@@ -250,23 +250,23 @@ private:
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	ExprOperands handleRValueReferenceCast(
+	ExprResult handleRValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	ExprOperands handleLValueReferenceCast(
+	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
-	ExprOperands generateStaticCastIr(const StaticCastNode& staticCastNode);
+	ExprResult generateStaticCastIr(const StaticCastNode& staticCastNode);
 	ExprOperands generateTypeidIr(const TypeidNode& typeidNode);
-	ExprOperands generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
-	ExprOperands generateConstCastIr(const ConstCastNode& constCastNode);
-	ExprOperands generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
+	ExprResult generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
+	ExprResult generateConstCastIr(const ConstCastNode& constCastNode);
+	ExprResult generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
 	LambdaInfo collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda);
 	ExprOperands generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
 	void generateLambdaFunctions(const LambdaInfo& lambda_info);

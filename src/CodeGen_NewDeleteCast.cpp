@@ -686,7 +686,7 @@
 		}
 	}
 
-	ExprOperands AstToIr::handleRValueReferenceCast(
+	ExprResult AstToIr::handleRValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
@@ -709,7 +709,7 @@
 		return makeExprResult(target_type, 64, result_var);
 	}
 
-	ExprOperands AstToIr::handleLValueReferenceCast(
+	ExprResult AstToIr::handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
@@ -732,7 +732,7 @@
 		return makeExprResult(target_type, 64, result_var);
 	}
 
-	ExprOperands AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
+	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
@@ -789,7 +789,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return { target_type, 64, expr_operands[2], 0ULL };
+			return makeExprResult(target_type, 64, expr_operands[2]);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -799,9 +799,9 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
-				return { target_type, target_size, expr_operands[2], 0ULL };
+				return makeExprResult(target_type, target_size, expr_operands[2]);
 			}
-			return expr_operands;
+			return toExprResult(expr_operands);
 		}
 
 		// For enum to int or int to enum, we can just change the type
@@ -810,7 +810,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return { target_type, target_size, expr_operands[2], 0ULL };
+			return makeExprResult(target_type, target_size, expr_operands[2]);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -837,7 +837,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -861,7 +861,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -885,7 +885,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -898,7 +898,7 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return { Type::Bool, 8, result_temp, 0ULL };
+			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -910,12 +910,12 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return { Type::Bool, 8, result_temp, 0ULL };
+			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		return makeExprResult(target_type, target_size, expr_operands[2]);
 	}
 
 	ExprOperands AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -978,7 +978,7 @@
 		return { Type::Void, 64, result_temp, 0ULL };
 	}
 
-	ExprOperands AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
+	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
 		// dynamic_cast<Type>(expr) performs runtime type checking
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
@@ -1056,10 +1056,10 @@
 		}
 
 		// Return the casted pointer/reference
-		return { result_type, result_size, result_temp, 0ULL };
+		return makeExprResult(result_type, result_size, IrOperand{result_temp});
 	}
 
-	ExprOperands AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
+	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
 		
@@ -1084,10 +1084,10 @@
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		return makeExprResult(target_type, target_size, expr_operands[2]);
 	}
 
-	ExprOperands AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
+	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
 		
@@ -1114,5 +1114,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
+		return makeExprResult(target_type, result_size, expr_operands[2], 0, target_pointer_depth);
 	}
