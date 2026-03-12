@@ -144,71 +144,63 @@
 	}
 
 	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
-		ExprOperands object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_operands.empty()) {
+		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
+		if (object_result.type == Type::Void && object_result.size_in_bits == 0) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
 		
-		ExprOperands ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_operands.empty()) {
+		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+		if (ptr_result.type == Type::Void && ptr_result.size_in_bits == 0) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
 		
 		TempVar object_addr = var_counter.next();
 		if (ptmNode.is_arrow()) {
-			if (std::holds_alternative<StringHandle>(object_operands[2])) {
-				StringHandle obj_ptr_name = std::get<StringHandle>(object_operands[2]);
+			if (std::holds_alternative<StringHandle>(object_result.value)) {
+				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
 				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
 				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-				object_addr = std::get<TempVar>(object_operands[2]);
+			} else if (std::holds_alternative<TempVar>(object_result.value)) {
+				object_addr = std::get<TempVar>(object_result.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
 				return ExprResult{};
 			}
 		} else {
-			if (std::holds_alternative<StringHandle>(object_operands[2])) {
-				StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+			if (std::holds_alternative<StringHandle>(object_result.value)) {
+				StringHandle obj_name = std::get<StringHandle>(object_result.value);
 				AddressOfOp addr_op;
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
-					.type = std::get<Type>(object_operands[0]),
-					.size_in_bits = std::get<int>(object_operands[1]),
+					.type = object_result.type,
+					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = 0
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-				object_addr = std::get<TempVar>(object_operands[2]);
+			} else if (std::holds_alternative<TempVar>(object_result.value)) {
+				object_addr = std::get<TempVar>(object_result.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
 				return ExprResult{};
 			}
 		}
 		
-		if (ptr_operands.size() < 2) {
-			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
-			return ExprResult{};
-		}
-		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
 		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-		add_op.rhs = toTypedValue(ptr_operands);
+		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 		
-		Type member_type = std::get<Type>(ptr_operands[0]);
-		int member_size = std::get<int>(ptr_operands[1]);
-		TypeIndex member_type_index = 0;
-		if (ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
-			member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
-		}
+		Type member_type = ptr_result.type;
+		int member_size = ptr_result.size_in_bits;
+		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(member_type, member_size, IrOperand{result_var}, 0, 0, static_cast<unsigned long long>(member_type_index));
