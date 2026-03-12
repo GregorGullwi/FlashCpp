@@ -3,6 +3,7 @@
 #include <vector>
 #include <variant>
 #include <iostream>
+#include <algorithm>
 
 // ---- Unified command-line option registry ----
 // Single source of truth for all supported options.
@@ -178,31 +179,32 @@ public:
 		             "Usage: FlashCpp [options] <input-file>\n\n"
 		             "Options:\n";
 
-		// Value options
+		auto print_option = [](const CliOptionInfo& opt) {
+			if (opt.is_alias) return;
+
+			std::string left = "  -";
+			if (opt.name.size() > 1) left += '-';
+			left += opt.name;
+
+			if (!opt.value_hint.empty()) {
+				// Long options (--) only support =value syntax; short options (-) use space
+				left += (opt.name.size() > 1) ? '=' : ' ';
+				left += opt.value_hint;
+			}
+
+			if (left.size() < kHelpColumnWidth) {
+				left.append(kHelpColumnWidth - left.size(), ' ');
+			} else {
+				left += ' '; // Ensure at least one space separator
+			}
+			std::cout << left << opt.description << "\n";
+		};
+
 		for (const auto& opt : all_cli_value_options) {
-			if (opt.is_alias) continue;
-			std::string left = "  -";
-			if (opt.name.size() > 1) left += "-";  // long options get --
-			left += std::string(opt.name);
-			// Long options (--) only support =value syntax; short options (-) use space
-			if (opt.name.size() > 1)
-				left += "=";
-			else
-				left += " ";
-			left += std::string(opt.value_hint);
-			while (left.size() < kHelpColumnWidth) left += ' ';
-			std::cout << left << opt.description << "\n";
+			print_option(opt);
 		}
-
-		// Flag options – skip aliases
 		for (const auto& opt : all_cli_flags) {
-			if (opt.is_alias) continue;
-
-			std::string left = "  -";
-			if (opt.name.size() > 1) left += "-";
-			left += std::string(opt.name);
-			while (left.size() < kHelpColumnWidth) left += ' ';
-			std::cout << left << opt.description << "\n";
+			print_option(opt);
 		}
 		std::cout << "\n";
 	}
@@ -211,9 +213,7 @@ private:
 	// Helper to check if an option is a known flag (doesn't take a value).
 	// Derived from the all_cli_flags constexpr table.
 	static bool isKnownFlag(std::string_view flag) {
-		for (const auto& entry : all_cli_flags)
-			if (entry.name == flag) return true;
-		return false;
+		return std::ranges::any_of(all_cli_flags, [flag](const auto& entry) { return entry.name == flag; });
 	}
 
 	std::map<std::string_view, std::variant<std::monostate, std::string_view>> optionValues_;

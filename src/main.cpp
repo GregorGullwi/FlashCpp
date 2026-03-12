@@ -146,8 +146,8 @@ int main_impl(int argc, char *argv[]) {
     };
 
     // Handle log level setting from command line
-    if (argsparser.hasOption("log-level")) {
-        auto level_str = argsparser.optionValue("log-level");
+    if (argsparser.hasOption("log-level"_opt)) {
+        auto level_str = argsparser.optionValue("log-level"_opt);
         if (std::holds_alternative<std::string_view>(level_str)) {
             std::string_view level_sv = std::get<std::string_view>(level_str);
             size_t colon_pos = level_sv.find(':');
