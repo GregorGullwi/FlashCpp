@@ -62,6 +62,7 @@ in the constexpr limitation docs.
 - lazy-instantiated current-struct plus base-template member-function lookup is centralized for the migrated function-call and member-function-call paths
 - current-struct static lookup mode gating plus identifier-name-handle normalization is centralized
 - the repeated static-member "evaluate initializer or synthesize scalar default" tail is centralized for the migrated instance-access paths
+- static-member lookup from struct type info now uses `findStaticMemberRecursive` for consistent base class support
 
 ### Early remaining follow-up seams
 
@@ -103,7 +104,7 @@ and reviewable.
 | `evaluate_member_access` | `src/ConstExprEvaluator_Members.cpp` | mixed object-source resolution + member evaluation tail | reuse a small helper for “resolve object, then either static-member fast path or member-source evaluation” | Yes | No |
 | `evaluate_nested_member_access` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled nested member extraction | helper for “evaluate final resolved member source” after `resolve_constexpr_member_source_from_initializer(...)` | Yes | No |
 | `evaluate_member_function_call` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup/evaluation dispatch | isolate object-kind dispatch (`this`, lambda, callable object, ctor-backed object, current-struct static case) from actual call evaluation | Yes | Lookup-only pieces maybe, full flow no |
-| `evaluate_function_call_member_access` + `evaluate_static_member_from_struct` | `src/ConstExprEvaluator_Members.cpp` | lookup-heavy static-member access | helper for “resolve static member from struct-returning expression/type info, then evaluate initializer/default” | Partly | Possibly, if reduced to declaration lookup only |
+| `evaluate_function_call_member_access` + `evaluate_static_member_from_struct` | `src/ConstExprEvaluator_Members.cpp` | lookup-heavy static-member access | ~~lookup helper~~ **COMPLETED** - uses `findStaticMemberRecursive` | Partly | No |
 | `evaluate_array_subscript_member_access` + `evaluate_variable_array_subscript` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled array element extraction | unify array-initializer element extraction / bounds handling after source resolution | Yes | No |
 | constructor-backed member extraction (`try_evaluate_member_from_constructor_initializers`, nearby ctor/member callers) | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled constructor-member interpretation | one helper boundary for “bind ctor args, then read member/default/member-init result” | Yes | No |
 
@@ -113,16 +114,16 @@ and reviewable.
    - highest duplication density
    - fully constexpr-local
    - easiest to review in isolation
-2. **static-member lookup family**
-   - `evaluate_qualified_identifier`
-   - `evaluate_function_call_member_access`
-   - `evaluate_static_member_from_struct`
+2. ~~**static-member lookup family**~~ ✅ COMPLETED
+   - `evaluate_qualified_identifier` - tightly coupled with EvalResult, not extracted
+   - `evaluate_function_call_member_access` - already uses helpers
+   - `evaluate_static_member_from_struct` - refactored to use `findStaticMemberRecursive`
 3. **member-access family**
-   - `evaluate_member_access`
-   - `evaluate_nested_member_access`
-   - array-member extraction paths
-4. **member-function-call dispatcher**
-   - save for after the smaller lookup/evaluation boundaries above are cleaner
+   - `evaluate_member_access` - already uses extracted helpers
+   - `evaluate_nested_member_access` - already uses extracted helpers
+   - array-member extraction paths - internal lambdas too specific
+4. **Review remaining candidates for additional extraction opportunities**
+   - remaining static-member duplication is now down to more behavior-specific paths
 
 ## Goals
 
