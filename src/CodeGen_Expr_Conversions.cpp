@@ -1717,7 +1717,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 		if (operand_pointer_depth > 1) {
 			element_size = 8;
 		} else {
-			element_size = getSizeInBytes(operandType, 0, get_type_size_bits(operandType));
+			element_size = getSizeInBytes(operandType, operandIrResult.type_index, get_type_size_bits(operandType));
 			if (element_size == 0) {
 				element_size = 1;
 			}
