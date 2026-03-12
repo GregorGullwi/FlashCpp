@@ -395,11 +395,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// The comma operator evaluates both operands left-to-right and returns the right operand
 		if (op == ",") {
 			// Generate IR for the left-hand side (evaluate for side effects, discard result)
-			[[maybe_unused]] ExprResult lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
-			ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+			ExprOperands lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
+
+			// Generate IR for the right-hand side (this is the result)
+			ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 			// Return the right-hand side result
-			return rhsIrOperands;
+			return toExprResult(rhsIrOperands);
 		}
 
 		// Special handling for assignment to array subscript or member access
@@ -412,30 +414,30 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 				// Evaluate LHS with LValueAddress context (no Load instruction)
-				ExprResult lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
-				bool use_unified_handler = true;
-				if (use_unified_handler) {
-					int lhs_size = lhsIrOperands.size_in_bits;
+				bool use_unified_handler = !lhsIrOperands.empty();
+				if (use_unified_handler && lhsIrOperands.size() >= 2) {
+					int lhs_size = std::get<int>(lhsIrOperands[1]);
 					if (lhs_size <= 0 || lhs_size > 1024) {
 						FLASH_LOG(Codegen, Info, "Unified handler skipped: invalid size (", lhs_size, ")");
 						use_unified_handler = false;  // Invalid size, use legacy code
 					}
-				} else { // dead code - ExprResult always has fields
-					// FLASH_LOG(Codegen, Info, "Unified handler skipped: empty or insufficient operands");
+				} else {
+					FLASH_LOG(Codegen, Info, "Unified handler skipped: empty or insufficient operands");
 					use_unified_handler = false;
 				}
 
 				if (use_unified_handler) {
 					// Evaluate RHS normally (Load context)
-					ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Try to handle assignment using unified lvalue metadata handler
-					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 						// Assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member assignment");
-						return rhsIrOperands;
+						return toExprResult(rhsIrOperands);
 					}
 
 					// If metadata handler didn't work, fall through to legacy code
@@ -462,14 +464,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (member_result) {
 						// This is an assignment to a member variable: member = value
 						// Handle via unified handler (identifiers are now marked as lvalues)
-						ExprResult lhsIrOperands = visitExpressionNode(lhs_expr);
-						ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr);
+						ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 						// Handle assignment using unified lvalue metadata handler
-						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 							// Assignment was handled successfully via metadata
 							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
-							return rhsIrOperands;
+							return toExprResult(rhsIrOperands);
 						}
 
 						// This shouldn't happen with proper metadata, but log for debugging
@@ -499,11 +501,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				if (is_captured_by_ref) {
 					std::string_view lhs_name = lhs_ident.name();
-					ExprResult lhsIrOperands = visitExpressionNode(lhs_expr);
-					ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+					ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr);
+					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 						FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
-						return rhsIrOperands;
+						return toExprResult(rhsIrOperands);
 					}
 					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
 					return makeExprResult(Type::Int, 32, IrOperand{TempVar{0}});
@@ -528,7 +530,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (lhs_type.is_function_pointer()) {
 						// This is a function pointer assignment
 						// Generate IR for the RHS (which should be a function address)
-						ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 						// Generate Assignment IR using typed payload
 						TempVar result_var = var_counter.next();
@@ -557,24 +559,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
-					ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
 
 					// Extract the value from RHS (rhsIrOperands[2])
-					if (std::holds_alternative<TempVar>(rhsIrOperands.value)) {
-						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands.value));
-					} else if (std::holds_alternative<StringHandle>(rhsIrOperands.value)
-					|| std::holds_alternative<unsigned long long>(rhsIrOperands.value)
-					|| std::holds_alternative<double>(rhsIrOperands.value)) {
+					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
+					} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])
+					|| std::holds_alternative<unsigned long long>(rhsIrOperands[2])
+					|| std::holds_alternative<double>(rhsIrOperands[2])) {
 						// Local variable (StringHandle) or constant: load into a temp first
 						TempVar temp = var_counter.next();
 						AssignmentOp assign_op;
 						assign_op.result = temp;
-						assign_op.lhs.type = rhsIrOperands.type;
-						assign_op.lhs.size_in_bits = rhsIrOperands.size_in_bits;
+						assign_op.lhs.type = std::get<Type>(rhsIrOperands[0]);
+						assign_op.lhs.size_in_bits = std::get<int>(rhsIrOperands[1]);
 						assign_op.lhs.value = temp;
 						assign_op.rhs = toTypedValue(rhsIrOperands);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -587,7 +589,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
 					// Return the RHS value as the result (assignment expression returns the assigned value)
-					return rhsIrOperands;
+					return toExprResult(rhsIrOperands);
 				}
 			}
 		}
@@ -612,7 +614,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
 
 					// Evaluate RHS
-					ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Map compound op to arithmetic opcode
 					static const std::unordered_map<std::string_view, IrOpcode> op_to_arith = {
@@ -660,24 +662,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 				// Evaluate LHS with LValueAddress context (no Load instruction)
-				ExprResult lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check
-				bool use_unified_handler = true;
-				if (use_unified_handler) {
-					int lhs_size = lhsIrOperands.size_in_bits;
+				bool use_unified_handler = !lhsIrOperands.empty();
+				if (use_unified_handler && lhsIrOperands.size() >= 2) {
+					int lhs_size = std::get<int>(lhsIrOperands[1]);
 					if (lhs_size <= 0 || lhs_size > 1024) {
 						FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: invalid size (", lhs_size, ")");
 						use_unified_handler = false;
 					}
-				} else { // dead code - ExprResult always has fields
-					// FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: empty or insufficient operands");
+				} else {
+					FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: empty or insufficient operands");
 					use_unified_handler = false;
 				}
 
 				if (use_unified_handler) {
 					// Evaluate RHS normally (Load context)
-					ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// For compound assignments, we need to:
 					// 1. Load the current value from the lvalue
@@ -685,12 +687,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// 3. Store the result back to the lvalue
 
 					// Try to handle compound assignment using lvalue metadata
-					if (handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+					if (handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
 						// Compound assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member compound assignment");
 						// Return the LHS operands which contain the result type/size info
 						// The actual result value is stored in the lvalue, so we return lvalue info
-						return lhsIrOperands;
+						return toExprResult(lhsIrOperands);
 					}
 
 					// If metadata handler didn't work, fall through to legacy code
@@ -702,29 +704,29 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Generate IR for the left-hand side and right-hand side of the operation
 		// For assignment (=), use LValueAddress context for LHS to avoid dereferencing reference parameters
 		ExpressionContext lhs_context = (op == "=") ? ExpressionContext::LValueAddress : ExpressionContext::Load;
-		ExprResult lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
-		ExprResult rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+		ExprOperands lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
+		ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 		// Try unified metadata-based handler for compound assignments on identifiers
 		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 		if (compound_assignment_ops.count(op) > 0 &&
-		handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+		handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
 			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
 		// This handles assignments like *ptr = value using lvalue metadata
-		if (op == "=" && handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+		if (op == "=" && handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
 			// Assignment was handled via lvalue metadata, return RHS as result
-			return rhsIrOperands;
+			return toExprResult(rhsIrOperands);
 		}
 
 		// Get the types and sizes of the operands
-		Type lhsType = lhsIrOperands.type;
-		Type rhsType = rhsIrOperands.type;
-		int lhsSize = lhsIrOperands.size_in_bits;
-		int rhsSize = rhsIrOperands.size_in_bits;
+		Type lhsType = std::get<Type>(lhsIrOperands[0]);
+		Type rhsType = std::get<Type>(rhsIrOperands[0]);
+		int lhsSize = std::get<int>(lhsIrOperands[1]);
+		int rhsSize = std::get<int>(rhsIrOperands[1]);
 
 		auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 			if (!parser_) {
@@ -824,14 +826,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsIrOperands.size() >= 4) {
 			// Get the type index of the struct
 			TypeIndex lhs_type_index = 0;
-			{
-				lhs_type_index = lhsIrOperands.type_index;
+			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 			}
 
 			TypeIndex rhs_type_index = 0;
 			if ((rhsType == Type::Enum || rhsType == Type::UserDefined) && rhsIrOperands.size() >= 4) {
-				{
-					rhs_type_index = rhsIrOperands.type_index;
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 				}
 			}
 
@@ -894,10 +896,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							// Take address of LHS to pass as 'this' pointer
 							std::variant<StringHandle, TempVar> lhs_value;
-							if (std::holds_alternative<StringHandle>(lhsIrOperands.value)) {
-								lhs_value = std::get<StringHandle>(lhsIrOperands.value);
-							} else if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
-								lhs_value = std::get<TempVar>(lhsIrOperands.value);
+							if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+								lhs_value = std::get<StringHandle>(lhsIrOperands[2]);
+							} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+								lhs_value = std::get<TempVar>(lhsIrOperands[2]);
 							} else {
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return ExprResult{};
@@ -944,13 +946,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Binary operators like +, -, *, etc. can be overloaded as member or free functions
 		// This should be checked before trying to generate built-in arithmetic operations
 		TypeIndex lhs_type_index = 0;
-		{
-			lhs_type_index = lhsIrOperands.type_index;
+		if (lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+			lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 		}
 
 		TypeIndex rhs_type_index = 0;
-		{
-			rhs_type_index = rhsIrOperands.type_index;
+		if (rhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+			rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
 		}
 
 		auto tryGetConcreteBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
@@ -1359,10 +1361,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Take address of LHS to pass as 'this' pointer
 				// The LHS operand contains a struct value - extract it properly
 				std::variant<StringHandle, TempVar> lhs_value;
-				if (std::holds_alternative<StringHandle>(lhsIrOperands.value)) {
-					lhs_value = std::get<StringHandle>(lhsIrOperands.value);
-				} else if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
-					lhs_value = std::get<TempVar>(lhsIrOperands.value);
+				if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+					lhs_value = std::get<StringHandle>(lhsIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+					lhs_value = std::get<TempVar>(lhsIrOperands[2]);
 				} else {
 					// Can't take address of non-lvalue
 					FLASH_LOG(Codegen, Error, "Cannot take address of binary operator LHS - not an lvalue");
@@ -1507,16 +1509,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				} else {
 					// Other expression types - use already-generated lhsIrOperands
 					// The lhsIrOperands were already generated earlier in this function
-					if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
-						lhs_value = std::get<TempVar>(lhsIrOperands.value);
+					if (lhsIrOperands.size() >= 3 && std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+						lhs_value = std::get<TempVar>(lhsIrOperands[2]);
 					} else {
 						// Complex expression that doesn't produce a temp var
 						return ExprResult{};
 					}
 
 					// Try to get type index from lhsIrOperands if available
-					{
-						spaceship_lhs_type_index = lhsIrOperands.type_index;
+					if (lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+						spaceship_lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
 					} else {
 						// Can't determine type index for complex expression
 						return ExprResult{};
@@ -1697,8 +1699,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Fallback: extract pointer depth from the LHS operands (4th element)
 		// This handles expressions like &member, function calls returning pointers, etc.
-		if (lhs_pointer_depth == 0) {
-			lhs_pointer_depth = lhsIrOperands.pointer_depth;
+		if (lhs_pointer_depth == 0 && lhsIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+			lhs_pointer_depth = static_cast<int>(std::get<unsigned long long>(lhsIrOperands[3]));
 		}
 
 		// Try to get pointer depth for RHS as well (for ptr - ptr case)
@@ -1731,8 +1733,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 1: Subtract the pointers (gives byte difference)
 			TempVar byte_diff = var_counter.next();
 			BinaryOp sub_op{
-				.lhs = { lhsType, 64, toIrValue(lhsIrOperands.value) },
-				.rhs = { rhsType, 64, toIrValue(rhsIrOperands.value) },
+				.lhs = { lhsType, 64, toIrValue(lhsIrOperands[2]) },
+				.rhs = { rhsType, 64, toIrValue(rhsIrOperands[2]) },
 				.result = byte_diff,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
@@ -1798,7 +1800,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Use typed BinaryOp for pointer addition/subtraction
 		BinaryOp ptr_arith_op{
-			.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands.value) },
+			.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands[2]) },
 			.rhs = { Type::Int, 32, scaled_offset },
 			.result = result_var,
 		};
@@ -1815,8 +1817,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "&&" || op == "||") {
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
-				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands.value) },
-				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands.value) },
+				.lhs = { Type::Bool, 8, toIrValue(lhsIrOperands[2]) },
+				.rhs = { Type::Bool, 8, toIrValue(rhsIrOperands[2]) },
 				.result = result_var,
 			};
 			IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
@@ -1852,7 +1854,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// ptr = ptr + scaled_offset (or ptr - scaled_offset)
 			TempVar result_var = var_counter.next();
 			BinaryOp ptr_arith_op{
-				.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands.value) },
+				.lhs = { lhsType, lhsSize, toIrValue(lhsIrOperands[2]) },
 				.rhs = { Type::Int, 32, scaled_offset },
 				.result = result_var,
 			};
@@ -1861,13 +1863,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
 			// Store result back to LHS (must be a variable)
-			if (std::holds_alternative<StringHandle>(lhsIrOperands.value)) {
+			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
 				AssignmentOp assign_op;
-				assign_op.result = std::get<StringHandle>(lhsIrOperands.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands.value) };
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
 
 				// Check if LHS is a reference variable
-				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands.value);
+				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
 				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
 				if (isVariableReference(lhs_name)) {
 					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
@@ -1875,13 +1877,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-			} else if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
 				AssignmentOp assign_op;
-				assign_op.result = std::get<TempVar>(lhsIrOperands.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands.value) };
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
 
 				// Check if LHS TempVar corresponds to a reference variable
-				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands.value);
+				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands[2]);
 				std::string_view temp_name = lhs_temp.name();
 				// Remove '%' prefix if present
 				if (!temp_name.empty() && temp_name[0] == '%') {
@@ -1908,13 +1910,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Pointer assignment: lhsSize={}, pointer_depth={}", lhsSize, lhs_pointer_depth);
 
 			// Get the assignment target (must be a variable)
-			if (std::holds_alternative<StringHandle>(lhsIrOperands.value)) {
+			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
 				AssignmentOp assign_op;
-				assign_op.result = std::get<StringHandle>(lhsIrOperands.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands.value) };
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
 
 				// Check if LHS is a reference variable
-				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands.value);
+				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
 				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
 				if (isVariableReference(lhs_name)) {
 					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
@@ -1923,15 +1925,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<StringHandle>(lhsIrOperands.value)});
-			} else if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
+				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<StringHandle>(lhsIrOperands[2])});
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
 				[[maybe_unused]] TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
-				assign_op.result = std::get<TempVar>(lhsIrOperands.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands.value) };
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
 
 				// Check if LHS TempVar corresponds to a reference variable
-				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands.value);
+				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands[2]);
 				std::string_view temp_name = lhs_temp.name();
 				// Remove '%' prefix if present
 				if (!temp_name.empty() && temp_name[0] == '%') {
@@ -1944,7 +1946,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<TempVar>(lhsIrOperands.value)});
+				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<TempVar>(lhsIrOperands[2])});
 			}
 		}
 
@@ -1953,15 +1955,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ
 			if (rhsType != lhsType) {
-				rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, lhsType, binaryOperatorNode.get_token());
+				rhsIrOperands = generateTypeConversion(toExprResult(rhsIrOperands), rhsType, lhsType, binaryOperatorNode.get_token());
 			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
 			// Extract the LHS value directly (it's either StringHandle or TempVar)
-			if (std::holds_alternative<StringHandle>(lhsIrOperands.value)) {
-				assign_op.result = std::get<StringHandle>(lhsIrOperands.value);
-			} else if (std::holds_alternative<TempVar>(lhsIrOperands.value)) {
-				assign_op.result = std::get<TempVar>(lhsIrOperands.value);
+			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 			} else {
 				// LHS is an immediate value - this shouldn't happen for valid assignments
 				throw InternalError("Assignment LHS cannot be an immediate value");
@@ -1971,17 +1973,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.rhs = toTypedValue(rhsIrOperands);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			// Assignment expression returns the LHS (the assigned-to value)
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
 		if (lhsType != commonType) {
-			lhsIrOperands = generateTypeConversion(lhsIrOperands, lhsType, commonType, binaryOperatorNode.get_token());
+			lhsIrOperands = generateTypeConversion(toExprResult(lhsIrOperands), lhsType, commonType, binaryOperatorNode.get_token());
 		}
 		if (rhsType != commonType) {
-			rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, commonType, binaryOperatorNode.get_token());
+			rhsIrOperands = generateTypeConversion(toExprResult(rhsIrOperands), rhsType, commonType, binaryOperatorNode.get_token());
 		}
 
 		// Check if we're dealing with floating-point operations
@@ -2128,91 +2130,91 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),  // Store result in LHS variable
+				.result = toIrValue(lhsIrOperands[2]),  // Store result in LHS variable
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "-=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "*=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "/=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "%=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "&=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "|=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "^=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == "<<=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (op == ">>=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands.value),
+				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return lhsIrOperands;
+			return toExprResult(lhsIrOperands);
 		}
 		else if (is_floating_point_op) { // Floating-point operations
 			// Float operations use typed BinaryOp
@@ -2516,7 +2518,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
-		ExprResult va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		ExprOperands va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
 
 		// Get the second argument (type identifier or type specifier)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -2565,10 +2567,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// va_list_ir[2] contains the variable/temp identifier
 		std::variant<StringHandle, TempVar> va_list_var;
-		if (std::holds_alternative<TempVar>(va_list_ir.value)) {
-			va_list_var = std::get<TempVar>(va_list_ir.value);
-		} else if (std::holds_alternative<StringHandle>(va_list_ir.value)) {
-			va_list_var = std::get<StringHandle>(va_list_ir.value);
+		if (std::holds_alternative<TempVar>(va_list_ir[2])) {
+			va_list_var = std::get<TempVar>(va_list_ir[2]);
+		} else if (std::holds_alternative<StringHandle>(va_list_ir[2])) {
+			va_list_var = std::get<StringHandle>(va_list_ir[2]);
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
 			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
@@ -2576,7 +2578,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 		// This must match the detection logic in generateVaStartIntrinsic
-		bool va_list_is_pointer = isVaListPointerType(arg0, va_list_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(va_list_ir));
 
 		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
@@ -3199,7 +3201,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
-		ExprResult arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		ExprOperands arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
 
 		// Get the va_list variable name (needed for assignment later)
 		StringHandle va_list_name_handle;
@@ -3209,7 +3211,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = isVaListPointerType(arg0, arg0_ir);
+		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(arg0_ir));
 
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -3421,11 +3423,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Evaluate the pointer argument
 		ASTNode ptr_arg = functionCallNode.arguments()[0];
-		ExprResult ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
+		ExprOperands ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 
 		// Extract pointer details
-		[[maybe_unused]] Type ptr_type = ptr_ir.type;
-		[[maybe_unused]] int ptr_size = ptr_ir.size_in_bits;
+		[[maybe_unused]] Type ptr_type = std::get<Type>(ptr_ir[0]);
+		[[maybe_unused]] int ptr_size = std::get<int>(ptr_ir[1]);
 
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -3442,7 +3444,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_launder encountered - optimization barrier created");
 
 		// Return the pointer unchanged (but optimization barrier is implied)
-		return ptr_ir;
+		return toExprResult(ptr_ir);
 	}
 
 	ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
