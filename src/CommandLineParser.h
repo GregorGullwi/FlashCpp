@@ -184,7 +184,11 @@ public:
 			std::string left = "  -";
 			if (opt.name.size() > 1) left += "-";  // long options get --
 			left += std::string(opt.name);
-			left += " ";
+			// Long options (--) only support =value syntax; short options (-) use space
+			if (opt.name.size() > 1)
+				left += "=";
+			else
+				left += " ";
 			left += std::string(opt.value_hint);
 			while (left.size() < kHelpColumnWidth) left += ' ';
 			std::cout << left << opt.description << "\n";
