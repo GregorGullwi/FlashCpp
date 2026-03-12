@@ -63,6 +63,8 @@ struct ExprResult {
 	}
 };
 
+// Explicit wrapper for the temporary legacy slot-4 bridge so callers must opt in
+// when they need to preserve raw encoded metadata during the ExprResult migration.
 struct EncodedExprMetadata {
 	std::optional<unsigned long long> value;
 };
@@ -72,7 +74,7 @@ inline EncodedExprMetadata preserveEncodedExprMetadata(unsigned long long value)
 }
 
 inline EncodedExprMetadata preserveEncodedExprMetadata(std::optional<unsigned long long> value) {
-	return EncodedExprMetadata{std::move(value)};
+	return EncodedExprMetadata{value};
 }
 
 inline ExprResult makeExprResultImpl(
