@@ -328,6 +328,11 @@ public:
 		TypeIndex declared_type_index{0};
 	};
 
+	struct ExtractedIdentifier {
+		const IdentifierNode* identifier = nullptr;
+		std::string_view name;
+	};
+
 private:
 	enum class CurrentStructStaticLookupMode {
 		BoundOnly,
@@ -384,6 +389,7 @@ private:
 	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
 	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
+	static std::optional<ExtractedIdentifier> extract_identifier_from_expression(const ASTNode& object_expr);
 		static EvalResult materialize_lambda_value(
 			const LambdaExpressionNode& lambda,
 			EvaluationContext& context,

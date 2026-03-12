@@ -2776,19 +2776,12 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 	
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
-		}
-		object_identifier = &std::get<IdentifierNode>(expr_node);
-		var_name = object_identifier->name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-		var_name = object_identifier->name();
-	} else {
+	auto extracted = extract_identifier_from_expression(object_expr);
+	if (!extracted) {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
+	object_identifier = extracted->identifier;
+	var_name = extracted->name;
 
 	if (placeholder_func.is_static() && object_identifier && object_identifier->name() == "this") {
 		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
@@ -3302,19 +3295,12 @@ EvalResult Evaluator::extract_object_members(
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 	
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
-		}
-		object_identifier = &std::get<IdentifierNode>(expr_node);
-		var_name = object_identifier->name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-		var_name = object_identifier->name();
-	} else {
+	auto extracted = extract_identifier_from_expression(object_expr);
+	if (!extracted) {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
+	object_identifier = extracted->identifier;
+	var_name = extracted->name;
 
 	const VariableDeclarationNode* var_decl = nullptr;
 	ResolvedConstexprObject resolved_object;

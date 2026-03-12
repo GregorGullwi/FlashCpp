@@ -63,6 +63,7 @@ in the constexpr limitation docs.
 - current-struct static lookup mode gating plus identifier-name-handle normalization is centralized
 - the repeated static-member "evaluate initializer or synthesize scalar default" tail is centralized for the migrated instance-access paths
 - static-member lookup from struct type info now uses `findStaticMemberRecursive` for consistent base class support
+- extracted `extract_identifier_from_expression` helper to deduplicate object expression parsing in member function call and object member extraction
 
 ### Early remaining follow-up seams
 
@@ -103,7 +104,7 @@ and reviewable.
 | `evaluate_qualified_identifier` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup + constexpr synthesis | split qualified-type/static-member resolution from `integral_constant` / trait-value synthesis | Partly | Maybe later, but only the lookup half |
 | `evaluate_member_access` | `src/ConstExprEvaluator_Members.cpp` | mixed object-source resolution + member evaluation tail | reuse a small helper for “resolve object, then either static-member fast path or member-source evaluation” | Yes | No |
 | `evaluate_nested_member_access` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled nested member extraction | helper for “evaluate final resolved member source” after `resolve_constexpr_member_source_from_initializer(...)` | Yes | No |
-| `evaluate_member_function_call` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup/evaluation dispatch | isolate object-kind dispatch (`this`, lambda, callable object, ctor-backed object, current-struct static case) from actual call evaluation | Yes | Lookup-only pieces maybe, full flow no |
+| `evaluate_member_function_call` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup/evaluation dispatch | ~~isolate object-kind dispatch~~ **COMPLETED** - extracted `extract_identifier_from_expression` | Yes | No |
 | `evaluate_function_call_member_access` + `evaluate_static_member_from_struct` | `src/ConstExprEvaluator_Members.cpp` | lookup-heavy static-member access | ~~lookup helper~~ **COMPLETED** - uses `findStaticMemberRecursive` | Partly | No |
 | `evaluate_array_subscript_member_access` + `evaluate_variable_array_subscript` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled array element extraction | unify array-initializer element extraction / bounds handling after source resolution | Yes | No |
 | constructor-backed member extraction (`try_evaluate_member_from_constructor_initializers`, nearby ctor/member callers) | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled constructor-member interpretation | one helper boundary for “bind ctor args, then read member/default/member-init result” | Yes | No |
