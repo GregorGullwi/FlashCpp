@@ -1905,12 +1905,12 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 
 
-ExprOperands AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
+ExprResult AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
 	// This should not happen during normal code generation - template parameters should be substituted
 	// during template instantiation. If we get here, it means template instantiation failed.
 	std::string param_name = std::string(templateParamRefNode.param_name().view());
 	std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
 	std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
 	assert(false && "Template parameter reference found during code generation - should have been substituted");
-	return {};
+	return ExprResult{};
 }

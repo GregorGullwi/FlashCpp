@@ -236,7 +236,7 @@
 		return size_bits;
 	}
 
-	ExprOperands AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
 		auto makeIdentifierResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
 			ExprResult result;
@@ -357,7 +357,7 @@
 						}
 
 						// Fallback: return the pointer temp
-						return { member->type, 64, ptr_temp, 0ULL };
+						return makeExprResult(member->type, 64, IrOperand{ptr_temp});
 					} else {
 						// By-value capture: direct member access
 						TempVar result_temp = var_counter.next();
@@ -437,7 +437,7 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return { info.type, info.size_in_bits, info.mangled_name, 0ULL };
+				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name});
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
@@ -450,7 +450,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return { info.type, info.size_in_bits, result_temp, 0ULL };
+			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp});
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
@@ -510,8 +510,8 @@
 								if (enum_info) {
 									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
 									if (enumerator) {
-										return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-											static_cast<unsigned long long>(enumerator->value) };
+										return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+											static_cast<unsigned long long>(enumerator->value));
 									}
 								}
 							}
@@ -835,8 +835,8 @@
 							if (enum_info && !enum_info->is_scoped) {
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
-									return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-									static_cast<unsigned long long>(enumerator->value) };
+									return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+									static_cast<unsigned long long>(enumerator->value));
 								}
 							}
 						}
@@ -849,7 +849,7 @@
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 			FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
 			throw InternalError("Expected symbol '" + std::string(identifierNode.name()) + "' to exist in code generation");
-			return {};
+			return ExprResult{};
 		}
 
 		if (symbol->is<DeclarationNode>()) {
@@ -871,8 +871,8 @@
 						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
-							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-							static_cast<unsigned long long>(enumerator->value) };
+							return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+							static_cast<unsigned long long>(enumerator->value));
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
 					}
@@ -941,7 +941,7 @@
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
+					return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 				}
 				
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -1126,7 +1126,7 @@
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
+						return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 					}
 					
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1240,7 +1240,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+			return makeExprResult(Type::FunctionPointer, 64, IrOperand{func_addr_var});
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1248,16 +1248,16 @@
 			// Variable template without instantiation - should not reach codegen
 			// The parser should have instantiated it already
 			throw InternalError("Uninstantiated variable template in codegen");
-			return {};
+			return ExprResult{};
 		}
 
 		// If we get here, the symbol is not a known type
 		FLASH_LOG(Codegen, Error, "Unknown symbol type for identifier '", identifierNode.name(), "'");
 		throw InternalError("Identifier is not a DeclarationNode");
-		return {};
+		return ExprResult{};
 	}
 
-	ExprOperands AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
@@ -1272,8 +1272,8 @@
 					// This is a scoped enum - look up the enumerator value
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-					static_cast<unsigned long long>(enum_value) };
+					return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					static_cast<unsigned long long>(enum_value));
 				}
 			}
 
@@ -1373,7 +1373,7 @@
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
-							return { Type::Bool, 8, 0ULL, 0ULL };
+							return makeExprResult(Type::Bool, 8, 0ULL);
 						}
 						
 						// Determine the correct qualified name to use
@@ -1416,7 +1416,7 @@
 									// true_type -> 1, false_type -> 0
 									bool value = (alias_name == "true_type") ? true : false;
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-									return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
+									return makeExprResult(Type::Bool, 8, static_cast<unsigned long long>(value));
 								}
 								
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
@@ -1502,12 +1502,12 @@
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-							return { static_member->type, get_type_size_bits(static_member->type), deref_temp, static_cast<unsigned long long>(type_index) };
+							return makeExprResult(static_member->type, get_type_size_bits(static_member->type), IrOperand{deref_temp}, type_index);
 						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return { static_member->type, qsm_size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+						return makeExprResult(static_member->type, qsm_size_bits, IrOperand{result_temp}, type_index);
 					}
 				}
 			}
@@ -1527,7 +1527,7 @@
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return { Type::Int, 32,  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
+			return makeExprResult(Type::Int, 32, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -1563,11 +1563,11 @@
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-					return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()),  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), static_cast<unsigned long long>(type_index) };
+				return makeExprResult(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
 			}
 		}
 
@@ -1602,18 +1602,18 @@
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+			return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return { Type::Function, 64, StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
+			return makeExprResult(Type::Function, 64, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		// If we get here, the symbol is not a supported type
 		throw InternalError("Qualified identifier is not a supported type");
-		return {};
+		return ExprResult{};
 	}
 
 	ExprResult

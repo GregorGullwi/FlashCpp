@@ -161,10 +161,10 @@ private:
 	ExprOperands generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprOperands generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
-	ExprOperands generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprOperands> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
-	ExprOperands generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
+	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprResult
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprOperands generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token);
@@ -792,7 +792,7 @@ private:
 	// Generate an instantiated member function template
 	void generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info);
 
-	ExprOperands generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode);
+	ExprResult generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode);
 
 	// Generate IR for std::initializer_list construction
 	// This is the "compiler magic" that creates a backing array on the stack
