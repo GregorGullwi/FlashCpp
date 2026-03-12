@@ -95,7 +95,7 @@
 
 		// Evaluate condition
 		// The condition may be a declaration: if (Type var = expr) — C++98/11/14/17/20
-		ExprOperands condition_operands;
+		ExprResult condition_result;
 		auto cond_node = node.get_condition();
 		if (cond_node.is<VariableDeclarationNode>()) {
 			// Declaration-as-condition: visit the declaration to generate alloc + init IR,
@@ -104,16 +104,16 @@
 			const VariableDeclarationNode& var_decl = cond_node.as<VariableDeclarationNode>();
 			visitVariableDeclarationNode(cond_node);
 			ExpressionNode ident_expr = IdentifierNode(var_decl.declaration().identifier_token());
-			condition_operands = visitExpressionNode(ident_expr);
+			condition_result = visitExpressionNode(ident_expr);
 		} else {
-			condition_operands = visitExpressionNode(cond_node.as<ExpressionNode>());
+			condition_result = visitExpressionNode(cond_node.as<ExpressionNode>());
 		}
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
 		cond_branch.label_true = StringTable::getOrInternStringHandle(then_label);
 		cond_branch.label_false = StringTable::getOrInternStringHandle(node.has_else() ? else_label : end_label);
-		cond_branch.condition = toTypedValue(condition_operands);
+		cond_branch.condition = toTypedValue(condition_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Then block
@@ -181,13 +181,13 @@
 
 		// Evaluate condition (if present, otherwise infinite loop)
 		if (node.has_condition()) {
-			ExprOperands condition_operands = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
+			ExprResult condition_result = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
 
 			// Generate conditional branch: if true goto body, else goto end
 			CondBranchOp cond_branch;
 			cond_branch.label_true = loop_body_label;
 			cond_branch.label_false = loop_end_label;
-			cond_branch.condition = toTypedValue(condition_operands);
+			cond_branch.condition = toTypedValue(condition_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 		}
 
@@ -247,13 +247,13 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(start_lbl), Token()));
 
 		// Evaluate condition
-		ExprOperands condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto body, else goto end
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(condition_operands);
+		cond_branch.condition = toTypedValue(condition_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
@@ -308,13 +308,13 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_condition_label}, Token()));
 
 		// Evaluate condition
-		ExprOperands condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto start, else goto end
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_start_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(condition_operands);
+		cond_branch.condition = toTypedValue(condition_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop end label
@@ -333,11 +333,11 @@
 		switch_counter++;
 		
 		// Evaluate the switch condition
-		ExprOperands condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Get the condition type and value
-		Type condition_type = std::get<Type>(condition_operands[0]);
-		int condition_size = std::get<int>(condition_operands[1]);
+		Type condition_type = condition_result.type;
+		int condition_size = condition_result.size_in_bits;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
 		// Continue is not allowed in switch, but break is
@@ -375,15 +375,15 @@
 		size_t check_index = 0;
 		for (const auto& [case_label, case_value_node] : case_labels) {
 			// Evaluate case value (must be constant)
-			ExprOperands case_value_operands = visitExpressionNode(case_value_node.as<ExpressionNode>());
+			ExprResult case_value_result = visitExpressionNode(case_value_node.as<ExpressionNode>());
 
 			// Compare condition with case value using Equal opcode
 			TempVar cmp_result = var_counter.next();
 			
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
-				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_operands[2])},
-				.rhs = TypedValue{.type = std::get<Type>(case_value_operands[0]), .size_in_bits = std::get<int>(case_value_operands[1]), .value = toIrValue(case_value_operands[2])},
+				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_result.value)},
+				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = case_value_result.size_in_bits, .value = toIrValue(case_value_result.value)},
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
@@ -704,13 +704,13 @@
 		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
 			BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr)
 		);
-		ExprOperands condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
+		ExprResult condition_result = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(condition_operands);
+		cond_branch.condition = toTypedValue(condition_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
@@ -880,13 +880,13 @@
 		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
 			BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr)
 		);
-		ExprOperands condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
+		ExprResult condition_result = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
 		cond_branch.label_true = loop_body_label;
 		cond_branch.label_false = loop_end_label;
-		cond_branch.condition = toTypedValue(condition_operands);
+		cond_branch.condition = toTypedValue(condition_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label

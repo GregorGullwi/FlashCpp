@@ -101,6 +101,12 @@
     by rebuilding through `makeExprResult(..., preserveEncodedExprMetadata(...))`
   - after that change, raw `encoded_metadata` field writes remain only in the
     compatibility bridge helpers inside `src/IROperandHelpers.h`
+- a follow-up consumer cleanup then migrated control-statement condition/value
+  handling in `src/CodeGen_Stmt_Control.cpp` to named `ExprResult` fields:
+  - `if`, `for`, `while`, `do-while`, `switch`, and range-for condition sites
+    now pass `ExprResult` directly into `toTypedValue(...)`
+  - the `switch` comparison chain now reads `.type`, `.size_in_bits`, and
+    `.value` from `ExprResult` instead of re-decoding positional operand slots
 
 ## Problem
 
