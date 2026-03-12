@@ -133,7 +133,7 @@
 		return result;
 	}
 
-	ExprOperands AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
 		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
 			ExprResult result;
@@ -251,11 +251,11 @@
 				payload.index.value = flat_index;
 
 				if (context == ExpressionContext::LValueAddress) {
-					return { element_type, base_element_size, result_var, 0ULL };
+					return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-				return { element_type, base_element_size, result_var, 0ULL };
+				return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
 			}
 
 			// This could be a multidimensional array access
@@ -488,14 +488,14 @@
 									if (context == ExpressionContext::LValueAddress) {
 										// Don't emit ArrayAccess instruction (no load)
 										// Just return the metadata with the result temp var
-										return { element_type, element_size_bits, result_var, elem_type_index };
+										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
 									}
 
 									// Create instruction with typed payload (Load context - default)
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 									// Return the result with the element type and its type index
-									return { element_type, element_size_bits, result_var, elem_type_index };
+									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
 								}
 							}
 						}
@@ -841,7 +841,7 @@
 		return true;
 	}
 
-	ExprOperands AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
+	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
 		ExprResult result;
 		result.type = type;
 		result.size_in_bits = size_bits;
@@ -883,7 +883,7 @@
 		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
 	}
 
-	ExprOperands AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context) {
 		// Get the object being accessed
 		ASTNode object_node = memberAccessNode.object();
@@ -1009,7 +1009,7 @@
 			}
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
-				if (!extractBaseFromOperands(toExprResult(nested_result), base_object, base_type, base_type_index, "nested member access")) {
+				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (base_type != Type::Struct && base_type != Type::UserDefined) {
@@ -1107,7 +1107,7 @@
 			}
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
-				if (!extractBaseFromOperands(toExprResult(array_operands), base_object, base_type, base_type_index, "array subscript")) {
+				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
 					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}

@@ -198,7 +198,7 @@ private:
 	ExprOperands generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
-	ExprOperands generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
@@ -212,7 +212,7 @@ private:
 		Type& base_type,
 		size_t& base_type_index,
 		std::string_view error_context);
-	static ExprOperands makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0);
+	static ExprResult makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0);
 	bool setupBaseFromIdentifier(
 		std::string_view object_name,
 		const Token& member_token,
@@ -220,7 +220,7 @@ private:
 		Type& base_type,
 		size_t& base_type_index,
 		bool& is_pointer_dereference);
-	ExprOperands generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context = ExpressionContext::Load);
 	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
 	ExprOperands generateSizeofIr(const SizeofExprNode& sizeofNode);

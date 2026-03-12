@@ -1496,14 +1496,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					const auto& member_access = std::get<MemberAccessNode>(lhs_expr);
 
 					// Generate IR for the member access expression
-					std::vector<IrOperand> member_ir = generateMemberAccessIr(member_access);
-					if (member_ir.empty() || member_ir.size() < 4) {
+					ExprResult member_ir = generateMemberAccessIr(member_access);
+					if (member_ir.type == Type::Void && member_ir.size_in_bits == 0) {
 						return {};
 					}
 
 					// Extract the result temp var and type index
-					lhs_value = std::get<TempVar>(member_ir[2]);
-					spaceship_lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(member_ir[3]));
+					lhs_value = std::get<TempVar>(member_ir.value);
+					spaceship_lhs_type_index = member_ir.type_index;
 				} else {
 					// Other expression types - use already-generated lhsIrOperands
 					// The lhsIrOperands were already generated earlier in this function
