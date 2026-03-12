@@ -1209,7 +1209,7 @@
 							
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
-							return makeExprResult(member_result.member->type, 64, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, 0, 0, static_cast<unsigned long long>(member_result.member->type_index));
+							return makeExprResult(member_result.member->type, 64, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, static_cast<TypeIndex>(member_result.member->type_index), 0, static_cast<unsigned long long>(member_result.member->type_index));
 						}
 					}
 				}

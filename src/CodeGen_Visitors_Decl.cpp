@@ -2281,7 +2281,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
-	return makeExprResult(Type::Struct, init_list_size_bits, IrOperand{init_list_name}, 0, 0, static_cast<unsigned long long>(init_list_type_index));
+	return makeExprResult(Type::Struct, init_list_size_bits, IrOperand{init_list_name}, static_cast<TypeIndex>(init_list_type_index), 0, static_cast<unsigned long long>(init_list_type_index));
 }
 
 
