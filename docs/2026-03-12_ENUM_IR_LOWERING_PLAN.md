@@ -221,31 +221,40 @@ struct TypedValue {
 
 ## Proposed Migration Strategy
 
-This should be done in small phases, not as a flag day rewrite.
+This should be done in small phases, not as a flag day rewrite. The central
+change is introducing `IrType` and migrating `TypedValue` to use it. Everything
+else follows from that.
 
-### Phase 0 — Inventory and Guard Rails
+### Phase 0 — Define `IrType` and the conversion function
 
-Before changing behavior broadly:
+Add the `IrType` enum and a pure conversion function in a new header (e.g.
+`src/IrType.h`):
 
-- audit all `Type::Enum` checks in:
-  - `CodeGen_Expr_Primitives.cpp`
-  - `CodeGen_Expr_Conversions.cpp`
-  - `CodeGen_Expr_Operators.cpp`
-  - `CodeGen_Call_Direct.cpp`
-  - `IRConverter_Conv_CorePrivate.h`
-  - `IROperandHelpers.h`
-  - `OverloadResolution.h`
-  - `NameMangling.h`
-  - trait evaluators / template registries
-- classify each use as one of:
-  - semantic identity
-  - mangling / RTTI / trait behavior
-  - runtime representation
-  - compatibility shim / legacy tuple encoding
+```cpp
+IrType toIrType(Type semantic_type, TypeIndex type_index = 0);
+```
 
-Add a short tracking table to this doc or a follow-up task doc.
+The mapping is:
 
-### Phase 1 — Add Explicit Lowering Helpers
+| `Type` | `IrType` |
+|--------|----------|
+| `Bool`, `Char`, `UnsignedChar`, `Short`, `UnsignedShort`, `Int`, `UnsignedInt`, `Long`, `UnsignedLong`, `LongLong`, `UnsignedLongLong`, `WChar`, `Char8`, `Char16`, `Char32` | `Integer` |
+| `Enum` | `Integer` (size/signedness from `EnumTypeInfo::underlying_size`) |
+| `Float` | `Float` |
+| `Double` | `Double` |
+| `LongDouble` | `LongDouble` |
+| `Struct` | `Struct` |
+| `UserDefined` | `Struct` (if `getStructInfo()` exists) or `Integer` (if alias to primitive) |
+| `FunctionPointer` | `FunctionPointer` |
+| `MemberFunctionPointer` | `MemberFunctionPointer` |
+| `MemberObjectPointer` | `MemberObjectPointer` |
+| `Nullptr` | `Nullptr` |
+| `Void` | `Void` |
+| `Auto`, `Template`, `Function`, `Invalid` | assert — these must not reach IR |
+
+This phase adds new code only. Nothing changes behavior.
+
+### Phase 1 — Add `ir_type` field to `TypedValue`
 
 Add small helpers with a single definition of “enum runtime representation”:
 
@@ -263,98 +272,58 @@ Important:
 - these helpers must not erase enum identity globally
 - they only answer “what should IR/runtime operations use?”
 
-### Phase 2 — Separate Semantic Metadata from Runtime TypedValue Construction
+### Phase 2 — Migrate backend to read `ir_type`
 
-Today `TypedValue` often carries a single `type` that has to serve both semantic
-and runtime needs.
+Change `IRConverter` handlers to read `ir_type` instead of `type`. Since the
+backend already barely uses semantic types (zero `Type::Enum` references, one
+`Type::UserDefined` reference), this should be a small diff.
 
-Refactor the construction sites so that:
+After this phase, the backend no longer depends on the `Type` enum at all.
 
-- arithmetic/comparison/load/store helpers build `TypedValue` from lowered
-  runtime type
-- enum nominal identity, when still needed, is carried separately through
-  `type_index` / semantic metadata instead of reusing `type == Type::Enum`
+### Phase 3 — Migrate codegen helpers to read `ir_type`
 
-Likely first targets:
+This is the main work phase. Convert codegen helpers that currently branch on
+`Type::Enum` or `Type::UserDefined` to use `ir_type` instead:
 
-- `toTypedValue(...)`
-- `generateIdentifierIr(...)`
-- `generateTypeConversion(...)`
-- unary/binary operator helpers
-- assignment helpers
+- `generateBuiltinIncDec` — pointer stride comes from `size_in_bits`, not
+  from recovering enum pointee size via `gTypeInfo`
+- `toTypedValue(...)` / `toExprResult(...)` — slot-4 ambiguity disappears
+  because `IrType::Integer` with `pointer_depth > 0` is unambiguously a pointer
+- `handleLValueAssignment` / `handleLValueCompoundAssignment` — size inference
+  uses `size_in_bits` directly, no `type_index` lookup needed for enums
+- `getSizeInBytes` — enum/UserDefined branches become unnecessary
 
-### Phase 3 — Lower Enum Values Earlier in Expression Producers
+Helpers that legitimately need semantic identity (overload resolution, mangling,
+type traits) continue to use `Type` from the AST — they never touch `TypedValue`.
 
-For ordinary enum values (not enum-type queries, not mangling):
+### Phase 4 — Remove `Type type` from `TypedValue`
 
-- lower `ExprResult.type` for operational values to the underlying integral type
-- preserve enum identity separately when the caller still needs it
+Once all consumers read `ir_type`, remove the old `type` field. Any remaining
+code that tries to match on `Type::Enum` inside a codegen helper will fail to
+compile — the bug class becomes structurally impossible.
 
-Examples:
+### Phase 5 — Simplify `ExprResult` / slot-4 compatibility
 
-- enumerator loads
-- enum variables in arithmetic/comparison
-- enum temporaries
+With `IrType` in place:
 
-This phase should sharply reduce enum-specific branches in codegen.
+- `ExprResult` can carry `IrType` instead of `Type` for its runtime fields
+- the slot-4 encoding/decoding heuristics in `toExprResult(...)` become trivial
+  or unnecessary (no more guessing whether metadata means `type_index` or
+  `pointer_depth` for enum types)
+- `encoded_metadata` can be removed once all producers emit `ExprResult` directly
 
-### Phase 4 — Make Pointer Semantics Representation-Driven
+### Phase 6 — Audit and cleanup
 
-Pointer operations should derive from:
-
-- pointer depth
-- pointee representation size
-
-not from ad hoc `Type::Enum` / `Type::Struct` special cases.
-
-Introduce an explicit pointee-size helper for pointer-valued expressions:
-
-```cpp
-int getPointerPointeeSizeBits(const ExprResult& result, const ExpressionNode* source_expr = nullptr);
-```
-
-This is exactly the class of bug that caused the recent enum-pointer increment
-regression.  The pointer stride should come from a proper pointee-size source,
-not from re-deriving meaning from overloaded enum metadata.
-
-### Phase 5 — Simplify `ExprResult` / Slot-4 Compatibility
-
-Once enum runtime lowering is cleaner:
-
-- fewer enum values will need special positional encoding
-- `encoded_metadata` use should shrink further
-- `toExprResult(...)` and `toTypedValue(...)` can become much more mechanical
-
-This phase should be coordinated with the remaining `ExprResult` migration work.
-
-### Phase 6 — ABI / IRConverter Audit
-
-Check whether any backend lowering still needs `Type::Enum` specifically.
-
-Candidates:
-
-- argument passing classification
-- return lowering
-- integer vs floating register choice
-- sign/zero-extension decisions
-
-In many places the correct answer should be:
-
-- use the lowered underlying integral representation
-- keep nominal enum identity out of the backend fast path
-
-### Phase 7 — Keep Enum Identity Only Where It Truly Belongs
-
-After the lowering boundary is in place, `Type::Enum` should remain primarily in:
-
-- AST / type system
-- semantic analysis
-- mangling
-- type traits / `__underlying_type`
-- RTTI / type identity features
-- diagnostics
-
-It should stop being a common runtime-operation discriminator in codegen.
+- verify `Type::Enum` and `Type::UserDefined` appear only in:
+  - `Parser.cpp` / AST construction
+  - `OverloadResolution.h` (semantic ranking)
+  - `NameMangling.h` (symbol identity)
+  - `TypeTraitEvaluator.h` (`is_enum`, `__underlying_type`)
+  - `TemplateRegistry.h` (template argument matching)
+  - `ConstExprEvaluator.h` (constant evaluation)
+  - diagnostics / error messages
+- remove any remaining `Type::Enum` / `Type::UserDefined` branches in
+  `CodeGen_*.cpp`, `IROperandHelpers.h`, `IRConverter*.h`
 
 ---
 
@@ -368,8 +337,8 @@ This plan is **not** proposing:
 - removing enum identity from diagnostics or traits
 - a broad one-shot rewrite across the whole compiler
 
-The goal is only to move the **representation boundary** earlier and make it
-explicit.
+The goal is to make the **representation boundary** structurally enforced by the
+type system rather than relying on discipline.
 
 ---
 
@@ -441,32 +410,28 @@ These components use enum information but may not need direct changes:
 
 The phased approach allows incremental migration:
 
-- **Phase 0-1** (Inventory + Helpers): Low risk, adding new code only
-- **Phase 2-3** (TypedValue refactoring): Medium risk, existing code paths modified
-- **Phase 4-5** (Pointer semantics + ExprResult): Medium risk, core infrastructure changes
-- **Phase 6-7** (ABI audit + Final cleanup): Lower risk, final adjustments
+- **Phase 0-1** (`IrType` definition + `TypedValue` dual field): Low risk, additive only
+- **Phase 2** (backend migration): Low risk, backend barely uses semantic types
+- **Phase 3** (codegen helper migration): Medium risk, main body of changes
+- **Phase 4** (remove old `Type` field): Low risk once Phase 3 is complete — compile errors guide remaining sites
+- **Phase 5-6** (ExprResult + audit): Lower risk, final simplification
 
 ---
 
 ## Proposed First Slice
 
-The proposed starting point is the narrowest, safest slice:
+The narrowest, safest starting point:
 
-1. add `getRuntimeValueType(...)` and `getRuntimeValueSizeBits(...)`
-2. add `getPointerPointeeSizeBits(...)`
-3. convert unary/binary arithmetic helpers to use those helpers instead of
-   branching directly on `Type::Enum`
-4. keep enum identity preserved in `ExprResult` / semantic metadata only where
-   a later consumer actually needs it
-5. add focused tests for:
-   - enum arithmetic
-   - enum comparisons
-   - enum pointers
-   - enum arrays
+1. add `src/IrType.h` with the `IrType` enum and `toIrType(Type, TypeIndex)`
+2. add `IrType ir_type` field to `TypedValue` and populate it at all
+   construction sites (mechanical, no behavior change)
+3. add a static assert or `[[deprecated]]` on `TypedValue::type` to catch any
+   new code that sets it directly — this surfaces sites that still need updating
+4. add focused tests that would fail if `Type::Enum` leaked into IR arithmetic:
+   - enum pointer increment/decrement stride
+   - enum pointer array subscript
    - overload resolution still preferring enum overloads over integer overloads
    - mangling for enum parameters unchanged
-
-That would reduce codegen fragility without forcing a whole-compiler rewrite.
 
 ---
 
@@ -476,9 +441,10 @@ The enum lowering refactoring is considered complete when:
 
 ### Code Quality Metrics
 
-- No `Type::Enum` branches in arithmetic, comparison, load/store, or assignment helpers in codegen
-- Pointer operations use explicit pointee-size helpers rather than deriving size from enum metadata
-- `ExprResult` encoding uses fewer special-case enum handling paths
+- `TypedValue.type` field removed — `IrType` is the only type field in IR op structs
+- `Type::Enum` and `Type::UserDefined` do not appear in `CodeGen_*.cpp`, `IROperandHelpers.h`, or `IRConverter*.h`
+- `toExprResult(...)` slot-4 heuristics removed — pointer vs type_index ambiguity no longer exists
+- Pointer stride comes from `size_in_bits` directly, no `gTypeInfo` lookup in codegen arithmetic
 
 ### Functional Requirements
 
@@ -496,13 +462,15 @@ The enum lowering refactoring is considered complete when:
 
 ### Cleanup Verification
 
-- `Type::Enum` remains only in:
-  - AST / type system layers
-  - Semantic analysis
-  - Mangling
-  - Type traits evaluation
-  - RTTI / type identity features
-  - Diagnostics
+- `Type::Enum` and `Type::UserDefined` remain only in:
+  - `Parser.cpp` / AST construction
+  - `OverloadResolution.h` (semantic ranking)
+  - `NameMangling.h` (symbol identity)
+  - `TypeTraitEvaluator.h` (`is_enum`, `__underlying_type`)
+  - `TemplateRegistry.h` (template argument matching)
+  - `ConstExprEvaluator.h` (constant evaluation)
+  - diagnostics / error messages
+- `TypedValue`, `ExprResult`, and all IR op structs use `IrType` only
 
 ### Test Coverage
 
@@ -581,6 +549,11 @@ int test_enum_class() {
 
 This plan proposes:
 
-- Keep enum identity in semantic/type metadata
-- Lower enum runtime behavior to the underlying integral representation earlier
-- Move the representation boundary earlier and make it explicit
+- Introduce `IrType` — a reduced enum that cannot express `Enum`, `UserDefined`,
+  `Auto`, or `Template` — as the type field in `TypedValue` and all IR op structs
+- `AstToIr` converts `Type` → `IrType` at the point where IR instructions are
+  built, keeping enum identity in the AST/semantic layer where it belongs
+- The backend (`IRConverter`) never sees `Type::Enum` or `Type::UserDefined` —
+  this is already true in practice; `IrType` makes it a compile-time guarantee
+- The slot-4 encoding ambiguity, enum-pointer stride bugs, and `getSizeInBytes`
+  special cases all disappear as natural consequences of the type boundary
