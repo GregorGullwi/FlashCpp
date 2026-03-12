@@ -165,10 +165,10 @@ private:
 	ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprOperands> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	ExprOperands generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
-	ExprOperands
+	ExprResult
 		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprOperands generateTypeConversion(const ExprOperands& operands, Type fromType, Type toType, const Token& source_token);
-	ExprOperands
+	ExprResult
 		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(

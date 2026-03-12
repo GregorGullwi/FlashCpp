@@ -162,7 +162,7 @@
 		return { toType, toSize, resultVar, 0ULL };
 	}
 
-	ExprOperands
+	ExprResult
 		AstToIr::generateStringLiteralIr(const StringLiteralNode& stringLiteralNode) {
 		// Generate IR for string literal
 		// Create a temporary variable to hold the address of the string
@@ -177,7 +177,7 @@
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer
-		return { Type::Char, 64, result_var, 0ULL };
+		return makeExprResult(Type::Char, 64, IrOperand{result_var});
 	}
 
 	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
