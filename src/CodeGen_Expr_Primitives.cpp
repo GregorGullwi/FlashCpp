@@ -1,15 +1,15 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
 	ExpressionContext context) {
-		return std::visit([this, context](const auto& expr) -> ExprOperands {
+		return std::visit([this, context](const auto& expr) -> ExprResult {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return generateIdentifierIr(expr, context);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				return generateQualifiedIdentifierIr(expr);
 			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-				return { Type::Bool, 8, expr.value() ? 1ULL : 0ULL, 0ULL };
+				return makeExprResult(Type::Bool, 8, IrOperand{expr.value() ? 1ULL : 0ULL});
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				return generateNumericLiteralIr(expr);
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -30,13 +30,13 @@
 				return generateMemberAccessIr(expr, context);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.empty() ? generateSizeofIr(expr) : const_result;
+				return const_result.type == Type::Void ? generateSizeofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
 				FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
-				return {};
+				return ExprResult{};
 			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.empty() ? generateAlignofIr(expr) : const_result;
+				return const_result.type == Type::Void ? generateAlignofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				return generateNoexceptExprIr(expr);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
@@ -77,22 +77,22 @@
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
-				return {};
+				return ExprResult{};
 			} else {
 				static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 			}
 		}, exprNode);
 	}
 
-	ExprOperands AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+	ExprResult AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 		bool is_noexcept = true;
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
+		return makeExprResult(Type::Bool, 8, IrOperand{is_noexcept ? 1ULL : 0ULL});
 	}
 
-	ExprOperands AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
@@ -140,78 +140,70 @@
 		} else {
 			FLASH_LOG(Codegen, Debug, "Non-class type ", type_name, " - destructor call is no-op");
 		}
-		return {};
+		return ExprResult{};
 	}
 
-	ExprOperands AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
-		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_operands.empty()) {
+	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
+		if (object_result.type == Type::Void && object_result.size_in_bits == 0) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
-			return {};
+			return ExprResult{};
 		}
 		
-		auto ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_operands.empty()) {
+		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+		if (ptr_result.type == Type::Void && ptr_result.size_in_bits == 0) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
-			return {};
+			return ExprResult{};
 		}
 		
 		TempVar object_addr = var_counter.next();
 		if (ptmNode.is_arrow()) {
-			if (std::holds_alternative<StringHandle>(object_operands[2])) {
-				StringHandle obj_ptr_name = std::get<StringHandle>(object_operands[2]);
+			if (std::holds_alternative<StringHandle>(object_result.value)) {
+				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
 				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
 				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-				object_addr = std::get<TempVar>(object_operands[2]);
+			} else if (std::holds_alternative<TempVar>(object_result.value)) {
+				object_addr = std::get<TempVar>(object_result.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
-				return {};
+				return ExprResult{};
 			}
 		} else {
-			if (std::holds_alternative<StringHandle>(object_operands[2])) {
-				StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+			if (std::holds_alternative<StringHandle>(object_result.value)) {
+				StringHandle obj_name = std::get<StringHandle>(object_result.value);
 				AddressOfOp addr_op;
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
-					.type = std::get<Type>(object_operands[0]),
-					.size_in_bits = std::get<int>(object_operands[1]),
+					.type = object_result.type,
+					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = 0
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_operands[2])) {
-				object_addr = std::get<TempVar>(object_operands[2]);
+			} else if (std::holds_alternative<TempVar>(object_result.value)) {
+				object_addr = std::get<TempVar>(object_result.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
-				return {};
+				return ExprResult{};
 			}
-		}
-		
-		if (ptr_operands.size() < 2) {
-			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
-			return {};
 		}
 		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
 		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-		add_op.rhs = toTypedValue(ptr_operands);
+		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 		
-		Type member_type = std::get<Type>(ptr_operands[0]);
-		int member_size = std::get<int>(ptr_operands[1]);
-		TypeIndex member_type_index = 0;
-		if (ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
-			member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
-		}
+		Type member_type = ptr_result.type;
+		int member_size = ptr_result.size_in_bits;
+		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
+		return makeExprResult(member_type, member_size, IrOperand{result_var}, member_type_index, 0, static_cast<unsigned long long>(member_type_index));
 	}
 
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
@@ -236,7 +228,7 @@
 		return size_bits;
 	}
 
-	ExprOperands AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
 	ExpressionContext context) {
 		auto makeIdentifierResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
 			ExprResult result;
@@ -357,7 +349,7 @@
 						}
 
 						// Fallback: return the pointer temp
-						return { member->type, 64, ptr_temp, 0ULL };
+						return makeExprResult(member->type, 64, IrOperand{ptr_temp});
 					} else {
 						// By-value capture: direct member access
 						TempVar result_temp = var_counter.next();
@@ -437,7 +429,7 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return { info.type, info.size_in_bits, info.mangled_name, 0ULL };
+				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name});
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
@@ -450,7 +442,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return { info.type, info.size_in_bits, result_temp, 0ULL };
+			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp});
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
@@ -510,8 +502,8 @@
 								if (enum_info) {
 									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
 									if (enumerator) {
-										return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-											static_cast<unsigned long long>(enumerator->value) };
+										return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+											static_cast<unsigned long long>(enumerator->value));
 									}
 								}
 							}
@@ -835,8 +827,8 @@
 							if (enum_info && !enum_info->is_scoped) {
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
-									return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-									static_cast<unsigned long long>(enumerator->value) };
+									return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+									static_cast<unsigned long long>(enumerator->value));
 								}
 							}
 						}
@@ -849,7 +841,7 @@
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 			FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
 			throw InternalError("Expected symbol '" + std::string(identifierNode.name()) + "' to exist in code generation");
-			return {};
+			return ExprResult{};
 		}
 
 		if (symbol->is<DeclarationNode>()) {
@@ -871,8 +863,8 @@
 						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
-							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-							static_cast<unsigned long long>(enumerator->value) };
+							return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+							static_cast<unsigned long long>(enumerator->value));
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
 					}
@@ -941,7 +933,7 @@
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
+					return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 				}
 				
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -1126,7 +1118,7 @@
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
+						return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 					}
 					
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1240,7 +1232,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+			return makeExprResult(Type::FunctionPointer, 64, IrOperand{func_addr_var});
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1248,16 +1240,16 @@
 			// Variable template without instantiation - should not reach codegen
 			// The parser should have instantiated it already
 			throw InternalError("Uninstantiated variable template in codegen");
-			return {};
+			return ExprResult{};
 		}
 
 		// If we get here, the symbol is not a known type
 		FLASH_LOG(Codegen, Error, "Unknown symbol type for identifier '", identifierNode.name(), "'");
 		throw InternalError("Identifier is not a DeclarationNode");
-		return {};
+		return ExprResult{};
 	}
 
-	ExprOperands AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
+	ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
@@ -1272,8 +1264,8 @@
 					// This is a scoped enum - look up the enumerator value
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-					return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-					static_cast<unsigned long long>(enum_value) };
+					return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					static_cast<unsigned long long>(enum_value));
 				}
 			}
 
@@ -1373,7 +1365,7 @@
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
-							return { Type::Bool, 8, 0ULL, 0ULL };
+							return makeExprResult(Type::Bool, 8, 0ULL);
 						}
 						
 						// Determine the correct qualified name to use
@@ -1416,7 +1408,7 @@
 									// true_type -> 1, false_type -> 0
 									bool value = (alias_name == "true_type") ? true : false;
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-									return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
+									return makeExprResult(Type::Bool, 8, static_cast<unsigned long long>(value));
 								}
 								
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
@@ -1502,12 +1494,12 @@
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-							return { static_member->type, get_type_size_bits(static_member->type), deref_temp, static_cast<unsigned long long>(type_index) };
+							return makeExprResult(static_member->type, get_type_size_bits(static_member->type), IrOperand{deref_temp}, type_index);
 						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return { static_member->type, qsm_size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+						return makeExprResult(static_member->type, qsm_size_bits, IrOperand{result_temp}, type_index);
 					}
 				}
 			}
@@ -1527,7 +1519,7 @@
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return { Type::Int, 32,  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
+			return makeExprResult(Type::Int, 32, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -1563,11 +1555,11 @@
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-					return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+					return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()),  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), static_cast<unsigned long long>(type_index) };
+				return makeExprResult(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
 			}
 		}
 
@@ -1602,29 +1594,29 @@
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
+			return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return { Type::Function, 64, StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
+			return makeExprResult(Type::Function, 64, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		// If we get here, the symbol is not a supported type
 		throw InternalError("Qualified identifier is not a supported type");
-		return {};
+		return ExprResult{};
 	}
 
-	ExprOperands
+	ExprResult
 		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
-			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()), 0ULL };
+			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()));
 		} else {
 			// For integer literals, the value is stored as unsigned long long
-			return { numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()), 0ULL };
+			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()));
 		}
 	}

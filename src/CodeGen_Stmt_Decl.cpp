@@ -745,7 +745,7 @@
 					const ASTNode& single_init = init_list.initializers()[0];
 					
 					// Visit the initializer expression to get its IR
-					auto init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
+					ExprOperands init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
 					
 					// Append the initializer operands
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
@@ -980,7 +980,7 @@
 											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										}
 										
-										auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+										ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										// init_operands = [type, size, value]
 										if (init_operands.size() >= 3) {
 											TypedValue tv;
@@ -1053,7 +1053,7 @@
 											if (param_decl.has_default_value()) {
 												const ASTNode& default_node = param_decl.default_value();
 												if (default_node.is<ExpressionNode>()) {
-													auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+													ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 													if (default_operands.size() >= 3) {
 														TypedValue default_arg = toTypedValue(default_operands);
 														ctor_op.arguments.push_back(std::move(default_arg));
@@ -1131,7 +1131,7 @@
 											}
 										}
 
-										std::vector<IrOperand> init_operands;
+										ExprOperands init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										} else {
@@ -1274,7 +1274,7 @@
 					ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
 						? ExpressionContext::LValueAddress
 						: ExpressionContext::Load;
-					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
+					ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
 					
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
@@ -1411,7 +1411,7 @@
 					
 					if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
-						auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 						// Check if this is an rvalue (TempVar) - function return value
 						bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
 						if (is_rvalue) {
@@ -1531,7 +1531,7 @@
 					}
 
 					// Evaluate the initializer expression
-					auto init_operands = visitExpressionNode(elem.as<ExpressionNode>());
+					ExprOperands init_operands = visitExpressionNode(elem.as<ExpressionNode>());
 					
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
@@ -1741,7 +1741,7 @@
 											return;
 										}
 										const StructMember& member = type_info.struct_info_->members[member_idx];
-										auto arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+										ExprOperands arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 										if (arg_operands.size() >= 3) {
 											MemberStoreOp store_op;
 											store_op.object = decl.identifier_token().handle();
@@ -1786,7 +1786,7 @@
 									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 								}
 								
-								auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+								ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 								// argumentIrOperands = [type, size, value]
 								if (argumentIrOperands.size() >= 3) {
 									TypedValue tv;
@@ -1877,7 +1877,7 @@
 						} else if (has_copy_init) {
 							// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();
-							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// init_operands = [type, size, value, type_index?]
 							
 							// Check if this is a converting constructor case (initializer type != target type)
@@ -2091,7 +2091,7 @@
 														// Generate IR for the default value expression
 														const ASTNode& default_node = param_decl.default_value();
 														if (default_node.is<ExpressionNode>()) {
-															auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+															ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 															if (default_operands.size() >= 3) {
 																TypedValue default_arg = toTypedValue(default_operands);
 																ctor_op.arguments.push_back(std::move(default_arg));
@@ -2122,7 +2122,7 @@
 													// Generate IR for the default value expression
 													const ASTNode& default_node = param_decl.default_value();
 													if (default_node.is<ExpressionNode>()) {
-														auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+														ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 														if (default_operands.size() >= 3) {
 															TypedValue default_arg = toTypedValue(default_operands);
 															ctor_op.arguments.push_back(std::move(default_arg));
@@ -2164,7 +2164,7 @@
 			return;
 		}
 		
-		auto init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
+		ExprOperands init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
 		if (init_operands.size() < 3) {
 			FLASH_LOG(Codegen, Error, "Structured binding initializer produced invalid operands");
 			return;

@@ -121,7 +121,7 @@
 		return collected_lambdas_.back();
 	}
 
-	ExprOperands AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
+	ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
 		// Collect lambda information for deferred generation
 		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
 		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
@@ -134,7 +134,7 @@
 		if (type_it == gTypesByName.end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
-			return {Type::Int, 32, dummy};
+			return makeExprResult(Type::Int, 32, IrOperand{dummy});
 		}
 
 		const TypeInfo* closure_type = type_it->second;
@@ -267,7 +267,7 @@
 						if (capture.has_initializer()) {
 							// Init-capture: evaluate the initializer expression and store it
 							const ASTNode& init_node = *capture.initializer();
-							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 
 							if (init_operands.size() < 3) {
 								continue;
@@ -489,7 +489,9 @@
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		return {Type::Struct, closure_size_bits, StringTable::getOrInternStringHandle(closure_var_name), static_cast<unsigned long long>(closure_type->type_index_)};
+		TypeIndex closure_type_index = static_cast<TypeIndex>(closure_type->type_index_);
+		return makeExprResult(Type::Struct, closure_size_bits, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, closure_type_index, 0,
+			static_cast<unsigned long long>(closure_type_index));
 	}
 
 	void AstToIr::generateLambdaFunctions(const LambdaInfo& lambda_info) {

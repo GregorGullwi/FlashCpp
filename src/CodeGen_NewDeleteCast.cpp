@@ -1,9 +1,9 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
+	ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (!newExpr.type_node().is<TypeSpecifierNode>()) {
 			FLASH_LOG(Codegen, Error, "New expression type node is not a TypeSpecifierNode");
-			return {};
+			return ExprResult{};
 		}
 		
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
@@ -24,7 +24,7 @@
 				FLASH_LOG(Codegen, Warning, "Scalar new initializer has extra arguments; using first");
 			}
 
-			auto init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+			ExprOperands init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 			if (init_operands.size() >= kInitOperandCount) {
 				TypedValue init_value = toTypedValue(init_operands);
 				emitDereferenceStore(init_value, type, size_in_bits, pointer_var, Token());
@@ -39,14 +39,14 @@
 			// Evaluate the size expression
 			if (!newExpr.size_expr().has_value()) {
 				FLASH_LOG(Codegen, Error, "Array new without size expression");
-				return {};
+				return ExprResult{};
 			}
 			if (!newExpr.size_expr()->is<ExpressionNode>()) {
 				FLASH_LOG(Codegen, Error, "Array size is not an ExpressionNode");
-				return {};
+				return ExprResult{};
 			}
 			
-			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
+			ExprOperands size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
 			// Check if this is placement array new
 			if (newExpr.placement_address().has_value()) {
@@ -54,10 +54,10 @@
 				// Check that placement_address is an ExpressionNode
 				if (!newExpr.placement_address()->is<ExpressionNode>()) {
 					FLASH_LOG(Codegen, Error, "Placement address is not an ExpressionNode");
-					return {};
+					return ExprResult{};
 				}
 				
-				auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+				ExprOperands address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
@@ -68,7 +68,7 @@
 				// Convert IrOperand to IrValue
 				if (address_operands.size() < 3) {
 					FLASH_LOG(Codegen, Error, "Placement address operands insufficient (expected 3, got ", address_operands.size(), ")");
-					return {};
+					return ExprResult{};
 				}
 				op.address = toIrValue(address_operands[2]);
 
@@ -127,7 +127,7 @@
 													continue;
 												}
 												
-												auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+												ExprOperands arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 												if (arg_operands.size() >= 3) {
 													TypedValue tv = toTypedValue(arg_operands);
 													ctor_op.arguments.push_back(std::move(tv));
@@ -165,7 +165,7 @@
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 								
 								// Evaluate the initializer expression
-								auto init_operands = visitExpressionNode(init.as<ExpressionNode>());
+								ExprOperands init_operands = visitExpressionNode(init.as<ExpressionNode>());
 								if (init_operands.size() >= 3) {
 									TypedValue init_value = toTypedValue(init_operands);
 									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
@@ -185,7 +185,7 @@
 				// Convert IrOperand to IrValue for count
 				if (size_operands.size() < 3) {
 					FLASH_LOG(Codegen, Error, "Array size operands insufficient (expected 3, got ", size_operands.size(), ")");
-					return {};
+					return ExprResult{};
 				}
 				IrValue count_value = op.count = toIrValue(size_operands[2]);
 
@@ -251,7 +251,7 @@
 												continue;
 											}
 											
-											auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+											ExprOperands arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 											if (arg_operands.size() >= 3) {
 												TypedValue tv = toTypedValue(arg_operands);
 												ctor_op.arguments.push_back(std::move(tv));
@@ -277,7 +277,7 @@
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 								
-								auto init_operands = visitExpressionNode(init.as<ExpressionNode>());
+								ExprOperands init_operands = visitExpressionNode(init.as<ExpressionNode>());
 								if (init_operands.size() >= 3) {
 									TypedValue init_value = toTypedValue(init_operands);
 									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
@@ -360,7 +360,7 @@
 		} else if (newExpr.placement_address().has_value()) {
 			// Single object placement new: new (address) Type or new (address) Type(args)
 			// Evaluate the placement address expression
-			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+			ExprOperands address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 			// Create PlacementNewOp
 			PlacementNewOp op;
@@ -371,7 +371,7 @@
 			// Convert IrOperand to IrValue
 			if (address_operands.size() < 3) {
 				FLASH_LOG(Codegen, Error, "Placement address operands insufficient for single object (expected 3, got ", address_operands.size(), ")");
-				return {};
+				return ExprResult{};
 			}
 			op.address = toIrValue(address_operands[2]);
 
@@ -399,7 +399,7 @@
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
-								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+								ExprOperands arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
 								// arg_operands = [type, size, value]
 								if (arg_operands.size() >= 3) {
 									TypedValue tv = toTypedValue(arg_operands);
@@ -446,7 +446,7 @@
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
-								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+								ExprOperands arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
 								// arg_operands = [type, size, value]
 								if (arg_operands.size() >= 3) {
 									TypedValue tv = toTypedValue(arg_operands);
@@ -465,12 +465,12 @@
 		
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return { type, size_in_bits, result_var, 0ULL };
+		return makeExprResult(type, size_in_bits, IrOperand{result_var});
 	}
 
-	ExprOperands AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
+	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
 		// Evaluate the expression to get the pointer to delete
-		auto ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
+		ExprOperands ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
 		// Get the pointer type
 		Type ptr_type = std::get<Type>(ptr_operands[0]);
@@ -616,7 +616,7 @@
 		}
 
 		// delete is a statement, not an expression, so return empty
-		return {};
+		return ExprResult{};
 	}
 
 	std::variant<StringHandle, TempVar> AstToIr::extractBaseOperand(
@@ -686,7 +686,7 @@
 		}
 	}
 
-	ExprOperands AstToIr::handleRValueReferenceCast(
+	ExprResult AstToIr::handleRValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
@@ -709,7 +709,7 @@
 		return makeExprResult(target_type, 64, result_var);
 	}
 
-	ExprOperands AstToIr::handleLValueReferenceCast(
+	ExprResult AstToIr::handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
@@ -732,7 +732,7 @@
 		return makeExprResult(target_type, 64, result_var);
 	}
 
-	ExprOperands AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
+	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
@@ -747,7 +747,7 @@
 		}
 		
 		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
+		ExprOperands expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);
@@ -789,7 +789,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return { target_type, 64, expr_operands[2], 0ULL };
+			return makeExprResult(target_type, 64, expr_operands[2]);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -799,9 +799,9 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
-				return { target_type, target_size, expr_operands[2], 0ULL };
+				return makeExprResult(target_type, target_size, expr_operands[2]);
 			}
-			return expr_operands;
+			return toExprResult(expr_operands);
 		}
 
 		// For enum to int or int to enum, we can just change the type
@@ -810,7 +810,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return { target_type, target_size, expr_operands[2], 0ULL };
+			return makeExprResult(target_type, target_size, expr_operands[2]);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -837,7 +837,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -861,7 +861,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -885,7 +885,7 @@
 				.to_size_in_bits = target_size
 			};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return { target_type, target_size, result_temp, 0ULL };
+			return makeExprResult(target_type, target_size, IrOperand{result_temp});
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -898,7 +898,7 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return { Type::Bool, 8, result_temp, 0ULL };
+			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -910,15 +910,15 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return { Type::Bool, 8, result_temp, 0ULL };
+			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		return makeExprResult(target_type, target_size, expr_operands[2]);
 	}
 
-	ExprOperands AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
+	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		// typeid returns a reference to const std::type_info
 		// For polymorphic types, we need to get RTTI from the vtable
 		// For non-polymorphic types, we return a compile-time constant
@@ -952,7 +952,7 @@
 		}
 		else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
-			auto expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
+			ExprOperands expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
 
 			// Extract IrValue from expression result
 			std::variant<StringHandle, TempVar> operand_value;
@@ -975,10 +975,10 @@
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return { Type::Void, 64, result_temp, 0ULL };
+		return makeExprResult(Type::Void, 64, IrOperand{result_temp});
 	}
 
-	ExprOperands AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
+	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
 		// dynamic_cast<Type>(expr) performs runtime type checking
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
@@ -993,7 +993,7 @@
 		}
 
 		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>(), eval_context);
+		ExprOperands expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get target struct type information
 		std::string target_type_name;
@@ -1056,15 +1056,15 @@
 		}
 
 		// Return the casted pointer/reference
-		return { result_type, result_size, result_temp, 0ULL };
+		return makeExprResult(result_type, result_size, IrOperand{result_temp});
 	}
 
-	ExprOperands AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
+	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
 		
 		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
+		ExprOperands expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
 		
 		// Get the target type from the type specifier
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
@@ -1084,15 +1084,15 @@
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		return makeExprResult(target_type, target_size, expr_operands[2]);
 	}
 
-	ExprOperands AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
+	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
 		
 		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
+		ExprOperands expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
 		
 		// Get the target type from the type specifier
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
@@ -1114,5 +1114,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
+		return makeExprResult(target_type, result_size, expr_operands[2], 0, target_pointer_depth);
 	}

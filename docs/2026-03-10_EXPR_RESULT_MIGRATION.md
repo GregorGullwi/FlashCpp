@@ -1,16 +1,41 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (`ExprResult` landed; Phase 2 partially landed)
+**Status**: In Progress (Phase 3 families 1-8 landed on this branch; compatibility bridge still present)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
-## Status Check (2026-03-11)
+## Status Check (2026-03-12)
 
 - `ExprResult` and `ExprOperands` are present in `src/IROperandHelpers.h`
 - `toTypedValue(const ExprResult&)` already exists, so consumer-side bridging is started
 - priority producer sites have been migrated in `src/CodeGen_MemberAccess.cpp`, `src/CodeGen_Expr_Primitives.cpp`, and selected address-expression paths in `src/CodeGen_Expr_Conversions.cpp`
 - the current implementation still uses `encoded_metadata` as a temporary compatibility escape hatch for legacy slot-4 enum encoding edge cases
-- the remaining Phase 2 work is no longer “add ExprResult” — it is “finish removing legacy positional consumers and manual slot-4 construction”, then unblock Phase 3 return-signature changes
+- the remaining compatibility work is no longer “add ExprResult” — it is “finish removing the positional bridge and slot-4 compatibility layer” after the Phase 3 return-signature migration
+
+### Branch progress (PR #893 / 2026-03-12)
+
+- all planned Phase 3 producer families on this branch now return `ExprResult` directly:
+  - leaf literals
+  - leaf identifiers
+  - member/subscript
+  - casts
+  - unary/binary/ternary operators
+  - calls
+  - remaining intrinsic/helper producers
+  - `visitExpressionNode`
+- positional caller updates were completed for the migrated producer families and
+  their directly touched helper paths, replacing many `result[0]` / `result[2]` /
+  `result[3]` reads with named `ExprResult` fields
+- follow-up validation on this branch exposed a non-migration runtime mismatch in
+  `tests/template_parsing_test_ret0.cpp`; the local direct-call lowering now inserts
+  standard primitive argument conversions before calls, and cross-domain literal
+  conversions are routed through conversion IR so the backend receives a typed temporary
+  instead of a mismatched immediate payload
+- `encoded_metadata`, `operator ExprOperands()`, and `toExprResult(...)` remain
+  intentionally in place for the later cleanup phase
+- some compatibility consumers still immediately materialize `ExprOperands` from
+  `ExprResult` return values or bounce through `toExprResult(...)` at callsites;
+  these remaining adapters are now the main Phase 4 cleanup target
 
 ## Problem
 
@@ -252,14 +277,17 @@ The plan is easier to execute if it is split into these concrete slices:
 2. **Convert legacy expression-result helper parameters** ✅ complete
    - all helpers from the original deferred `AstToIr.h` list now take
      `const ExprResult&`
-3. **Change return signatures now that helper parameters are migrated**
-   - Phase 3 is now unblocked because the last legacy positional helper
-     parameters have been removed
+3. **Change return signatures now that helper parameters are migrated** ✅ branch-complete for the planned producer families
+    - Phase 3 is now unblocked because the last legacy positional helper
+      parameters have been removed
 4. **Delete the compatibility shim last**
-   - remove `encoded_metadata`
-   - remove slot-4 decoding from `toTypedValue()`
+    - remove `encoded_metadata`
+    - remove slot-4 decoding from `toTypedValue()`
+    - remove implicit `ExprResult` -> `ExprOperands` compatibility usage at
+      remaining consumers/callsites
+    - remove `toExprResult(...)` bounce points once callers consume named fields directly
 
-### Phase 3: Change function signatures (optional, longer-term)
+### Phase 3: Change function signatures
 
 Once all producers for a function use `ExprResult`, change its return type:
 
@@ -276,9 +304,10 @@ Callers that use `toTypedValue()` continue to work (add a
 (`result[0]`, `result[2]`) must be updated to use the named fields — this is
 intentional, as those are the fragile access patterns we want to eliminate.
 
-**Recommendation:** Phase 3 can now start, but keep it incremental: change
-return signatures one producer family at a time so any remaining positional
-callers are updated together with each producer.
+**2026-03-12 branch update:** the planned producer-family migration has been
+completed incrementally on this branch. The remaining work after merge is the
+Phase 4 compatibility cleanup: deleting the encoding bridge and converting the
+remaining compatibility consumers that still materialize positional operands.
 
 ### Phase 4: Remove the encoding/decoding layer
 
@@ -301,3 +330,72 @@ the need to choose — both fields are always available. The temporary
 `encoded_metadata` override exists only so the migration can proceed
 incrementally without reintroducing enum slot-4 regressions while mixed old/new
 paths still coexist.
+
+### Deferred Follow-up: Harden `makeExprResult`
+
+**Problem:** The original `makeExprResult` has positional parameters with defaults:
+
+```cpp
+inline ExprResult makeExprResult(
+    Type type,
+    int size_in_bits,
+    IrOperand value,
+    TypeIndex type_index = 0,           // default
+    int pointer_depth = 0,              // default
+    std::optional<unsigned long long> encoded_metadata = std::nullopt  // default
+);
+```
+
+This caused bugs like:
+```cpp
+// BUG: 6th arg goes to encoded_metadata, NOT type_index!
+// type_index stays at default (0), causing struct resolution failures
+makeExprResult(Type::Struct, size, value, 0, 0, static_cast<unsigned long long>(type_index));
+```
+
+**Narrow solution:** Replace the current defaulted helper with explicit
+overloads or similarly explicit helper entry points:
+
+```cpp
+// 3 args: just type + value (most common)
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value);
+
+// 4 args: with TypeIndex
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index);
+
+// 4 args: with pointer_depth
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, int pointer_depth);
+
+// 5 args: both type_index and pointer_depth
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
+
+// 6 args: legacy encoded_metadata bridge (rare - only for partial migrations)
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, unsigned long long encoded_metadata);
+```
+
+This is a good **follow-up hardening step**, but it is not a prerequisite for
+finishing the main `ExprResult` migration.
+
+**Benefits:**
+- The bug case `makeExprResult(..., 0, 0, ull)` no longer compiles
+- Callers with `TypeIndex` variables work without changes (they're already the correct type)
+- Only literal `0` for pointer_depth needs explicit cast
+
+**Migration:**
+- ~150 call sites to update
+- Bug cases `makeExprResult(..., 0, 0, ull)` → `makeExprResult(..., type_index)`
+- 5-arg calls `makeExprResult(..., ti, 0)` → `makeExprResult(..., ti)`
+
+## Explicitly Out of Scope for This Plan
+
+The following are reasonable ideas, but they should be treated as a **separate
+design effort**, not as later phases of this migration plan:
+
+- converting `TypeIndex` from an alias into a strong wrapper type
+- introducing `SizeInBits` / `SizeInBytes` / `PointerDepth` wrapper types
+- adding user-defined literals such as `_bits`, `_bytes`, `_ptr`, or `_type`
+- doing a repo-wide API relabeling pass around those new wrapper types
+
+Those changes are much broader than the `ExprResult` migration itself and would
+touch parser/codegen/IR APIs well beyond the slot-4 compatibility cleanup. They
+are now tracked separately in `docs\2026-03-12_IR_METADATA_STRONG_TYPES_PLAN.md`.

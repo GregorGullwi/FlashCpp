@@ -217,7 +217,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			const auto& expr = *node.expression();
 			
 			// Generate code for the expression to throw
-			auto expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
+			ExprOperands expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
 			
 			// Extract type information from the operands
 			// operands format: [type, size, value_or_temp_var] - always 3 elements
@@ -406,7 +406,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Evaluate the filter expression inside the funclet
 			// RBP points to parent frame, so local variable access works correctly
-			auto filter_operands = visitExpressionNode(filter_inner_expr);
+			ExprOperands filter_operands = visitExpressionNode(filter_inner_expr);
 
 			// Restore filter funclet context
 			seh_in_filter_funclet_ = false;

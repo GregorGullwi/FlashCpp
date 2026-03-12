@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 
@@ -74,7 +74,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 									
 									// Return pointer type (64-bit address) with pointer depth 1
-									return { operand_type, 64, result_var, 1ULL };
+									return makeExprResult(operand_type, 64, IrOperand{result_var}, 0, 0, 1ULL);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -120,7 +120,7 @@
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
-					auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
 					Type arg_type = std::get<Type>(argumentIrOperands[0]);
 					int arg_size = std::get<int>(argumentIrOperands[1]);
@@ -147,10 +147,10 @@
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return { sig.return_type, 64, ret_var, 0ULL };  // 64 bits for return value
+					return makeExprResult(sig.return_type, 64, IrOperand{ret_var});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return { Type::Int, 32, ret_var, 0ULL };
+					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
 				}
 			}
 			
@@ -225,7 +225,7 @@
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
-							auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 							Type arg_type = std::get<Type>(argumentIrOperands[0]);
 							int arg_size = std::get<int>(argumentIrOperands[1]);
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -258,7 +258,7 @@
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 					
-					return { Type::Int, 32, ret_var, 0ULL };
+					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
 				}
 			}
 		}
@@ -783,19 +783,32 @@
 				arg_context = ExpressionContext::LValueAddress;
 			}
 			
-			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+			ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
 			
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type && argumentIrOperands.size() >= 3) {
-				Type arg_type = std::get<Type>(argumentIrOperands[0]);
-				int arg_size = std::get<int>(argumentIrOperands[1]);
+				ExprResult argumentResult = toExprResult(argumentIrOperands);
+				Type arg_type = argumentResult.type;
+				int arg_size = argumentResult.size_in_bits;
 				Type param_base_type = param_type->type();
-				
-				TypeIndex arg_type_index = 0;
-				if (argumentIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(argumentIrOperands[3])) {
-					arg_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(argumentIrOperands[3]));
+
+				TypeIndex arg_type_index = argumentResult.type_index;
+
+				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
+				bool should_apply_standard_conversion =
+					param_ref_qualifier == CVReferenceQualifier::None &&
+					param_type->pointer_depth() == 0 &&
+					arg_type != param_base_type &&
+					standard_conversion.is_valid &&
+					standard_conversion.rank != ConversionRank::UserDefined;
+				if (should_apply_standard_conversion) {
+					argumentResult = generateTypeConversion(argumentResult, arg_type, param_base_type, functionCallNode.called_from());
+					argumentIrOperands = static_cast<ExprOperands>(argumentResult);
+					arg_type = argumentResult.type;
+					arg_size = argumentResult.size_in_bits;
+					arg_type_index = argumentResult.type_index;
 				}
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
@@ -1312,8 +1325,9 @@
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		// Return type_index for struct types so structured bindings can decompose the result
-		unsigned long long type_index_result = (return_type.type() == Type::Struct) 
-			? static_cast<unsigned long long>(return_type.type_index())
-			: 0ULL;
-		return { return_type.type(), result_size, ret_var, type_index_result };
+		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+			? return_type.type_index()
+			: 0;
+		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, type_index_result, 0,
+			type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt);
 	}

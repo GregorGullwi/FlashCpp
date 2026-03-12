@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+	ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
@@ -33,7 +33,7 @@
 			// This ensures operator() and __invoke functions will be generated.
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
-			auto lambda_ir = generateLambdaExpressionIr(lambda);
+			ExprOperands lambda_ir = generateLambdaExpressionIr(lambda);
 			
 			// Check if this is a generic lambda (has auto parameters)
 			bool is_generic = false;
@@ -119,7 +119,7 @@
 								static_cast<unsigned char>(literal.sizeInBits())));
 						} else {
 							// For complex expressions, evaluate and get type
-							auto operands = visitExpressionNode(arg_expr);
+							ExprOperands operands = visitExpressionNode(arg_expr);
 							Type type = std::get<Type>(operands[0]);
 							int size = std::get<int>(operands[1]);
 							arg_types.push_back(TypeSpecifierNode(type, TypeQualifier::None, static_cast<unsigned char>(size)));
@@ -210,7 +210,7 @@
 				// Add arguments
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-					auto argumentIrOperands = visitExpressionNode(arg_expr);
+					ExprOperands argumentIrOperands = visitExpressionNode(arg_expr);
 					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						const auto& identifier = std::get<IdentifierNode>(arg_expr);
 						const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
@@ -237,7 +237,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 				// Return the result with actual return type from lambda
-				return { lambda_return_type, lambda_return_size, ret_var, 0ULL };
+				return makeExprResult(lambda_return_type, lambda_return_size, IrOperand{ret_var});
 			}
 
 			if (lambda_ir.size() < 4 || !std::holds_alternative<StringHandle>(lambda_ir[2]) || !std::holds_alternative<unsigned long long>(lambda_ir[3])) {
@@ -272,7 +272,7 @@
 			// need the original AST node to be wrapped in an ExpressionNode.
 			if (!object_node.is<ExpressionNode>()) {
 				throw InternalError("Member function call object must be an ExpressionNode");
-				return {};
+				return ExprResult{};
 			}
 
 			object_expr = &object_node.as<ExpressionNode>();
@@ -401,7 +401,7 @@
 									
 									// Generate member access chain for o.inner.callback
 									// First get o.inner
-					std::vector<IrOperand> base_result = visitExpressionNode(*object_expr);
+					ExprOperands base_result = visitExpressionNode(*object_expr);
 									TempVar base_temp = std::get<TempVar>(base_result[2]);
 									
 									// Now access the callback member from that
@@ -422,7 +422,7 @@
 									// Build arguments for the indirect call
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-										auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+										ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 										Type arg_type = std::get<Type>(argumentIrOperands[0]);
 										int arg_size = std::get<int>(argumentIrOperands[1]);
 										IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -450,7 +450,7 @@
 									}
 									Type ret_type = member.function_signature->return_type;
 									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-									return { ret_type, ret_size, ret_var, 0ULL };
+									return makeExprResult(ret_type, ret_size, IrOperand{ret_var});
 								}
 							}
 							
@@ -694,7 +694,7 @@
 						// Generate an indirect call instead of a member function call
 
 						TempVar ret_var = var_counter.next();
-						std::vector<IrOperand> func_ptr_call_operands;
+						ExprOperands func_ptr_call_operands;
 						func_ptr_call_operands.emplace_back(ret_var);
 
 						// Get the function pointer member
@@ -711,7 +711,7 @@
 						if (object_name.empty()) {
 							// Object is not a named variable - evaluate the expression to get a TempVar
 							// visitExpressionNode returns {Type, size_in_bits, value, ...} (at least 3 elements)
-						std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
+						ExprOperands obj_result = visitExpressionNode(*object_expr);
 							if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 								throw InternalError("Function pointer member call: expression did not produce a TempVar");
 							}
@@ -737,7 +737,7 @@
 						// Add arguments
 						std::vector<TypedValue> arguments;
 						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-							auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 							// Extract type, size, and value from the expression result
 							Type arg_type = std::get<Type>(argumentIrOperands[0]);
 							int arg_size = std::get<int>(argumentIrOperands[1]);
@@ -766,7 +766,7 @@
 						}
 						Type ret_type = member.function_signature->return_type;
 						int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-						return { ret_type, ret_size, ret_var, 0ULL };
+						return makeExprResult(ret_type, ret_size, IrOperand{ret_var});
 					}
 				}
 			}
@@ -986,7 +986,7 @@
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar
-					std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
+					ExprOperands obj_result = visitExpressionNode(*object_expr);
 				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 					throw InternalError("Virtual call on expression: did not produce a TempVar");
 				}
@@ -1002,7 +1002,7 @@
 
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+				ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 				
 				// For variables, we need to add the type and size
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -1275,7 +1275,7 @@
 			if (object_name.empty()) {
 				// Object is a temporary expression result (e.g., getContainer().method())
 				// Evaluate the expression to get a TempVar, then take its address for the this pointer
-					std::vector<IrOperand> obj_result = visitExpressionNode(*object_expr);
+					ExprOperands obj_result = visitExpressionNode(*object_expr);
 				if (obj_result.size() < 3 || !std::holds_alternative<TempVar>(obj_result[2])) {
 					throw InternalError("Member function call on expression: did not produce a TempVar");
 				}
@@ -1439,13 +1439,13 @@
 						}
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
-						auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+						ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 						call_op.args.push_back(toTypedValue(argumentIrOperands));
 					}
 				}
 				else {
 					// Not an identifier - call visitExpressionNode to get the value
-					auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					
 					// Check if parameter expects a reference and argument is a literal
 					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
@@ -1553,7 +1553,11 @@
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		
-		return { return_type.type(), return_size_bits, ret_var, static_cast<unsigned long long>(return_type.type_index()) };
+		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+			? return_type.type_index()
+			: 0;
+		return makeExprResult(return_type.type(), return_size_bits, IrOperand{ret_var}, ret_type_index, 0,
+			ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt);
 	}
 
 
@@ -1561,7 +1565,7 @@
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 // Used when a member function call syntax is used but the object is not a struct
-ExprOperands AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
+ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 	

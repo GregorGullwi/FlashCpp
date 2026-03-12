@@ -693,7 +693,7 @@
 						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
 						qualified_name, "'");
 						// Evaluate the initializer expression
-						auto init_operands = visitExpressionNode(init_expr);
+						ExprOperands init_operands = visitExpressionNode(init_expr);
 						// Convert to raw bytes
 						if (init_operands.size() >= 3) {
 							unsigned long long value = 0;
@@ -717,7 +717,7 @@
 						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
 						qualified_name, "' - should have been substituted!");
 						// Try to evaluate anyway
-						auto init_operands = visitExpressionNode(init_expr);
+						ExprOperands init_operands = visitExpressionNode(init_expr);
 						if (init_operands.size() >= 3) {
 							unsigned long long value = 0;
 							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
@@ -748,7 +748,7 @@
 								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
 							} else {
 							// Evaluate the initializer expression
-							auto init_operands = visitExpressionNode(init_expr);
+							ExprOperands init_operands = visitExpressionNode(init_expr);
 							if (init_operands.size() >= 3) {
 								unsigned long long value = 0;
 								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
@@ -946,7 +946,7 @@
 									found_base_value = true;
 									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit.value());
 								} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-									auto init_operands = visitExpressionNode(init_expr);
+									ExprOperands init_operands = visitExpressionNode(init_expr);
 									if (init_operands.size() >= 3 && std::holds_alternative<unsigned long long>(init_operands[2])) {
 										inferred_value = std::get<unsigned long long>(init_operands[2]);
 										found_base_value = true;
@@ -1152,7 +1152,7 @@
 						const ASTNode& init_node = member.default_initializer.value();
 						if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 							// Use the default member initializer
-							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// Extract just the value (third element of init_operands)
 							// Verify we have at least 3 elements before accessing
 							if (init_operands.size() < 3) {
@@ -1478,7 +1478,7 @@ const Token& token)
 
 	const size_t emit_count = std::min(element_count, flat_initializers.size());
 	for (size_t i = 0; i < emit_count; ++i) {
-		auto init_operands = visitExpressionNode(*flat_initializers[i]);
+		ExprOperands init_operands = visitExpressionNode(*flat_initializers[i]);
 		if (init_operands.size() < 3) {
 			throw InternalError("Invalid array member initializer operands");
 		}
@@ -1601,7 +1601,7 @@ const Token& token)
 			// Not a struct type - try to extract single value from single-element list
 			const auto& nested_initializers = nested_init_list.initializers();
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-				auto init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+				ExprOperands init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
 				if (init_operands.size() >= 3) {
 					if (std::holds_alternative<TempVar>(init_operands[2])) {
@@ -1640,7 +1640,7 @@ const Token& token)
 			}
 		} else if (init_expr.is<ExpressionNode>()) {
 			// Direct expression initializer
-			auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+			ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
 			if (init_operands.size() >= 3) {
 				if (std::holds_alternative<TempVar>(init_operands[2])) {
@@ -1905,12 +1905,12 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 
 
-ExprOperands AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
+ExprResult AstToIr::generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
 	// This should not happen during normal code generation - template parameters should be substituted
 	// during template instantiation. If we get here, it means template instantiation failed.
 	std::string param_name = std::string(templateParamRefNode.param_name().view());
 	std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
 	std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
 	assert(false && "Template parameter reference found during code generation - should have been substituted");
-	return {};
+	return ExprResult{};
 }

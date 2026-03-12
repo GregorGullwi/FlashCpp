@@ -133,7 +133,7 @@
 		return result;
 	}
 
-	ExprOperands AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
 		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
 			ExprResult result;
@@ -251,11 +251,11 @@
 				payload.index.value = flat_index;
 
 				if (context == ExpressionContext::LValueAddress) {
-					return { element_type, base_element_size, result_var, 0ULL };
+					return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-				return { element_type, base_element_size, result_var, 0ULL };
+				return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
 			}
 
 			// This could be a multidimensional array access
@@ -423,7 +423,7 @@
 								if (member_result) {
 									const StructMember* member = member_result.member;
 									// Get index expression
-									auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+									ExprOperands index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 									// Get element type and size from the member
 									Type element_type = member->type;
@@ -488,14 +488,14 @@
 									if (context == ExpressionContext::LValueAddress) {
 										// Don't emit ArrayAccess instruction (no load)
 										// Just return the metadata with the result temp var
-										return { element_type, element_size_bits, result_var, elem_type_index };
+										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
 									}
 
 									// Create instruction with typed payload (Load context - default)
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 									// Return the result with the element type and its type index
-									return { element_type, element_size_bits, result_var, elem_type_index };
+									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
 								}
 							}
 						}
@@ -506,10 +506,10 @@
 
 		// Fall back to default handling for regular arrays
 		// Get the array expression (should be an identifier for now)
-		auto array_operands = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
+		ExprOperands array_operands = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
 
 		// Get the index expression
-		auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+		ExprOperands index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
 		Type element_type = std::get<Type>(array_operands[0]);
@@ -841,7 +841,7 @@
 		return true;
 	}
 
-	ExprOperands AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
+	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
 		ExprResult result;
 		result.type = type;
 		result.size_in_bits = size_bits;
@@ -883,7 +883,7 @@
 		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
 	}
 
-	ExprOperands AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context) {
 		// Get the object being accessed
 		ASTNode object_node = memberAccessNode.object();
@@ -1009,7 +1009,7 @@
 			}
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
-				if (!extractBaseFromOperands(toExprResult(nested_result), base_object, base_type, base_type_index, "nested member access")) {
+				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (base_type != Type::Struct && base_type != Type::UserDefined) {
@@ -1107,7 +1107,7 @@
 			}
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
-				if (!extractBaseFromOperands(toExprResult(array_operands), base_object, base_type, base_type_index, "array subscript")) {
+				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
 					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
@@ -1396,7 +1396,7 @@
 		return element_size * array_count;
 	}
 
-	ExprOperands AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
+	ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 		size_t size_in_bytes = 0;
 
 		// Helper: look up sizeof a struct member (static or non-static) by qualified name.
@@ -1447,7 +1447,7 @@
 			const ASTNode& type_node = sizeofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
 				throw InternalError("sizeof type argument must be TypeSpecifierNode");
-				return {};
+				return ExprResult{};
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
@@ -1471,7 +1471,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
 						size_t member_size = lookupStructMemberSize(struct_name, member_name);
 						if (member_size > 0) {
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
+							return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(member_size)});
 						}
 					}
 				}
@@ -1482,7 +1482,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
+						return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(*array_size)});
 					}
 				}
 
@@ -1495,7 +1495,7 @@
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 
 					if (param_size_bytes > 0) {
-						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(param_size_bytes) };
+						return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(param_size_bytes)});
 					}
 				}
 			}
@@ -1520,14 +1520,14 @@
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
 					throw InternalError("Invalid type index for struct");
-					return {};
+					return ExprResult{};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
 					throw InternalError("Struct type info not found");
-					return {};
+					return ExprResult{};
 				}
 
 				size_in_bytes = struct_info->total_size;
@@ -1542,7 +1542,7 @@
 			const ASTNode& expr_node = sizeofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
 				throw InternalError("sizeof expression argument must be ExpressionNode");
-				return {};
+				return ExprResult{};
 			}
 
 			// Special handling for identifiers: sizeof(x) where x is a variable
@@ -1566,7 +1566,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
+						return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(*array_size)});
 					}
 
 					// For regular variables, get the type size from the declaration
@@ -1577,16 +1577,16 @@
 							const TypeInfo& type_info = gTypeInfo[type_index];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && struct_info->total_size > 0) {
-								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->total_size) };
+								return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(struct_info->total_size)});
 							}
 							// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
 							if (type_info.type_size_ > 0) {
-								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(type_info.type_size_) };
+								return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(type_info.type_size_)});
 							}
 						}
 						// Fallback: use size_in_bits from the type specifier node
 						if (var_type.size_in_bits() > 0) {
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(var_type.size_in_bits() / 8) };
+							return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)});
 						}
 					} else {
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
@@ -1595,7 +1595,7 @@
 							size_bits = get_type_size_bits(var_type.type());
 						}
 						size_in_bytes = size_bits / 8;
-						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+						return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
 					}
 				}
 			}
@@ -1644,7 +1644,7 @@
 									// Otherwise, search for instantiated types (template vs instantiation mismatch)
 									if (direct_member_size > 1) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
+										return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(direct_member_size)});
 									}
 
 									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
@@ -1663,7 +1663,7 @@
 												for (const auto& member : inst_struct_info->members) {
 													if (StringTable::getStringView(member.getName()) == member_name) {
 														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-														return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
+														return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(member.size)});
 													}
 												}
 											}
@@ -1673,7 +1673,7 @@
 									// If no instantiation found but direct lookup had a result, use that
 									if (direct_member_size > 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-										return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
+										return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(direct_member_size)});
 									}
 								}
 							}
@@ -1755,7 +1755,7 @@
 							}
 
 							// Return the size without generating runtime IR
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+							return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
 						}
 
 						fallback_to_ir:
@@ -1775,15 +1775,15 @@
 
 				size_t member_size = lookupStructMemberSize(struct_name, member_name);
 				if (member_size > 0) {
-					return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_size) };
+					return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(member_size)});
 				}
 			}
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
-			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
+			ExprOperands expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
 			if (expr_operands.empty()) {
-				return {};
+				return ExprResult{};
 			}
 
 			// Extract type and size from the expression result
@@ -1795,7 +1795,7 @@
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("sizeof(struct_expression) not fully implemented yet");
-				return {};
+				return ExprResult{};
 			}
 			else {
 				size_in_bytes = size_in_bits / 8;
@@ -1810,10 +1810,10 @@
 
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+		return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
 	}
 
-	ExprOperands AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
+	ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
 		size_t alignment = 0;
 
 		if (alignofNode.is_type()) {
@@ -1821,7 +1821,7 @@
 			const ASTNode& type_node = alignofNode.type_or_expr();
 			if (!type_node.is<TypeSpecifierNode>()) {
 				throw InternalError("alignof type argument must be TypeSpecifierNode");
-				return {};
+				return ExprResult{};
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
@@ -1832,14 +1832,14 @@
 				size_t type_index = type_spec.type_index();
 				if (type_index >= gTypeInfo.size()) {
 					throw InternalError("Invalid type index for struct");
-					return {};
+					return ExprResult{};
 				}
 
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (!struct_info) {
 					throw InternalError("Struct type info not found");
-					return {};
+					return ExprResult{};
 				}
 
 				alignment = struct_info->alignment;
@@ -1855,7 +1855,7 @@
 			const ASTNode& expr_node = alignofNode.type_or_expr();
 			if (!expr_node.is<ExpressionNode>()) {
 				throw InternalError("alignof expression argument must be ExpressionNode");
-				return {};
+				return ExprResult{};
 			}
 
 			// Special handling for identifiers: alignof(x) where x is a variable
@@ -1877,7 +1877,7 @@
 								const TypeInfo& type_info = gTypeInfo[type_index];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
-									return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(struct_info->alignment) };
+									return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(struct_info->alignment)});
 								}
 							}
 						} else {
@@ -1888,7 +1888,7 @@
 							}
 							size_t size_in_bytes = size_bits / 8;
 							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
+							return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(alignment)});
 						}
 					}
 				}
@@ -1896,9 +1896,9 @@
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
-			auto expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
+			ExprOperands expr_operands = visitExpressionNode(expr_node.as<ExpressionNode>());
 			if (expr_operands.empty()) {
-				return {};
+				return ExprResult{};
 			}
 
 			// Extract type and size from the expression result
@@ -1910,7 +1910,7 @@
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("alignof(struct_expression) not fully implemented yet");
-				return {};
+				return ExprResult{};
 			}
 			else {
 				// For primitive types
@@ -1924,28 +1924,28 @@
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(alignment) };
+		return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(alignment)});
 	}
 
-	ExprOperands AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
+	ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
 		// offsetof(struct_type, member)
 		const ASTNode& type_node = offsetofNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			throw InternalError("offsetof type argument must be TypeSpecifierNode");
-			return {};
+			return ExprResult{};
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 		if (type_spec.type() != Type::Struct) {
 			throw InternalError("offsetof requires a struct type");
-			return {};
+			return ExprResult{};
 		}
 
 		// Get the struct type info
 		size_t type_index = type_spec.type_index();
 		if (type_index >= gTypeInfo.size()) {
 			throw InternalError("Invalid type index for struct");
-			return {};
+			return ExprResult{};
 		}
 
 		// Find the member
@@ -1955,12 +1955,12 @@
 			StringTable::getOrInternStringHandle(std::string(member_name)));
 		if (!member_result) {
 			throw InternalError("Member not found in struct");
-			return {};
+			return ExprResult{};
 		}
 
 		// Return offset as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_result.adjusted_offset) };
+		return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)});
 	}
 
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
@@ -2044,7 +2044,7 @@
 		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
 	}
 
-	ExprOperands AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
+	ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// Type traits evaluate to a compile-time boolean constant
 		bool result = false;
 
@@ -2063,14 +2063,14 @@
 					break;
 			}
 			// Return result as a bool constant
-			return { Type::Bool, 8, static_cast<unsigned long long>(result ? 1 : 0) };
+			return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : 0)});
 		}
 
 		// For traits that require type arguments, extract the type information
 		const ASTNode& type_node = traitNode.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			throw InternalError("Type trait argument must be TypeSpecifierNode");
-			return {};
+			return ExprResult{};
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
@@ -2977,10 +2977,10 @@
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Return the enum's declared underlying type
-						return { enum_info->underlying_type, enum_info->underlying_size, 0ULL };
+						return makeExprResult(enum_info->underlying_type, enum_info->underlying_size, IrOperand{0ULL});
 					}
 					// Fallback to int if no enum info
-					return { Type::Int, 32, 0ULL };
+					return makeExprResult(Type::Int, 32, IrOperand{0ULL});
 				}
 				// For non-enums, this is an error - return false/0
 				result = false;
@@ -3001,7 +3001,7 @@
 
 		// Return result as a bool constant
 		// Format: [type, size_bits, value]
-		return { Type::Bool, 8, static_cast<unsigned long long>(result ? 1 : 0) };
+		return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : 0)});
 	}
 
 
