@@ -120,10 +120,10 @@
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
-					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
-					Type arg_type = std::get<Type>(argumentIrOperands[0]);
-					int arg_size = std::get<int>(argumentIrOperands[1]);
+					Type arg_type = argumentIrOperands.type;
+					int arg_size = argumentIrOperands.size_in_bits;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
 						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -132,7 +132,7 @@
 						} else {
 							return 0ULL;
 						}
-					}, argumentIrOperands[2]);
+					}, argumentIrOperands.value);
 					arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
 				});
 

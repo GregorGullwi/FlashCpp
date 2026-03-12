@@ -1000,7 +1000,7 @@
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
-				if (!extractBaseFromOperands(toExprResult(call_result), base_object, base_type, base_type_index, "member function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
 					throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1099,7 +1099,7 @@
 
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
-					if (!extractBaseFromOperands(toExprResult(pointer_operands), base_object, base_type, base_type_index, "pointer expression")) {
+					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
 						throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
@@ -1113,7 +1113,7 @@
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
-				if (!extractBaseFromOperands(toExprResult(call_result), base_object, base_type, base_type_index, "function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
 					throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
