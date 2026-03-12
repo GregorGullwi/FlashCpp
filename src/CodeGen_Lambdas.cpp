@@ -267,31 +267,15 @@
 						if (capture.has_initializer()) {
 							// Init-capture: evaluate the initializer expression and store it
 							const ASTNode& init_node = *capture.initializer();
-							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							ExprResult init_result = visitExpressionNode(init_node.as<ExpressionNode>());
 
-							if (init_operands.size() < 3) {
-								continue;
-							}
-
-							// visitExpressionNode returns {type, size, value, ...}
-							// The actual value is at index 2
-							IrOperand init_value = init_operands[2];
+							IrOperand init_value = init_result.value;
 
 							// For init-capture by reference [&y = x], we need to store the address of x
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-								// Get the type info from the init operands
-								Type init_type = Type::Int;
-								int init_size = 32;
-								if (init_operands.size() > 0 && std::holds_alternative<Type>(init_operands[0])) {
-									init_type = std::get<Type>(init_operands[0]);
-								}
-								if (init_operands.size() > 1) {
-									if (std::holds_alternative<int>(init_operands[1])) {
-										init_size = std::get<int>(init_operands[1]);
-									} else if (std::holds_alternative<unsigned long long>(init_operands[1])) {
-										init_size = static_cast<int>(std::get<unsigned long long>(init_operands[1]));
-									}
-								}
+								// Get the type info from the init result
+								Type init_type = init_result.type;
+								int init_size = init_result.size_in_bits;
 
 								// Generate AddressOf for the initializer
 								TempVar addr_temp = var_counter.next();

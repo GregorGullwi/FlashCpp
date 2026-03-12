@@ -115,6 +115,21 @@
     directly for typed argument construction
   - temporary-object call paths and reference-argument materialization now read
     `.value`, `.type`, and `.size_in_bits` instead of positional operand slots
+- the largest consumer-side batch then migrated several more files to named
+  `ExprResult` fields in a single wave:
+  - `src/CodeGen_Expr_Operators.cpp`: struct-init-list member initializers,
+    ternary operator true/false branches, function-pointer assignment RHS,
+    global-variable assignment RHS, compound-assignment-to-global RHS,
+    and both `__builtin_abs`/`__builtin_fabs` intrinsic argument paths
+  - `src/CodeGen_MemberAccess.cpp`: the member-struct array subscript index
+    path, the main regular array subscript path (both `array_result` and
+    `index_result`), and the `sizeof`/`alignof` expression-fallback paths
+  - `src/CodeGen_Lambdas.cpp`: init-capture initializer expression path
+  - `src/CodeGen_Visitors_Namespace.cpp`: namespace-scope struct-member
+    initializer store path
+  - `src/CodeGen_Stmt_TryCatchSeh.cpp`: `throw` expression evaluation and
+    SEH `__except`-filter expression evaluation; the throw path now reads
+    `.type_index` directly instead of decoding legacy slot-3 metadata
 
 ## Problem
 

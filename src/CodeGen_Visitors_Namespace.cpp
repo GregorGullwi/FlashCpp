@@ -141,21 +141,16 @@
 						// Evaluate the initializer expression
 						const ASTNode* init_expr = it->second;
 						if (init_expr->is<ExpressionNode>()) {
-							ExprOperands init_operands = visitExpressionNode(init_expr->as<ExpressionNode>());
-							
-							if (init_operands.size() >= 3) {
-								// Generate member store
-								MemberStoreOp store_op;
-								store_op.object = temp_var;
-								store_op.member_name = member.getName();
-								store_op.offset = static_cast<int>(member.offset);
-								
-								// Create TypedValue from operands
-								store_op.value = toTypedValue(init_operands);
-								store_op.ref_qualifier = CVReferenceQualifier::None;
-								
-								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), node.return_token()));
-							}
+							ExprResult init_result = visitExpressionNode(init_expr->as<ExpressionNode>());
+							// Generate member store
+							MemberStoreOp store_op;
+							store_op.object = temp_var;
+							store_op.member_name = member.getName();
+							store_op.offset = static_cast<int>(member.offset);
+							// Create TypedValue from result
+							store_op.value = toTypedValue(init_result);
+							store_op.ref_qualifier = CVReferenceQualifier::None;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), node.return_token()));
 						}
 					}
 				}

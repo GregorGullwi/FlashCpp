@@ -148,13 +148,11 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		bool store_value_set = false;
 
 		if (init_expr.is<ExpressionNode>()) {
-			ExprOperands operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-			if (operands.size() >= 3) {
-				store_type = std::get<Type>(operands[0]);
-				store_size = std::get<int>(operands[1]);
-				store_value = toIrValue(operands[2]);
-				store_value_set = true;
-			}
+			ExprResult init_result = visitExpressionNode(init_expr.as<ExpressionNode>());
+			store_type = init_result.type;
+			store_size = init_result.size_in_bits;
+			store_value = toIrValue(init_result.value);
+			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
 				   member.type_index > 0 && member.type_index < gTypeInfo.size()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
@@ -344,12 +342,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
 
 		// Evaluate true expression
-		ExprOperands true_operands = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
+		ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
 		// Create result variable to hold the final value
 		TempVar result_var = var_counter.next();
-		Type result_type = std::get<Type>(true_operands[0]);
-		int result_size = std::get<int>(true_operands[1]);
+		Type result_type = true_result.type;
+		int result_size = true_result.size_in_bits;
 
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
@@ -357,7 +355,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		assign_true_op.lhs.type = result_type;
 		assign_true_op.lhs.size_in_bits = result_size;
 		assign_true_op.lhs.value = result_var;
-		assign_true_op.rhs = toTypedValue(true_operands);
+		assign_true_op.rhs = toTypedValue(true_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
 
 		// Unconditional branch to end
@@ -367,7 +365,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
 
 		// Evaluate false expression
-		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
+		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
@@ -375,7 +373,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		assign_false_op.lhs.type = result_type;
 		assign_false_op.lhs.size_in_bits = result_size;
 		assign_false_op.lhs.value = result_var;
-		assign_false_op.rhs = toTypedValue(false_operands);
+		assign_false_op.rhs = toTypedValue(false_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 
 		// End label (merge point)
@@ -532,7 +530,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (lhs_type.is_function_pointer()) {
 						// This is a function pointer assignment
 						// Generate IR for the RHS (which should be a function address)
-						ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 						// Generate Assignment IR using typed payload
 						TempVar result_var = var_counter.next();
@@ -541,7 +539,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						assign_op.lhs.type = lhs_type.type();
 						assign_op.lhs.size_in_bits = static_cast<int>(lhs_type.size_in_bits());
 						assign_op.lhs.value = StringTable::getOrInternStringHandle(lhs_name);
-						assign_op.rhs = toTypedValue(rhsIrOperands);
+						assign_op.rhs = toTypedValue(rhs_result);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 
 						// Return the result
@@ -562,26 +560,25 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-					ExprOperands rhsIrOperands = rhsExprResult;
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
 
-					// Extract the value from RHS (rhsIrOperands[2])
-					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-						store_operands.emplace_back(std::get<TempVar>(rhsIrOperands[2]));
-					} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])
-					|| std::holds_alternative<unsigned long long>(rhsIrOperands[2])
-					|| std::holds_alternative<double>(rhsIrOperands[2])) {
+					// Extract the value from RHS
+					if (std::holds_alternative<TempVar>(rhsExprResult.value)) {
+						store_operands.emplace_back(std::get<TempVar>(rhsExprResult.value));
+					} else if (std::holds_alternative<StringHandle>(rhsExprResult.value)
+					|| std::holds_alternative<unsigned long long>(rhsExprResult.value)
+					|| std::holds_alternative<double>(rhsExprResult.value)) {
 						// Local variable (StringHandle) or constant: load into a temp first
 						TempVar temp = var_counter.next();
 						AssignmentOp assign_op;
 						assign_op.result = temp;
-						assign_op.lhs.type = std::get<Type>(rhsIrOperands[0]);
-						assign_op.lhs.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						assign_op.lhs.type = rhsExprResult.type;
+						assign_op.lhs.size_in_bits = rhsExprResult.size_in_bits;
 						assign_op.lhs.value = temp;
-						assign_op.rhs = toTypedValue(rhsIrOperands);
+						assign_op.rhs = toTypedValue(rhsExprResult);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 						store_operands.emplace_back(temp);
 					} else {
@@ -617,7 +614,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
 
 					// Evaluate RHS
-					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Map compound op to arithmetic opcode
 					static const std::unordered_map<std::string_view, IrOpcode> op_to_arith = {
@@ -637,7 +634,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar result_var = var_counter.next();
 					BinaryOp bin_op{
 						.lhs = {gsi.type, gsi.size_in_bits, loaded},
-						.rhs = toTypedValue(rhsIrOperands),
+						.rhs = toTypedValue(rhs_result),
 						.result = result_var,
 					};
 					ir_.addInstruction(IrInstruction(arith_it->second, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2443,12 +2440,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the argument
 		ASTNode arg = functionCallNode.arguments()[0];
-		ExprOperands arg_ir = visitExpressionNode(arg.as<ExpressionNode>());
+		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = std::get<Type>(arg_ir[0]);
-		int arg_size = std::get<int>(arg_ir[1]);
-		TypedValue arg_value = toTypedValue(arg_ir);
+		Type arg_type = arg_result.type;
+		int arg_size = arg_result.size_in_bits;
+		TypedValue arg_value = toTypedValue(arg_result);
 
 		// Step 1: Arithmetic shift right by 63 to get sign mask (all 1s if negative, all 0s if positive)
 		TempVar sign_mask = var_counter.next();
@@ -2488,12 +2485,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the argument
 		ASTNode arg = functionCallNode.arguments()[0];
-		ExprOperands arg_ir = visitExpressionNode(arg.as<ExpressionNode>());
+		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = std::get<Type>(arg_ir[0]);
-		int arg_size = std::get<int>(arg_ir[1]);
-		TypedValue arg_value = toTypedValue(arg_ir);
+		Type arg_type = arg_result.type;
+		int arg_size = arg_result.size_in_bits;
+		TypedValue arg_value = toTypedValue(arg_result);
 
 		// For floating point abs, clear the sign bit using bitwise AND
 		// Float (32-bit): AND with 0x7FFFFFFF

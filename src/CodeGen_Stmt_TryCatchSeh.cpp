@@ -217,39 +217,29 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			const auto& expr = *node.expression();
 			
 			// Generate code for the expression to throw
-			ExprOperands expr_operands = visitExpressionNode(expr.as<ExpressionNode>());
-			
-			// Extract type information from the operands
-			// operands format: [type, size, value_or_temp_var] - always 3 elements
-			if (expr_operands.size() < 3) {
-				FLASH_LOG(Codegen, Error, "Invalid expression operands for throw statement");
-				return;
-			}
-			
-			Type expr_type = std::get<Type>(expr_operands[0]);
-			size_t type_size = std::get<int>(expr_operands[1]);
-			
-			// Extract TypeIndex from expression operands (now at position 3 since all operands have 4 elements)
-			TypeIndex exception_type_index = 0;
-			if (expr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(expr_operands[3])) {
-				exception_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(expr_operands[3]));
-			}
+			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
+
+			Type expr_type = expr_result.type;
+			size_t type_size = expr_result.size_in_bits;
+
+			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
+			TypeIndex exception_type_index = expr_result.type_index;
 
 			IrValue exception_value;
-			bool is_rvalue = !std::holds_alternative<StringHandle>(expr_operands[2]);
+			bool is_rvalue = !std::holds_alternative<StringHandle>(expr_result.value);
 			bool value_is_materialized = false;
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_operands[2]));
+			if (std::holds_alternative<TempVar>(expr_result.value)) {
+				is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_result.value));
 			}
 
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				exception_value = std::get<TempVar>(expr_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
-				exception_value = std::get<StringHandle>(expr_operands[2]);
-			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
-				exception_value = std::get<unsigned long long>(expr_operands[2]);
-			} else if (std::holds_alternative<double>(expr_operands[2])) {
-				exception_value = std::get<double>(expr_operands[2]);
+			if (std::holds_alternative<TempVar>(expr_result.value)) {
+				exception_value = std::get<TempVar>(expr_result.value);
+			} else if (std::holds_alternative<StringHandle>(expr_result.value)) {
+				exception_value = std::get<StringHandle>(expr_result.value);
+			} else if (std::holds_alternative<unsigned long long>(expr_result.value)) {
+				exception_value = std::get<unsigned long long>(expr_result.value);
+			} else if (std::holds_alternative<double>(expr_result.value)) {
+				exception_value = std::get<double>(expr_result.value);
 			} else {
 				// Unknown operand type - log warning and default to zero value
 				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
@@ -406,24 +396,24 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Evaluate the filter expression inside the funclet
 			// RBP points to parent frame, so local variable access works correctly
-			ExprOperands filter_operands = visitExpressionNode(filter_inner_expr);
+			ExprResult filter_result_expr = visitExpressionNode(filter_inner_expr);
 
 			// Restore filter funclet context
 			seh_in_filter_funclet_ = false;
 
 			// Determine filter result - TempVar or constant
 			SehFilterEndOp filter_end_op;
-			if (filter_operands.size() >= 3 && std::holds_alternative<TempVar>(filter_operands[2])) {
-				filter_result = std::get<TempVar>(filter_operands[2]);
+			if (std::holds_alternative<TempVar>(filter_result_expr.value)) {
+				filter_result = std::get<TempVar>(filter_result_expr.value);
 				filter_end_op.filter_result = filter_result;
 				filter_end_op.is_constant_result = false;
 				filter_end_op.constant_result = 0;
 				FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
-			} else if (filter_operands.size() >= 3 && std::holds_alternative<unsigned long long>(filter_operands[2])) {
+			} else if (std::holds_alternative<unsigned long long>(filter_result_expr.value)) {
 				// Filter expression returned a constant (e.g. comma expr ending in literal 1)
 				filter_end_op.filter_result = filter_result;
 				filter_end_op.is_constant_result = true;
-				filter_end_op.constant_result = static_cast<int32_t>(std::get<unsigned long long>(filter_operands[2]));
+				filter_end_op.constant_result = static_cast<int32_t>(std::get<unsigned long long>(filter_result_expr.value));
 				FLASH_LOG(Codegen, Debug, "SEH filter funclet returns constant=", filter_end_op.constant_result);
 			} else {
 				filter_end_op.filter_result = filter_result;
