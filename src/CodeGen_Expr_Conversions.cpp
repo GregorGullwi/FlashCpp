@@ -1724,27 +1724,40 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 			}
 		}
 	}
-	if (operandHandledAsIdentifier && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+	auto applyPointerTypeInfo = [&](const TypeSpecifierNode& type_node, size_t consumed_dereferences = 0) {
+		if (type_node.pointer_depth() <= consumed_dereferences) {
+			return;
+		}
+		size_t remaining_pointer_depth = type_node.pointer_depth() - consumed_dereferences;
+		is_pointer = true;
+		operand_pointer_depth = static_cast<int>(remaining_pointer_depth);
+		if (remaining_pointer_depth > 1) {
+			element_size = 8;  // Multi-level pointer: element is a pointer
+		} else {
+			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), type_node.size_in_bits());
+		}
+	};
+	auto tryApplyPointerInfoFromIdentifier = [&](const IdentifierNode& identifier, size_t consumed_dereferences = 0) -> bool {
+		auto symbol = symbol_table.lookup(identifier.name());
+		if (!symbol.has_value()) {
+			return false;
+		}
+		if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+			applyPointerTypeInfo(decl->type_node().as<TypeSpecifierNode>(), consumed_dereferences);
+			return true;
+		}
+		return false;
+	};
+	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-			const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
-			auto symbol = symbol_table.lookup(identifier.name());
-			if (symbol.has_value()) {
-				const TypeSpecifierNode* type_node = nullptr;
-				if (symbol->is<DeclarationNode>()) {
-					type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				} else if (symbol->is<VariableDeclarationNode>()) {
-					type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-				}
-				
-				if (type_node && type_node->pointer_depth() > 0) {
-					is_pointer = true;
-					operand_pointer_depth = static_cast<int>(type_node->pointer_depth());
-					if (type_node->pointer_depth() > 1) {
-						element_size = 8;  // Multi-level pointer: element is a pointer
-					} else {
-						element_size = getSizeInBytes(type_node->type(), type_node->type_index(), type_node->size_in_bits());
-					}
+		if (operandHandledAsIdentifier && std::holds_alternative<IdentifierNode>(operandExpr)) {
+			tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(operandExpr));
+		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {
+			const UnaryOperatorNode& deref_expr = std::get<UnaryOperatorNode>(operandExpr);
+			if (deref_expr.op() == "*" && deref_expr.get_operand().is<ExpressionNode>()) {
+				const ExpressionNode& inner_expr = deref_expr.get_operand().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(inner_expr)) {
+					tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(inner_expr), 1);
 				}
 			}
 		}
