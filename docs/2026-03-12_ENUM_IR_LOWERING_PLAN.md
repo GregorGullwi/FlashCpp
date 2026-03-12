@@ -127,36 +127,95 @@ In other words:
 
 ---
 
-## Target Design
+## Target Design: Separate `IrType` Enum
 
-Introduce an explicit split between:
+The root cause of the enum-pointer regressions (and the `UserDefined` vs `Struct`
+confusion) is that the same `Type` enum is used for both semantic identity and
+runtime representation. Codegen helpers can always write `if (type == Type::Enum)`
+and nothing prevents it — the bug class is structurally permitted.
 
-- **semantic type**: the nominal type the user wrote
-- **representation type**: the lowered runtime storage/ABI/arithmetic type
+The fix is to make illegal states unrepresentable: introduce a **separate enum
+for IR-level types** that physically cannot express `Enum`, `UserDefined`,
+`Auto`, or `Template`.
 
-Conceptually:
+### Evidence that this already works
+
+The backend (`src/IRConverter*.h`) already operates on an implicit reduced type
+set:
+
+- `Type::Enum` appears **zero times** in the backend
+- `Type::UserDefined` appears **once** (exception handling guard)
+- The backend discriminates on `Float` vs `Double` (SSE vs GPR), `Struct`
+  (ABI classification for >64-bit values), and integer-of-size-N for everything
+  else
+
+The backend already doesn't care about `Enum` or `UserDefined`. Making that
+constraint explicit just means the compiler enforces what is already the intent.
+
+### The `IrType` enum
 
 ```cpp
-struct LoweredValueType {
-    Type repr_type;          // e.g. Int / UnsignedInt / Long
-    int repr_size_bits;
-    int pointer_depth;
-
-    // Optional semantic identity that still matters outside raw runtime ops.
-    Type semantic_type;      // e.g. Enum
-    TypeIndex semantic_type_index;
+// Runtime representation types — the only types that matter for
+// register selection, ABI classification, and instruction emission.
+enum class IrType : int_fast16_t {
+    Void,
+    Integer,        // all integer types, enums, bool — distinguished by size_in_bits + is_signed
+    Float,          // 32-bit IEEE 754
+    Double,         // 64-bit IEEE 754
+    LongDouble,     // 80-bit x87 extended precision
+    Struct,         // needs type_index for size/layout, ABI classification
+    FunctionPointer,
+    MemberFunctionPointer,
+    MemberObjectPointer,
+    Nullptr,
 };
 ```
 
-The exact structure can vary, but the key rule is:
+No `Enum`. No `UserDefined`. No `Char` vs `Int` vs `Long` (they are all
+`Integer` with different `size_in_bits` and `is_signed`). No `Auto`, `Template`,
+`Invalid` — those are parser/semantic concerns that must not leak into IR.
 
-- codegen/IR helpers that only care about runtime behavior consume the
-  **representation**
-- semantic / mangling / type-identity helpers consume the **semantic identity**
+### Where the conversion happens
 
-`ExprResult` is a natural place to make this cleaner, because it already
-separates fields instead of forcing everything through a single overloaded
-metadata slot.
+`AstToIr` is the converter. It already reads `TypeSpecifierNode` (which carries
+the full `Type` enum) from AST nodes and populates `TypedValue` for IR
+instructions. The conversion to `IrType` happens at exactly the points where
+`TypedValue` is constructed — the same sites that currently do ad-hoc lowering.
+
+### What it fixes
+
+| Current bug class | Why `IrType` prevents it |
+|---|---|
+| Slot-4 `type_index` vs `pointer_depth` ambiguity | `IrType::Integer` with `pointer_depth > 0` is unambiguously a pointer — no heuristic needed |
+| `getSizeInBytes` needing enum branches | `IrType::Integer` already carries `size_in_bits = 32` — no `gTypeInfo` lookup needed |
+| Pointer stride recovery for enum pointees | `IrType::Integer` pointer with `size_in_bits = 32` → stride is 4, trivially |
+| `UserDefined` vs `Struct` confusion | Both become `IrType::Struct` |
+| Future contributors adding `if (type == Type::Enum)` in codegen | Won't compile — `IrType` has no `Enum` variant |
+
+### `TypedValue` becomes the boundary
+
+`TypedValue` (`src/IRTypes_Ops.h`) is the shared currency between codegen and
+backend. Every IR op struct (`BinaryOp`, `AssignmentOp`, `CallOp`,
+`DereferenceOp`, etc.) uses `TypedValue` for its operands. Changing
+`TypedValue.type` from `Type` to `IrType` means codegen physically cannot leak
+semantic-only type tags into the IR.
+
+For the transition period, `TypedValue` can carry both fields:
+
+```cpp
+struct TypedValue {
+    IrType ir_type;         // runtime representation (new, authoritative)
+    int size_in_bits;
+    IrValue value;
+    bool is_signed;
+    int pointer_depth;
+    TypeIndex type_index;   // still needed for Struct layout / ABI
+    // ... existing fields ...
+
+    // Transitional: kept during migration, removed when backend is fully on ir_type
+    Type semantic_type = Type::Invalid;
+};
+```
 
 ---
 
