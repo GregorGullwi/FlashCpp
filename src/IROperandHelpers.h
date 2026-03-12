@@ -146,12 +146,38 @@ inline ExprResult toExprResult(std::span<const IrOperand> operands) {
 	result.size_in_bits = std::get<int>(operands[1]);
 	result.value = operands[2];
 
-	TypedValue typed_value = toTypedValue(operands);
-	result.type_index = typed_value.type_index;
-	result.pointer_depth = typed_value.pointer_depth;
-
+	// Decode the optional 4th slot into named fields.
+	//
+	// The encoding rule used by tryBuildIdentifierOperand / generateIdentifierIr is:
+	//   Type::Struct                        → type_index
+	//   non-Struct with pointer_depth > 0   → pointer_depth   (includes Enum pointers!)
+	//   otherwise                           → 0
+	//
+	// toTypedValue uses a DIFFERENT rule (Struct|Enum|UserDefined → type_index),
+	// which is correct for non-pointer enum *values* but wrong for enum *pointers*.
+	// We must match the encoder's rule here so that ExprResult named fields are
+	// correct for all callers.
 	if (operands.size() >= 4 && std::holds_alternative<unsigned long long>(operands[3])) {
-		result.encoded_metadata = std::get<unsigned long long>(operands[3]);
+		unsigned long long metadata = std::get<unsigned long long>(operands[3]);
+		result.encoded_metadata = metadata;
+
+		if (result.type == Type::Struct) {
+			// Struct slot-4 is always type_index (even for struct pointers,
+			// the encoder stores type_index, not pointer_depth).
+			result.type_index = static_cast<TypeIndex>(metadata);
+		} else if (result.size_in_bits == 64 && metadata > 0 &&
+		           (result.type == Type::Enum || result.type == Type::UserDefined)) {
+			// Enum/UserDefined with 64-bit size and nonzero metadata:
+			// the encoder stored pointer_depth (the base type is not 64 bits,
+			// so size_in_bits==64 implies this is a pointer).
+			result.pointer_depth = static_cast<int>(metadata);
+		} else if (result.type == Type::Enum || result.type == Type::UserDefined) {
+			// Non-pointer enum/UserDefined: slot-4 is type_index.
+			result.type_index = static_cast<TypeIndex>(metadata);
+		} else {
+			// All other types: slot-4 is pointer_depth.
+			result.pointer_depth = static_cast<int>(metadata);
+		}
 	}
 
 	return result;
