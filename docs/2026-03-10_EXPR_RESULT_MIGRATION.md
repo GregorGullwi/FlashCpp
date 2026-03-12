@@ -36,6 +36,15 @@
 - some compatibility consumers still immediately materialize `ExprOperands` from
   `ExprResult` return values or bounce through `toExprResult(...)` at callsites;
   these remaining adapters are now the main Phase 4 cleanup target
+- additional Phase 4 cleanup on this branch migrated unary-expression handling in
+  `src/CodeGen_Expr_Conversions.cpp`: the local `tryBuildIdentifierOperand`
+  builder and `operandIrOperands` now use `ExprResult`, the last 4
+  `toExprResult(...)` bounce points in that file were removed, and the nearby
+  unary `+`, `++`, `--`, `&`, and `*` paths now consume named fields instead of
+  positional operand indexes
+- after that follow-up, the remaining known consumer-side `toExprResult(...)`
+  bounce points on this branch are concentrated in
+  `src/CodeGen_Expr_Operators.cpp`
 
 ## Problem
 
