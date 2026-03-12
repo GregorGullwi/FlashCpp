@@ -1556,8 +1556,16 @@
 		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
 			: 0;
-		return makeExprResult(return_type.type(), return_size_bits, IrOperand{ret_var}, ret_type_index, 0,
-			ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt);
+		return makeExprResult(
+			return_type.type(),
+			return_size_bits,
+			IrOperand{ret_var},
+			ret_type_index,
+			0,
+			preserveEncodedExprMetadata(
+				ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt
+			)
+		);
 	}
 
 

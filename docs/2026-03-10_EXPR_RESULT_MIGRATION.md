@@ -88,7 +88,13 @@
   - remove the implicit `ExprResult -> ExprOperands` compatibility path
   - remove slot-4 decoding from `toTypedValue()` once all callers consume named
     `ExprResult` fields or other direct metadata
-  - harden `makeExprResult(...)` so metadata arguments cannot be misordered
+- a follow-up on this branch then hardened `makeExprResult(...)` so the legacy
+  slot-4 bridge is explicit instead of positional:
+  - common construction now uses dedicated 3/4/5-argument overloads
+  - legacy raw metadata preservation must go through
+    `preserveEncodedExprMetadata(...)`
+  - the old bug shape `makeExprResult(..., 0, 0, ull)` no longer matches a
+    public overload
 
 ## Problem
 
@@ -386,17 +392,13 @@ paths still coexist.
 
 ### Deferred Follow-up: Harden `makeExprResult`
 
-**Problem:** The original `makeExprResult` has positional parameters with defaults:
+**Problem (fixed on 2026-03-12):** The original `makeExprResult` had positional
+parameters with defaults:
 
 ```cpp
-inline ExprResult makeExprResult(
-    Type type,
-    int size_in_bits,
-    IrOperand value,
-    TypeIndex type_index = 0,           // default
-    int pointer_depth = 0,              // default
-    std::optional<unsigned long long> encoded_metadata = std::nullopt  // default
-);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index);
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
 ```
 
 This caused bugs like:
@@ -406,8 +408,8 @@ This caused bugs like:
 makeExprResult(Type::Struct, size, value, 0, 0, static_cast<unsigned long long>(type_index));
 ```
 
-**Narrow solution:** Replace the current defaulted helper with explicit
-overloads or similarly explicit helper entry points:
+**Implemented solution:** Keep the common overloads terse, but make the legacy
+slot-4 preservation path explicit:
 
 ```cpp
 // 3 args: just type + value (most common)
@@ -416,28 +418,34 @@ inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value);
 // 4 args: with TypeIndex
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index);
 
-// 4 args: with pointer_depth
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, int pointer_depth);
-
 // 5 args: both type_index and pointer_depth
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
 
-// 6 args: legacy encoded_metadata bridge (rare - only for partial migrations)
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, unsigned long long encoded_metadata);
+// Explicit legacy bridge for partial-migration sites only
+inline EncodedExprMetadata preserveEncodedExprMetadata(unsigned long long value);
+inline EncodedExprMetadata preserveEncodedExprMetadata(std::optional<unsigned long long> value);
+inline ExprResult makeExprResult(
+    Type type,
+    int size_in_bits,
+    IrOperand value,
+    TypeIndex type_index,
+    int pointer_depth,
+    EncodedExprMetadata encoded_metadata
+);
 ```
-
-This is a good **follow-up hardening step**, but it is not a prerequisite for
-finishing the main `ExprResult` migration.
 
 **Benefits:**
 - The bug case `makeExprResult(..., 0, 0, ull)` no longer compiles
-- Callers with `TypeIndex` variables work without changes (they're already the correct type)
-- Only literal `0` for pointer_depth needs explicit cast
+- Legacy-bridge call sites are visually obvious in review because they spell
+  `preserveEncodedExprMetadata(...)`
+- Regular callers keep the compact overloads and do not need to thread a
+  wrapper type through the common path
 
 **Migration:**
-- ~150 call sites to update
-- Bug cases `makeExprResult(..., 0, 0, ull)` → `makeExprResult(..., type_index)`
-- 5-arg calls `makeExprResult(..., ti, 0)` → `makeExprResult(..., ti)`
+- update only the small set of legacy bridge sites that intentionally preserve
+  raw slot-4 payloads
+- convert those calls to
+  `makeExprResult(..., preserveEncodedExprMetadata(...))`
 
 ## Explicitly Out of Scope for This Plan
 

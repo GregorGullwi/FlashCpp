@@ -203,7 +203,14 @@
 		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return makeExprResult(member_type, member_size, IrOperand{result_var}, member_type_index, 0, static_cast<unsigned long long>(member_type_index));
+		return makeExprResult(
+			member_type,
+			member_size,
+			IrOperand{result_var},
+			member_type_index,
+			0,
+			preserveEncodedExprMetadata(static_cast<unsigned long long>(member_type_index))
+		);
 	}
 
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {

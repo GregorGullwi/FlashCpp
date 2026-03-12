@@ -100,7 +100,14 @@
 		// The value can be reinterpreted as the new type
 		if (fromSize == toSize) {
 			// Same size, different signedness - just change the type metadata
-			return makeExprResult(toType, toSize, operands.value, operands.type_index, operands.pointer_depth, operands.encoded_metadata);
+			return makeExprResult(
+				toType,
+				toSize,
+				operands.value,
+				operands.type_index,
+				operands.pointer_depth,
+				preserveEncodedExprMetadata(operands.encoded_metadata)
+			);
 		}
 
 		// For non-literal values (variables, TempVars), create a conversion instruction
@@ -510,7 +517,14 @@
 								fourth_element = static_cast<unsigned long long>(return_type.type_index());
 							}
 							
-							return makeExprResult(return_type.type(), call_op.return_size_in_bits, IrOperand{ret_var}, 0, 0, fourth_element);
+							return makeExprResult(
+								return_type.type(),
+								call_op.return_size_in_bits,
+								IrOperand{ret_var},
+								0,
+								0,
+								preserveEncodedExprMetadata(fourth_element)
+							);
 						}
 					}
 				}
@@ -552,7 +566,7 @@
 						IrOperand{result_temp},
 						type_node->type_index(),
 						type_node->pointer_depth(),
-						encoded_metadata
+						preserveEncodedExprMetadata(encoded_metadata)
 					);
 					return true;
 				}
@@ -570,7 +584,7 @@
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,
 					kStaticLocalPointerDepth,
-					kStaticLocalEncodedMetadata
+					preserveEncodedExprMetadata(kStaticLocalEncodedMetadata)
 				); // pointer depth/type_index metadata are assumed 0 for static locals here
 				return true;
 			}
@@ -592,7 +606,7 @@
 				IrOperand{identifier_handle},
 				type_node->type_index(),
 				type_node->pointer_depth(),
-				encoded_metadata
+				preserveEncodedExprMetadata(encoded_metadata)
 			);
 			return true;
 		};
@@ -1221,7 +1235,14 @@
 							
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
-							return makeExprResult(member_result.member->type, 64, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, static_cast<TypeIndex>(member_result.member->type_index), 0, static_cast<unsigned long long>(member_result.member->type_index));
+							return makeExprResult(
+								member_result.member->type,
+								64,
+								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
+								static_cast<TypeIndex>(member_result.member->type_index),
+								0,
+								preserveEncodedExprMetadata(static_cast<unsigned long long>(member_result.member->type_index))
+							);
 						}
 					}
 				}
@@ -1349,7 +1370,7 @@
 				IrOperand{result_var},
 				operandIrOperands.type_index,
 				static_cast<int>(operand_ptr_depth + 1),
-				operand_ptr_depth + 1
+				preserveEncodedExprMetadata(operand_ptr_depth + 1)
 			);
 		}
 		else if (unaryOperatorNode.op() == "*") {
@@ -1445,7 +1466,7 @@
 					IrOperand{lvalue_temp},
 					operandIrOperands.type_index,
 					static_cast<int>(result_ptr_depth),
-					result_ptr_depth
+					preserveEncodedExprMetadata(result_ptr_depth)
 				);
 			}
 			
@@ -1537,7 +1558,7 @@
 				IrOperand{result_var},
 				operandIrOperands.type_index,
 				static_cast<int>(result_ptr_depth),
-				result_ptr_depth
+				preserveEncodedExprMetadata(result_ptr_depth)
 			);
 		}
 		else {
@@ -1693,7 +1714,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			value_var,
 			operandIrResult.type_index,
 			operand_pointer_depth,
-			operandIrResult.encoded_metadata
+			preserveEncodedExprMetadata(operandIrResult.encoded_metadata)
 		);
 	};
 
@@ -1813,7 +1834,14 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer increment/decrement result");
 				return ExprResult{};
 			}
-			return makeExprResult(operandType, 64, IrOperand{result_var}, 0, 0, static_cast<unsigned long long>(operand_pointer_depth));
+			return makeExprResult(
+				operandType,
+				64,
+				IrOperand{result_var},
+				0,
+				0,
+				preserveEncodedExprMetadata(static_cast<unsigned long long>(operand_pointer_depth))
+			);
 		} else {
 			// Postfix: save old value, modify, return old value
 			TempVar old_value = var_counter.next();
@@ -1834,7 +1862,14 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer postfix increment/decrement result");
 				return ExprResult{};
 			}
-			return makeExprResult(operandType, 64, IrOperand{old_value}, 0, 0, static_cast<unsigned long long>(operand_pointer_depth));
+			return makeExprResult(
+				operandType,
+				64,
+				IrOperand{old_value},
+				0,
+				0,
+				preserveEncodedExprMetadata(static_cast<unsigned long long>(operand_pointer_depth))
+			);
 		}
 	} else {
 		// Regular integer increment/decrement

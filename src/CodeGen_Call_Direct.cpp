@@ -74,7 +74,14 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 									
 									// Return pointer type (64-bit address) with pointer depth 1
-									return makeExprResult(operand_type, 64, IrOperand{result_var}, 0, 0, 1ULL);
+									return makeExprResult(
+										operand_type,
+										64,
+										IrOperand{result_var},
+										0,
+										0,
+										preserveEncodedExprMetadata(1ULL)
+									);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -1326,6 +1333,14 @@
 		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
 			: 0;
-		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, type_index_result, 0,
-			type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt);
+		return makeExprResult(
+			return_type.type(),
+			result_size,
+			IrOperand{ret_var},
+			type_index_result,
+			0,
+			preserveEncodedExprMetadata(
+				type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt
+			)
+		);
 	}
