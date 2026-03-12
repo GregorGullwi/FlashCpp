@@ -2,6 +2,60 @@
 #include <map>
 #include <vector>
 #include <variant>
+#include <iostream>
+
+// ---- Unified command-line option registry ----
+// Single source of truth for all supported options.
+// Both the consteval _opt literal and isKnownFlag/printHelp derive from this table.
+
+struct CliOptionInfo {
+	std::string_view name;         // option name without leading '-'
+	std::string_view value_hint;   // non-empty when the option takes a value (e.g. "<file>")
+	std::string_view description;  // human-readable description for --help
+	bool             is_alias;     // true for duplicate/alias entries omitted from --help output
+};
+
+// Options that accept a value (--name=value or -name value)
+inline constexpr CliOptionInfo all_cli_value_options[] = {
+	{ "o",          "<file>",   "Specify output object file",                                         false },
+	{ "I",          "<path>",   "Add include directory",                                              false },
+	{ "log-level",  "<level>",  "Set log level: error/warning/info/debug/trace or category:level\n"
+	                            "                              (categories: General, Parser, Lexer, Templates,\n"
+	                            "                               Symbols, Types, Codegen, Scope, Mangling, All)", false },
+	{ "fmangling",  "<style>",  "Name mangling style: msvc or itanium",                              false },
+};
+
+// Flag options (no value, presence implies true)
+inline constexpr CliOptionInfo all_cli_flags[] = {
+	{ "h",                          "", "Show this help message",                                    true  },
+	{ "help",                       "", "Show this help message",                                    false },
+	{ "v",                          "", "Verbose output (shows dependency analysis and IR)",         false },
+	{ "verbose",                    "", "Verbose output",                                            true  },
+	{ "E",                          "", "Preprocess only (output preprocessed source)",              false },
+	{ "d",                          "", "Enable debug output",                                       false },
+	{ "debug",                      "", "Enable debug output",                                       true  },
+	{ "perf-stats",                 "", "Show performance statistics",                               false },
+	{ "stats",                      "", "Show performance statistics",                               true  },
+	{ "time",                       "", "Show compilation timing",                                   false },
+	{ "timing",                     "", "Show compilation timing",                                   true  },
+	{ "fno-access-control",         "", "Disable access-control checks",                             false },
+	{ "no-access-control",          "", "Disable access-control checks",                             true  },
+	{ "fgcc-compat",                "", "Use GCC/Clang compatible built-in macros",                  false },
+	{ "fclang-compat",              "", "Use GCC/Clang compatible built-in macros",                  true  },
+	{ "fno-exceptions",             "", "Disable exception handling",                                false },
+	{ "eager-template-instantiation", "", "Instantiate all template members eagerly (default: lazy)", false },
+};
+
+// Compile-time lookup: _opt user-defined literal.
+// Returns the option name as a std::string_view; triggers a compile error for unknown names.
+consteval std::string_view operator""_opt(const char* s, size_t len) {
+	std::string_view sv(s, len);
+	for (const auto& entry : all_cli_value_options)
+		if (entry.name == sv) return sv;
+	for (const auto& entry : all_cli_flags)
+		if (entry.name == sv) return sv;
+	throw "unrecognized option name";
+}
 
 class CommandLineParser {
 public:
@@ -116,16 +170,46 @@ public:
 		return inputFileArgs_;
 	}
 
+	// Print help text to stdout, derived from the constexpr option tables.
+	static void printHelp() {
+		static constexpr size_t kHelpColumnWidth = 36;
+
+		std::cout << "FlashCpp - A C++20 compiler front-end\n\n"
+		             "Usage: FlashCpp [options] <input-file>\n\n"
+		             "Options:\n";
+
+		// Value options
+		for (const auto& opt : all_cli_value_options) {
+			if (opt.is_alias) continue;
+			std::string left = "  -";
+			if (opt.name.size() > 1) left += "-";  // long options get --
+			left += std::string(opt.name);
+			left += " ";
+			left += std::string(opt.value_hint);
+			while (left.size() < kHelpColumnWidth) left += ' ';
+			std::cout << left << opt.description << "\n";
+		}
+
+		// Flag options – skip aliases
+		for (const auto& opt : all_cli_flags) {
+			if (opt.is_alias) continue;
+
+			std::string left = "  -";
+			if (opt.name.size() > 1) left += "-";
+			left += std::string(opt.name);
+			while (left.size() < kHelpColumnWidth) left += ' ';
+			std::cout << left << opt.description << "\n";
+		}
+		std::cout << "\n";
+	}
+
 private:
-	// Helper to check if an option is a known flag (doesn't take a value)
+	// Helper to check if an option is a known flag (doesn't take a value).
+	// Derived from the all_cli_flags constexpr table.
 	static bool isKnownFlag(std::string_view flag) {
-		return flag == "v" || flag == "verbose" ||
-		       flag == "E" ||
-		       flag == "perf-stats" || flag == "stats" ||
-		       flag == "time" || flag == "timing" ||
-		       flag == "fno-access-control" || flag == "no-access-control" ||
-		       flag == "fgcc-compat" || flag == "fclang-compat" ||
-		       flag == "fno-exceptions";
+		for (const auto& entry : all_cli_flags)
+			if (entry.name == flag) return true;
+		return false;
 	}
 
 	std::map<std::string_view, std::variant<std::monostate, std::string_view>> optionValues_;

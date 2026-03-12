@@ -173,23 +173,23 @@ int main_impl(int argc, char *argv[]) {
         }
     }
 
-    if (argsparser.hasOption("h") || argsparser.hasOption("help")) {
-        FLASH_LOG(General, Info, "Help message\n");
+    if (argsparser.hasOption("h"_opt) || argsparser.hasOption("help"_opt)) {
+        CommandLineParser::printHelp();
         return 0;
     }
 
-    if (argsparser.hasOption("o")) {
-        auto output_file = argsparser.optionValue("o");
+    if (argsparser.hasOption("o"_opt)) {
+        auto output_file = argsparser.optionValue("o"_opt);
         if (std::holds_alternative<std::string_view>(output_file))
             context.setOutputFile(std::get<std::string_view>(output_file));
     }
 
-    context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
-    context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
-    context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
+    context.setVerboseMode(argsparser.hasFlag("v"_opt) || argsparser.hasFlag("verbose"_opt));
+    context.setPreprocessorOnlyMode(argsparser.hasFlag("E"_opt));
+    context.setDisableAccessControl(argsparser.hasFlag("fno-access-control"_opt) || argsparser.hasFlag("no-access-control"_opt));
     
     // Check for -fno-exceptions flag
-    if (argsparser.hasFlag("fno-exceptions")) {
+    if (argsparser.hasFlag("fno-exceptions"_opt)) {
         extern bool g_enable_exceptions;
         g_enable_exceptions = false;
         FLASH_LOG(General, Info, "Exception handling disabled by -fno-exceptions flag");
@@ -198,7 +198,7 @@ int main_impl(int argc, char *argv[]) {
     // Compiler mode - controls which compiler's builtin macros to use
     // Auto-detect based on platform, but allow override with -fgcc-compat or -fclang-compat
     // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.
-    if (argsparser.hasFlag("fgcc-compat"sv) || argsparser.hasFlag("fclang-compat"sv)) {
+    if (argsparser.hasFlag("fgcc-compat"_opt) || argsparser.hasFlag("fclang-compat"_opt)) {
         context.setCompilerMode(CompileContext::CompilerMode::GCC);
         FLASH_LOG(General, Debug, "Using GCC/Clang compiler mode (forced by flag)"sv);
     } else {
@@ -214,8 +214,8 @@ int main_impl(int argc, char *argv[]) {
 
     // Name mangling style - auto-detected by platform but can be overridden
     // for cross-compilation support
-    if (argsparser.hasOption("fmangling")) {
-        auto mangling_opt = argsparser.optionValue("fmangling"sv);
+    if (argsparser.hasOption("fmangling"_opt)) {
+        auto mangling_opt = argsparser.optionValue("fmangling"_opt);
         if (std::holds_alternative<std::string_view>(mangling_opt)) {
             std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
             FLASH_LOG(General, Info, "Using name mangling style: "sv, mangling_str);
@@ -238,15 +238,15 @@ int main_impl(int argc, char *argv[]) {
         #endif
     }
 
-    bool show_debug = argsparser.hasFlag("d"sv) || argsparser.hasFlag("debug"sv);
-    bool show_perf_stats = argsparser.hasFlag("perf-stats"sv) || argsparser.hasFlag("stats"sv);
-    bool show_timing = argsparser.hasFlag("time"sv) || argsparser.hasFlag("timing"sv) || show_perf_stats;
+    bool show_debug = argsparser.hasFlag("d"_opt) || argsparser.hasFlag("debug"_opt);
+    bool show_perf_stats = argsparser.hasFlag("perf-stats"_opt) || argsparser.hasFlag("stats"_opt);
+    bool show_timing = argsparser.hasFlag("time"_opt) || argsparser.hasFlag("timing"_opt) || show_perf_stats;
 
     // Set global debug flag (also enabled by verbose mode)
     g_enable_debug_output = show_debug || context.isVerboseMode();
 
     // Lazy template instantiation mode (enabled by default, can be disabled for testing)
-    bool lazy_instantiation = !argsparser.hasFlag("eager-template-instantiation"sv);
+    bool lazy_instantiation = !argsparser.hasFlag("eager-template-instantiation"_opt);
     context.setLazyTemplateInstantiation(lazy_instantiation);
     if (!lazy_instantiation && context.isVerboseMode()) {
         FLASH_LOG(General, Info, "Eager template instantiation mode enabled (all template members instantiated immediately)");
