@@ -95,6 +95,12 @@
     `preserveEncodedExprMetadata(...)`
   - the old bug shape `makeExprResult(..., 0, 0, ull)` no longer matches a
     public overload
+- another small producer-side cleanup then removed the last direct
+  `ExprResult::encoded_metadata = ...` writes from codegen:
+  - `generateIdentifierIr(...)` now preserves enum identifier slot-4 metadata
+    by rebuilding through `makeExprResult(..., preserveEncodedExprMetadata(...))`
+  - after that change, raw `encoded_metadata` field writes remain only in the
+    compatibility bridge helpers inside `src/IROperandHelpers.h`
 
 ## Problem
 
