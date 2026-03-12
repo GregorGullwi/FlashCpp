@@ -395,13 +395,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// The comma operator evaluates both operands left-to-right and returns the right operand
 		if (op == ",") {
 			// Generate IR for the left-hand side (evaluate for side effects, discard result)
-			ExprOperands lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
+			visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 
 			// Generate IR for the right-hand side (this is the result)
-			ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+			ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 			// Return the right-hand side result
-			return toExprResult(rhsIrOperands);
+			return rhsExprResult;
 		}
 
 		// Special handling for assignment to array subscript or member access
@@ -2528,7 +2528,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
-		ExprOperands va_list_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		ExprResult vaListExprResult = visitExpressionNode(arg0.as<ExpressionNode>());
 
 		// Get the second argument (type identifier or type specifier)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -2577,10 +2577,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// va_list_ir[2] contains the variable/temp identifier
 		std::variant<StringHandle, TempVar> va_list_var;
-		if (std::holds_alternative<TempVar>(va_list_ir[2])) {
-			va_list_var = std::get<TempVar>(va_list_ir[2]);
-		} else if (std::holds_alternative<StringHandle>(va_list_ir[2])) {
-			va_list_var = std::get<StringHandle>(va_list_ir[2]);
+		if (std::holds_alternative<TempVar>(vaListExprResult.value)) {
+			va_list_var = std::get<TempVar>(vaListExprResult.value);
+		} else if (std::holds_alternative<StringHandle>(vaListExprResult.value)) {
+			va_list_var = std::get<StringHandle>(vaListExprResult.value);
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
 			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
@@ -2588,7 +2588,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 		// This must match the detection logic in generateVaStartIntrinsic
-		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(va_list_ir));
+		bool va_list_is_pointer = isVaListPointerType(arg0, vaListExprResult);
 
 		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
@@ -3211,7 +3211,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
-		ExprOperands arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		ExprResult arg0ExprResult = visitExpressionNode(arg0.as<ExpressionNode>());
 
 		// Get the va_list variable name (needed for assignment later)
 		StringHandle va_list_name_handle;
@@ -3221,7 +3221,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = isVaListPointerType(arg0, toExprResult(arg0_ir));
+		bool va_list_is_pointer = isVaListPointerType(arg0, arg0ExprResult);
 
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -3249,14 +3249,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar va_list_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
-			// Get the va_list variable from arg0_ir[2]
+			// Get the va_list variable from arg0ExprResult.value
 			std::variant<StringHandle, TempVar> va_list_var;
 			if (va_list_name_handle.isValid()) {
 				va_list_var = va_list_name_handle;
-			} else if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-				va_list_var = std::get<TempVar>(arg0_ir[2]);
-			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
-				va_list_var = std::get<StringHandle>(arg0_ir[2]);
+			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
+				va_list_var = std::get<TempVar>(arg0ExprResult.value);
+			} else if (std::holds_alternative<StringHandle>(arg0ExprResult.value)) {
+				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return makeExprResult(Type::Void, 0, IrOperand{0ULL});
@@ -3281,10 +3281,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::variant<StringHandle, TempVar> va_list_var;
 			if (va_list_name_handle.isValid()) {
 				va_list_var = va_list_name_handle;
-			} else if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-				va_list_var = std::get<TempVar>(arg0_ir[2]);
-			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
-				va_list_var = std::get<StringHandle>(arg0_ir[2]);
+			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
+				va_list_var = std::get<TempVar>(arg0ExprResult.value);
+			} else if (std::holds_alternative<StringHandle>(arg0ExprResult.value)) {
+				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return makeExprResult(Type::Void, 0, IrOperand{0ULL});
@@ -3433,11 +3433,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Evaluate the pointer argument
 		ASTNode ptr_arg = functionCallNode.arguments()[0];
-		ExprOperands ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
+		ExprResult ptrExprResult = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 
 		// Extract pointer details
-		[[maybe_unused]] Type ptr_type = std::get<Type>(ptr_ir[0]);
-		[[maybe_unused]] int ptr_size = std::get<int>(ptr_ir[1]);
+		[[maybe_unused]] Type ptr_type = ptrExprResult.type;
+		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits;
 
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -3454,7 +3454,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_launder encountered - optimization barrier created");
 
 		// Return the pointer unchanged (but optimization barrier is implied)
-		return toExprResult(ptr_ir);
+		return ptrExprResult;
 	}
 
 	ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {

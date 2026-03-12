@@ -69,8 +69,18 @@
     `ExprOperands` bridge for its positional store logic before returning the
     original `ExprResult`
 - after that slice, the remaining known consumer-side `toExprResult(...)`
-  bounce points in `src/CodeGen_Expr_Operators.cpp` are down to the comma
+  bounce points in `src/CodeGen_Expr_Operators.cpp` were down to the comma
   operator, the `va_list` helpers, and the builtin launder return path
+- the next follow-up removed those last `CodeGen_Expr_Operators.cpp`
+  consumer-side bounce points too:
+  - the comma operator now returns the direct `ExprResult` from its RHS
+  - `generateVaArgIntrinsic(...)` and `generateVaStartIntrinsic(...)` now pass
+    the original `ExprResult` into `isVaListPointerType(...)` and use `.value`
+    instead of positional slot access for the tracked va_list variable
+  - `generateBuiltinLaunderIntrinsic(...)` now uses named `ExprResult` fields
+    and returns the original pointer result directly
+- after that cleanup, the known Phase 4 consumer-side `toExprResult(...)`
+  bounce points are no longer in `src/CodeGen_Expr_Operators.cpp`
 
 ## Problem
 
