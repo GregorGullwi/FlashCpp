@@ -107,6 +107,14 @@
     now pass `ExprResult` directly into `toTypedValue(...)`
   - the `switch` comparison chain now reads `.type`, `.size_in_bits`, and
     `.value` from `ExprResult` instead of re-decoding positional operand slots
+- another larger consumer cleanup then migrated the indirect/member-call lowering
+  in `src/CodeGen_Call_Indirect.cpp` to named `ExprResult` fields:
+  - immediate lambda invocation now uses the direct `ExprResult` returned by
+    `generateLambdaExpressionIr(...)` instead of re-reading positional slots
+  - indirect/member/virtual call argument packing now consumes `ExprResult`
+    directly for typed argument construction
+  - temporary-object call paths and reference-argument materialization now read
+    `.value`, `.type`, and `.size_in_bits` instead of positional operand slots
 
 ## Problem
 
