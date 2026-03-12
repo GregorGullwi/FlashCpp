@@ -2465,6 +2465,13 @@ TEST_CASE("ConstExpr:UB") {
 	run_test_from_file("test_ub_fail.cpp", "Constexpr UB detection", false);
 }
 
+TEST_CASE("ConstExpr:InheritedStaticMember") {
+	// Regression test for bug where evaluate_static_member_from_struct used the
+	// derived class name instead of the base class name for the symbol table fallback
+	// lookup when a static member is inherited and has no inline initializer.
+	run_test_from_file("test_constexpr_inherited_static_member_ret42.cpp", "Constexpr inherited static member lookup", false);
+}
+
 TEST_CASE("RangedFor:Simple") {
 	run_test_from_file("test_range_for_simple.cpp", "Range-based for loop simple test", false);
 }
