@@ -189,6 +189,11 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 		assert(struct_info && "Struct type info not found");
 		return struct_info->total_size;
 	}
+	// For Enum types with a valid type_index, look up the size from gTypeInfo
+	// The type_size_ is stored in bits, so divide by 8 to get bytes
+	if ((type == Type::Enum || type == Type::UserDefined) && type_index > 0 && type_index < gTypeInfo.size()) {
+		return gTypeInfo[type_index].type_size_ / 8;
+	}
 	// For primitive types, convert bits to bytes
 	return size_in_bits / 8;
 }
