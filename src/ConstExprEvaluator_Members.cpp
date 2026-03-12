@@ -1085,7 +1085,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	const ASTNode& expr_node,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context) {
-	
+	return evaluate_expression_with_bindings_dispatch(expr_node, bindings, context, evaluate_expression_with_bindings_const, nullptr);
+}
+
+EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
+	const ASTNode& expr_node,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	RecursiveBindEvalFn recursive_eval,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
+
 	if (!expr_node.is<ExpressionNode>()) {
 		return EvalResult::error("Not an expression node");
 	}
@@ -1126,8 +1135,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
-		auto lhs_result = evaluate_expression_with_bindings_const(bin_op.get_lhs(), bindings, context);
-		auto rhs_result = evaluate_expression_with_bindings_const(bin_op.get_rhs(), bindings, context);
+		auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
+		auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
 		
 		if (!lhs_result.success()) return lhs_result;
 		if (!rhs_result.success()) return rhs_result;
@@ -1135,32 +1144,40 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 	}
 	
+	// For unary operators
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unary_op = std::get<UnaryOperatorNode>(expr);
+		auto operand_result = recursive_eval(unary_op.get_operand(), bindings, context);
+		if (!operand_result.success()) return operand_result;
+		return apply_unary_op(operand_result, unary_op.op());
+	}
+	
 	// For ternary operators
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
-		auto cond_result = evaluate_expression_with_bindings_const(ternary.condition(), bindings, context);
+		auto cond_result = recursive_eval(ternary.condition(), bindings, context);
 		
 		if (!cond_result.success()) return cond_result;
 		
 		if (cond_result.as_bool()) {
-			return evaluate_expression_with_bindings_const(ternary.true_expr(), bindings, context);
+			return recursive_eval(ternary.true_expr(), bindings, context);
 		} else {
-			return evaluate_expression_with_bindings_const(ternary.false_expr(), bindings, context);
+			return recursive_eval(ternary.false_expr(), bindings, context);
 		}
 	}
 	
 	// For function calls (for recursion)
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
-		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
+		return evaluate_function_call_with_outer_bindings(func_call, bindings, context, mutable_bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
-	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context)) {
+	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, mutable_bindings)) {
 		return *call_result;
 	}
 
-	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context)) {
+	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context, mutable_bindings)) {
 		return *member_call_result;
 	}
 	

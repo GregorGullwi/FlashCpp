@@ -473,6 +473,13 @@ private:
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
+	using RecursiveBindEvalFn = EvalResult(*)(const ASTNode&, const std::unordered_map<std::string_view, EvalResult>&, EvaluationContext&);
+	static EvalResult evaluate_expression_with_bindings_dispatch(
+		const ASTNode& expr_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		RecursiveBindEvalFn recursive_eval,
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
 	static std::optional<ASTNode> lookup_identifier_symbol(
 		const IdentifierNode* identifier,
 		std::string_view fallback_name,
