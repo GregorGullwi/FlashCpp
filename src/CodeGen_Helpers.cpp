@@ -189,10 +189,26 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 		assert(struct_info && "Struct type info not found");
 		return struct_info->total_size;
 	}
-	// For Enum types with a valid type_index, look up the size from gTypeInfo
-	// The type_size_ is stored in bits, so divide by 8 to get bytes
-	if ((type == Type::Enum || type == Type::UserDefined) && type_index > 0 && type_index < gTypeInfo.size()) {
-		return gTypeInfo[type_index].type_size_ / 8;
+	// For Enum types with a valid type_index, look up the size from EnumTypeInfo.
+	// Note: TypeInfo::type_size_ is NOT set for fully-defined enums (only for
+	// forward-declared enums and typedef aliases), so we must read underlying_size
+	// from the EnumTypeInfo directly.  underlying_size is in bits.
+	if (type == Type::Enum && type_index > 0 && type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
+			return enum_info->underlying_size / 8;
+		}
+		// Fallback for forward-declared enums that only have type_size_ set
+		if (type_info.type_size_ > 0) {
+			return type_info.type_size_ / 8;
+		}
+	}
+	// For UserDefined (typedef) types with a valid type_index, type_size_ is
+	// set from size_in_bits() at the typedef site, so it is in bits.
+	if (type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size()) {
+		if (gTypeInfo[type_index].type_size_ > 0) {
+			return gTypeInfo[type_index].type_size_ / 8;
+		}
 	}
 	// For primitive types, convert bits to bytes
 	return size_in_bits / 8;
