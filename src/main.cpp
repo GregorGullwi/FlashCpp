@@ -120,30 +120,9 @@ int main_impl(int argc, char *argv[]) {
     CompileContext context;
     CommandLineParser argsparser(argc, argv, context);
 
-    // Helper functions for parsing log levels and categories
-    auto parseLevel = [](std::string_view sv) -> FlashCpp::LogLevel {
-        if (sv == "error" || sv == "0") return FlashCpp::LogLevel::Error;
-        if (sv == "warning" || sv == "1") return FlashCpp::LogLevel::Warning;
-        if (sv == "info" || sv == "2") return FlashCpp::LogLevel::Info;
-        if (sv == "debug" || sv == "3") return FlashCpp::LogLevel::Debug;
-        if (sv == "trace" || sv == "4") return FlashCpp::LogLevel::Trace;
-        return FlashCpp::LogLevel::Info; // default
-    };
-
-    auto parseCategory = [](std::string_view sv) -> FlashCpp::LogCategory {
-        if (sv == "General") return FlashCpp::LogCategory::General;
-        if (sv == "Parser") return FlashCpp::LogCategory::Parser;
-        if (sv == "Lexer") return FlashCpp::LogCategory::Lexer;
-        if (sv == "Templates") return FlashCpp::LogCategory::Templates;
-        if (sv == "Symbols") return FlashCpp::LogCategory::Symbols;
-        if (sv == "Types") return FlashCpp::LogCategory::Types;
-        if (sv == "Codegen") return FlashCpp::LogCategory::Codegen;
-        if (sv == "Scope") return FlashCpp::LogCategory::Scope;
-        if (sv == "Mangling") return FlashCpp::LogCategory::Mangling;
-        if (sv == "ConstExpr") return FlashCpp::LogCategory::ConstExpr;
-        if (sv == "All") return FlashCpp::LogCategory::All;
-        return FlashCpp::LogCategory::General; // default
-    };
+    // Use the constexpr lookup helpers from Log.h (single source of truth)
+    auto parseLevel    = [](std::string_view sv) { return FlashCpp::levelFromName(sv); };
+    auto parseCategory = [](std::string_view sv) { return FlashCpp::categoryFromName(sv); };
 
     // Handle log level setting from command line
     if (argsparser.hasOption("log-level"_opt)) {

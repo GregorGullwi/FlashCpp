@@ -20,9 +20,7 @@ struct CliOptionInfo {
 inline constexpr CliOptionInfo all_cli_value_options[] = {
 	{ "o",          "<file>",   "Specify output object file",                                         false },
 	{ "I",          "<path>",   "Add include directory",                                              false },
-	{ "log-level",  "<level>",  "Set log level: error/warning/info/debug/trace or category:level\n"
-	                            "                              (categories: General, Parser, Lexer, Templates,\n"
-	                            "                               Symbols, Types, Codegen, Scope, Mangling, All)", false },
+	{ "log-level",  "<level>",  "Set log level (see below for details)",                               false },
 	{ "fmangling",  "<style>",  "Name mangling style: msvc or itanium",                              false },
 };
 
@@ -206,7 +204,23 @@ public:
 		for (const auto& opt : all_cli_flags) {
 			print_option(opt);
 		}
-		std::cout << "\n";
+
+		// Build log-level detail block from the constexpr tables in Log.h
+		std::cout << "\nLog levels: ";
+		bool first = true;
+		for (const auto& lv : FlashCpp::all_log_levels) {
+			if (!first) std::cout << '/';
+			std::cout << lv.name;
+			first = false;
+		}
+		std::cout << "\nLog categories: ";
+		first = true;
+		for (const auto& cat : FlashCpp::all_log_categories) {
+			if (!first) std::cout << ", ";
+			std::cout << cat.name;
+			first = false;
+		}
+		std::cout << "\nUsage: --log-level=<level> or --log-level=<category>:<level>\n\n";
 	}
 
 private:
