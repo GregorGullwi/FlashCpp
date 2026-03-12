@@ -478,9 +478,7 @@
 			Type::Struct,
 			closure_size_bits,
 			IrOperand{StringTable::getOrInternStringHandle(closure_var_name)},
-			closure_type_index,
-			0,
-			preserveEncodedExprMetadata(static_cast<unsigned long long>(closure_type_index))
+			closure_type_index
 		);
 	}
 

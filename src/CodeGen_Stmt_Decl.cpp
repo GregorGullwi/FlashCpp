@@ -676,6 +676,12 @@
 		// Create variable declaration operands
 		// Format: [type, size_in_bits, var_name, custom_alignment, is_ref, is_rvalue_ref, is_array, ...]
 		std::vector<IrOperand> operands;
+		auto appendExprResultToOperands = [&](const ExprResult& result) {
+			operands.reserve(operands.size() + 3);
+			operands.emplace_back(result.type);
+			operands.emplace_back(result.size_in_bits);
+			operands.emplace_back(result.value);
+		};
 		operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
@@ -745,10 +751,10 @@
 					const ASTNode& single_init = init_list.initializers()[0];
 					
 					// Visit the initializer expression to get its IR
-					ExprOperands init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
+					ExprResult init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
 					
 					// Append the initializer operands
-					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					appendExprResultToOperands(init_operands);
 					
 					ensure_symbol_registered();
 
@@ -1385,8 +1391,7 @@
 						}
 					}
 					
-					ExprOperands init_converted = init_operands;
-				operands.insert(operands.end(), init_converted.begin(), init_converted.end());
+					appendExprResultToOperands(init_operands);
 				} else {
 					// For struct with constructor, check if this is copy elision case first
 					// C++17 mandates copy elision for: T x = T(args);
@@ -1400,12 +1405,12 @@
 					
 					if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
-						ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 						// Check if this is an rvalue (TempVar) - function return value
-						bool is_rvalue = (init_operands.size() >= 3 && std::holds_alternative<TempVar>(init_operands[2]));
+						bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 						if (is_rvalue) {
 							// For rvalues, use direct initialization (no constructor call)
-							operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+							appendExprResultToOperands(init_operands);
 						}
 						// For lvalues, skip adding to operands - will use constructor call below
 					}

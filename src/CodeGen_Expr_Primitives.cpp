@@ -207,9 +207,7 @@
 			member_type,
 			member_size,
 			IrOperand{result_var},
-			member_type_index,
-			0,
-			preserveEncodedExprMetadata(static_cast<unsigned long long>(member_type_index))
+			member_type_index
 		);
 	}
 
@@ -242,19 +240,8 @@
 			int size_bits,
 			IrOperand value,
 			TypeIndex type_index = 0,
-			int pointer_depth = 0,
-			std::optional<unsigned long long> encoded_metadata = std::nullopt
+			int pointer_depth = 0
 		) -> ExprResult {
-			if (encoded_metadata.has_value()) {
-				return makeExprResult(
-					type,
-					size_bits,
-					std::move(value),
-					type_index,
-					pointer_depth,
-					preserveEncodedExprMetadata(encoded_metadata)
-				);
-			}
 			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
@@ -276,30 +263,15 @@
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
-			const std::optional<unsigned long long> encoded_metadata =
-				(type_node.type() == Type::Enum && !is_enum_pointer)
-				? std::optional<unsigned long long>{static_cast<unsigned long long>(type_node.type_index())}
-				: std::nullopt;
 			return makeIdentifierResult(
 				result_type,
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				pointer_depth,
-				encoded_metadata
+				pointer_depth
 			);
 		};
-		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0) {
-				return makeExprResult(
-					result.type,
-					result.size_in_bits,
-					std::move(result.value),
-					result.type_index,
-					result.pointer_depth,
-					preserveEncodedExprMetadata(static_cast<unsigned long long>(type_node.type_index()))
-				);
-			}
+		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode&) -> ExprResult {
 			return std::move(result);
 		};
 

@@ -3,6 +3,12 @@
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
+		auto appendArgumentIrResult = [&](const ExprResult& result) {
+			irOperands.reserve(irOperands.size() + 3);
+			irOperands.emplace_back(result.type);
+			irOperands.emplace_back(result.size_in_bits);
+			irOperands.emplace_back(result.value);
+		};
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
@@ -79,8 +85,7 @@
 										64,
 										IrOperand{result_var},
 										0,
-										0,
-										preserveEncodedExprMetadata(1ULL)
+										1
 									);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
@@ -1143,9 +1148,8 @@
 							}
 							
 							if (is_already_address) {
-								// Already an address - pass through via ExprOperands bridge
-								ExprOperands argOps = argumentIrOperands;
-								irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
+								// Already an address - pass through directly
+								appendArgumentIrResult(argumentIrOperands);
 							} else {
 								// Need to take address of the value
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
@@ -1155,15 +1159,13 @@
 								irOperands.emplace_back(addr_var);
 							}
 						} else {
-							// Fallback - just pass through via ExprOperands bridge
-							ExprOperands argOps = argumentIrOperands;
-							irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
+							// Fallback - just pass through directly
+							appendArgumentIrResult(argumentIrOperands);
 						}
 					}
 				} else {
-					// Parameter doesn't expect a reference - pass through as-is via ExprOperands bridge
-					ExprOperands argOps = argumentIrOperands;
-					irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
+					// Parameter doesn't expect a reference - pass through as-is
+					appendArgumentIrResult(argumentIrOperands);
 				}
 			}
 		});
@@ -1243,23 +1245,10 @@
 		}
 		
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
-		// Operands come in groups of 3 (type, size, value) or 4 (type, size, value, type_index)
-		// toTypedValue handles both cases
+		// Operands come in fixed groups of 3: [type, size, value].
 		size_t arg_idx = 0;
-		for (size_t i = 2; i < irOperands.size(); ) {
-			// Peek ahead to determine operand group size
-			// If there are at least 4 more operands and the 4th is an integer, assume it's type_index
-			size_t group_size = 3;
-			if (i + 3 < irOperands.size() && std::holds_alternative<unsigned long long>(irOperands[i + 3])) {
-				// Check if this looks like a type_index by seeing if i+4 would be start of next group
-				// or end of operands
-				bool next_is_type = (i + 4 >= irOperands.size() || std::holds_alternative<Type>(irOperands[i + 4]));
-				if (next_is_type) {
-					group_size = 4;
-				}
-			}
-			
-			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
+		for (size_t i = 2; i + 2 < irOperands.size(); i += 3) {
+			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], 3));
 			const TypeSpecifierNode* param_type_spec = nullptr;
 			if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
 				param_type_spec = &param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
@@ -1286,6 +1275,9 @@
 				// applyTypeNodeMetadata is still used for default arguments where the
 				// parameter type IS the correct type.
 				arg.pointer_depth = static_cast<int>(param_type_spec->pointer_depth());
+				if (param_type_spec->type_index() != 0) {
+					arg.type_index = param_type_spec->type_index();
+				}
 				arg.cv_qualifier = param_type_spec->cv_qualifier();
 				if (param_type_spec->is_rvalue_reference()) {
 					arg.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -1297,7 +1289,6 @@
 			}
 			
 			call_op.args.push_back(arg);
-			i += group_size;
 			arg_idx++;
 		}
 
@@ -1337,10 +1328,6 @@
 			return_type.type(),
 			result_size,
 			IrOperand{ret_var},
-			type_index_result,
-			0,
-			preserveEncodedExprMetadata(
-				type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt
-			)
+			type_index_result
 		);
 	}

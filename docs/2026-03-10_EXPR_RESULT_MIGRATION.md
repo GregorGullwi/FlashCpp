@@ -1,18 +1,21 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (all consumer-side positional-slot reads migrated; only the legacy `ExprOperands` shim + `encoded_metadata` field remain to be deleted)
+**Status**: Complete on branch `copilot/update-exprresult-migration` (all planned `ExprResult` migration and shim-removal work is implemented)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
 
-- `ExprResult` and `ExprOperands` are present in `src/IROperandHelpers.h`
-- `toTypedValue(const ExprResult&)` already exists, so consumer-side bridging is started
-- priority producer sites have been migrated in `src/CodeGen_MemberAccess.cpp`, `src/CodeGen_Expr_Primitives.cpp`, and selected address-expression paths in `src/CodeGen_Expr_Conversions.cpp`
-- the current implementation still uses `encoded_metadata` as a temporary compatibility escape hatch for legacy slot-4 enum encoding edge cases
-- the remaining compatibility work is no longer “add ExprResult” — it is “finish removing the positional bridge and slot-4 compatibility layer” after the Phase 3 return-signature migration
+- `ExprResult` is now the only fixed-size expression-result representation in `src/IROperandHelpers.h`
+- `toTypedValue(const ExprResult&)` is the main hot-path consumer helper; the raw-span helper now only handles `[type, size, value]` triples
+- the last legacy `operands.insert(...)` declaration sites in `src/CodeGen_Stmt_Decl.cpp` now write the 3-field tuple directly into the destination vector after reserving contiguous space
+- the compatibility shim has been removed: `encoded_metadata`, `preserveEncodedExprMetadata(...)`, `ExprResult::operator ExprOperands()`, `toExprResult(...)`, and the `ExprOperands` alias are gone
+- direct-call argument packing and the remaining operator/visitor helpers now consume named `ExprResult` fields directly instead of bouncing through positional adapters
 
 ### Branch progress (PR #893 / 2026-03-12)
+
+Historical branch-progress notes are kept below in commit order. The newest
+bullets near the end of this section supersede earlier intermediate-state notes.
 
 - all planned Phase 3 producer families on this branch now return `ExprResult` directly:
   - leaf literals
@@ -148,26 +151,34 @@
   captures that immediately read positional slots have been migrated; the only
   remaining `ExprOperands` captures are at architectural legacy sites that feed a
   broader positional `operands[]` vector (deferred to chunked-vector refactor)
+- the final Phase 4 follow-up completed that deferred declaration work and deleted
+  the remaining shim layer:
+  - `src/CodeGen_Stmt_Decl.cpp` now appends initializer `[type, size, value]`
+    triples directly into the local `operands` vector instead of inserting a
+    temporary 3/4-slot expression-result container
+  - `src/CodeGen_Call_Direct.cpp` no longer round-trips arguments through a
+    synthetic slot-4 metadata encoding; it packs fixed 3-field groups and
+    restores parameter-only metadata directly on the final `TypedValue`
+  - `src/CodeGen_Expr_Operators.cpp`, `src/CodeGen_Visitors_Decl.cpp`, and the
+    remaining identifier/unary helpers now read `.type`, `.size_in_bits`,
+    `.value`, `.type_index`, and `.pointer_depth` directly
+  - `src/IROperandHelpers.h` now contains only the 3/4/5-argument
+    `makeExprResult(...)` overloads plus `toTypedValue(const ExprResult&)`; the
+    legacy bridge helpers and slot-4 compatibility field were removed
 
 ## Remaining Work (Phase 4 — shim removal)
 
-Once the two legacy `operands.insert` architectural sites in `CodeGen_Stmt_Decl.cpp` are
-migrated (using the global chunked-vector + span approach), the following dead code can
-be deleted:
-
-1. `ExprResult::encoded_metadata` field and `preserveEncodedExprMetadata(...)` helper
-2. `ExprResult::operator ExprOperands() const` implicit conversion
-3. `toExprResult(...)` helper overloads in `src/IROperandHelpers.h`
-4. slot-4 decoding path inside `toTypedValue(ExprOperands)` in `src/IROperandHelpers.h`
-5. `ExprOperands` typedef (or keep as internal alias only)
+No remaining Phase 4 shim-removal tasks are known on this branch. Any further
+follow-up would be broader cleanup or architecture work outside the original
+`ExprResult` migration scope.
 
 ## Problem
 
 Expression-evaluating codegen functions (e.g. `generateArraySubscriptIr`,
 `generateIdentifierIr`, `generateMemberAccessIr`) historically returned
-`std::vector<IrOperand>` with positional semantics. The fixed-size hot path has
-now moved to `ExprOperands` (`InlineVector<IrOperand, 4>`), but much of the
-legacy positional contract still exists at the producer/consumer boundary:
+`std::vector<IrOperand>` with positional semantics. The migration replaced that
+fixed-size hot path with `ExprResult`, eliminating the old 3/4-slot positional
+contract from expression producers and hot-path consumers:
 
 ```
 [0] Type               — element type
@@ -207,10 +218,10 @@ though these are always exactly 3 or 4 elements.
 
 ## Solution: `ExprResult` Struct with `InlineVector` Storage
 
-Replace the raw `std::vector<IrOperand>` with a struct that has named fields
-and uses `InlineVector<IrOperand, 4>` for the backward-compatible conversion.
-Since expression results are always 3-4 elements, `InlineVector<IrOperand, 4>`
-keeps everything on the stack — no heap allocation ever.
+Replace the raw `std::vector<IrOperand>` with a struct that has named fields.
+The final migrated state no longer needs a compatibility container or slot-4
+bridge; expression producers and consumers talk in terms of the named fields
+directly.
 
 ```cpp
 struct ExprResult {
@@ -219,18 +230,8 @@ struct ExprResult {
     IrOperand value;          // TempVar, StringHandle, literal
     TypeIndex type_index = 0;
     int pointer_depth = 0;
-
-    // Transitional compatibility override for legacy slot-4 encoding.
-    std::optional<unsigned long long> encoded_metadata;
-
-    // Backward-compat: implicit conversion to ExprOperands.
-    operator ExprOperands() const;
 };
 ```
-
-`encoded_metadata` is a temporary migration aid, not the end state. It exists
-to preserve legacy enum-specific slot-4 behavior while remaining producers and
-consumers are still being migrated away from positional metadata.
 
 ### Why this works
 
@@ -473,8 +474,8 @@ This caused bugs like:
 makeExprResult(Type::Struct, size, value, 0, 0, static_cast<unsigned long long>(type_index));
 ```
 
-**Implemented solution:** Keep the common overloads terse, but make the legacy
-slot-4 preservation path explicit:
+**Implemented solution during the transition:** Keep the common overloads terse,
+but make the legacy slot-4 preservation path explicit:
 
 ```cpp
 // 3 args: just type + value (most common)
@@ -486,31 +487,22 @@ inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, T
 // 5 args: both type_index and pointer_depth
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth);
 
-// Explicit legacy bridge for partial-migration sites only
-inline EncodedExprMetadata preserveEncodedExprMetadata(unsigned long long value);
-inline EncodedExprMetadata preserveEncodedExprMetadata(std::optional<unsigned long long> value);
-inline ExprResult makeExprResult(
-    Type type,
-    int size_in_bits,
-    IrOperand value,
-    TypeIndex type_index,
-    int pointer_depth,
-    EncodedExprMetadata encoded_metadata
-);
 ```
 
-**Benefits:**
+That explicit bridge has since been deleted as part of the final Phase 4
+cleanup; the surviving public API is just the 3/4/5-argument overload set.
+
+**Benefits of the transition step:**
 - The bug case `makeExprResult(..., 0, 0, ull)` no longer compiles
 - Legacy-bridge call sites are visually obvious in review because they spell
   `preserveEncodedExprMetadata(...)`
 - Regular callers keep the compact overloads and do not need to thread a
   wrapper type through the common path
 
-**Migration:**
-- update only the small set of legacy bridge sites that intentionally preserve
-  raw slot-4 payloads
-- convert those calls to
-  `makeExprResult(..., preserveEncodedExprMetadata(...))`
+**Migration outcome:**
+- the temporary explicit bridge kept the risky mixed old/new period reviewable
+- the final follow-up then removed the bridge entirely once the last positional
+  adapter sites were gone
 
 ## Explicitly Out of Scope for This Plan
 

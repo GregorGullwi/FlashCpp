@@ -2161,19 +2161,15 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	Type element_type = Type::Int;
 	
 	// Infer element type from first element if available
-	std::vector<std::vector<IrOperand>> element_operands;
+	std::vector<ExprResult> element_operands;
 	for (size_t i = 0; i < init_list.elements().size(); ++i) {
 		const ASTNode& elem = init_list.elements()[i];
 		if (elem.is<ExpressionNode>()) {
-			ExprOperands operands = visitExpressionNode(elem.as<ExpressionNode>());
+			ExprResult operands = visitExpressionNode(elem.as<ExpressionNode>());
 			element_operands.push_back(operands);
-			if (i == 0 && operands.size() >= 2) {
-				if (std::holds_alternative<Type>(operands[0])) {
-					element_type = std::get<Type>(operands[0]);
-				}
-				if (std::holds_alternative<int>(operands[1])) {
-					element_size_bits = std::get<int>(operands[1]);
-				}
+			if (i == 0) {
+				element_type = operands.type;
+				element_size_bits = operands.size_in_bits;
 			}
 		}
 	}
@@ -2200,8 +2196,6 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
-		if (element_operands[i].size() < 3) continue;
-		
 		ArrayStoreOp store_op;
 		store_op.element_type = element_type;
 		store_op.element_size_in_bits = element_size_bits;
@@ -2279,9 +2273,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		Type::Struct,
 		init_list_size_bits,
 		IrOperand{init_list_name},
-		static_cast<TypeIndex>(init_list_type_index),
-		0,
-		preserveEncodedExprMetadata(static_cast<unsigned long long>(init_list_type_index))
+		static_cast<TypeIndex>(init_list_type_index)
 	);
 }
 
@@ -2489,9 +2481,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				type_spec.type(),
 				actual_size_bits,
 				IrOperand{ret_var},
-				static_cast<TypeIndex>(result_type_index),
-				0,
-				preserveEncodedExprMetadata(static_cast<unsigned long long>(result_type_index))
+				static_cast<TypeIndex>(result_type_index)
 			);
 		}
 	}
@@ -2652,8 +2642,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		type_spec.type(),
 		actual_size_bits,
 		IrOperand{ret_var},
-		static_cast<TypeIndex>(result_type_index),
-		0,
-		preserveEncodedExprMetadata(static_cast<unsigned long long>(result_type_index))
+		static_cast<TypeIndex>(result_type_index)
 	);
 }
