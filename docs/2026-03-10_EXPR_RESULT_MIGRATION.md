@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (Phase 4 consumer-side `toExprResult` removal underway)
+**Status**: In Progress (planned consumer-side `toExprResult` cleanup complete; compatibility-shim cleanup remains)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
@@ -81,6 +81,14 @@
     and returns the original pointer result directly
 - after that cleanup, the known Phase 4 consumer-side `toExprResult(...)`
   bounce points are no longer in `src/CodeGen_Expr_Operators.cpp`
+- for the current PR scope, the planned consumer-side `toExprResult(...)`
+  removal work is complete; the remaining document work is broader follow-up
+  cleanup outside this PR:
+  - remove `encoded_metadata` once no legacy slot-4 bridge is needed
+  - remove the implicit `ExprResult -> ExprOperands` compatibility path
+  - remove slot-4 decoding from `toTypedValue()` once all callers consume named
+    `ExprResult` fields or other direct metadata
+  - harden `makeExprResult(...)` so metadata arguments cannot be misordered
 
 ## Problem
 
