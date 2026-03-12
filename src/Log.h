@@ -88,6 +88,57 @@ constexpr bool isSingleBitCategory(LogCategory cat) {
 // Number of log categories (General through ConstExpr = 10)
 constexpr size_t NUM_LOG_CATEGORIES = 10;
 
+// ---- Constexpr name tables for categories and levels ----
+// Single source of truth used by categoryName(), parseCategory(), and --help output.
+
+struct LogCategoryInfo {
+	LogCategory value;
+	std::string_view name;
+};
+
+inline constexpr LogCategoryInfo all_log_categories[] = {
+	{ LogCategory::General,   "General" },
+	{ LogCategory::Parser,    "Parser" },
+	{ LogCategory::Lexer,     "Lexer" },
+	{ LogCategory::Templates, "Templates" },
+	{ LogCategory::Symbols,   "Symbols" },
+	{ LogCategory::Types,     "Types" },
+	{ LogCategory::Codegen,   "Codegen" },
+	{ LogCategory::Scope,     "Scope" },
+	{ LogCategory::Mangling,  "Mangling" },
+	{ LogCategory::ConstExpr, "ConstExpr" },
+	{ LogCategory::All,       "All" },
+};
+
+struct LogLevelInfo {
+	LogLevel value;
+	std::string_view name;
+};
+
+inline constexpr LogLevelInfo all_log_levels[] = {
+	{ LogLevel::Error,   "error" },
+	{ LogLevel::Warning, "warning" },
+	{ LogLevel::Info,    "info" },
+	{ LogLevel::Debug,   "debug" },
+	{ LogLevel::Trace,   "trace" },
+};
+
+// Look up a category by name (returns General if not found)
+constexpr LogCategory categoryFromName(std::string_view sv) {
+	for (const auto& entry : all_log_categories)
+		if (entry.name == sv) return entry.value;
+	return LogCategory::General;
+}
+
+// Look up a level by name or numeric string (returns Info if not found)
+constexpr LogLevel levelFromName(std::string_view sv) {
+	for (const auto& entry : all_log_levels)
+		if (entry.name == sv) return entry.value;
+	if (sv.size() == 1 && sv[0] >= '0' && sv[0] <= '4')
+		return static_cast<LogLevel>(sv[0] - '0');
+	return LogLevel::Info;
+}
+
 // Runtime filter (can be changed at runtime for enabled levels)
 struct LogConfig {
     static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_DEFAULT_RUNTIME_LEVEL);
@@ -208,21 +259,9 @@ struct Logger {
     }
 
     static constexpr std::string_view categoryName() {
-        switch (Category) {
-            case LogCategory::None:      return "None";
-            case LogCategory::General:   return "General";
-            case LogCategory::Parser:    return "Parser";
-            case LogCategory::Lexer:     return "Lexer";
-            case LogCategory::Templates: return "Templates";
-            case LogCategory::Symbols:   return "Symbols";
-            case LogCategory::Types:     return "Types";
-            case LogCategory::Codegen:   return "Codegen";
-            case LogCategory::Scope:     return "Scope";
-            case LogCategory::Mangling:  return "Mangling";
-            case LogCategory::ConstExpr: return "ConstExpr";
-            case LogCategory::All:       return "All";
-            default:                     return "Unknown";  // Multi-category bitmask
-        }
+        for (const auto& entry : all_log_categories)
+            if (entry.value == Category) return entry.name;
+        return "Unknown";  // Multi-category bitmask or None
     }
 };
 
