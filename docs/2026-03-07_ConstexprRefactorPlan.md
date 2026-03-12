@@ -106,8 +106,8 @@ and reviewable.
 | `evaluate_nested_member_access` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled nested member extraction | helper for “evaluate final resolved member source” after `resolve_constexpr_member_source_from_initializer(...)` | Yes | No |
 | `evaluate_member_function_call` | `src/ConstExprEvaluator_Members.cpp` | mixed lookup/evaluation dispatch | ~~isolate object-kind dispatch~~ **COMPLETED** - extracted `extract_identifier_from_expression` | Yes | No |
 | `evaluate_function_call_member_access` + `evaluate_static_member_from_struct` | `src/ConstExprEvaluator_Members.cpp` | lookup-heavy static-member access | ~~lookup helper~~ **COMPLETED** - uses `findStaticMemberRecursive` | Partly | No |
-| `evaluate_array_subscript_member_access` + `evaluate_variable_array_subscript` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled array element extraction | unify array-initializer element extraction / bounds handling after source resolution | Yes | No |
-| constructor-backed member extraction (`try_evaluate_member_from_constructor_initializers`, nearby ctor/member callers) | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled constructor-member interpretation | one helper boundary for “bind ctor args, then read member/default/member-init result” | Yes | No |
+| `evaluate_array_subscript_member_access` + `evaluate_variable_array_subscript` | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled array element extraction | ~~reviewed~~ - internal lambdas too specific | Yes | No |
+| constructor-backed member extraction | `src/ConstExprEvaluator_Members.cpp` | evaluation-coupled constructor-member interpretation | ~~helper for ctor member binding~~ - already uses extracted helpers | Yes | No |
 
 ## Suggested Next Slice Order
 
@@ -123,8 +123,10 @@ and reviewable.
    - `evaluate_member_access` - already uses extracted helpers
    - `evaluate_nested_member_access` - already uses extracted helpers
    - array-member extraction paths - internal lambdas too specific
-4. **Review remaining candidates for additional extraction opportunities**
+4. **Review remaining candidates for additional extraction opportunities** - completed review, no further extraction opportunities identified
    - remaining static-member duplication is now down to more behavior-specific paths
+   - constructor-backed member extraction already uses `try_evaluate_member_from_constructor_initializers`
+   - array-element extraction has internal lambdas with specific return types
 
 ## Goals
 
