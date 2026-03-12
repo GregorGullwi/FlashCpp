@@ -141,7 +141,7 @@
 						// Evaluate the initializer expression
 						const ASTNode* init_expr = it->second;
 						if (init_expr->is<ExpressionNode>()) {
-							auto init_operands = visitExpressionNode(init_expr->as<ExpressionNode>());
+							ExprOperands init_operands = visitExpressionNode(init_expr->as<ExpressionNode>());
 							
 							if (init_operands.size() >= 3) {
 								// Generate member store
@@ -202,7 +202,7 @@
 			ExpressionContext return_context = current_function_returns_reference_ 
 				? ExpressionContext::LValueAddress 
 				: ExpressionContext::Load;
-			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
+			ExprOperands operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
 			
 			// Clear the RVO flag after evaluation
 			in_return_statement_with_rvo_ = false;
@@ -368,15 +368,15 @@
 								}
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
-								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+								operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
 							}
 						} else {
 							// No valid type_index - fall back to generateTypeConversion
-							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+							operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
 						}
 					} else {
 						// Not a struct type - use standard type conversion
-						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+						operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
 					}
 				}
 			}

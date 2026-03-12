@@ -1,6 +1,6 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 
@@ -74,7 +74,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 									
 									// Return pointer type (64-bit address) with pointer depth 1
-									return { operand_type, 64, result_var, 1ULL };
+									return makeExprResult(operand_type, 64, IrOperand{result_var}, 0, 0, 1ULL);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -120,7 +120,7 @@
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
-					auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
 					Type arg_type = std::get<Type>(argumentIrOperands[0]);
 					int arg_size = std::get<int>(argumentIrOperands[1]);
@@ -147,10 +147,10 @@
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return { sig.return_type, 64, ret_var, 0ULL };  // 64 bits for return value
+					return makeExprResult(sig.return_type, 64, IrOperand{ret_var});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return { Type::Int, 32, ret_var, 0ULL };
+					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
 				}
 			}
 			
@@ -225,7 +225,7 @@
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
-							auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 							Type arg_type = std::get<Type>(argumentIrOperands[0]);
 							int arg_size = std::get<int>(argumentIrOperands[1]);
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -258,7 +258,7 @@
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 					
-					return { Type::Int, 32, ret_var, 0ULL };
+					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
 				}
 			}
 		}
@@ -783,7 +783,7 @@
 				arg_context = ExpressionContext::LValueAddress;
 			}
 			
-			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+			ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
 			
 			// Check if we need to call a conversion operator for this argument
@@ -1315,5 +1315,5 @@
 		unsigned long long type_index_result = (return_type.type() == Type::Struct) 
 			? static_cast<unsigned long long>(return_type.type_index())
 			: 0ULL;
-		return { return_type.type(), result_size, ret_var, type_index_result };
+		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, 0, 0, type_index_result);
 	}

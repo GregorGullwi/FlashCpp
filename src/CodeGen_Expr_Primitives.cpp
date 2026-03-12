@@ -1,15 +1,15 @@
 #include "CodeGen.h"
 
-	ExprOperands AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
 	ExpressionContext context) {
-		return std::visit([this, context](const auto& expr) -> ExprOperands {
+		return std::visit([this, context](const auto& expr) -> ExprResult {
 			using T = std::decay_t<decltype(expr)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return generateIdentifierIr(expr, context);
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				return generateQualifiedIdentifierIr(expr);
 			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-				return { Type::Bool, 8, expr.value() ? 1ULL : 0ULL, 0ULL };
+				return makeExprResult(Type::Bool, 8, IrOperand{expr.value() ? 1ULL : 0ULL});
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				return generateNumericLiteralIr(expr);
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -30,13 +30,13 @@
 				return generateMemberAccessIr(expr, context);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.empty() ? generateSizeofIr(expr) : const_result;
+				return const_result.type == Type::Void ? generateSizeofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
 				FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
-				return {};
+				return ExprResult{};
 			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.empty() ? generateAlignofIr(expr) : const_result;
+				return const_result.type == Type::Void ? generateAlignofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				return generateNoexceptExprIr(expr);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
@@ -77,22 +77,22 @@
 				return generateInitializerListConstructionIr(expr);
 			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
-				return {};
+				return ExprResult{};
 			} else {
 				static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 			}
 		}, exprNode);
 	}
 
-	ExprOperands AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
+	ExprResult AstToIr::generateNoexceptExprIr(const NoexceptExprNode& noexcept_node) {
 		bool is_noexcept = true;
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
+		return makeExprResult(Type::Bool, 8, IrOperand{is_noexcept ? 1ULL : 0ULL});
 	}
 
-	ExprOperands AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
+	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
 		std::string_view type_name = dtor.has_qualified_name() 
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
@@ -140,20 +140,20 @@
 		} else {
 			FLASH_LOG(Codegen, Debug, "Non-class type ", type_name, " - destructor call is no-op");
 		}
-		return {};
+		return ExprResult{};
 	}
 
-	ExprOperands AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
-		auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
+	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
+		ExprOperands object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
 		if (object_operands.empty()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
-			return {};
+			return ExprResult{};
 		}
 		
-		auto ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+		ExprOperands ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
 		if (ptr_operands.empty()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
-			return {};
+			return ExprResult{};
 		}
 		
 		TempVar object_addr = var_counter.next();
@@ -169,7 +169,7 @@
 				object_addr = std::get<TempVar>(object_operands[2]);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
-				return {};
+				return ExprResult{};
 			}
 		} else {
 			if (std::holds_alternative<StringHandle>(object_operands[2])) {
@@ -187,13 +187,13 @@
 				object_addr = std::get<TempVar>(object_operands[2]);
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
-				return {};
+				return ExprResult{};
 			}
 		}
 		
 		if (ptr_operands.size() < 2) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
-			return {};
+			return ExprResult{};
 		}
 		
 		TempVar member_addr = var_counter.next();
@@ -211,7 +211,7 @@
 		}
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
+		return makeExprResult(member_type, member_size, IrOperand{result_var}, 0, 0, static_cast<unsigned long long>(member_type_index));
 	}
 
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {

@@ -1134,7 +1134,7 @@
 							op.is_initialized = static_member.initializer.has_value();
 							if (op.is_initialized) {
 								// Evaluate the initializer expression
-								auto init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+								ExprOperands init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
 								// Convert to raw bytes
 								if (init_operands.size() >= 3) {
 									unsigned long long value = 0;
@@ -1342,7 +1342,7 @@
 
 			// Add constructor arguments from delegating initializer
 			for (const auto& arg : delegating_init.arguments) {
-				auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
+				ExprOperands arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
 				// arg_operands = [type, size, value]
 				if (arg_operands.size() >= 3) {
 					TypedValue tv = toTypedValue(arg_operands);
@@ -1410,7 +1410,7 @@
 					// Add constructor arguments from base initializer
 					if (base_init) {
 						for (const auto& arg : base_init->arguments) {
-							auto arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
+							ExprOperands arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
 							// arg_operands = [type, size, value]
 							if (arg_operands.size() >= 3) {
 								TypedValue tv = toTypedValue(arg_operands);
@@ -1668,7 +1668,7 @@
 								const ASTNode& init_node = member.default_initializer.value();
 								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 									// Use the default member initializer
-									auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 									// Extract just the value (third element of init_operands)
 									if (std::holds_alternative<TempVar>(init_operands[2])) {
 										member_value = std::get<TempVar>(init_operands[2]);
@@ -1746,7 +1746,7 @@
 																// For non-struct types with single-element initializer lists
 																const auto& nested_initializers = nested_init_list.initializers();
 																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-																	auto nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+																	ExprOperands nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 																	if (std::holds_alternative<TempVar>(nested_init_operands[2])) {
 																		nested_member_value = std::get<TempVar>(nested_init_operands[2]);
 																	} else if (std::holds_alternative<unsigned long long>(nested_init_operands[2])) {
@@ -1760,7 +1760,7 @@
 															}
 														}
 													} else if (init_expr.is<ExpressionNode>()) {
-														auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+														ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 														if (std::holds_alternative<TempVar>(init_operands[2])) {
 															nested_member_value = std::get<TempVar>(init_operands[2]);
 														} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
@@ -1795,7 +1795,7 @@
 										} else {
 											// For non-struct types with single-element initializer lists
 											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
-												auto init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+												ExprOperands init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
 												if (std::holds_alternative<TempVar>(init_operands[2])) {
 													member_value = std::get<TempVar>(init_operands[2]);
 												} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
@@ -1928,7 +1928,7 @@
 							
 							if (!handled_as_reference_init) {
 								// Use explicit initializer from constructor initializer list
-								auto init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+								ExprOperands init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
 								if (std::holds_alternative<TempVar>(init_operands[2])) {
 									member_value = std::get<TempVar>(init_operands[2]);
@@ -1946,7 +1946,7 @@
 							const ASTNode& init_node = member.default_initializer.value();
 							if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 								// Use default member initializer (C++11 feature)
-								auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+								ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
 								if (std::holds_alternative<TempVar>(init_operands[2])) {
 									member_value = std::get<TempVar>(init_operands[2]);
@@ -2150,7 +2150,7 @@
 // Generate IR for std::initializer_list construction
 // This is the "compiler magic" that creates a backing array on the stack
 // and constructs an initializer_list pointing to it
-ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
+ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
 	FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
 	init_list.size(), " elements");
 	
@@ -2158,7 +2158,7 @@ ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerLis
 	const ASTNode& target_type_node = init_list.target_type();
 	if (!target_type_node.is<TypeSpecifierNode>()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target_type is not TypeSpecifierNode");
-		return {};
+		return ExprResult{};
 	}
 	const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
 	
@@ -2171,7 +2171,7 @@ ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerLis
 	for (size_t i = 0; i < init_list.elements().size(); ++i) {
 		const ASTNode& elem = init_list.elements()[i];
 		if (elem.is<ExpressionNode>()) {
-			auto operands = visitExpressionNode(elem.as<ExpressionNode>());
+			ExprOperands operands = visitExpressionNode(elem.as<ExpressionNode>());
 			element_operands.push_back(operands);
 			if (i == 0 && operands.size() >= 2) {
 				if (std::holds_alternative<Type>(operands[0])) {
@@ -2223,14 +2223,14 @@ ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerLis
 	TypeIndex init_list_type_index = target_type.type_index();
 	if (init_list_type_index >= gTypeInfo.size()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
-		return {};
+		return ExprResult{};
 	}
 	
 	const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index];
 	const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
 	if (!init_list_struct_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
-		return {};
+		return ExprResult{};
 	}
 	
 	int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
@@ -2281,17 +2281,17 @@ ExprOperands AstToIr::generateInitializerListConstructionIr(const InitializerLis
 	
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
-	return { Type::Struct, init_list_size_bits, init_list_name, static_cast<unsigned long long>(init_list_type_index) };
+	return makeExprResult(Type::Struct, init_list_size_bits, IrOperand{init_list_name}, 0, 0, static_cast<unsigned long long>(init_list_type_index));
 }
 
 
 
-ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
+ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
 	const ASTNode& type_node = constructorCallNode.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		assert(false && "Constructor call type node must be a TypeSpecifierNode");
-		return {};
+		return ExprResult{};
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
@@ -2468,7 +2468,7 @@ ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& const
 					return;
 				}
 
-				auto arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+				ExprOperands arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 				if (arg_operands.size() >= 3) {
 					MemberStoreOp store_op;
 					store_op.object = ret_var;
@@ -2486,7 +2486,7 @@ ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& const
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 			
 			TypeIndex result_type_index = type_spec.type_index();
-			return { type_spec.type(), actual_size_bits, ret_var, static_cast<unsigned long long>(result_type_index) };
+			return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, 0, 0, static_cast<unsigned long long>(result_type_index));
 		}
 	}
 	
@@ -2501,7 +2501,7 @@ ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& const
 			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 		}
 		
-		auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+		ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 		// argumentIrOperands = [type, size, value]
 		if (argumentIrOperands.size() >= 3) {
 			TypedValue tv;
@@ -2606,7 +2606,7 @@ ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& const
 							const auto& param_decl = params[i].as<DeclarationNode>();
 							const ASTNode& default_node = param_decl.default_value();
 							if (default_node.is<ExpressionNode>()) {
-								auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+								ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 								if (default_operands.size() >= 3) {
 									TypedValue default_arg = toTypedValue(default_operands);
 									ctor_op.arguments.push_back(std::move(default_arg));
@@ -2644,5 +2644,5 @@ ExprOperands AstToIr::generateConstructorCallIr(const ConstructorCallNode& const
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	TypeIndex result_type_index = type_spec.type_index();
-	return { type_spec.type(), actual_size_bits, ret_var, static_cast<unsigned long long>(result_type_index) };
+	return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, 0, 0, static_cast<unsigned long long>(result_type_index));
 }
