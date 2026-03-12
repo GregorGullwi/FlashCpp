@@ -1085,7 +1085,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	const ASTNode& expr_node,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context) {
-	
+	return evaluate_expression_with_bindings_dispatch(expr_node, bindings, context, evaluate_expression_with_bindings_const, nullptr);
+}
+
+EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
+	const ASTNode& expr_node,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	RecursiveBindEvalFn recursive_eval,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
+
 	if (!expr_node.is<ExpressionNode>()) {
 		return EvalResult::error("Not an expression node");
 	}
@@ -1126,8 +1135,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
-		auto lhs_result = evaluate_expression_with_bindings_const(bin_op.get_lhs(), bindings, context);
-		auto rhs_result = evaluate_expression_with_bindings_const(bin_op.get_rhs(), bindings, context);
+		auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
+		auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
 		
 		if (!lhs_result.success()) return lhs_result;
 		if (!rhs_result.success()) return rhs_result;
@@ -1135,32 +1144,40 @@ EvalResult Evaluator::evaluate_expression_with_bindings_const(
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 	}
 	
+	// For unary operators
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unary_op = std::get<UnaryOperatorNode>(expr);
+		auto operand_result = recursive_eval(unary_op.get_operand(), bindings, context);
+		if (!operand_result.success()) return operand_result;
+		return apply_unary_op(operand_result, unary_op.op());
+	}
+	
 	// For ternary operators
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
-		auto cond_result = evaluate_expression_with_bindings_const(ternary.condition(), bindings, context);
+		auto cond_result = recursive_eval(ternary.condition(), bindings, context);
 		
 		if (!cond_result.success()) return cond_result;
 		
 		if (cond_result.as_bool()) {
-			return evaluate_expression_with_bindings_const(ternary.true_expr(), bindings, context);
+			return recursive_eval(ternary.true_expr(), bindings, context);
 		} else {
-			return evaluate_expression_with_bindings_const(ternary.false_expr(), bindings, context);
+			return recursive_eval(ternary.false_expr(), bindings, context);
 		}
 	}
 	
 	// For function calls (for recursion)
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
-		return evaluate_function_call_with_outer_bindings(func_call, bindings, context);
+		return evaluate_function_call_with_outer_bindings(func_call, bindings, context, mutable_bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
-	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context)) {
+	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, mutable_bindings)) {
 		return *call_result;
 	}
 
-	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context)) {
+	if (auto member_call_result = try_evaluate_bound_member_function_call(expr, bindings, context, mutable_bindings)) {
 		return *member_call_result;
 	}
 	
@@ -2622,40 +2639,34 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	std::string_view member_name,
 	EvaluationContext& context) {
 	
-	// Look up the static member in the struct
-	// Search for a static member variable with the given name
-	for (const auto& static_member : struct_info->static_members) {
-		if (static_member.getName() == member_name_handle) {
-			// Found the static member - check if it has an initializer
-			if (static_member.initializer.has_value()) {
-				// Evaluate the initializer directly
-				return evaluate(*static_member.initializer, context);
+	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
+	
+	if (!static_member) {
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+	}
+
+	if (static_member->initializer.has_value()) {
+		return evaluate(*static_member->initializer, context);
+	}
+
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(StringTable::getStringView(owner_struct ? owner_struct->getName() : type_info.name_));
+	qualified_name_builder.append("::");
+	qualified_name_builder.append(member_name);
+	std::string_view qualified_member_name = qualified_name_builder.commit();
+
+	auto member_symbol = context.symbols->lookup(qualified_member_name);
+	if (member_symbol.has_value()) {
+		const ASTNode& member_node = member_symbol.value();
+		if (member_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
+			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+				return evaluate(*var_decl.initializer(), context);
 			}
-			
-			// If no inline initializer, try to find the definition in the symbol table
-			// Build qualified member name using StringBuilder
-			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(StringTable::getStringView(type_info.name_));
-			qualified_name_builder.append("::");
-			qualified_name_builder.append(member_name);
-			std::string_view qualified_member_name = qualified_name_builder.commit();
-			
-			auto member_symbol = context.symbols->lookup(qualified_member_name);
-			if (member_symbol.has_value()) {
-				const ASTNode& member_node = member_symbol.value();
-				if (member_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
-					if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
-						return evaluate(*var_decl.initializer(), context);
-					}
-				}
-			}
-			
-			return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
 		}
 	}
-	
-	return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+
+	return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
 }
 
 // Evaluate function call followed by member access (e.g., get_struct().member)
@@ -2765,19 +2776,12 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 	
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
-		}
-		object_identifier = &std::get<IdentifierNode>(expr_node);
-		var_name = object_identifier->name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-		var_name = object_identifier->name();
-	} else {
+	auto extracted = extract_identifier_from_expression(object_expr);
+	if (!extracted) {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
+	object_identifier = extracted->identifier;
+	var_name = extracted->name;
 
 	if (placeholder_func.is_static() && object_identifier && object_identifier->name() == "this") {
 		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
@@ -3291,19 +3295,12 @@ EvalResult Evaluator::extract_object_members(
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 	
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
-		}
-		object_identifier = &std::get<IdentifierNode>(expr_node);
-		var_name = object_identifier->name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-		var_name = object_identifier->name();
-	} else {
+	auto extracted = extract_identifier_from_expression(object_expr);
+	if (!extracted) {
 		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
 	}
+	object_identifier = extracted->identifier;
+	var_name = extracted->name;
 
 	const VariableDeclarationNode* var_decl = nullptr;
 	ResolvedConstexprObject resolved_object;
