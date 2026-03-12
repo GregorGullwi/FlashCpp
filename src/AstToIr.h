@@ -1,5 +1,6 @@
 #pragma once
 #include "CodeGen.h"
+#include "InlineVector.h"
 
 class AstToIr {
 public:
@@ -98,6 +99,11 @@ private:
 
 	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name);
 
+	struct CatchScopeContext {
+		size_t base_depth;
+		size_t try_depth;
+	};
+
 	// Phase 1 capture state: vars declared in the innermost try block scope
 	bool capture_try_cleanup_ = false;
 	size_t capture_try_cleanup_depth_ = 0;
@@ -105,7 +111,8 @@ private:
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
 	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
-	std::vector<size_t> catch_scope_base_depth_stack_;
+	InlineVector<CatchScopeContext, 4> catch_scope_stack_;
+	size_t active_try_statement_depth_ = 0;
 	// Set by visitTryStatementNode() when any typed (non-catch-all) handlers are present.
 	// Used by emitPendingFunctionCleanupLP() to ensure FunctionCleanupLP is always emitted
 	// on ELF when ElfCatchNoMatch references need resolving.

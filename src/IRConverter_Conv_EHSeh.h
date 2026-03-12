@@ -326,10 +326,36 @@
 	void patchElfCatchFilterValues(const std::vector<ObjectFileWriter::TryBlockInfo>& try_blocks) {
 		if (elf_catch_filter_patches_.empty()) return;
 
-		// Build the type table in the same order as ElfFileWriter will build it.
-		// This determines the filter values for each handler.
+		// Build the type table in the SAME order as ElfFileWriter_EH.cpp will build it.
+		// ElfFileWriter uses an event-sweep that adds a try block's handler type the first
+		// time that block is innermost in a code region. For nested try blocks, the innermost
+		// (narrowest range) block is encountered first when they share the same start offset.
+		//
+		// We replicate this ordering by sorting try_blocks:
+		//   Primary key:   try_start_offset ascending  (earlier-starting blocks first)
+		//   Secondary key: range size ascending         (smaller range = inner block first,
+		//                                                 used when two blocks start at the
+		//                                                 same offset)
+		//
+		// This ensures that for immediately-nested tries (same start offset), the inner
+		// try's handler type is added to the table before the outer try's handler type,
+		// exactly matching the event-sweep order in ElfFileWriter_EH.cpp.
+		std::vector<size_t> sorted_indices(try_blocks.size());
+		std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
+		std::sort(sorted_indices.begin(), sorted_indices.end(),
+			[&](size_t a, size_t b) {
+				const auto& ta = try_blocks[a];
+				const auto& tb = try_blocks[b];
+				if (ta.try_start_offset != tb.try_start_offset)
+					return ta.try_start_offset < tb.try_start_offset;
+				uint32_t ra = ta.try_end_offset - ta.try_start_offset;
+				uint32_t rb = tb.try_end_offset - tb.try_start_offset;
+				return ra < rb;
+			});
+
 		std::vector<std::string> type_table;
-		for (const auto& try_block : try_blocks) {
+		for (size_t idx : sorted_indices) {
+			const auto& try_block = try_blocks[idx];
 			for (const auto& handler : try_block.catch_handlers) {
 				if (!handler.is_catch_all && !handler.type_name.empty()) {
 					std::string typeinfo_sym = writer.get_typeinfo_symbol(handler.type_name);

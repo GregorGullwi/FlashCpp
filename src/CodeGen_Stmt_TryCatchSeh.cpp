@@ -1,6 +1,11 @@
 #include "CodeGen.h"
 
-	void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
+void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
+	active_try_statement_depth_ += 1;
+	auto pop_try_depth = [this]() {
+		active_try_statement_depth_ -= 1;
+	};
+
 		// Generate try-catch-finally structure
 		// For now, we'll generate a simplified version that doesn't actually implement exception handling
 		// but allows the code to compile and run
@@ -165,9 +170,9 @@
 			}
 
 			// Visit catch block body
-			catch_scope_base_depth_stack_.push_back(scope_stack_.size());
+			catch_scope_stack_.push_back({scope_stack_.size(), active_try_statement_depth_});
 			visit(catch_clause.body());
-			catch_scope_base_depth_stack_.pop_back();
+			catch_scope_stack_.pop_back();
 
 			// Emit CatchEnd marker
 			ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
@@ -199,6 +204,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::ElfCatchNoMatch, ElfCatchNoMatchOp{}, node.try_token()));
 		}
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
+		pop_try_depth();
 	}
 
 	void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
@@ -228,33 +234,73 @@
 			if (expr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(expr_operands[3])) {
 				exception_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(expr_operands[3]));
 			}
-			
+
+			IrValue exception_value;
+			bool is_rvalue = !std::holds_alternative<StringHandle>(expr_operands[2]);
+			bool value_is_materialized = false;
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_operands[2]));
+			}
+
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				exception_value = std::get<TempVar>(expr_operands[2]);
+			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				exception_value = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
+				exception_value = std::get<unsigned long long>(expr_operands[2]);
+			} else if (std::holds_alternative<double>(expr_operands[2])) {
+				exception_value = std::get<double>(expr_operands[2]);
+			} else {
+				// Unknown operand type - log warning and default to zero value
+				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
+				exception_value = static_cast<unsigned long long>(0);
+			}
+
+			if (!catch_scope_stack_.empty()) {
+				bool needs_materialization =
+					expr_type == Type::Struct &&
+					!is_rvalue &&
+					(std::holds_alternative<StringHandle>(exception_value) ||
+					 (std::holds_alternative<TempVar>(exception_value) &&
+					  isTempVarLValue(std::get<TempVar>(exception_value))));
+
+				if (needs_materialization) {
+					TempVar throw_storage_var = var_counter.next();
+					StringBuilder temp_name_builder;
+					temp_name_builder.append("__catch_throw_value_").append(throw_storage_var.var_number);
+					StringHandle throw_storage_name = StringTable::getOrInternStringHandle(temp_name_builder.commit());
+
+					VariableDeclOp materialized_throw_decl;
+					materialized_throw_decl.type = expr_type;
+					materialized_throw_decl.size_in_bits = static_cast<int>(type_size);
+					materialized_throw_decl.var_name = throw_storage_name;
+					materialized_throw_decl.use_copy_constructor = (exception_type_index != 0);
+
+					TypedValue materialized_init;
+					materialized_init.type = expr_type;
+					materialized_init.size_in_bits = static_cast<int>(type_size);
+					materialized_init.value = exception_value;
+					materialized_init.type_index = exception_type_index;
+					materialized_throw_decl.initializer = std::move(materialized_init);
+
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(materialized_throw_decl), node.throw_token()));
+					exception_value = throw_storage_name;
+					is_rvalue = false;
+					value_is_materialized = true;
+				}
+
+				emitActiveCatchScopeDestructors();
+			}
+
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
 			throw_op.type_index = exception_type_index;
 			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
-			throw_op.is_rvalue = !std::holds_alternative<StringHandle>(expr_operands[2]);
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				throw_op.is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_operands[2]));
-			}
-			
-			// Handle the value - it can be a TempVar, immediate int, or immediate float
-			// All these types are compatible with IrValue variant
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				throw_op.exception_value = std::get<TempVar>(expr_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
-				throw_op.exception_value = std::get<StringHandle>(expr_operands[2]);
-			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
-				throw_op.exception_value = std::get<unsigned long long>(expr_operands[2]);
-			} else if (std::holds_alternative<double>(expr_operands[2])) {
-				throw_op.exception_value = std::get<double>(expr_operands[2]);
-			} else {
-				// Unknown operand type - log warning and default to zero value
-				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
-				throw_op.exception_value = static_cast<unsigned long long>(0);
-			}
-			
+			throw_op.is_rvalue = is_rvalue;
+			throw_op.value_is_materialized = value_is_materialized;
+			throw_op.exception_value = exception_value;
+
 			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));
 		}
 	}

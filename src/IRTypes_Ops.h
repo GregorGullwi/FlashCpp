@@ -953,6 +953,7 @@ struct ThrowOp {
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
+	bool value_is_materialized = false; // True if exception_value already names/carries a fully materialized object state
 };
 
 // ============================================================================

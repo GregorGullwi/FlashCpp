@@ -27,11 +27,29 @@ void AstToIr::exitScope() {
 
 
 void AstToIr::emitActiveCatchScopeDestructors() {
-	if (catch_scope_base_depth_stack_.empty()) {
+	if (catch_scope_stack_.empty()) {
 		return;
 	}
 
-	size_t catch_scope_base_depth = catch_scope_base_depth_stack_.back();
+	size_t catch_scope_index = catch_scope_stack_.size();
+	for (size_t i = catch_scope_stack_.size(); i > 0; --i) {
+		size_t candidate_index = i - 1;
+		if (catch_scope_stack_[candidate_index].try_depth == active_try_statement_depth_) {
+			catch_scope_index = candidate_index;
+			break;
+		}
+	}
+
+	if (catch_scope_index == catch_scope_stack_.size()) {
+		return;
+	}
+
+	// The try-depth match answers whether this throw/rethrow is leaving an active
+	// catch context at all. Once it is, frontend-emitted cleanup must cover the
+	// full active catch chain because Windows catch-body locals are not yet
+	// modeled as first-class unwind actions in the FH3 unwind map.
+	size_t catch_scope_base_depth = catch_scope_stack_.front().base_depth;
+
 	if (scope_stack_.size() <= catch_scope_base_depth) {
 		return;
 	}

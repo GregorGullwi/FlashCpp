@@ -1821,7 +1821,9 @@
 			// Clear the current function state
 			current_function_name_ = StringHandle();
 			current_function_offset_ = 0;
-			current_catch_handler_ = nullptr;
+				current_catch_handler_ = nullptr;
+			current_catch_handler_ref_ = ActiveCatchHandlerRef{};
+			catch_codegen_context_stack_.clear();
 			in_catch_funclet_ = false;
 			catch_funclet_return_slot_offset_ = 0;
 			catch_funclet_return_flag_slot_offset_ = 0;
