@@ -662,7 +662,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 				// Evaluate LHS with LValueAddress context (no Load instruction)
-				ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprOperands lhsIrOperands = lhsExprResult;
 
 				// Safety check
 				bool use_unified_handler = !lhsIrOperands.empty();
@@ -679,7 +680,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				if (use_unified_handler) {
 					// Evaluate RHS normally (Load context)
-					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = rhsExprResult;
 
 					// For compound assignments, we need to:
 					// 1. Load the current value from the lvalue
@@ -687,12 +689,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// 3. Store the result back to the lvalue
 
 					// Try to handle compound assignment using lvalue metadata
-					if (handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
+					if (handleLValueCompoundAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token(), op)) {
 						// Compound assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member compound assignment");
 						// Return the LHS operands which contain the result type/size info
 						// The actual result value is stored in the lvalue, so we return lvalue info
-						return toExprResult(lhsIrOperands);
+						return lhsExprResult;
 					}
 
 					// If metadata handler didn't work, fall through to legacy code
@@ -704,15 +706,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Generate IR for the left-hand side and right-hand side of the operation
 		// For assignment (=), use LValueAddress context for LHS to avoid dereferencing reference parameters
 		ExpressionContext lhs_context = (op == "=") ? ExpressionContext::LValueAddress : ExpressionContext::Load;
-		ExprOperands lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
-		ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+		ExprResult lhsExprResult = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
+		ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+		ExprOperands lhsIrOperands = lhsExprResult;
+		ExprOperands rhsIrOperands = rhsExprResult;
 
 		// Try unified metadata-based handler for compound assignments on identifiers
 		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 		if (compound_assignment_ops.count(op) > 0 &&
-		handleLValueCompoundAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token(), op)) {
+		handleLValueCompoundAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token(), op)) {
 			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
@@ -1955,7 +1959,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ
 			if (rhsType != lhsType) {
-				rhsIrOperands = generateTypeConversion(toExprResult(rhsIrOperands), rhsType, lhsType, binaryOperatorNode.get_token());
+				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+				rhsIrOperands = rhsExprResult;
 			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
@@ -1973,17 +1978,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.rhs = toTypedValue(rhsIrOperands);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			// Assignment expression returns the LHS (the assigned-to value)
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
 		if (lhsType != commonType) {
-			lhsIrOperands = generateTypeConversion(toExprResult(lhsIrOperands), lhsType, commonType, binaryOperatorNode.get_token());
+			lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
+			lhsIrOperands = lhsExprResult;
 		}
 		if (rhsType != commonType) {
-			rhsIrOperands = generateTypeConversion(toExprResult(rhsIrOperands), rhsType, commonType, binaryOperatorNode.get_token());
+			rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
+			rhsIrOperands = rhsExprResult;
 		}
 
 		// Check if we're dealing with floating-point operations
@@ -2130,91 +2137,91 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),  // Store result in LHS variable
+				.result = toIrValue(lhsExprResult.value),  // Store result in LHS variable
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "-=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "*=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "/=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "%=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "&=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "|=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "^=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == "<<=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (op == ">>=") {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
-				.result = toIrValue(lhsIrOperands[2]),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
-			return toExprResult(lhsIrOperands);
+			return lhsExprResult;
 		}
 		else if (is_floating_point_op) { // Floating-point operations
 			// Float operations use typed BinaryOp

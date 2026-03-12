@@ -42,9 +42,21 @@
   `toExprResult(...)` bounce points in that file were removed, and the nearby
   unary `+`, `++`, `--`, `&`, and `*` paths now consume named fields instead of
   positional operand indexes
-- after that follow-up, the remaining known consumer-side `toExprResult(...)`
-  bounce points on this branch are concentrated in
-  `src/CodeGen_Expr_Operators.cpp`
+- a further Phase 4 follow-up reduced the remaining
+  `src/CodeGen_Expr_Operators.cpp` bounce points by threading `ExprResult`
+  alongside legacy `ExprOperands` in the compound-assignment flow:
+  - both compound-assignment metadata-handler paths now call
+    `handleLValueCompoundAssignment(...)` with the original `ExprResult`
+    returned from `visitExpressionNode()`
+  - the `op=` typed IR block now returns `lhsExprResult` directly and uses
+    `.value` for the result target instead of re-decoding `lhsIrOperands`
+  - the nearby assignment/common-type conversion sites now keep
+    `lhsExprResult` / `rhsExprResult` synchronized when
+    `generateTypeConversion(...)` materializes converted temporaries
+- after those follow-ups, the remaining known consumer-side `toExprResult(...)`
+  bounce points on this branch are still concentrated in
+  `src/CodeGen_Expr_Operators.cpp`, but mostly in the older assignment/helper
+  paths rather than the typed compound-assignment block
 
 ## Problem
 
