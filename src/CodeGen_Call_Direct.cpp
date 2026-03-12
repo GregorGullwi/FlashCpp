@@ -1,7 +1,7 @@
 #include "CodeGen.h"
 
 	ExprOperands AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
-		ExprOperands irOperands;
+		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 
 		const auto& decl_node = functionCallNode.function_declaration();
