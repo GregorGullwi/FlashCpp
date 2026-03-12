@@ -517,7 +517,7 @@
 			}
 		}
 
-		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, ExprOperands& out) -> bool {
+		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, ExprResult& out) -> bool {
 			// Phase 4: Using StringHandle for lookup
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
 
@@ -543,14 +543,17 @@
 						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
 						type_node->type(), size_bits));
 
-					out.clear();
-					out.emplace_back(type_node->type());
-					out.emplace_back(size_bits);
-					out.emplace_back(result_temp);
-					unsigned long long fourth_element = (type_node->type() == Type::Struct)
+					unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
 						? static_cast<unsigned long long>(type_node->type_index())
 						: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
-					out.emplace_back(fourth_element);
+					out = makeExprResult(
+						type_node->type(),
+						size_bits,
+						IrOperand{result_temp},
+						type_node->type_index(),
+						type_node->pointer_depth(),
+						encoded_metadata
+					);
 					return true;
 				}
 			}
@@ -558,11 +561,17 @@
 			// Static local variables are stored as globals with mangled names
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
-				out.clear();
-				out.emplace_back(static_local_it->second.type);
-				out.emplace_back(static_cast<int>(static_local_it->second.size_in_bits));
-				out.emplace_back(static_local_it->second.mangled_name);
-				out.emplace_back(0ULL); // pointer depth - assume 0 for static locals for now
+				constexpr TypeIndex kStaticLocalTypeIndex = 0;
+				constexpr int kStaticLocalPointerDepth = 0;
+				constexpr unsigned long long kStaticLocalEncodedMetadata = 0ULL;
+				out = makeExprResult(
+					static_local_it->second.type,
+					static_cast<int>(static_local_it->second.size_in_bits),
+					IrOperand{static_local_it->second.mangled_name},
+					kStaticLocalTypeIndex,
+					kStaticLocalPointerDepth,
+					kStaticLocalEncodedMetadata
+				); // pointer depth/type_index metadata are assumed 0 for static locals here
 				return true;
 			}
 
@@ -570,18 +579,21 @@
 				return false;
 			}
 
-			out.clear();
-			out.emplace_back(type_node->type());
-			out.emplace_back(static_cast<int>(type_node->size_in_bits()));
-			out.emplace_back(identifier_handle);
 			// For the 4th element: 
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
-			unsigned long long fourth_element = (type_node->type() == Type::Struct)
+			unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
 				? static_cast<unsigned long long>(type_node->type_index())
 				: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
-			out.emplace_back(fourth_element);
+			out = makeExprResult(
+				type_node->type(),
+				static_cast<int>(type_node->size_in_bits()),
+				IrOperand{identifier_handle},
+				type_node->type_index(),
+				type_node->pointer_depth(),
+				encoded_metadata
+			);
 			return true;
 		};
 
@@ -1115,7 +1127,7 @@
 			}
 		}
 		
-		ExprOperands operandIrOperands;
+		ExprResult operandIrOperands;
 		bool operandHandledAsIdentifier = false;
 		// For ++, --, and & operators on identifiers, use tryBuildIdentifierOperand
 		// This ensures we get the variable name (or static local's mangled name) directly
@@ -1221,17 +1233,12 @@
 		}
 
 		// Get the type of the operand
-		Type operandType = std::get<Type>(operandIrOperands[0]);
-		[[maybe_unused]] int operandSize = std::get<int>(operandIrOperands[1]);
+		Type operandType = operandIrOperands.type;
+		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
 		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
-			size_t struct_type_index = 0;
-			if (operandIrOperands.size() >= 4) {
-				if (std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-					struct_type_index = static_cast<size_t>(std::get<unsigned long long>(operandIrOperands[3]));
-				}
-			}
+			size_t struct_type_index = operandIrOperands.type_index;
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(op_expr)) {
@@ -1285,11 +1292,11 @@
 		}
 		else if (unaryOperatorNode.op() == "+") {
 			// Unary plus (no-op, just return the operand)
-			return toExprResult(operandIrOperands);
+			return operandIrOperands;
 		}
 		else if (unaryOperatorNode.op() == "++") {
 			// Increment operator (prefix or postfix)
-			ExprResult operand_result = toExprResult(operandIrOperands);
+			ExprResult operand_result = operandIrOperands;
 
 			// Check for user-defined operator++ overload on struct types
 			auto inc_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Increment, operandType, operand_result, unaryOperatorNode.is_prefix());
@@ -1301,7 +1308,7 @@
 		}
 		else if (unaryOperatorNode.op() == "--") {
 			// Decrement operator (prefix or postfix)
-			ExprResult operand_result = toExprResult(operandIrOperands);
+			ExprResult operand_result = operandIrOperands;
 
 			// Check for user-defined operator-- overload on struct types
 			auto dec_result = generateUnaryIncDecOverloadCall(OverloadableOperator::Decrement, operandType, operand_result, unaryOperatorNode.is_prefix());
@@ -1314,10 +1321,7 @@
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
 			// Get the current pointer depth from operandIrOperands
-			unsigned long long operand_ptr_depth = 0;
-			if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-				operand_ptr_depth = std::get<unsigned long long>(operandIrOperands[3]);
-			}
+			unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth);
 			
 			// Create typed payload with TypedValue
 			AddressOfOp op;
@@ -1325,21 +1329,28 @@
 			
 			// Populate TypedValue with full type information
 			op.operand.type = operandType;
-			op.operand.size_in_bits = std::get<int>(operandIrOperands[1]);
+			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = static_cast<int>(operand_ptr_depth);
 			
 			// Get the operand value - it's at index 2 in operandIrOperands
-			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				op.operand.value = std::get<StringHandle>(operandIrOperands[2]);
-			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-				op.operand.value = std::get<TempVar>(operandIrOperands[2]);
+			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
+				op.operand.value = std::get<StringHandle>(operandIrOperands.value);
+			} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
+				op.operand.value = std::get<TempVar>(operandIrOperands.value);
 			} else {
 				throw InternalError("AddressOf operand must be StringHandle or TempVar");
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 			// Return 64-bit pointer with incremented pointer depth
-			return makeExprResult(operandType, 64, IrOperand{result_var}, 0, 0, operand_ptr_depth + 1);
+			return makeExprResult(
+				operandType,
+				64,
+				IrOperand{result_var},
+				operandIrOperands.type_index,
+				static_cast<int>(operand_ptr_depth + 1),
+				operand_ptr_depth + 1
+			);
 		}
 		else if (unaryOperatorNode.op() == "*") {
 			// Dereference operator: *x
@@ -1356,8 +1367,8 @@
 				int pointer_depth = 0;
 				
 				// Get pointer depth
-				if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-					pointer_depth = static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
+				if (operandIrOperands.pointer_depth > 0) {
+					pointer_depth = operandIrOperands.pointer_depth;
 				} else if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 					const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(operandExpr)) {
@@ -1384,15 +1395,15 @@
 				
 				// Extract the pointer base (StringHandle or TempVar)
 				std::variant<StringHandle, TempVar> base;
-				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-					base = std::get<StringHandle>(operandIrOperands[2]);
-				} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-					base = std::get<TempVar>(operandIrOperands[2]);
+				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
+					base = std::get<StringHandle>(operandIrOperands.value);
+				} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
+					base = std::get<TempVar>(operandIrOperands.value);
 				} else {
 					// Fall back to old behavior if we can't extract base
 					// This can happen with complex expressions that don't have a simple base
 					FLASH_LOG(Codegen, Debug, "Dereference LValueAddress fallback: operand is not StringHandle or TempVar");
-					return toExprResult(operandIrOperands);
+					return operandIrOperands;
 				}
 				
 				// Emit assignment to copy the pointer value into lvalue_temp.
@@ -1400,12 +1411,12 @@
 				// The reference init code reads the TempVar's stack value; without this
 				// assignment the slot would be uninitialized.
 				IrValue rhs_value;
-				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-					rhs_value = std::get<StringHandle>(operandIrOperands[2]);
-				} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-					rhs_value = std::get<TempVar>(operandIrOperands[2]);
-				} else if (std::holds_alternative<unsigned long long>(operandIrOperands[2])) {
-					rhs_value = std::get<unsigned long long>(operandIrOperands[2]);
+				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
+					rhs_value = std::get<StringHandle>(operandIrOperands.value);
+				} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
+					rhs_value = std::get<TempVar>(operandIrOperands.value);
+				} else if (std::holds_alternative<unsigned long long>(operandIrOperands.value)) {
+					rhs_value = std::get<unsigned long long>(operandIrOperands.value);
 				} else {
 					rhs_value = 0ULL;
 				}
@@ -1428,18 +1439,23 @@
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-				return makeExprResult(operandType, 64, IrOperand{lvalue_temp}, 0, 0, result_ptr_depth);
+				return makeExprResult(
+					operandType,
+					64,
+					IrOperand{lvalue_temp},
+					operandIrOperands.type_index,
+					static_cast<int>(result_ptr_depth),
+					result_ptr_depth
+				);
 			}
 			
 			int element_size = 64; // Default to pointer size
 			int pointer_depth = 0;
 			
 			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
-			if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
-				pointer_depth = static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
-			}
-			// Otherwise, look up the pointer operand to determine its pointer depth from symbol table
-			else if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			pointer_depth = operandIrOperands.pointer_depth;
+			// If pointer_depth is still 0, look up the pointer operand in the symbol table.
+			if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 					const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
@@ -1487,10 +1503,10 @@
 			op.pointer.pointer_depth = pointer_depth;
 			
 			// Get the pointer value - it's at index 2 in operandIrOperands
-			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				op.pointer.value = std::get<StringHandle>(operandIrOperands[2]);
-			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-				op.pointer.value = std::get<TempVar>(operandIrOperands[2]);
+			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
+				op.pointer.value = std::get<StringHandle>(operandIrOperands.value);
+			} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
+				op.pointer.value = std::get<TempVar>(operandIrOperands.value);
 			} else {
 				throw InternalError("Dereference pointer must be StringHandle or TempVar");
 			}
@@ -1515,14 +1531,21 @@
 		
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-			return makeExprResult(operandType, element_size, IrOperand{result_var}, 0, 0, result_ptr_depth);
+			return makeExprResult(
+				operandType,
+				element_size,
+				IrOperand{result_var},
+				operandIrOperands.type_index,
+				static_cast<int>(result_ptr_depth),
+				result_ptr_depth
+			);
 		}
 		else {
 			throw InternalError("Unary operator not implemented yet");
 		}
 
 		// Return the result
-		return makeExprResult(operandType, std::get<int>(operandIrOperands[1]), IrOperand{result_var});
+		return makeExprResult(operandType, operandIrOperands.size_in_bits, IrOperand{result_var});
 	}
 
 

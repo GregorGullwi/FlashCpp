@@ -202,14 +202,14 @@
 			ExpressionContext return_context = current_function_returns_reference_ 
 				? ExpressionContext::LValueAddress 
 				: ExpressionContext::Load;
-			ExprOperands operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
+			ExprResult operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
 			
 			// Clear the RVO flag after evaluation
 			in_return_statement_with_rvo_ = false;
 			
 			// Check if this is a void return with a void expression (e.g., return void_func();)
-			if (!operands.empty() && operands.size() >= 1) {
-				Type expr_type = std::get<Type>(operands[0]);
+			{
+				Type expr_type = operands.type;
 				
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
@@ -221,20 +221,17 @@
 			}
 			
 			// If the current function has auto return type, deduce it from the return expression
-			if (current_function_return_type_ == Type::Auto && !operands.empty() && operands.size() >= 2) {
-				Type expr_type = std::get<Type>(operands[0]);
-				int expr_size = std::get<int>(operands[1]);
+			if (current_function_return_type_ == Type::Auto) {
+				Type expr_type = operands.type;
+				int expr_size = operands.size_in_bits;
 				
 				// Build a TypeSpecifierNode for the deduced type
 				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
 				
 				// If we have type_index information (for structs), include it
-				if (operands.size() >= 4) {
-					if (std::holds_alternative<unsigned long long>(operands[3])) {
-						TypeIndex type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
-						deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
-						deduced_type.set_type_index(type_index);
-					}
+				if (operands.type_index != 0) {
+					deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
+					deduced_type.set_type_index(operands.type_index);
 				}
 				
 				// Store the deduced type for this function
@@ -249,9 +246,9 @@
 			
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
-			if (!current_function_returns_reference_ && !operands.empty() && operands.size() >= 2) {
-				Type expr_type = std::get<Type>(operands[0]);
-				int expr_size = std::get<int>(operands[1]);
+			if (!current_function_returns_reference_) {
+				Type expr_type = operands.type;
+				int expr_size = operands.size_in_bits;
 		
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
@@ -263,11 +260,8 @@
 				if (expr_type != return_type || expr_size != return_size) {
 					// Check for user-defined conversion operator
 					// If expr is a struct type with a conversion operator to return_type, call it
-					if (expr_type == Type::Struct && operands.size() >= 4) {
-						TypeIndex expr_type_index = 0;
-						if (std::holds_alternative<unsigned long long>(operands[3])) {
-							expr_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
-						}
+					if (expr_type == Type::Struct) {
+						TypeIndex expr_type_index = operands.type_index;
 						
 						if (expr_type_index > 0 && expr_type_index < gTypeInfo.size()) {
 							const TypeInfo& source_type_info = gTypeInfo[expr_type_index];
@@ -294,7 +288,7 @@
 									} else {
 										return 0ULL;
 									}
-								}, operands[2]);
+								}, operands.value);
 								
 								// Build the mangled name for the conversion operator
 								StringHandle struct_name_handle = source_type_info.name();
@@ -361,22 +355,19 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
 									
 									// Replace operands with the result of the conversion
-									operands.clear();
-									operands.emplace_back(return_type);
-									operands.emplace_back(return_size);
-									operands.emplace_back(result_var);
+									operands = makeExprResult(return_type, return_size, IrOperand{result_var});
 								}
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
-								operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
+								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 							}
 						} else {
 							// No valid type_index - fall back to generateTypeConversion
-							operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
+							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
 					} else {
 						// Not a struct type - use standard type conversion
-						operands = generateTypeConversion(toExprResult(operands), expr_type, return_type, node.return_token());
+						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				}
 			}
@@ -384,10 +375,9 @@
 			// For reference returns, prefer materializing the referred-to address in IR when we
 			// have direct member lvalue metadata. This avoids relying on backend reconstruction
 			// from a loaded member temp.
-			constexpr size_t kValueOperandIndex = 2;
-			if (current_function_returns_reference_ && operands.size() > kValueOperandIndex &&
-				std::holds_alternative<TempVar>(operands[kValueOperandIndex])) {
-				TempVar return_temp = std::get<TempVar>(operands[kValueOperandIndex]);
+			if (current_function_returns_reference_ &&
+				std::holds_alternative<TempVar>(operands.value)) {
+				TempVar return_temp = std::get<TempVar>(operands.value);
 				auto lv_info_opt = getTempVarLValueInfo(return_temp);
 				if (lv_info_opt.has_value()) {
 					const LValueInfo& lv_info = *lv_info_opt;
@@ -404,7 +394,7 @@
 						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, current_function_return_size_);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
-						operands[kValueOperandIndex] = address_temp;
+						operands.value = address_temp;
 					}
 				}
 			}
@@ -412,18 +402,12 @@
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
 
-			// Check if operands has at least 3 elements before accessing
-			if (operands.size() < 3) {
-				FLASH_LOG(Codegen, Error, "Return statement: expression evaluation failed or returned insufficient operands");
-				return;
-			}
-			
-			// Extract IrValue from operand[2]
+			// Extract IrValue from operands.value
 			IrValue return_value;
-			if (std::holds_alternative<unsigned long long>(operands[2])) {
-				return_value = std::get<unsigned long long>(operands[2]);
-			} else if (std::holds_alternative<TempVar>(operands[2])) {
-				TempVar return_temp = std::get<TempVar>(operands[2]);
+			if (std::holds_alternative<unsigned long long>(operands.value)) {
+				return_value = std::get<unsigned long long>(operands.value);
+			} else if (std::holds_alternative<TempVar>(operands.value)) {
+				TempVar return_temp = std::get<TempVar>(operands.value);
 				return_value = return_temp;
 				
 				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
@@ -436,10 +420,10 @@
 				
 				// Mark the temp as a return value for potential NRVO analysis
 				markTempVarAsReturnValue(return_temp);
-			} else if (std::holds_alternative<StringHandle>(operands[2])) {
-				return_value = std::get<StringHandle>(operands[2]);
-			} else if (std::holds_alternative<double>(operands[2])) {
-				return_value = std::get<double>(operands[2]);
+			} else if (std::holds_alternative<StringHandle>(operands.value)) {
+				return_value = std::get<StringHandle>(operands.value);
+			} else if (std::holds_alternative<double>(operands.value)) {
+				return_value = std::get<double>(operands.value);
 			}
 			// Use the function's return type, not the expression type
 			emitReturn(return_value, current_function_return_type_, current_function_return_size_,

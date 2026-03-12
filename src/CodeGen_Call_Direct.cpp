@@ -120,10 +120,10 @@
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
-					ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
-					Type arg_type = std::get<Type>(argumentIrOperands[0]);
-					int arg_size = std::get<int>(argumentIrOperands[1]);
+					Type arg_type = argumentIrOperands.type;
+					int arg_size = argumentIrOperands.size_in_bits;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
 						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -132,7 +132,7 @@
 						} else {
 							return 0ULL;
 						}
-					}, argumentIrOperands[2]);
+					}, argumentIrOperands.value);
 					arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
 				});
 
@@ -783,18 +783,17 @@
 				arg_context = ExpressionContext::LValueAddress;
 			}
 			
-			ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+			ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
 			
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
-			if (param_type && argumentIrOperands.size() >= 3) {
-				ExprResult argumentResult = toExprResult(argumentIrOperands);
-				Type arg_type = argumentResult.type;
-				int arg_size = argumentResult.size_in_bits;
+			if (param_type) {
+				Type arg_type = argumentIrOperands.type;
+				int arg_size = argumentIrOperands.size_in_bits;
 				Type param_base_type = param_type->type();
 
-				TypeIndex arg_type_index = argumentResult.type_index;
+				TypeIndex arg_type_index = argumentIrOperands.type_index;
 
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				bool should_apply_standard_conversion =
@@ -804,11 +803,10 @@
 					standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined;
 				if (should_apply_standard_conversion) {
-					argumentResult = generateTypeConversion(argumentResult, arg_type, param_base_type, functionCallNode.called_from());
-					argumentIrOperands = static_cast<ExprOperands>(argumentResult);
-					arg_type = argumentResult.type;
-					arg_size = argumentResult.size_in_bits;
-					arg_type_index = argumentResult.type_index;
+					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
+					arg_type = argumentIrOperands.type;
+					arg_size = argumentIrOperands.size_in_bits;
+					arg_type_index = argumentIrOperands.type_index;
 				}
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
@@ -911,7 +909,7 @@
 								} else {
 									return 0ULL;
 								}
-							}, argumentIrOperands[2]);
+							}, argumentIrOperands.value);
 							
 							// Generate the call to conversion operator
 							if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
@@ -966,10 +964,9 @@
 								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
 								
 								// Replace argumentIrOperands with the result of the conversion
-								argumentIrOperands.clear();
-								argumentIrOperands.emplace_back(param_base_type);
-								argumentIrOperands.emplace_back(param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits()));
-								argumentIrOperands.emplace_back(result_var);
+								argumentIrOperands = makeExprResult(param_base_type,
+									param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits()),
+									IrOperand{result_var});
 							}
 						}
 					}
@@ -978,8 +975,7 @@
 			
 			// Check if visitExpressionNode returned a TempVar - this means the value was computed
 			// (e.g., global load, expression result, etc.) and we should use the TempVar directly
-			bool use_computed_result = (argumentIrOperands.size() >= 3 && 
-			std::holds_alternative<TempVar>(argumentIrOperands[2]));
+			bool use_computed_result = std::holds_alternative<TempVar>(argumentIrOperands.value);
 			
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -1073,15 +1069,14 @@
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 					
-					// Check if this is a literal value (has unsigned long long or double in operand[2])
-					bool is_literal = (argumentIrOperands.size() >= 3 && 
-					(std::holds_alternative<unsigned long long>(argumentIrOperands[2]) ||
-					std::holds_alternative<double>(argumentIrOperands[2])));
+					// Check if this is a literal value (has unsigned long long or double in value)
+					bool is_literal = (std::holds_alternative<unsigned long long>(argumentIrOperands.value) ||
+					std::holds_alternative<double>(argumentIrOperands.value));
 					
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
-						Type literal_type = std::get<Type>(argumentIrOperands[0]);
-						int literal_size = std::get<int>(argumentIrOperands[1]);
+						Type literal_type = argumentIrOperands.type;
+						int literal_size = argumentIrOperands.size_in_bits;
 						
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
@@ -1092,10 +1087,10 @@
 						
 						// Convert IrOperand to IrValue for the literal
 						IrValue rhs_value;
-						if (std::holds_alternative<unsigned long long>(argumentIrOperands[2])) {
-							rhs_value = std::get<unsigned long long>(argumentIrOperands[2]);
-						} else if (std::holds_alternative<double>(argumentIrOperands[2])) {
-							rhs_value = std::get<double>(argumentIrOperands[2]);
+						if (std::holds_alternative<unsigned long long>(argumentIrOperands.value)) {
+							rhs_value = std::get<unsigned long long>(argumentIrOperands.value);
+						} else if (std::holds_alternative<double>(argumentIrOperands.value)) {
+							rhs_value = std::get<double>(argumentIrOperands.value);
 						}
 						
 						// Create TypedValue for lhs and rhs
@@ -1113,10 +1108,10 @@
 						irOperands.emplace_back(addr_var);
 					} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
-						if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
-							Type expr_type = std::get<Type>(argumentIrOperands[0]);
-							int expr_size = std::get<int>(argumentIrOperands[1]);
-							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
+						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
+							Type expr_type = argumentIrOperands.type;
+							int expr_size = argumentIrOperands.size_in_bits;
+							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 							
 							// Check if the TempVar already holds an address
 							// This can happen when:
@@ -1141,8 +1136,9 @@
 							}
 							
 							if (is_already_address) {
-								// Already an address - pass through
-								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+								// Already an address - pass through via ExprOperands bridge
+								ExprOperands argOps = argumentIrOperands;
+								irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
 							} else {
 								// Need to take address of the value
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
@@ -1152,13 +1148,15 @@
 								irOperands.emplace_back(addr_var);
 							}
 						} else {
-							// Fallback - just pass through
-							irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+							// Fallback - just pass through via ExprOperands bridge
+							ExprOperands argOps = argumentIrOperands;
+							irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
 						}
 					}
 				} else {
-					// Parameter doesn't expect a reference - pass through as-is
-					irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+					// Parameter doesn't expect a reference - pass through as-is via ExprOperands bridge
+					ExprOperands argOps = argumentIrOperands;
+					irOperands.insert(irOperands.end(), argOps.begin(), argOps.end());
 				}
 			}
 		});

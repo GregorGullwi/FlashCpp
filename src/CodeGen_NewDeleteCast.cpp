@@ -747,15 +747,12 @@
 		}
 		
 		// Evaluate the expression to cast
-		ExprOperands expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
+		ExprResult expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
-		Type source_type = std::get<Type>(expr_operands[0]);
-		int source_size = std::get<int>(expr_operands[1]);
-		TypeIndex source_type_index = 0;
-		if (expr_operands.size() > 3 && std::holds_alternative<unsigned long long>(expr_operands[3])) {
-			source_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(expr_operands[3]));
-		}
+		Type source_type = expr_operands.type;
+		int source_size = expr_operands.size_in_bits;
+		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
 			if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
 				return false;
@@ -771,13 +768,13 @@
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for lvalue reference casts: static_cast<T&>(expr)
 		// This produces an lvalue
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
@@ -789,7 +786,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return makeExprResult(target_type, 64, expr_operands[2]);
+			return makeExprResult(target_type, 64, expr_operands.value);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -799,9 +796,9 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
-				return makeExprResult(target_type, target_size, expr_operands[2]);
+				return makeExprResult(target_type, target_size, expr_operands.value);
 			}
-			return toExprResult(expr_operands);
+			return expr_operands;
 		}
 
 		// For enum to int or int to enum, we can just change the type
@@ -810,7 +807,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return makeExprResult(target_type, target_size, expr_operands[2]);
+			return makeExprResult(target_type, target_size, expr_operands.value);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -828,7 +825,7 @@
 					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
-			}, expr_operands[2]);
+			}, expr_operands.value);
 			
 			TypeConversionOp op{
 				.result = result_temp,
@@ -852,7 +849,7 @@
 					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
-			}, expr_operands[2]);
+			}, expr_operands.value);
 			
 			TypeConversionOp op{
 				.result = result_temp,
@@ -876,7 +873,7 @@
 					throw InternalError("Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
-			}, expr_operands[2]);
+			}, expr_operands.value);
 			
 			TypeConversionOp op{
 				.result = result_temp,
@@ -915,7 +912,7 @@
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return makeExprResult(target_type, target_size, expr_operands[2]);
+		return makeExprResult(target_type, target_size, expr_operands.value);
 	}
 
 	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -952,14 +949,14 @@
 		}
 		else {
 			// typeid(expr) - may need runtime lookup for polymorphic types
-			ExprOperands expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
+			ExprResult expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
 
 			// Extract IrValue from expression result
 			std::variant<StringHandle, TempVar> operand_value;
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				operand_value = std::get<TempVar>(expr_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
-				operand_value = std::get<StringHandle>(expr_operands[2]);
+			if (std::holds_alternative<TempVar>(expr_operands.value)) {
+				operand_value = std::get<TempVar>(expr_operands.value);
+			} else if (std::holds_alternative<StringHandle>(expr_operands.value)) {
+				operand_value = std::get<StringHandle>(expr_operands.value);
 			} else {
 				// Shouldn't happen - typeid operand should be a variable
 				operand_value = TempVar{0};
@@ -993,7 +990,7 @@
 		}
 
 		// Evaluate the expression to cast
-		ExprOperands expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>(), eval_context);
+		ExprResult expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get target struct type information
 		std::string target_type_name;
@@ -1012,18 +1009,18 @@
 
 		// Extract source pointer from expression result
 		TempVar source_ptr;
-		if (std::holds_alternative<TempVar>(expr_operands[2])) {
-			source_ptr = std::get<TempVar>(expr_operands[2]);
-		} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+		if (std::holds_alternative<TempVar>(expr_operands.value)) {
+			source_ptr = std::get<TempVar>(expr_operands.value);
+		} else if (std::holds_alternative<StringHandle>(expr_operands.value)) {
 			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();
-			StringHandle var_name_handle = std::get<StringHandle>(expr_operands[2]);
+			StringHandle var_name_handle = std::get<StringHandle>(expr_operands.value);
 			
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
-			load_op.lhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), source_ptr};
-			load_op.rhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), var_name_handle};
+			load_op.lhs = TypedValue{expr_operands.type, expr_operands.size_in_bits, source_ptr};
+			load_op.rhs = TypedValue{expr_operands.type, expr_operands.size_in_bits, var_name_handle};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
@@ -1050,9 +1047,9 @@
 
 		// Mark value category for reference types
 		if (target_type_node.is_rvalue_reference()) {
-			markReferenceMetadata(toExprResult(expr_operands), result_temp, result_type, result_size, true, "dynamic_cast");
+			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, true, "dynamic_cast");
 		} else if (target_type_node.is_lvalue_reference()) {
-			markReferenceMetadata(toExprResult(expr_operands), result_temp, result_type, result_size, false, "dynamic_cast");
+			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, false, "dynamic_cast");
 		}
 
 		// Return the casted pointer/reference
@@ -1064,7 +1061,7 @@
 		// It doesn't change the actual value, just the type metadata
 		
 		// Evaluate the expression to cast
-		ExprOperands expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
+		ExprResult expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
 		
 		// Get the target type from the type specifier
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
@@ -1073,18 +1070,18 @@
 		
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
 		
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
 		
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return makeExprResult(target_type, target_size, expr_operands[2]);
+		return makeExprResult(target_type, target_size, expr_operands.value);
 	}
 
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1092,7 +1089,7 @@
 		// It doesn't change the actual bits, just the type interpretation
 		
 		// Evaluate the expression to cast
-		ExprOperands expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
+		ExprResult expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
 		
 		// Get the target type from the type specifier
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
@@ -1102,17 +1099,17 @@
 		
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(toExprResult(expr_operands), target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 		
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(toExprResult(expr_operands), target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 		
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return makeExprResult(target_type, result_size, expr_operands[2], 0, target_pointer_depth);
+		return makeExprResult(target_type, result_size, expr_operands.value, 0, target_pointer_depth);
 	}

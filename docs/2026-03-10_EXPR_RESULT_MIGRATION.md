@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (Phase 3 families 1-8 landed on this branch; compatibility bridge still present)
+**Status**: In Progress (planned consumer-side `toExprResult` cleanup complete; compatibility-shim cleanup remains)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
@@ -36,6 +36,59 @@
 - some compatibility consumers still immediately materialize `ExprOperands` from
   `ExprResult` return values or bounce through `toExprResult(...)` at callsites;
   these remaining adapters are now the main Phase 4 cleanup target
+- additional Phase 4 cleanup on this branch migrated unary-expression handling in
+  `src/CodeGen_Expr_Conversions.cpp`: the local `tryBuildIdentifierOperand`
+  builder and `operandIrOperands` now use `ExprResult`, the last 4
+  `toExprResult(...)` bounce points in that file were removed, and the nearby
+  unary `+`, `++`, `--`, `&`, and `*` paths now consume named fields instead of
+  positional operand indexes
+- a further Phase 4 follow-up reduced the remaining
+  `src/CodeGen_Expr_Operators.cpp` bounce points by threading `ExprResult`
+  alongside legacy `ExprOperands` in the compound-assignment flow:
+  - both compound-assignment metadata-handler paths now call
+    `handleLValueCompoundAssignment(...)` with the original `ExprResult`
+    returned from `visitExpressionNode()`
+  - the `op=` typed IR block now returns `lhsExprResult` directly and uses
+    `.value` for the result target instead of re-decoding `lhsIrOperands`
+  - the nearby assignment/common-type conversion sites now keep
+    `lhsExprResult` / `rhsExprResult` synchronized when
+    `generateTypeConversion(...)` materializes converted temporaries
+- after those follow-ups, the remaining known consumer-side `toExprResult(...)`
+  bounce points on this branch are still concentrated in
+  `src/CodeGen_Expr_Operators.cpp`, but mostly in the older assignment/helper
+  paths rather than the typed compound-assignment block
+- another follow-up then trimmed most of those older assignment/helper adapters:
+  - the array/member assignment fast path now carries `lhsExprResult` /
+    `rhsExprResult` through `handleLValueAssignment(...)` directly and returns
+    `rhsExprResult`
+  - the implicit-member and captured-by-reference assignment paths now call
+    `handleLValueAssignment(...)` with direct `ExprResult` locals instead of
+    immediately bouncing through `toExprResult(...)`
+  - the general unified lvalue-assignment path now returns `rhsExprResult`
+    directly, and the global/static assignment helper keeps only a local
+    `ExprOperands` bridge for its positional store logic before returning the
+    original `ExprResult`
+- after that slice, the remaining known consumer-side `toExprResult(...)`
+  bounce points in `src/CodeGen_Expr_Operators.cpp` were down to the comma
+  operator, the `va_list` helpers, and the builtin launder return path
+- the next follow-up removed those last `CodeGen_Expr_Operators.cpp`
+  consumer-side bounce points too:
+  - the comma operator now returns the direct `ExprResult` from its RHS
+  - `generateVaArgIntrinsic(...)` and `generateVaStartIntrinsic(...)` now pass
+    the original `ExprResult` into `isVaListPointerType(...)` and use `.value`
+    instead of positional slot access for the tracked va_list variable
+  - `generateBuiltinLaunderIntrinsic(...)` now uses named `ExprResult` fields
+    and returns the original pointer result directly
+- after that cleanup, the known Phase 4 consumer-side `toExprResult(...)`
+  bounce points are no longer in `src/CodeGen_Expr_Operators.cpp`
+- for the current PR scope, the planned consumer-side `toExprResult(...)`
+  removal work is complete; the remaining document work is broader follow-up
+  cleanup outside this PR:
+  - remove `encoded_metadata` once no legacy slot-4 bridge is needed
+  - remove the implicit `ExprResult -> ExprOperands` compatibility path
+  - remove slot-4 decoding from `toTypedValue()` once all callers consume named
+    `ExprResult` fields or other direct metadata
+  - harden `makeExprResult(...)` so metadata arguments cannot be misordered
 
 ## Problem
 
