@@ -57,6 +57,20 @@
   bounce points on this branch are still concentrated in
   `src/CodeGen_Expr_Operators.cpp`, but mostly in the older assignment/helper
   paths rather than the typed compound-assignment block
+- another follow-up then trimmed most of those older assignment/helper adapters:
+  - the array/member assignment fast path now carries `lhsExprResult` /
+    `rhsExprResult` through `handleLValueAssignment(...)` directly and returns
+    `rhsExprResult`
+  - the implicit-member and captured-by-reference assignment paths now call
+    `handleLValueAssignment(...)` with direct `ExprResult` locals instead of
+    immediately bouncing through `toExprResult(...)`
+  - the general unified lvalue-assignment path now returns `rhsExprResult`
+    directly, and the global/static assignment helper keeps only a local
+    `ExprOperands` bridge for its positional store logic before returning the
+    original `ExprResult`
+- after that slice, the remaining known consumer-side `toExprResult(...)`
+  bounce points in `src/CodeGen_Expr_Operators.cpp` are down to the comma
+  operator, the `va_list` helpers, and the builtin launder return path
 
 ## Problem
 

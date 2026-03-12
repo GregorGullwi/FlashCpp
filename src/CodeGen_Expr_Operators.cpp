@@ -414,7 +414,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 				// Evaluate LHS with LValueAddress context (no Load instruction)
-				ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				ExprOperands lhsIrOperands = lhsExprResult;
 
 				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
 				bool use_unified_handler = !lhsIrOperands.empty();
@@ -431,13 +432,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				if (use_unified_handler) {
 					// Evaluate RHS normally (Load context)
-					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = rhsExprResult;
 
 					// Try to handle assignment using unified lvalue metadata handler
-					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
+					if (handleLValueAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token())) {
 						// Assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member assignment");
-						return toExprResult(rhsIrOperands);
+						return rhsExprResult;
 					}
 
 					// If metadata handler didn't work, fall through to legacy code
@@ -464,14 +466,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (member_result) {
 						// This is an assignment to a member variable: member = value
 						// Handle via unified handler (identifiers are now marked as lvalues)
-						ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr);
-						ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						ExprResult lhsExprResult = visitExpressionNode(lhs_expr);
+						ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 						// Handle assignment using unified lvalue metadata handler
-						if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
+						if (handleLValueAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token())) {
 							// Assignment was handled successfully via metadata
 							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
-							return toExprResult(rhsIrOperands);
+							return rhsExprResult;
 						}
 
 						// This shouldn't happen with proper metadata, but log for debugging
@@ -501,11 +503,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				if (is_captured_by_ref) {
 					std::string_view lhs_name = lhs_ident.name();
-					ExprOperands lhsIrOperands = visitExpressionNode(lhs_expr);
-					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-					if (handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
+					ExprResult lhsExprResult = visitExpressionNode(lhs_expr);
+					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					if (handleLValueAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token())) {
 						FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
-						return toExprResult(rhsIrOperands);
+						return rhsExprResult;
 					}
 					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
 					return makeExprResult(Type::Int, 32, IrOperand{TempVar{0}});
@@ -559,7 +561,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (gsi.is_global_or_static) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
-					ExprOperands rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					ExprOperands rhsIrOperands = rhsExprResult;
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
@@ -589,7 +592,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
 					// Return the RHS value as the result (assignment expression returns the assigned value)
-					return toExprResult(rhsIrOperands);
+					return rhsExprResult;
 				}
 			}
 		}
@@ -721,9 +724,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
 		// This handles assignments like *ptr = value using lvalue metadata
-		if (op == "=" && handleLValueAssignment(toExprResult(lhsIrOperands), toExprResult(rhsIrOperands), binaryOperatorNode.get_token())) {
+		if (op == "=" && handleLValueAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token())) {
 			// Assignment was handled via lvalue metadata, return RHS as result
-			return toExprResult(rhsIrOperands);
+			return rhsExprResult;
 		}
 
 		// Get the types and sizes of the operands
