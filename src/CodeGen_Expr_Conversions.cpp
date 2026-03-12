@@ -18,6 +18,10 @@
 			return operands; // No conversion needed
 		}
 
+		// Check for int-to-float or float-to-int conversions
+		bool from_is_float = is_floating_point_type(fromType);
+		bool to_is_float = is_floating_point_type(toType);
+
 		// Check if the value is a compile-time constant (literal)
 		bool is_literal =
 			std::holds_alternative<unsigned long long>(operands.value) ||
@@ -25,15 +29,30 @@
 			std::holds_alternative<double>(operands.value);
 
 		if (is_literal) {
-			// For literal values, just convert the value directly without creating a TempVar
-			// This allows the literal to be used as an immediate value in instructions
+			if (from_is_float != to_is_float) {
+				TempVar resultVar = var_counter.next();
+				TypeConversionOp conv_op{
+					.result = resultVar,
+					.from = toTypedValue(operands),
+					.to_type = toType,
+					.to_size_in_bits = toSize
+				};
+
+				if (from_is_float) {
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatToInt, std::move(conv_op), source_token));
+				} else {
+					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
+				}
+
+				return makeExprResult(toType, toSize, IrOperand{resultVar});
+			}
+
+			// For same-domain literal conversions, keep the value immediate.
 			if (std::holds_alternative<unsigned long long>(operands.value)) {
 				unsigned long long value = std::get<unsigned long long>(operands.value);
-				// For integer literals, the value remains the same (truncation/extension happens at runtime)
 				return makeExprResult(toType, toSize, IrOperand{value});
 			} else if (std::holds_alternative<int>(operands.value)) {
 				int value = std::get<int>(operands.value);
-				// Convert to unsigned long long for consistency
 				return makeExprResult(toType, toSize, IrOperand{static_cast<unsigned long long>(value)});
 			} else if (std::holds_alternative<double>(operands.value)) {
 				double value = std::get<double>(operands.value);
@@ -42,10 +61,6 @@
 		}
 
 		// For non-literal values (variables, TempVars), check if conversion is needed
-
-		// Check for int-to-float or float-to-int conversions
-		bool from_is_float = is_floating_point_type(fromType);
-		bool to_is_float = is_floating_point_type(toType);
 
 		if (from_is_float != to_is_float) {
 			// Converting between int and float (or vice versa)

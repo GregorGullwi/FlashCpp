@@ -1,16 +1,37 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (`ExprResult` landed; Phase 2 partially landed)
+**Status**: In Progress (Phase 3 families 1-8 landed on this branch; compatibility bridge still present)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
-## Status Check (2026-03-11)
+## Status Check (2026-03-12)
 
 - `ExprResult` and `ExprOperands` are present in `src/IROperandHelpers.h`
 - `toTypedValue(const ExprResult&)` already exists, so consumer-side bridging is started
 - priority producer sites have been migrated in `src/CodeGen_MemberAccess.cpp`, `src/CodeGen_Expr_Primitives.cpp`, and selected address-expression paths in `src/CodeGen_Expr_Conversions.cpp`
 - the current implementation still uses `encoded_metadata` as a temporary compatibility escape hatch for legacy slot-4 enum encoding edge cases
-- the remaining Phase 2 work is no longer “add ExprResult” — it is “finish removing legacy positional consumers and manual slot-4 construction”, then unblock Phase 3 return-signature changes
+- the remaining compatibility work is no longer “add ExprResult” — it is “finish removing the positional bridge and slot-4 compatibility layer” after the Phase 3 return-signature migration
+
+### Branch progress (PR #893 / 2026-03-12)
+
+- all planned Phase 3 producer families on this branch now return `ExprResult` directly:
+  - leaf literals
+  - leaf identifiers
+  - member/subscript
+  - casts
+  - unary/binary/ternary operators
+  - calls
+  - remaining intrinsic/helper producers
+  - `visitExpressionNode`
+- positional caller updates were completed together with each migrated family, replacing
+  `result[0]` / `result[2]` / `result[3]` reads with named `ExprResult` fields
+- follow-up validation on this branch exposed a non-migration runtime mismatch in
+  `tests/template_parsing_test_ret0.cpp`; the local direct-call lowering now inserts
+  standard primitive argument conversions before calls, and cross-domain literal
+  conversions are routed through conversion IR so the backend receives a typed temporary
+  instead of a mismatched immediate payload
+- `encoded_metadata`, `operator ExprOperands()`, and `toExprResult(...)` remain
+  intentionally in place for the later cleanup phase
 
 ## Problem
 
@@ -252,14 +273,14 @@ The plan is easier to execute if it is split into these concrete slices:
 2. **Convert legacy expression-result helper parameters** ✅ complete
    - all helpers from the original deferred `AstToIr.h` list now take
      `const ExprResult&`
-3. **Change return signatures now that helper parameters are migrated**
-   - Phase 3 is now unblocked because the last legacy positional helper
-     parameters have been removed
+3. **Change return signatures now that helper parameters are migrated** ✅ branch-complete for the planned producer families
+    - Phase 3 is now unblocked because the last legacy positional helper
+      parameters have been removed
 4. **Delete the compatibility shim last**
-   - remove `encoded_metadata`
-   - remove slot-4 decoding from `toTypedValue()`
+    - remove `encoded_metadata`
+    - remove slot-4 decoding from `toTypedValue()`
 
-### Phase 3: Change function signatures (optional, longer-term)
+### Phase 3: Change function signatures
 
 Once all producers for a function use `ExprResult`, change its return type:
 
@@ -276,9 +297,10 @@ Callers that use `toTypedValue()` continue to work (add a
 (`result[0]`, `result[2]`) must be updated to use the named fields — this is
 intentional, as those are the fragile access patterns we want to eliminate.
 
-**Recommendation:** Phase 3 can now start, but keep it incremental: change
-return signatures one producer family at a time so any remaining positional
-callers are updated together with each producer.
+**2026-03-12 branch update:** the planned producer-family migration has been
+completed incrementally on this branch. The remaining work after merge is the
+Phase 4 compatibility cleanup, not additional family-by-family return-signature
+changes.
 
 ### Phase 4: Remove the encoding/decoding layer
 

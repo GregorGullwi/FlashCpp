@@ -789,13 +789,26 @@
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type && argumentIrOperands.size() >= 3) {
-				Type arg_type = std::get<Type>(argumentIrOperands[0]);
-				int arg_size = std::get<int>(argumentIrOperands[1]);
+				ExprResult argumentResult = toExprResult(argumentIrOperands);
+				Type arg_type = argumentResult.type;
+				int arg_size = argumentResult.size_in_bits;
 				Type param_base_type = param_type->type();
-				
-				TypeIndex arg_type_index = 0;
-				if (argumentIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(argumentIrOperands[3])) {
-					arg_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(argumentIrOperands[3]));
+
+				TypeIndex arg_type_index = argumentResult.type_index;
+
+				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
+				bool should_apply_standard_conversion =
+					param_ref_qualifier == CVReferenceQualifier::None &&
+					param_type->pointer_depth() == 0 &&
+					arg_type != param_base_type &&
+					standard_conversion.is_valid &&
+					standard_conversion.rank != ConversionRank::UserDefined;
+				if (should_apply_standard_conversion) {
+					argumentResult = generateTypeConversion(argumentResult, arg_type, param_base_type, functionCallNode.called_from());
+					argumentIrOperands = static_cast<ExprOperands>(argumentResult);
+					arg_type = argumentResult.type;
+					arg_size = argumentResult.size_in_bits;
+					arg_type_index = argumentResult.type_index;
 				}
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
