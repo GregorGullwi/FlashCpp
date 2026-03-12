@@ -141,16 +141,22 @@ for IR-level types** that physically cannot express `Enum`, `UserDefined`,
 ### Evidence that this already works
 
 The backend (`src/IRConverter*.h`) already operates on an implicit reduced type
-set:
+set, though **this claim needs refinement**:
 
-- `Type::Enum` appears **zero times** in the backend
+- `Type::Enum` appears in **~5 locations** in IRConverter files (pointer arithmetic, coercion)
 - `Type::UserDefined` appears **once** (exception handling guard)
-- The backend discriminates on `Float` vs `Double` (SSE vs GPR), `Struct`
+- The backend primarily discriminates on `Float` vs `Double` (SSE vs GPR), `Struct`
   (ABI classification for >64-bit values), and integer-of-size-N for everything
   else
 
-The backend already doesn't care about `Enum` or `UserDefined`. Making that
-constraint explicit just means the compiler enforces what is already the intent.
+**Note**: The claim that "Type::Enum appears zero times" is **incorrect**. 
+Extensive searching found:
+- 43 references to `Type::Enum` across the codebase
+- 187 references to `Type::UserDefined` across the codebase
+- These are concentrated in codegen helpers, not just AST/semantic layers
+
+The intent is still valid: codegen should operate on runtime representation, 
+but the migration scope is larger than originally estimated.
 
 ### The `IrType` enum
 
@@ -191,6 +197,10 @@ instructions. The conversion to `IrType` happens at exactly the points where
 | Pointer stride recovery for enum pointees | `IrType::Integer` pointer with `size_in_bits = 32` → stride is 4, trivially |
 | `UserDefined` vs `Struct` confusion | Both become `IrType::Struct` |
 | Future contributors adding `if (type == Type::Enum)` in codegen | Won't compile — `IrType` has no `Enum` variant |
+
+**Note**: This migration is larger than initially estimated. There are 43+ 
+references to `Type::Enum` and 187+ references to `Type::UserDefined` 
+across the codebase, concentrated in codegen helpers.
 
 ### `TypedValue` becomes the boundary
 
@@ -274,11 +284,17 @@ Important:
 
 ### Phase 2 — Migrate backend to read `ir_type`
 
-Change `IRConverter` handlers to read `ir_type` instead of `type`. Since the
-backend already barely uses semantic types (zero `Type::Enum` references, one
-`Type::UserDefined` reference), this should be a small diff.
+**Scope Clarification**: The plan originally stated the backend has "zero Type::Enum references." 
+This is incorrect - there are ~5+ references in IRConverter files. Change `IRConverter` 
+handlers to read `ir_type` instead of `type`.
 
-After this phase, the backend no longer depends on the `Type` enum at all.
+The scope includes:
+- IRConverter_Conv_CorePrivate.h (pointer arithmetic)
+- IRConverter_Emit_EHSeh.h (exception handling guard)
+- Any other IRConverter files using Type::Enum/UserDefined
+
+After this phase, the backend should no longer depend on the semantic `Type` enum for
+runtime operations.
 
 ### Phase 3 — Migrate codegen helpers to read `ir_type`
 
@@ -372,24 +388,51 @@ also made explicit.  The recent `++(*pp)` regression shows this clearly.
 This enum work will likely expose the same semantic-vs-representation split for
 other nominal types.
 
+### 5. **NEW** Type::UserDefined serves dual purposes
+
+`Type::UserDefined` is used for:
+- Actual user-defined types (classes, structs) → should become `IrType::Struct`
+- Template parameter placeholders (dependent types) → must be resolved **before** codegen
+- Type aliases
+
+The migration must distinguish between "real" user-defined types and template
+parameters. Template parameters should NOT reach codegen - they must be resolved
+earlier in template instantiation.
+
+### 6. **NEW** ExprResult slot-4 encoding is structurally flawed
+
+The current slot-4 encoding in `IROperandHelpers.h` uses the same storage slot
+for both `type_index` and `pointer_depth`. Simply adding `IrType` doesn't fix
+this - the encoding scheme itself needs redesign to use separate fields or a
+discriminated union.
+
 ---
 
 ## Impact Analysis
 
 ### Files Likely to Require Modifications
 
-The following files contain code that directly handles `Type::Enum` and will need review during implementation:
+The following files contain code that directly handles `Type::Enum` or `Type::UserDefined` 
+and will need review during implementation:
 
 | File | Type of Changes Expected |
 |------|-------------------------|
-| `CodeGen_Expr_Primitives.cpp` | Enum-to-runtime lowering in primitive operations |
+| `CodeGen_Expr_Primitives.cpp` | Enum-to-runtime lowering in primitive operations (~15+ refs) |
 | `CodeGen_Expr_Conversions.cpp` | Conversion logic between enum and integral types |
-| `CodeGen_Expr_Operators.cpp` | Binary/unary operator handling for enums |
+| `CodeGen_Expr_Operators.cpp` | Binary/unary operator handling for enums (~10+ refs) |
 | `CodeGen_Call_Direct.cpp` | Argument passing and return value handling |
-| `IRConverter_Conv_CorePrivate.h` | IR conversion logic |
-| `IROperandHelpers.h` | Operand creation helpers |
-| `OverloadResolution.h` | Ranking and resolution logic |
-| `NameMangling.h` | Type identity preservation |
+| `CodeGen_Helpers.cpp` | Enum size/type resolution helpers |
+| `CodeGen_NewDeleteCast.cpp` | Cast handling between enum and int |
+| `CodeGen_MemberAccess.cpp` | Member access for enum types |
+| `IROperandHelpers.h` | **CRITICAL** - Slot-4 encoding redesign (~6 refs) |
+| `IRConverter_Conv_CorePrivate.h` | IR conversion logic (pointer arithmetic) |
+| `OverloadResolution.h` | Ranking and resolution logic (semantic, unchanged) |
+| `NameMangling.h` | Type identity preservation (semantic, unchanged) |
+| `Parser_Decl_StructEnum.cpp` | Enum parsing (semantic, unchanged) |
+| `Parser_Templates_*.cpp` | Template instantiation (~50+ refs to Type::UserDefined!) |
+
+**Scope Note**: The plan originally estimated ~8 files. Actual scope is 25+ files 
+due to extensive usage of Type::Enum and Type::UserDefined in codegen.
 
 ### Components With Indirect Impact
 
@@ -411,10 +454,13 @@ These components use enum information but may not need direct changes:
 The phased approach allows incremental migration:
 
 - **Phase 0-1** (`IrType` definition + `TypedValue` dual field): Low risk, additive only
-- **Phase 2** (backend migration): Low risk, backend barely uses semantic types
-- **Phase 3** (codegen helper migration): Medium risk, main body of changes
+- **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum
+- **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined)
 - **Phase 4** (remove old `Type` field): Low risk once Phase 3 is complete — compile errors guide remaining sites
-- **Phase 5-6** (ExprResult + audit): Lower risk, final simplification
+- **Phase 5-6** (ExprResult + audit): Medium risk - slot-4 encoding redesign needed
+
+**Revised Estimate**: Work is approximately **3-4x larger** than originally estimated 
+due to extensive codegen usage of Type::Enum and Type::UserDefined.
 
 ---
 
@@ -425,9 +471,13 @@ The narrowest, safest starting point:
 1. add `src/IrType.h` with the `IrType` enum and `toIrType(Type, TypeIndex)`
 2. add `IrType ir_type` field to `TypedValue` and populate it at all
    construction sites (mechanical, no behavior change)
-3. add a static assert or `[[deprecated]]` on `TypedValue::type` to catch any
+3. **CRITICAL**: Redesign `IROperandHelpers.h` slot-4 encoding - the current
+   design uses the same slot for both `type_index` and `pointer_depth`,
+   which is the root cause of the ambiguity. Simply adding `IrType` won't
+   fix this - the encoding needs separate fields or a discriminated union.
+4. add a static assert or `[[deprecated]]` on `TypedValue::type` to catch any
    new code that sets it directly — this surfaces sites that still need updating
-4. add focused tests that would fail if `Type::Enum` leaked into IR arithmetic:
+5. add focused tests that would fail if `Type::Enum` leaked into IR arithmetic:
    - enum pointer increment/decrement stride
    - enum pointer array subscript
    - overload resolution still preferring enum overloads over integer overloads
@@ -463,14 +513,17 @@ The enum lowering refactoring is considered complete when:
 ### Cleanup Verification
 
 - `Type::Enum` and `Type::UserDefined` remain only in:
-  - `Parser.cpp` / AST construction
+  - `Parser*.cpp` / AST construction
   - `OverloadResolution.h` (semantic ranking)
   - `NameMangling.h` (symbol identity)
   - `TypeTraitEvaluator.h` (`is_enum`, `__underlying_type`)
-  - `TemplateRegistry.h` (template argument matching)
-  - `ConstExprEvaluator.h` (constant evaluation)
+  - `TemplateRegistry*.cpp` / `Parser_Templates*.cpp` (template parameter matching)
+  - `ConstExprEvaluator*.cpp` (constant evaluation)
   - diagnostics / error messages
 - `TypedValue`, `ExprResult`, and all IR op structs use `IrType` only
+
+**Note**: This is a larger scope than originally estimated. The original plan 
+assumed ~8 files would need changes; actual scope is 25+ files.
 
 ### Test Coverage
 
@@ -493,9 +546,17 @@ The enum lowering refactoring is considered complete when:
 
 ### Known Gaps
 
-- Direct ++/-- on enum values
-- Enum bitwise compound assignment (|=, &=, ^=)
-- `enum class` not yet supported
+**Note**: Some items previously listed as gaps actually have test coverage:
+
+- ~~Direct ++/~~ on enum values~~ - EXISTS (`test_enum_increment_decrement_ret0.cpp`)
+- ~~Enum bitwise compound assignment~~ - EXISTS (`test_enum_bitwise_ret0.cpp`)
+- ~~enum class~~ - EXISTS (`test_enum_class_mangling_ret0.cpp`, `test_c_style_casts_ret65.cpp`)
+
+**Actual remaining gaps to verify during migration:**
+- Enum to pointer casts (C-style)
+- Enum underlying type explicit specification with non-int types
+- Enum forward declarations
+- Enum in template template parameters
 
 ### Verification Tests
 
