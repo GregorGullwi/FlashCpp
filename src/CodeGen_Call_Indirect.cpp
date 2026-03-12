@@ -1553,7 +1553,11 @@
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		
-		return makeExprResult(return_type.type(), return_size_bits, IrOperand{ret_var}, 0, 0, static_cast<unsigned long long>(return_type.type_index()));
+		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+			? return_type.type_index()
+			: 0;
+		return makeExprResult(return_type.type(), return_size_bits, IrOperand{ret_var}, ret_type_index, 0,
+			ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt);
 	}
 
 

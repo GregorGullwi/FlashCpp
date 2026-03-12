@@ -2486,7 +2486,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 			
 			TypeIndex result_type_index = type_spec.type_index();
-			return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, 0, 0, static_cast<unsigned long long>(result_type_index));
+			return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, static_cast<TypeIndex>(result_type_index), 0,
+				static_cast<unsigned long long>(result_type_index));
 		}
 	}
 	
@@ -2644,5 +2645,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	TypeIndex result_type_index = type_spec.type_index();
-	return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, 0, 0, static_cast<unsigned long long>(result_type_index));
+	return makeExprResult(type_spec.type(), actual_size_bits, IrOperand{ret_var}, static_cast<TypeIndex>(result_type_index), 0,
+		static_cast<unsigned long long>(result_type_index));
 }

@@ -489,7 +489,9 @@
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		return makeExprResult(Type::Struct, closure_size_bits, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, 0, 0, static_cast<unsigned long long>(closure_type->type_index_));
+		TypeIndex closure_type_index = static_cast<TypeIndex>(closure_type->type_index_);
+		return makeExprResult(Type::Struct, closure_size_bits, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, closure_type_index, 0,
+			static_cast<unsigned long long>(closure_type_index));
 	}
 
 	void AstToIr::generateLambdaFunctions(const LambdaInfo& lambda_info) {

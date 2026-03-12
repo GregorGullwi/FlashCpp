@@ -1325,8 +1325,9 @@
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		// Return type_index for struct types so structured bindings can decompose the result
-		unsigned long long type_index_result = (return_type.type() == Type::Struct) 
-			? static_cast<unsigned long long>(return_type.type_index())
-			: 0ULL;
-		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, 0, 0, type_index_result);
+		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+			? return_type.type_index()
+			: 0;
+		return makeExprResult(return_type.type(), result_size, IrOperand{ret_var}, type_index_result, 0,
+			type_index_result ? std::optional<unsigned long long>{static_cast<unsigned long long>(type_index_result)} : std::nullopt);
 	}

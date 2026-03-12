@@ -3,15 +3,21 @@
 //
 // The bug: makeExprResult(..., 0, 0, type_index_ull) sets ExprResult.type_index = 0
 // and puts the real value only in encoded_metadata.  extractBaseFromOperands reads
-// .type_index directly; when it is 0 it falls back to a linear scan of gTypeInfo
-// looking for type_index_ == 0.  With two structs registered, type_index_ == 0 belongs
-// to the FIRST struct (Decoy), not the one actually returned (Target), so the member
-// lookup resolves against the wrong struct and either crashes (InternalError: member
-// not found) or returns a value from the wrong field.
+// .type_index directly and passes it to gLazyMemberResolver.  With type_index=0 the
+// resolver looks up gTypeInfo[0], which is a native type (not a struct), so the
+// direct-index lookup fails.  The fallback linear scan then searches for a TypeInfo
+// with type_index_ == 0 — user structs start at index > 0, so the scan also finds
+// nothing, and the code throws InternalError("struct type info not found").
 //
-// Decoy is declared first so it receives type_index_ == 0 — the value the broken
-// code always passes to extractBaseFromOperands for any struct-returning call.
-// Target is declared second so it receives type_index_ > 0, which the bug discards.
+// Currently the crash is prevented by a pair of redundant toExprResult() wrappers in
+// generateMemberAccessIr (lines 1003 and 1116 of CodeGen_MemberAccess.cpp) that
+// encode/decode the ExprResult through ExprOperands, recovering the correct type_index
+// from encoded_metadata.  This test will fail if those wrappers are removed without
+// first fixing makeExprResult to populate type_index correctly, and will also catch
+// any future regression where type_index is again lost at the producer site.
+//
+// Two structs are declared so the fallback scan cannot accidentally succeed by finding
+// a struct with type_index_ == 0 (user structs always get index > 0 in gTypeInfo).
 
 struct Decoy {
     int dummy;

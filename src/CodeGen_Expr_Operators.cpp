@@ -1310,7 +1310,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-				return makeExprResult(return_type.type(), actual_return_size, IrOperand{result_var}, 0, 0, return_type.type_index());
+				return makeExprResult(return_type.type(), actual_return_size, IrOperand{result_var}, return_type.type_index(), 0,
+					return_type.type_index() ? std::optional<unsigned long long>{static_cast<unsigned long long>(return_type.type_index())} : std::nullopt);
 			}
 
 			else if (overload_result.has_match) {
@@ -1449,7 +1450,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 				// Return the result with resolved types
-				return makeExprResult(resolved_return_type, actual_return_size, IrOperand{result_var}, 0, 0, return_type.type_index());
+				return makeExprResult(resolved_return_type, actual_return_size, IrOperand{result_var}, return_type.type_index(), 0,
+					return_type.type_index() ? std::optional<unsigned long long>{static_cast<unsigned long long>(return_type.type_index())} : std::nullopt);
 			}
 			}
 
