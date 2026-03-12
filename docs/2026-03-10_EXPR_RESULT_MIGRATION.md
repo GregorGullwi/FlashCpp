@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (planned consumer-side `toExprResult` cleanup complete; compatibility-shim cleanup remains)
+**Status**: In Progress (all consumer-side positional-slot reads migrated; only the legacy `ExprOperands` shim + `encoded_metadata` field remain to be deleted)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
@@ -130,6 +130,36 @@
   - `src/CodeGen_Stmt_TryCatchSeh.cpp`: `throw` expression evaluation and
     SEH `__except`-filter expression evaluation; the throw path now reads
     `.type_index` directly instead of decoding legacy slot-3 metadata
+- the final consumer-side batch then migrated the last six files in a single wave:
+  - `src/CodeGen_Stmt_Decl.cpp`: constructor-arg packing, default-param handling,
+    conversion-operator init, array-element stores, member-store argument paths,
+    and copy-init detection (two legacy `operands.insert(begin/end)` sites deferred
+    because they feed the broader positional `operands[]` vector protocol)
+  - `src/CodeGen_Visitors_Decl.cpp`: static-member initializers, ctor-arg packing,
+    nested/flat aggregate init, enum-value tracking
+  - `src/CodeGen_Visitors_TypeInit.cpp`: global/flat aggregate init, scalar direct-init,
+    member-value extraction
+  - `src/CodeGen_NewDeleteCast.cpp`: `new` placement address, array/single-object
+    ctor args, `delete` pointer
+  - `src/CodeGen_Expr_Conversions.cpp`: `analyzeAddressExpression` object/array-subscript
+    lookup, member address paths; removed the stale `size() < 4` early-return guard
+  - `src/CodeGen_Call_Direct.cpp`: argument IR operand extraction
+- after this batch, all named consumer-side `ExprOperands foo = visitExpressionNode(...)`
+  captures that immediately read positional slots have been migrated; the only
+  remaining `ExprOperands` captures are at architectural legacy sites that feed a
+  broader positional `operands[]` vector (deferred to chunked-vector refactor)
+
+## Remaining Work (Phase 4 — shim removal)
+
+Once the two legacy `operands.insert` architectural sites in `CodeGen_Stmt_Decl.cpp` are
+migrated (using the global chunked-vector + span approach), the following dead code can
+be deleted:
+
+1. `ExprResult::encoded_metadata` field and `preserveEncodedExprMetadata(...)` helper
+2. `ExprResult::operator ExprOperands() const` implicit conversion
+3. `toExprResult(...)` helper overloads in `src/IROperandHelpers.h`
+4. slot-4 decoding path inside `toTypedValue(ExprOperands)` in `src/IROperandHelpers.h`
+5. `ExprOperands` typedef (or keep as internal alias only)
 
 ## Problem
 

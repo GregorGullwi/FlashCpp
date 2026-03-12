@@ -351,7 +351,6 @@
 				if (array_operands.pointer_depth != 0) {
 					element_pointer_depth = array_operands.pointer_depth;
 				}
-				}
 			}
 			
 			// Recurse on the array expression (could be nested: arr[i][j])
