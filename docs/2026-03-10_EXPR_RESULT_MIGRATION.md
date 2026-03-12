@@ -1,7 +1,7 @@
 # ExprResult Migration Plan
 
 **Date**: 2026-03-10
-**Status**: In Progress (Phase 3 families 1-8 landed on this branch; compatibility bridge still present)
+**Status**: In Progress (Phase 4 consumer-side `toExprResult` removal underway)
 **Related**: TODO #22 (Pointer Type in `Type` Enum), PR #878
 
 ## Status Check (2026-03-12)
