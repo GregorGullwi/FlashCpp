@@ -232,9 +232,9 @@
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
-							ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							Type arg_type = std::get<Type>(argumentIrOperands[0]);
-							int arg_size = std::get<int>(argumentIrOperands[1]);
+							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							Type arg_type = argumentIrOperands.type;
+							int arg_size = argumentIrOperands.size_in_bits;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -243,7 +243,7 @@
 								} else {
 									return 0ULL;
 								}
-							}, argumentIrOperands[2]);
+							}, argumentIrOperands.value);
 							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
 							
 							// Type for mangling

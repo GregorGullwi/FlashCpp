@@ -1134,14 +1134,14 @@
 							op.is_initialized = static_member.initializer.has_value();
 							if (op.is_initialized) {
 								// Evaluate the initializer expression
-								ExprOperands init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
+								ExprResult init_operands = visitExpressionNode(static_member.initializer->as<ExpressionNode>());
 								// Convert to raw bytes
-								if (init_operands.size() >= 3) {
+								{
 									unsigned long long value = 0;
-									if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-										value = std::get<unsigned long long>(init_operands[2]);
-									} else if (std::holds_alternative<double>(init_operands[2])) {
-										double d = std::get<double>(init_operands[2]);
+									if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+										value = std::get<unsigned long long>(init_operands.value);
+									} else if (std::holds_alternative<double>(init_operands.value)) {
+										double d = std::get<double>(init_operands.value);
 										std::memcpy(&value, &d, sizeof(double));
 									}
 									size_t byte_count = op.size_in_bits / 8;
@@ -1342,12 +1342,9 @@
 
 			// Add constructor arguments from delegating initializer
 			for (const auto& arg : delegating_init.arguments) {
-				ExprOperands arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-				// arg_operands = [type, size, value]
-				if (arg_operands.size() >= 3) {
+				ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
 					TypedValue tv = toTypedValue(arg_operands);
 					ctor_op.arguments.push_back(std::move(tv));
-				}
 			}
 
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -1410,12 +1407,9 @@
 					// Add constructor arguments from base initializer
 					if (base_init) {
 						for (const auto& arg : base_init->arguments) {
-							ExprOperands arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-							// arg_operands = [type, size, value]
-							if (arg_operands.size() >= 3) {
+							ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
 								TypedValue tv = toTypedValue(arg_operands);
 								ctor_op.arguments.push_back(std::move(tv));
-							}
 						}
 						// If there's an explicit initializer, generate the constructor call
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -1668,16 +1662,16 @@
 								const ASTNode& init_node = member.default_initializer.value();
 								if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 									// Use the default member initializer
-									ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 									// Extract just the value (third element of init_operands)
-									if (std::holds_alternative<TempVar>(init_operands[2])) {
-										member_value = std::get<TempVar>(init_operands[2]);
-									} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-										member_value = std::get<unsigned long long>(init_operands[2]);
-									} else if (std::holds_alternative<double>(init_operands[2])) {
-										member_value = std::get<double>(init_operands[2]);
-									} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-										member_value = std::get<StringHandle>(init_operands[2]);
+									if (std::holds_alternative<TempVar>(init_operands.value)) {
+										member_value = std::get<TempVar>(init_operands.value);
+									} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+										member_value = std::get<unsigned long long>(init_operands.value);
+									} else if (std::holds_alternative<double>(init_operands.value)) {
+										member_value = std::get<double>(init_operands.value);
+									} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+										member_value = std::get<StringHandle>(init_operands.value);
 									} else {
 										member_value = 0ULL;  // fallback
 									}
@@ -1746,29 +1740,29 @@
 																// For non-struct types with single-element initializer lists
 																const auto& nested_initializers = nested_init_list.initializers();
 																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
-																	ExprOperands nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
-																	if (std::holds_alternative<TempVar>(nested_init_operands[2])) {
-																		nested_member_value = std::get<TempVar>(nested_init_operands[2]);
-																	} else if (std::holds_alternative<unsigned long long>(nested_init_operands[2])) {
-																		nested_member_value = std::get<unsigned long long>(nested_init_operands[2]);
-																	} else if (std::holds_alternative<double>(nested_init_operands[2])) {
-																		nested_member_value = std::get<double>(nested_init_operands[2]);
-																	} else if (std::holds_alternative<StringHandle>(nested_init_operands[2])) {
-																		nested_member_value = std::get<StringHandle>(nested_init_operands[2]);
+																	ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+																	if (std::holds_alternative<TempVar>(nested_init_operands.value)) {
+																		nested_member_value = std::get<TempVar>(nested_init_operands.value);
+																	} else if (std::holds_alternative<unsigned long long>(nested_init_operands.value)) {
+																		nested_member_value = std::get<unsigned long long>(nested_init_operands.value);
+																	} else if (std::holds_alternative<double>(nested_init_operands.value)) {
+																		nested_member_value = std::get<double>(nested_init_operands.value);
+																	} else if (std::holds_alternative<StringHandle>(nested_init_operands.value)) {
+																		nested_member_value = std::get<StringHandle>(nested_init_operands.value);
 																	}
 																}
 															}
 														}
 													} else if (init_expr.is<ExpressionNode>()) {
-														ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-														if (std::holds_alternative<TempVar>(init_operands[2])) {
-															nested_member_value = std::get<TempVar>(init_operands[2]);
-														} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-															nested_member_value = std::get<unsigned long long>(init_operands[2]);
-														} else if (std::holds_alternative<double>(init_operands[2])) {
-															nested_member_value = std::get<double>(init_operands[2]);
-														} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-															nested_member_value = std::get<StringHandle>(init_operands[2]);
+														ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+														if (std::holds_alternative<TempVar>(init_operands.value)) {
+															nested_member_value = std::get<TempVar>(init_operands.value);
+														} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+															nested_member_value = std::get<unsigned long long>(init_operands.value);
+														} else if (std::holds_alternative<double>(init_operands.value)) {
+															nested_member_value = std::get<double>(init_operands.value);
+														} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+															nested_member_value = std::get<StringHandle>(init_operands.value);
 														}
 													}
 												}
@@ -1795,15 +1789,15 @@
 										} else {
 											// For non-struct types with single-element initializer lists
 											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
-												ExprOperands init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
-												if (std::holds_alternative<TempVar>(init_operands[2])) {
-													member_value = std::get<TempVar>(init_operands[2]);
-												} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-													member_value = std::get<unsigned long long>(init_operands[2]);
-												} else if (std::holds_alternative<double>(init_operands[2])) {
-													member_value = std::get<double>(init_operands[2]);
-												} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-													member_value = std::get<StringHandle>(init_operands[2]);
+												ExprResult init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+												if (std::holds_alternative<TempVar>(init_operands.value)) {
+													member_value = std::get<TempVar>(init_operands.value);
+												} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+													member_value = std::get<unsigned long long>(init_operands.value);
+												} else if (std::holds_alternative<double>(init_operands.value)) {
+													member_value = std::get<double>(init_operands.value);
+												} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+													member_value = std::get<StringHandle>(init_operands.value);
 												} else {
 													member_value = 0ULL;
 												}
@@ -1928,16 +1922,16 @@
 							
 							if (!handled_as_reference_init) {
 								// Use explicit initializer from constructor initializer list
-								ExprOperands init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+								ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
-								if (std::holds_alternative<TempVar>(init_operands[2])) {
-									member_value = std::get<TempVar>(init_operands[2]);
-								} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-									member_value = std::get<unsigned long long>(init_operands[2]);
-								} else if (std::holds_alternative<double>(init_operands[2])) {
-									member_value = std::get<double>(init_operands[2]);
-								} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-									member_value = std::get<StringHandle>(init_operands[2]);
+								if (std::holds_alternative<TempVar>(init_operands.value)) {
+									member_value = std::get<TempVar>(init_operands.value);
+								} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+									member_value = std::get<unsigned long long>(init_operands.value);
+								} else if (std::holds_alternative<double>(init_operands.value)) {
+									member_value = std::get<double>(init_operands.value);
+								} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+									member_value = std::get<StringHandle>(init_operands.value);
 								} else {
 									member_value = 0ULL;  // fallback
 								}
@@ -1946,16 +1940,16 @@
 							const ASTNode& init_node = member.default_initializer.value();
 							if (init_node.has_value() && init_node.is<ExpressionNode>()) {
 								// Use default member initializer (C++11 feature)
-								ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+								ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
-								if (std::holds_alternative<TempVar>(init_operands[2])) {
-									member_value = std::get<TempVar>(init_operands[2]);
-								} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-									member_value = std::get<unsigned long long>(init_operands[2]);
-								} else if (std::holds_alternative<double>(init_operands[2])) {
-									member_value = std::get<double>(init_operands[2]);
-								} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-									member_value = std::get<StringHandle>(init_operands[2]);
+								if (std::holds_alternative<TempVar>(init_operands.value)) {
+									member_value = std::get<TempVar>(init_operands.value);
+								} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+									member_value = std::get<unsigned long long>(init_operands.value);
+								} else if (std::holds_alternative<double>(init_operands.value)) {
+									member_value = std::get<double>(init_operands.value);
+								} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+									member_value = std::get<StringHandle>(init_operands.value);
 								} else {
 									member_value = 0ULL;  // fallback
 								}
@@ -2475,8 +2469,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					return;
 				}
 
-				ExprOperands arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
-				if (arg_operands.size() >= 3) {
+				ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 					MemberStoreOp store_op;
 					store_op.object = ret_var;
 					store_op.member_name = member.getName();
@@ -2486,7 +2479,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					store_op.ref_qualifier = CVReferenceQualifier::None;
 					store_op.is_pointer_to_member = false;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
-				}
 				member_idx++;
 			});
 			
@@ -2515,9 +2507,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 		}
 		
-		ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 		// argumentIrOperands = [type, size, value]
-		if (argumentIrOperands.size() >= 3) {
+		{
 			TypedValue tv;
 			
 			// Check if parameter expects a reference and argument is an identifier
@@ -2620,11 +2612,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 							const auto& param_decl = params[i].as<DeclarationNode>();
 							const ASTNode& default_node = param_decl.default_value();
 							if (default_node.is<ExpressionNode>()) {
-								ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-								if (default_operands.size() >= 3) {
+								ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 									TypedValue default_arg = toTypedValue(default_operands);
 									ctor_op.arguments.push_back(std::move(default_arg));
-								}
 							}
 						}
 						break;  // Found a matching constructor

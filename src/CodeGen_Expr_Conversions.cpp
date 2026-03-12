@@ -253,15 +253,12 @@
 			const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 			
 			// Get object type to lookup member
-			ExprOperands object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
-			if (object_operands.size() < 4) {
-				return std::nullopt;
-			}
+			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 			
-			Type object_type = std::get<Type>(object_operands[0]);
+			Type object_type = object_operands.type;
 			TypeIndex type_index = 0;
-			if (std::holds_alternative<unsigned long long>(object_operands[3])) {
-				type_index = static_cast<TypeIndex>(std::get<unsigned long long>(object_operands[3]));
+			if (object_operands.type_index != 0) {
+				type_index = object_operands.type_index;
 			}
 			
 			// Look up member information
@@ -306,20 +303,17 @@
 			}
 			
 			// Get the array and index operands
-			ExprOperands array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
-			ExprOperands index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+			ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+			ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 			
-			if (array_operands.size() < 3 || index_operands.size() < 3) {
-				return std::nullopt;
-			}
 			
-			Type element_type = std::get<Type>(array_operands[0]);
-			int element_size_bits = std::get<int>(array_operands[1]);
+			Type element_type = array_operands.type;
+			int element_size_bits = array_operands.size_in_bits;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 			
 			// Calculate actual element size from array declaration
-			if (std::holds_alternative<StringHandle>(array_operands[2])) {
-				StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+			if (std::holds_alternative<StringHandle>(array_operands.value)) {
+				StringHandle array_name = std::get<StringHandle>(array_operands.value);
 				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
@@ -342,7 +336,7 @@
 						}
 					}
 				}
-			} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+			} else if (std::holds_alternative<TempVar>(array_operands.value)) {
 				// Array from expression (e.g., member access: obj.arr_member[idx])
 				// array_operands[1] contains total array size, we need element size
 				// For primitive types, use the type's size directly
@@ -354,8 +348,8 @@
 					element_size_bits = get_type_size_bits(element_type);
 				}
 				// Try to get pointer depth from array_operands[3] if available
-				if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
-					element_pointer_depth = static_cast<int>(std::get<unsigned long long>(array_operands[3]));
+				if (array_operands.type_index != 0) {
+					element_pointer_depth = static_cast<int>(array_operands.type_index);
 				}
 			}
 			
@@ -371,16 +365,16 @@
 			arr_idx.element_size_bits = element_size_bits;
 			
 			// Capture index type information for proper sign extension
-			arr_idx.index_type = std::get<Type>(index_operands[0]);
-			arr_idx.index_size_bits = std::get<int>(index_operands[1]);
+			arr_idx.index_type = index_operands.type;
+			arr_idx.index_size_bits = index_operands.size_in_bits;
 			
 			// Set index value
-			if (std::holds_alternative<unsigned long long>(index_operands[2])) {
-				arr_idx.index = std::get<unsigned long long>(index_operands[2]);
-			} else if (std::holds_alternative<TempVar>(index_operands[2])) {
-				arr_idx.index = std::get<TempVar>(index_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
-				arr_idx.index = std::get<StringHandle>(index_operands[2]);
+			if (std::holds_alternative<unsigned long long>(index_operands.value)) {
+				arr_idx.index = std::get<unsigned long long>(index_operands.value);
+			} else if (std::holds_alternative<TempVar>(index_operands.value)) {
+				arr_idx.index = std::get<TempVar>(index_operands.value);
+			} else if (std::holds_alternative<StringHandle>(index_operands.value)) {
+				arr_idx.index = std::get<StringHandle>(index_operands.value);
 			} else {
 				return std::nullopt;
 			}
@@ -655,18 +649,18 @@
 						const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(obj_expr);
 						
 						// Get the array and index operands
-						ExprOperands array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
-						ExprOperands index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+						ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+						ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 						
 						// Check that we have valid operands
-						if (array_operands.size() >= 3 && index_operands.size() >= 3) {
-							Type element_type = std::get<Type>(array_operands[0]);
-							int element_size_bits = std::get<int>(array_operands[1]);
+						{
+							Type element_type = array_operands.type;
+							int element_size_bits = array_operands.size_in_bits;
 							
 							// For arrays, array_operands[1] is the pointer size (64), not element size
 							// We need to calculate the actual element size from the array declaration
-							if (std::holds_alternative<StringHandle>(array_operands[2])) {
-								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+							if (std::holds_alternative<StringHandle>(array_operands.value)) {
+								StringHandle array_name = std::get<StringHandle>(array_operands.value);
 								const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 								if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 									// This is an array - calculate element size
@@ -696,8 +690,8 @@
 							
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
 							TypeIndex type_index = 0;
-							if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
-								type_index = static_cast<TypeIndex>(std::get<unsigned long long>(array_operands[3]));
+							if (array_operands.type_index != 0) {
+								type_index = array_operands.type_index;
 							}
 							
 							// Look up member information
@@ -715,14 +709,14 @@
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 									
 									// Set array (either variable name or temp)
-									if (std::holds_alternative<StringHandle>(array_operands[2])) {
-										elem_addr_payload.array = std::get<StringHandle>(array_operands[2]);
-									} else if (std::holds_alternative<TempVar>(array_operands[2])) {
-										elem_addr_payload.array = std::get<TempVar>(array_operands[2]);
+									if (std::holds_alternative<StringHandle>(array_operands.value)) {
+										elem_addr_payload.array = std::get<StringHandle>(array_operands.value);
+									} else if (std::holds_alternative<TempVar>(array_operands.value)) {
+										elem_addr_payload.array = std::get<TempVar>(array_operands.value);
 									}
 									
 									// Set index as TypedValue
-									elem_addr_payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3));
+									elem_addr_payload.index = toTypedValue(index_operands);
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr_payload), arraySubscript.bracket_token()));
 									
@@ -751,15 +745,15 @@
 				(object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
 					
 					// Get the object expression (identifier, pointer dereference, etc.)
-					ExprOperands object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
+					ExprResult object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
 					
-					if (object_operands.size() >= 3) {
-						Type object_type = std::get<Type>(object_operands[0]);
+					{
+						Type object_type = object_operands.type;
 						
 						// Get the struct type index
 						TypeIndex type_index = 0;
-						if (object_operands.size() >= 4 && std::holds_alternative<unsigned long long>(object_operands[3])) {
-							type_index = static_cast<TypeIndex>(std::get<unsigned long long>(object_operands[3]));
+						if (object_operands.type_index != 0) {
+							type_index = object_operands.type_index;
 						}
 						
 						// Look up member information
@@ -775,8 +769,8 @@
 								// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
 								// But mark the intermediate as NOT a reference to avoid dereferencing
 								
-								if (std::holds_alternative<StringHandle>(object_operands[2])) {
-									StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+								if (std::holds_alternative<StringHandle>(object_operands.value)) {
+									StringHandle obj_name = std::get<StringHandle>(object_operands.value);
 									
 									// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
 									// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
@@ -926,16 +920,16 @@
 				// Fall through to single-dimensional array handling
 				single_dim_handling:
 				// Get the array and index operands
-				ExprOperands array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
-				ExprOperands index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+				ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+				ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 				
-				Type element_type = std::get<Type>(array_operands[0]);
-				int element_size_bits = std::get<int>(array_operands[1]);
+				Type element_type = array_operands.type;
+				int element_size_bits = array_operands.size_in_bits;
 				
 				// For arrays, array_operands[1] is the pointer size (64), not element size
 				// We need to calculate the actual element size from the array declaration
-				if (std::holds_alternative<StringHandle>(array_operands[2])) {
-					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+				if (std::holds_alternative<StringHandle>(array_operands.value)) {
+					StringHandle array_name = std::get<StringHandle>(array_operands.value);
 					const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 					if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 						// This is an array - calculate element size
@@ -973,14 +967,14 @@
 				payload.element_size_in_bits = element_size_bits;
 				
 				// Set array (either variable name or temp)
-				if (std::holds_alternative<StringHandle>(array_operands[2])) {
-					payload.array = std::get<StringHandle>(array_operands[2]);
-				} else if (std::holds_alternative<TempVar>(array_operands[2])) {
-					payload.array = std::get<TempVar>(array_operands[2]);
+				if (std::holds_alternative<StringHandle>(array_operands.value)) {
+					payload.array = std::get<StringHandle>(array_operands.value);
+				} else if (std::holds_alternative<TempVar>(array_operands.value)) {
+					payload.array = std::get<TempVar>(array_operands.value);
 				}
 				
 				// Set index as TypedValue
-				payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3)); 
+				payload.index = toTypedValue(index_operands); 
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 				

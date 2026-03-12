@@ -980,9 +980,8 @@
 											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										}
 										
-										ExprOperands init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-										// init_operands = [type, size, value]
-										if (init_operands.size() >= 3) {
+										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+										{
 											TypedValue tv;
 											
 											// Check if parameter expects a reference and argument is an identifier
@@ -1034,8 +1033,6 @@
 											}
 											
 											ctor_op.arguments.push_back(std::move(tv));
-										} else {
-											throw InternalError("Invalid initializer operands - expected [type, size, value]");
 										}
 									} else {
 										throw InternalError("Initializer must be an ExpressionNode");
@@ -1053,11 +1050,9 @@
 											if (param_decl.has_default_value()) {
 												const ASTNode& default_node = param_decl.default_value();
 												if (default_node.is<ExpressionNode>()) {
-													ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-													if (default_operands.size() >= 3) {
+													ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 														TypedValue default_arg = toTypedValue(default_operands);
 														ctor_op.arguments.push_back(std::move(default_arg));
-													}
 												}
 											}
 										}
@@ -1131,29 +1126,25 @@
 											}
 										}
 
-										ExprOperands init_operands;
+										ExprResult init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										} else {
 											throw InternalError("Initializer must be an ExpressionNode or InitializerListNode");
 										}
 
-										if (init_operands.size() >= 3) {
-											// Extract value from init_operands[2]
-											if (std::holds_alternative<TempVar>(init_operands[2])) {
-												member_value = std::get<TempVar>(init_operands[2]);
-											} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-												member_value = std::get<unsigned long long>(init_operands[2]);
-											} else if (std::holds_alternative<double>(init_operands[2])) {
-												member_value = std::get<double>(init_operands[2]);
-											} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
-												member_value = std::get<StringHandle>(init_operands[2]);
+											if (std::holds_alternative<TempVar>(init_operands.value)) {
+												member_value = std::get<TempVar>(init_operands.value);
+											} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
+												member_value = std::get<unsigned long long>(init_operands.value);
+											} else if (std::holds_alternative<double>(init_operands.value)) {
+												member_value = std::get<double>(init_operands.value);
+											} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
+												member_value = std::get<StringHandle>(init_operands.value);
 											} else {
 												member_value = 0ULL;  // fallback
 											}
-										} else {
-											throw InternalError("Invalid initializer operands");
-										}
+
 									} else {
 										// Use default member initializer if available, otherwise zero-initialize
 										if (member.default_initializer.has_value()) {
@@ -1274,18 +1265,18 @@
 					ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
 						? ExpressionContext::LValueAddress
 						: ExpressionContext::Load;
-					ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
+					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
 					
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
-					if (init_operands.size() >= 3) {
-						Type init_type = std::get<Type>(init_operands[0]);
-						int init_size = std::get<int>(init_operands[1]);
+					{
+						Type init_type = init_operands.type;
+						int init_size = init_operands.size_in_bits;
 						TypeIndex init_type_index = 0;  // Will be set below if type_index is available
 						
 						// Extract type_index if available (4th element in init_operands)
-						if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
-							init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+						if (init_operands.type_index != 0) {
+							init_type_index = init_operands.type_index;
 						}
 						
 						// Check if source and target types differ and source is a struct
@@ -1318,7 +1309,7 @@
 									} else {
 										return 0ULL;
 									}
-								}, init_operands[2]);
+								}, init_operands.value);
 								
 								// Build the mangled name for the conversion operator
 								StringHandle struct_name_handle = source_type_info.name();
@@ -1388,16 +1379,13 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), decl.identifier_token()));
 									
 									// Replace init_operands with the result of the conversion
-									init_operands.clear();
-									init_operands.emplace_back(type_node.type());
-									init_operands.emplace_back(type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits()));
-									init_operands.emplace_back(result_var);
+									init_operands = makeExprResult(type_node.type(), type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits()), IrOperand{result_var});
 								}
 							}
 						}
 					}
 					
-					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					{ ExprOperands _converted = init_operands; operands.insert(operands.end(), _converted.begin(), _converted.end()); }
 				} else {
 					// For struct with constructor, check if this is copy elision case first
 					// C++17 mandates copy elision for: T x = T(args);
@@ -1531,7 +1519,7 @@
 					}
 
 					// Evaluate the initializer expression
-					ExprOperands init_operands = visitExpressionNode(elem.as<ExpressionNode>());
+					ExprResult init_operands = visitExpressionNode(elem.as<ExpressionNode>());
 					
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
@@ -1741,8 +1729,7 @@
 											return;
 										}
 										const StructMember& member = type_info.struct_info_->members[member_idx];
-										ExprOperands arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
-										if (arg_operands.size() >= 3) {
+										ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 											MemberStoreOp store_op;
 											store_op.object = decl.identifier_token().handle();
 											store_op.member_name = member.getName();
@@ -1752,7 +1739,6 @@
 											store_op.ref_qualifier = CVReferenceQualifier::None;
 											store_op.is_pointer_to_member = false;
 											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), decl.identifier_token()));
-										}
 										member_idx++;
 									});
 
@@ -1786,9 +1772,9 @@
 									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 								}
 								
-								ExprOperands argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+								ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 								// argumentIrOperands = [type, size, value]
-								if (argumentIrOperands.size() >= 3) {
+								{
 									TypedValue tv;
 									
 									// Check if parameter expects a reference and argument is an identifier
@@ -1877,16 +1863,15 @@
 						} else if (has_copy_init) {
 							// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();
-							ExprOperands init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-							// init_operands = [type, size, value, type_index?]
+							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
-							if (init_operands.size() >= 3) {
-								Type init_type = std::get<Type>(init_operands[0]);
+							{
+								Type init_type = init_operands.type;
 								TypeIndex init_type_index = 0;
-								if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
-									init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+								if (init_operands.type_index != 0) {
+									init_type_index = init_operands.type_index;
 								}
 								
 								// Check if types differ
@@ -1962,7 +1947,7 @@
 							ctor_op.object = decl.identifier_token().handle();
 
 							// Add initializer as constructor parameter
-							if (init_operands.size() >= 3) {
+							{
 								TypedValue init_arg;
 								
 								// Check if initializer is an identifier (variable)
@@ -2091,11 +2076,9 @@
 														// Generate IR for the default value expression
 														const ASTNode& default_node = param_decl.default_value();
 														if (default_node.is<ExpressionNode>()) {
-															ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-															if (default_operands.size() >= 3) {
+															ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 																TypedValue default_arg = toTypedValue(default_operands);
 																ctor_op.arguments.push_back(std::move(default_arg));
-															}
 														}
 													}
 												}
@@ -2122,11 +2105,9 @@
 													// Generate IR for the default value expression
 													const ASTNode& default_node = param_decl.default_value();
 													if (default_node.is<ExpressionNode>()) {
-														ExprOperands default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-														if (default_operands.size() >= 3) {
+														ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
 															TypedValue default_arg = toTypedValue(default_operands);
 															ctor_op.arguments.push_back(std::move(default_arg));
-														}
 													}
 												}
 											}
@@ -2164,20 +2145,16 @@
 			return;
 		}
 		
-		ExprOperands init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
-		if (init_operands.size() < 3) {
-			FLASH_LOG(Codegen, Error, "Structured binding initializer produced invalid operands");
-			return;
-		}
+		ExprResult init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
 		
 		// Extract initializer type information
-		Type init_type = std::get<Type>(init_operands[0]);
-		int init_size = std::get<int>(init_operands[1]);
+		Type init_type = init_operands.type;
+		int init_size = init_operands.size_in_bits;
 		TypeIndex init_type_index = 0;
 		
 		// Get type_index if available (4th element)
-		if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
-			init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+		if (init_operands.type_index != 0) {
+			init_type_index = init_operands.type_index;
 		}
 		
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type, 

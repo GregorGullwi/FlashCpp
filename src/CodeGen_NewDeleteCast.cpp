@@ -14,7 +14,6 @@
 		// Create a temporary variable for the result (pointer to allocated memory)
 		TempVar result_var = var_counter.next();
 		auto emit_scalar_new_initializer = [&](TempVar pointer_var) {
-			constexpr size_t kInitOperandCount = 3;  // [type, size_in_bits, value]
 			if (type == Type::Struct || newExpr.constructor_args().size() == 0) {
 				return;
 			}
@@ -24,13 +23,9 @@
 				FLASH_LOG(Codegen, Warning, "Scalar new initializer has extra arguments; using first");
 			}
 
-			ExprOperands init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
-			if (init_operands.size() >= kInitOperandCount) {
-				TypedValue init_value = toTypedValue(init_operands);
-				emitDereferenceStore(init_value, type, size_in_bits, pointer_var, Token());
-			} else {
-				FLASH_LOG(Codegen, Warning, "Scalar new initializer returned insufficient operands");
-			}
+			ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+			TypedValue init_value = toTypedValue(init_operands);
+			emitDereferenceStore(init_value, type, size_in_bits, pointer_var, Token());
 		};
 
 		// Check if this is an array allocation (with or without placement)
@@ -46,7 +41,7 @@
 				return ExprResult{};
 			}
 			
-			ExprOperands size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
+			ExprResult size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
 			// Check if this is placement array new
 			if (newExpr.placement_address().has_value()) {
@@ -57,7 +52,7 @@
 					return ExprResult{};
 				}
 				
-				ExprOperands address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+				ExprResult address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
@@ -66,11 +61,7 @@
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = pointer_depth;
 				// Convert IrOperand to IrValue
-				if (address_operands.size() < 3) {
-					FLASH_LOG(Codegen, Error, "Placement address operands insufficient (expected 3, got ", address_operands.size(), ")");
-					return ExprResult{};
-				}
-				op.address = toIrValue(address_operands[2]);
+				op.address = toIrValue(address_operands.value);
 
 				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 				
@@ -127,11 +118,9 @@
 													continue;
 												}
 												
-												ExprOperands arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-												if (arg_operands.size() >= 3) {
+												ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 													TypedValue tv = toTypedValue(arg_operands);
 													ctor_op.arguments.push_back(std::move(tv));
-												}
 											}
 											
 											ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
@@ -165,11 +154,9 @@
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 								
 								// Evaluate the initializer expression
-								ExprOperands init_operands = visitExpressionNode(init.as<ExpressionNode>());
-								if (init_operands.size() >= 3) {
+								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
 									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
-								}
 							}
 						}
 					}
@@ -183,11 +170,7 @@
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = pointer_depth;
 				// Convert IrOperand to IrValue for count
-				if (size_operands.size() < 3) {
-					FLASH_LOG(Codegen, Error, "Array size operands insufficient (expected 3, got ", size_operands.size(), ")");
-					return ExprResult{};
-				}
-				IrValue count_value = op.count = toIrValue(size_operands[2]);
+				IrValue count_value = op.count = toIrValue(size_operands.value);
 
 				// Check if struct type needs a cookie (has destructor)
 				bool needs_ctor_loop = false;
@@ -251,11 +234,9 @@
 												continue;
 											}
 											
-											ExprOperands arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-											if (arg_operands.size() >= 3) {
+											ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 												TypedValue tv = toTypedValue(arg_operands);
 												ctor_op.arguments.push_back(std::move(tv));
-											}
 										}
 										
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
@@ -277,11 +258,9 @@
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 								
-								ExprOperands init_operands = visitExpressionNode(init.as<ExpressionNode>());
-								if (init_operands.size() >= 3) {
+								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
 									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
-								}
 							}
 						}
 					}
@@ -360,7 +339,7 @@
 		} else if (newExpr.placement_address().has_value()) {
 			// Single object placement new: new (address) Type or new (address) Type(args)
 			// Evaluate the placement address expression
-			ExprOperands address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+			ExprResult address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 			// Create PlacementNewOp
 			PlacementNewOp op;
@@ -369,11 +348,7 @@
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = pointer_depth;
 			// Convert IrOperand to IrValue
-			if (address_operands.size() < 3) {
-				FLASH_LOG(Codegen, Error, "Placement address operands insufficient for single object (expected 3, got ", address_operands.size(), ")");
-				return ExprResult{};
-			}
-			op.address = toIrValue(address_operands[2]);
+			op.address = toIrValue(address_operands.value);
 
 			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 
@@ -399,12 +374,9 @@
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
-								ExprOperands arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-								// arg_operands = [type, size, value]
-								if (arg_operands.size() >= 3) {
+								ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
 									TypedValue tv = toTypedValue(arg_operands);
 									ctor_op.arguments.push_back(std::move(tv));
-								}
 							}
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
@@ -446,12 +418,9 @@
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
-								ExprOperands arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-								// arg_operands = [type, size, value]
-								if (arg_operands.size() >= 3) {
+								ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
 									TypedValue tv = toTypedValue(arg_operands);
 									ctor_op.arguments.push_back(std::move(tv));
-								}
 							}
 						
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
@@ -470,20 +439,20 @@
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
 		// Evaluate the expression to get the pointer to delete
-		ExprOperands ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
+		ExprResult ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
 		// Get the pointer type
-		Type ptr_type = std::get<Type>(ptr_operands[0]);
+		Type ptr_type = ptr_operands.type;
 
 		// Convert IrOperand to IrValue
-		IrValue ptr_value = toIrValue(ptr_operands[2]);
+		IrValue ptr_value = toIrValue(ptr_operands.value);
 
 		// Check if we need to call destructor (for struct types with a user-defined destructor).
 		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
-		ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
-			unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
+		(ptr_operands.type_index != 0)) {
+			unsigned long long type_idx_val = ptr_operands.type_index;
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
 			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx_val];
@@ -509,8 +478,8 @@
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
 			if (ptr_type == Type::Struct &&
-			ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
-				unsigned long long type_idx_val = std::get<unsigned long long>(ptr_operands[3]);
+			(ptr_operands.type_index != 0)) {
+				unsigned long long type_idx_val = ptr_operands.type_index;
 				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_idx_val];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
