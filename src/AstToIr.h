@@ -457,15 +457,15 @@ private:
 	// - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
 	// - Only Indirect (dereference) case is fully implemented
 	// - Future work: Extend LValueInfo or pass additional context to handle all cases
-	bool handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
-	const std::vector<IrOperand>& rhs_operands,
+	bool handleLValueAssignment(const ExprResult& lhs_operands,
+	const ExprResult& rhs_operands,
 	const Token& token);
 
 	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
 	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
-	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
-	const std::vector<IrOperand>& rhs_operands,
+	bool handleLValueCompoundAssignment(const ExprResult& lhs_operands,
+	const ExprResult& rhs_operands,
 	const Token& token,
 	std::string_view op);
 

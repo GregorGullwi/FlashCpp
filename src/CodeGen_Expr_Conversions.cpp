@@ -607,7 +607,6 @@
 					result_var,
 					0,
 					addr_components->pointer_depth + 1);
-				preserveLegacyEnumPointerDepthEncoding(result);
 				return result;
 			}
 			
@@ -1694,7 +1693,7 @@ ExprOperands AstToIr::generateBuiltinIncDec(
 			return true;
 		}
 		if (std::holds_alternative<TempVar>(operandIrResult.value)) {
-			if (handleLValueAssignment(static_cast<ExprOperands>(operandIrResult), static_cast<ExprOperands>(rhs_operands), unaryOperatorNode.get_token())) {
+			if (handleLValueAssignment(operandIrResult, rhs_operands, unaryOperatorNode.get_token())) {
 				return true;
 			}
 			AssignmentOp assign_op;

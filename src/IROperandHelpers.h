@@ -52,6 +52,8 @@ struct ExprResult {
 		unsigned long long metadata = 0;
 		if (encoded_metadata.has_value()) {
 			metadata = *encoded_metadata;
+		} else if ((type == Type::Enum || type == Type::UserDefined) && pointer_depth > 0) {
+			metadata = static_cast<unsigned long long>(pointer_depth);
 		} else if (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) {
 			metadata = static_cast<unsigned long long>(type_index);
 		} else if (pointer_depth > 0) {
@@ -81,12 +83,6 @@ inline ExprResult makeExprResult(
 		.pointer_depth = pointer_depth,
 		.encoded_metadata = encoded_metadata
 	};
-}
-
-inline void preserveLegacyEnumPointerDepthEncoding(ExprResult& result) {
-	if (result.type == Type::Enum && result.pointer_depth > 0) {
-		result.encoded_metadata = static_cast<unsigned long long>(result.pointer_depth);
-	}
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
@@ -128,7 +124,13 @@ inline TypedValue toTypedValue(const ExprOperands& operands) {
 }
 
 inline TypedValue toTypedValue(const ExprResult& result) {
-	return toTypedValue(static_cast<ExprOperands>(result));
+	TypedValue tv;
+	tv.type = result.type;
+	tv.size_in_bits = result.size_in_bits;
+	tv.value = toIrValue(result.value);
+	tv.type_index = result.type_index;
+	tv.pointer_depth = result.pointer_depth;
+	return tv;
 }
 
 // Temporary Phase 2 bridge: decode positional expression operands into named
@@ -165,11 +167,10 @@ inline ExprResult toExprResult(std::span<const IrOperand> operands) {
 			// Struct slot-4 is always type_index (even for struct pointers,
 			// the encoder stores type_index, not pointer_depth).
 			result.type_index = static_cast<TypeIndex>(metadata);
-		} else if (result.size_in_bits == 64 && metadata > 0 &&
-		           (result.type == Type::Enum || result.type == Type::UserDefined)) {
-			// Enum/UserDefined with 64-bit size and nonzero metadata:
-			// the encoder stored pointer_depth (the base type is not 64 bits,
-			// so size_in_bits==64 implies this is a pointer).
+		} else if (result.size_in_bits == 64 && metadata > 0 && result.type == Type::Enum) {
+			// Enum with 64-bit size and nonzero metadata:
+			// the encoder stored pointer_depth because enums are always lowered to
+			// <=32-bit underlying value types, so a 64-bit enum result is a pointer.
 			result.pointer_depth = static_cast<int>(metadata);
 		} else if (result.type == Type::Enum || result.type == Type::UserDefined) {
 			// Non-pointer enum/UserDefined: slot-4 is type_index.

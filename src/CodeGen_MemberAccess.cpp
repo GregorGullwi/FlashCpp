@@ -142,7 +142,6 @@
 			result.value = std::move(value);
 			result.type_index = type_index;
 			result.pointer_depth = pointer_depth;
-			preserveLegacyEnumPointerDepthEncoding(result);
 			return result;
 		};
 
