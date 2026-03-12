@@ -1385,7 +1385,8 @@
 						}
 					}
 					
-					{ ExprOperands _converted = init_operands; operands.insert(operands.end(), _converted.begin(), _converted.end()); }
+					ExprOperands init_converted = init_operands;
+				operands.insert(operands.end(), init_converted.begin(), init_converted.end());
 				} else {
 					// For struct with constructor, check if this is copy elision case first
 					// C++17 mandates copy elision for: T x = T(args);
