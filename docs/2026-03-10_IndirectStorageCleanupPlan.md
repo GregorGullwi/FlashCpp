@@ -143,10 +143,14 @@ TempVar metadata now supports all three states:
 - `Reference` (via `makeReference()`) - true reference, should implicitly dereference  
 - `AddressOnly` (via `makeAddressOnly()`) - plain address, should NOT implicitly dereference
 
-### Track 3: Migrate backend consumers (partially done)
+### Track 3: COMPLETED (2026-03-13)
 
-- replace raw map lookups in arithmetic/control-flow/var-decl/member/call lowering with semantic helpers - largely done in Track 0
-- keep all implicit-deref decisions centralized
+- Extended `isPointerBaseStorage` to accept optional `TempVar` parameter
+- Helper now checks both stack-offset map and TempVar metadata
+- Replaced 6 ad-hoc patterns with centralized helper:
+  - `IRConverter_Conv_ControlFlow.h`: `handleArrayAccess`, `handleArrayStore`
+  - `IRConverter_Conv_Memory.h`: `handleMemberAccess`, `handleMemberStore`, `handleAddressOfMember`, `handleComputeAddress`
+- Removed redundant `"this"` string checks since 'this' is registered in `indirect_stack_info_` via `setAddressOnlyInfo`
 
 ### Track 4: Add focused regression coverage
 
