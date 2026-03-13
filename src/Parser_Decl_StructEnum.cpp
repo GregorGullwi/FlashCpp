@@ -3297,7 +3297,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
 			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
-			deferred.struct_type_index = delayed.struct_type_index;
+			deferred.struct_type_index = delayed.struct_type_index.value;
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
 			deferred.is_const_method = is_const_method;

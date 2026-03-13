@@ -1578,7 +1578,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (object_node.is<ExpressionNode>()) {
 			auto object_type_opt = get_expression_type(object_node);
 			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
-				size_t struct_type_index = object_type_opt->type_index();
+				size_t struct_type_index = object_type_opt->type_index().value;
 				if (struct_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[struct_type_index];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
