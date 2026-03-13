@@ -38,11 +38,24 @@ The immediate cleanup should stay narrow:
 - stop duplicating the `AddressOf` vs `AddressOfMember` side-table setup
 - prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code
 
-Status today:
+Status today (2026-03-13):
 
 - factor address-only registration behind helpers ✅
 - stop duplicating the `AddressOf` vs `AddressOfMember` side-table setup ✅
-- prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code ⚠️ partial
+- prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code ✅ (2026-03-13)
+
+### Track 0 Completed (2026-03-13)
+
+The following files have been migrated from raw `.find()`/`.count()` lookups to semantic helpers:
+
+- `IRConverter_Conv_Arithmetic.h` - All reference_stack_info_ lookups replaced with `getIndirectStackInfo()` and `shouldImplicitlyDeref()`
+- `IRConverter_Conv_ControlFlow.h` - `.count()` replaced with `hasIndirectStackStorage()`
+- `IRConverter_Conv_VarDecl.h` - Lookups replaced with `getIndirectStackInfo()` and `shouldImplicitlyDeref()`
+- `IRConverter_Emit_CompareBranch.h` - Lookup replaced with `getIndirectStackInfo()`
+- `IRConverter_Conv_CorePrivate.h` - Binary op handling refactored with helpers
+
+New helper added:
+- `isPointerBaseStorage(int32_t stack_offset)` - for member-access / compute-address decisions
 
 This note captures the **larger** cleanup that should happen later.
 
@@ -104,20 +117,11 @@ That decision should eventually come from one shared helper rather than repeated
 
 ## Suggested future implementation plan
 
-### Track 0: Finish helper adoption before renaming anything
+### Track 0: COMPLETED (2026-03-13)
 
-Current raw-map sites still appear in at least:
-
-- `src/IRConverter_Conv_Arithmetic.h`
-- `src/IRConverter_Conv_ControlFlow.h`
-- `src/IRConverter_Conv_VarDecl.h`
-- `src/IRConverter_Emit_CompareBranch.h`
-
-Recommended first pass:
-
-1. replace direct `.find()` / `.count()` checks with existing helpers where behavior already matches
-2. introduce one missing helper (`isPointerBaseStorage(...)` or equivalent) for member-access / compute-address decisions
-3. only after helper adoption stabilizes, consider broader renaming
+- All files listed above have been migrated to use semantic helpers
+- `isPointerBaseStorage(...)` helper added
+- Ready for broader renaming (Track 1)
 
 ### Track 1: Rename the concept
 
