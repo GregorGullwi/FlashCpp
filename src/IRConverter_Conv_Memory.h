@@ -919,8 +919,7 @@
 		int64_t base_offset = 0;
 		bool base_is_global = false;
 		StringHandle base_global_name;
-		bool base_is_reference = false;
-		bool base_is_pointer = false;  // For 'this' and other pointers
+		bool base_is_indirect = false;  // True if base is a pointer/reference (not a regular variable)
 		if (std::holds_alternative<StringHandle>(op.base)) {
 			// Variable name - look up its stack offset
 			StringHandle base_name = std::get<StringHandle>(op.base);
@@ -939,8 +938,7 @@
 
 				// Check if base is a pointer (reference or 'this')
 				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
-				base_is_pointer = isPointerBaseStorage(static_cast<int32_t>(base_offset));
-				base_is_reference = base_is_pointer;
+				base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset));
 			}
 		} else {
 			// TempVar - get its stack offset
@@ -948,14 +946,13 @@
 			base_offset = getStackOffsetFromTempVar(base_temp);
 			
 			// Check if TempVar is a reference or address-only
-			base_is_pointer = isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
-			base_is_reference = base_is_pointer;
+			base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
 		}
 		
 		if (base_is_global) {
 			uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 			pending_global_relocations_.push_back({reloc_offset, base_global_name, IMAGE_REL_AMD64_REL32});
-		} else if (base_is_reference || base_is_pointer) {
+		} else if (base_is_indirect) {
 			// Base is a reference or pointer - load the address it contains (MOV, not LEA)
 			emitMovFromFrame(X64Register::RAX, base_offset);
 		} else {
