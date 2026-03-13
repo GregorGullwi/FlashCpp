@@ -311,7 +311,7 @@
 									call_op.result = result_var;
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 									call_op.return_type = return_type;
-									call_op.return_size_in_bits = return_size;
+									call_op.return_size_in_bits = SizeInBits{return_size};
 									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
@@ -323,7 +323,7 @@
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
 										addr_op.operand.type = expr_type;
-										addr_op.operand.size_in_bits = expr_size;
+										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(expr_size)};
 										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
@@ -331,7 +331,7 @@
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = expr_type;
-										this_arg.size_in_bits = 64;  // Pointer size
+										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 										this_arg.value = this_ptr;
 										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
@@ -341,7 +341,7 @@
 										// represent the address of the object (not the object value itself).
 										TypedValue this_arg;
 										this_arg.type = expr_type;
-										this_arg.size_in_bits = 64;  // Pointer size for 'this'
+										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
 										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
@@ -350,7 +350,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
 									
 									// Replace operands with the result of the conversion
-									operands = makeExprResult(return_type, return_size, IrOperand{result_var});
+									operands = makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var});
 								}
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
@@ -384,7 +384,7 @@
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
 						addr_member_op.member_type = current_function_return_type_;
-						addr_member_op.member_size_in_bits = current_function_return_size_;
+						addr_member_op.member_size_in_bits = SizeInBits{current_function_return_size_};
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
 						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, current_function_return_size_);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);

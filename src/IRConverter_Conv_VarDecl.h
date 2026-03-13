@@ -1385,7 +1385,7 @@
 						int32_t offset = -(static_cast<int32_t>(base_named_vars_size) + static_cast<int32_t>(reserved_offset));
 						auto& temp_info = variable_scopes.back().variables[temp_handle];
 						temp_info.offset = offset;
-						temp_info.size_in_bits = 64;
+						temp_info.size_in_bits = SizeInBits{64};
 						reserved_offset += 8;
 					}
 				}
@@ -1420,7 +1420,7 @@
 				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
 
 				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
-				parameters.push_back({Type::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
+				parameters.push_back({Type::Struct, SizeInBits{64}, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
 				regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
 
 				param_offset_adjustment = 1;  // Shift other parameters (including 'this') by 1
@@ -1446,7 +1446,7 @@
 
 			// Store 'this' parameter info (register depends on param_offset_adjustment)
 			X64Register this_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
-			parameters.push_back({Type::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
+			parameters.push_back({Type::Struct, SizeInBits{64}, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
 			regAlloc.allocateSpecific(this_reg, this_offset);
 
 			param_offset_adjustment++;  // Shift regular parameters by 1 more
@@ -1553,7 +1553,7 @@
 				StringHandle param_name_handle = instruction.getOperandAs<StringHandle>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 				std::string_view param_name = StringTable::getStringView(param_name_handle);
 				variable_scopes.back().variables[param_name_handle].offset = offset;
-				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
+				variable_scopes.back().variables[param_name_handle].size_in_bits = SizeInBits{static_cast<int>(param_size)};
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
@@ -1626,7 +1626,7 @@
 					}
 
 					// Store parameter info for later processing
-					parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference, second_reg});
+					parameters.push_back({param_type, SizeInBits{param_size}, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference, second_reg});
 				}
 
 				paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
@@ -1710,7 +1710,7 @@
 
 				// Phase 4: Use helper to get param name for map key
 				variable_scopes.back().variables[param.getName()].offset = offset;
-				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
+				variable_scopes.back().variables[param.getName()].size_in_bits = SizeInBits{param.size_in_bits};
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing)
 				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for

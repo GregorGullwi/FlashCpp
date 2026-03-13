@@ -73,7 +73,7 @@
 									}
 									
 									op.operand.type = operand_type;
-									op.operand.size_in_bits = operand_size;
+									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
 									
@@ -82,7 +82,7 @@
 									// Return pointer type (64-bit address) with pointer depth 1
 									return makeExprResult(
 										operand_type,
-										64,
+										SizeInBits{64},
 										IrOperand{result_var},
 										TypeIndex{},
 										PointerDepth{1}
@@ -145,7 +145,7 @@
 							return 0ULL;
 						}
 					}, argumentIrOperands.value);
-					arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+					arguments.push_back(TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value});
 				});
 
 				// Add the indirect call instruction
@@ -159,10 +159,10 @@
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, 64, IrOperand{ret_var});  // 64 bits for return value
+					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
 			
@@ -190,13 +190,13 @@
 					CallOp call_op;
 					call_op.result = ret_var;
 					call_op.return_type = Type::Int;  // Default, will be refined
-					call_op.return_size_in_bits = 32;
+					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
 					
 					// Add the object (self) as the first argument (this pointer)
 					call_op.args.push_back(TypedValue{
 						.type = Type::Struct,
-						.size_in_bits = 64,  // Pointer size
+						.size_in_bits = SizeInBits{64},  // Pointer size
 						.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
 					});
 					
@@ -227,7 +227,7 @@
 							// Don't call visitExpressionNode which would dereference it
 							call_op.args.push_back(TypedValue{
 								.type = Type::Struct,
-								.size_in_bits = 64,  // Reference/pointer size
+								.size_in_bits = SizeInBits{64},  // Reference/pointer size
 								.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
 							});
 							
@@ -249,7 +249,7 @@
 									return 0ULL;
 								}
 							}, argumentIrOperands.value);
-							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
+							call_op.args.push_back(TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value});
 							
 							// Type for mangling
 							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
@@ -270,7 +270,7 @@
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 					
-					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
 		}
@@ -946,7 +946,7 @@
 								call_op.result = result_var;
 								call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 								call_op.return_type = param_base_type;
-								call_op.return_size_in_bits = param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits());
+								call_op.return_size_in_bits = SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())};
 								call_op.return_type_index = param_type->type_index();
 								call_op.is_member_function = true;
 								call_op.is_variadic = false;
@@ -959,7 +959,7 @@
 									// Add 'this' as first argument
 									TypedValue this_arg;
 									this_arg.type = arg_type;
-									this_arg.size_in_bits = 64;  // Pointer size
+									this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 									this_arg.value = this_ptr;
 									this_arg.type_index = TypeIndex{arg_type_index};
 									call_op.args.push_back(std::move(this_arg));
@@ -967,7 +967,7 @@
 									// It's already a temporary
 									TypedValue this_arg;
 									this_arg.type = arg_type;
-									this_arg.size_in_bits = 64;  // Pointer size for 'this'
+									this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 									this_arg.value = std::get<TempVar>(source_value);
 									this_arg.type_index = TypeIndex{arg_type_index};
 									call_op.args.push_back(std::move(this_arg));
@@ -977,7 +977,7 @@
 								
 								// Replace argumentIrOperands with the result of the conversion
 								argumentIrOperands = makeExprResult(param_base_type,
-									param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits()),
+									SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())},
 									IrOperand{result_var});
 							}
 						}
@@ -1106,8 +1106,8 @@
 						}
 						
 						// Create TypedValue for lhs and rhs
-						assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
-						assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+						assign_op.lhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var};
+						assign_op.rhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value};
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
@@ -1196,9 +1196,9 @@
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
-		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64 
-			: static_cast<int>(return_type.size_in_bits());
+			: static_cast<int>(return_type.size_in_bits())};
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
@@ -1217,7 +1217,7 @@
 			}
 			call_op.args.push_back(TypedValue{
 				.type = this_type,
-				.size_in_bits = 64,
+				.size_in_bits = SizeInBits{64},
 				.value = IrValue(StringTable::getOrInternStringHandle("this")),
 				.type_index = this_type_index,
 			});
@@ -1326,7 +1326,7 @@
 			: TypeIndex{};
 		return makeExprResult(
 			return_type.type(),
-			result_size,
+			SizeInBits{result_size},
 			IrOperand{ret_var},
 			type_index_result
 		);

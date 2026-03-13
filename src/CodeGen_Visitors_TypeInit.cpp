@@ -536,12 +536,12 @@
 
 					GlobalVariableDeclOp op;
 					op.type = static_member.type;
-					op.size_in_bits = static_cast<int>(static_member.size * 8);
+					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (op.size_in_bits == 0 && static_member.type_index > 0 && static_member.type_index < gTypeInfo.size()) {
 						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index].getStructInfo();
 						if (member_si) {
-							op.size_in_bits = static_cast<int>(member_si->total_size * 8);
+							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
 						}
 					}
 					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
@@ -926,7 +926,7 @@
 							
 							GlobalVariableDeclOp alias_op;
 							alias_op.type = static_member_ptr->type;
-							alias_op.size_in_bits = static_cast<int>(static_member_ptr->size * 8);
+							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
 							
@@ -1032,7 +1032,7 @@
 				ctor_decl_op.function_name = type_info->name();
 				ctor_decl_op.struct_name = type_info->name();
 				ctor_decl_op.return_type = Type::Void;
-				ctor_decl_op.return_size_in_bits = 0;
+				ctor_decl_op.return_size_in_bits = SizeInBits{0};
 				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
 				ctor_decl_op.is_variadic = false;
@@ -1128,7 +1128,7 @@
 							if (member.offset == offset && member.bitfield_width.has_value()) {
 								MemberStoreOp combined_store;
 								combined_store.value.type = member.type;
-								combined_store.value.size_in_bits = static_cast<int>(member.size * 8);
+								combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								combined_store.value.value = combined_bitfield_values[offset];
 								combined_store.object = StringTable::getOrInternStringHandle("this");
 								combined_store.member_name = member.getName();
@@ -1169,7 +1169,7 @@
 							
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
-							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
@@ -1376,7 +1376,7 @@ void AstToIr::emitRecursiveZeroFill(
 		} else {
 			MemberStoreOp member_store;
 			member_store.value.type = sub_member.type;
-			member_store.value.size_in_bits = static_cast<int>(sub_member.size * 8);
+			member_store.value.size_in_bits = SizeInBits{static_cast<int>(sub_member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
 			member_store.member_name = sub_member.getName();
@@ -1478,7 +1478,7 @@ const Token& token)
 			member.type,
 			element_size_bits,
 			base_object,
-			TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+			TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1504,12 +1504,12 @@ const Token& token)
 			emitRecursiveZeroFill(*gTypeInfo[member.type_index].struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			TypedValue zero_value{member.type, element_size_bits, 0ULL};
+			TypedValue zero_value{member.type, SizeInBits{element_size_bits}, 0ULL};
 			emitArrayStore(
 				member.type,
 				element_size_bits,
 				base_object,
-				TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)},
+				TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,
@@ -1552,7 +1552,7 @@ const Token& token)
 			// Zero-initialize unspecified members
 			MemberStoreOp member_store;
 			member_store.value.type = member.type;
-			member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
 			member_store.member_name = member_name;
@@ -1606,7 +1606,7 @@ const Token& token)
 
 				MemberStoreOp member_store;
 				member_store.value.type = member.type;
-				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = member_value;
 				member_store.object = base_object;
 				member_store.member_name = member_name;
@@ -1618,7 +1618,7 @@ const Token& token)
 				// Zero-initialize if we can't extract a value
 				MemberStoreOp member_store;
 				member_store.value.type = member.type;
-				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = 0ULL;
 				member_store.object = base_object;
 				member_store.member_name = member_name;
@@ -1643,7 +1643,7 @@ const Token& token)
 
 			MemberStoreOp member_store;
 			member_store.value.type = member.type;
-			member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = member_value;
 			member_store.object = base_object;
 			member_store.member_name = member_name;
@@ -1682,7 +1682,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 	func_decl_op.return_type = return_type.type();
-	func_decl_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 	
 	// Add function name and struct name
@@ -1710,13 +1710,13 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			if (i < inst_info.template_args.size()) {
 				Type concrete_type = inst_info.template_args[i];
 				func_param.type = concrete_type;
-				func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
+				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_type)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				func_param.type = param_type.type();
-				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}
 			

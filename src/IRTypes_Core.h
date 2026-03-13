@@ -18,6 +18,36 @@
 class IrInstruction;
 
 // ============================================================================
+// Strong wrapper for a size expressed in bits (e.g. 8, 16, 32, 64).
+//
+// Design intent:
+//   - Explicit construction prevents accidentally passing a plain int where a
+//     bit-size is expected (e.g. mixing up bytes and bits).
+//   - operator int() is implicit so all existing arithmetic, comparison, and
+//     format uses work unchanged at read sites.
+//   - Defined here alongside PointerDepth so all IR structs share the same type.
+// ============================================================================
+struct SizeInBits {
+	int value = 0;
+	constexpr SizeInBits() noexcept = default;
+	constexpr explicit SizeInBits(int v) noexcept : value(v) {}
+	constexpr operator int() const noexcept { return value; }
+	constexpr bool operator==(SizeInBits o) const noexcept { return value == o.value; }
+	constexpr bool operator!=(SizeInBits o) const noexcept { return value != o.value; }
+	constexpr bool operator<(SizeInBits o)  const noexcept { return value <  o.value; }
+	constexpr bool operator<=(SizeInBits o) const noexcept { return value <= o.value; }
+	constexpr bool operator>(SizeInBits o)  const noexcept { return value >  o.value; }
+	constexpr bool operator>=(SizeInBits o) const noexcept { return value >= o.value; }
+};
+
+template<>
+struct std::formatter<SizeInBits, char> : std::formatter<int, char> {
+	auto format(const SizeInBits& s, std::format_context& ctx) const {
+		return std::formatter<int, char>::format(s.value, ctx);
+	}
+};
+
+// ============================================================================
 // Strong wrapper for pointer indirection depth.
 //
 // Design intent:

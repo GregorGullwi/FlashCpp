@@ -9,7 +9,7 @@
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				return generateQualifiedIdentifierIr(expr);
 			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-				return makeExprResult(Type::Bool, 8, IrOperand{expr.value() ? 1ULL : 0ULL});
+				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{expr.value() ? 1ULL : 0ULL});
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				return generateNumericLiteralIr(expr);
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -89,7 +89,7 @@
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		return makeExprResult(Type::Bool, 8, IrOperand{is_noexcept ? 1ULL : 0ULL});
+		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{is_noexcept ? 1ULL : 0ULL});
 	}
 
 	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
@@ -162,8 +162,8 @@
 				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
 				object_addr = std::get<TempVar>(object_result.value);
@@ -178,7 +178,7 @@
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
 					.type = object_result.type,
-					.size_in_bits = object_result.size_in_bits,
+					.size_in_bits = SizeInBits{object_result.size_in_bits},
 					.value = obj_name,
 					.pointer_depth = PointerDepth{}
 				};
@@ -193,7 +193,7 @@
 		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+		add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
 		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
@@ -205,7 +205,7 @@
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(
 			member_type,
-			member_size,
+			SizeInBits{static_cast<int>(member_size)},
 			IrOperand{result_var},
 			member_type_index
 		);
@@ -242,7 +242,7 @@
 			TypeIndex type_index = TypeIndex{},
 			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
-			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
+			return makeExprResult(type, SizeInBits{static_cast<int>(size_bits)}, std::move(value), type_index, pointer_depth);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
@@ -308,7 +308,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = ptr_temp;
 						member_load.result.type = member->type;  // Base type (e.g., Int)
-						member_load.result.size_in_bits = 64;  // pointer size in bits
+						member_load.result.size_in_bits = SizeInBits{64};  // pointer size in bits
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -340,14 +340,14 @@
 						}
 
 						// Fallback: return the pointer temp
-						return makeExprResult(member->type, 64, IrOperand{ptr_temp});
+						return makeExprResult(member->type, SizeInBits{64}, IrOperand{ptr_temp});
 					} else {
 						// By-value capture: direct member access
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -387,7 +387,7 @@
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
 					member_load.result.type = member->type;
-					member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = *copy_this_temp;
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -420,20 +420,20 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name});
+				return makeExprResult(info.type, SizeInBits{info.size_in_bits}, IrOperand{info.mangled_name});
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
 			op.result.type = info.type;
-			op.result.size_in_bits = info.size_in_bits;
+			op.result.size_in_bits = SizeInBits{info.size_in_bits};
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp});
+			return makeExprResult(info.type, SizeInBits{info.size_in_bits}, IrOperand{result_temp});
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
@@ -468,7 +468,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
-						op.result.size_in_bits = size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
 						op.is_array = is_array_type;
@@ -493,7 +493,7 @@
 								if (enum_info) {
 									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
 									if (enumerator) {
-										return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+										return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 											static_cast<unsigned long long>(enumerator->value));
 									}
 								}
@@ -504,7 +504,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
-						op.result.size_in_bits = size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
 						op.is_array = is_array_type;
@@ -535,7 +535,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = *this_ptr;
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -571,7 +571,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -740,7 +740,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -791,7 +791,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = member_size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
@@ -818,7 +818,7 @@
 							if (enum_info && !enum_info->is_scoped) {
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
-									return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+									return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 									static_cast<unsigned long long>(enumerator->value));
 								}
 							}
@@ -854,7 +854,7 @@
 						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
-							return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+							return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 							static_cast<unsigned long long>(enumerator->value));
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
@@ -871,7 +871,7 @@
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = size_bits;
+				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
 				// If we resolved this via a using declaration, use the resolved qualified name
@@ -924,7 +924,7 @@
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
+					return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 				}
 				
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -951,8 +951,8 @@
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					AssignmentOp assign_op;
 					assign_op.result = lvalue_temp;
-					assign_op.lhs = TypedValue{pointee_type, 64, lvalue_temp};  // 64-bit pointer dest
-					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+					assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, lvalue_temp};  // 64-bit pointer dest
+					assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1061,7 +1061,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = size_bits;
+				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
 				// If we resolved this via a using declaration, use the resolved qualified name
@@ -1108,7 +1108,7 @@
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
+						return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 					}
 					
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1131,8 +1131,8 @@
 						// Use AssignmentOp to copy the pointer value to a temp
 						AssignmentOp assign_op;
 						assign_op.result = addr_temp;
-						assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
-						assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+						assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, addr_temp};  // 64-bit pointer dest
+						assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
 						assign_op.is_pointer_store = false;
 						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1212,14 +1212,14 @@
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
-			op.result.size_in_bits = 64;
+			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;
 			op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
 			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return makeExprResult(Type::FunctionPointer, 64, IrOperand{func_addr_var});
+			return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var});
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1251,7 +1251,7 @@
 					// This is a scoped enum - look up the enumerator value
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-					return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 					static_cast<unsigned long long>(enum_value));
 				}
 			}
@@ -1352,7 +1352,7 @@
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
-							return makeExprResult(Type::Bool, 8, 0ULL);
+							return makeExprResult(Type::Bool, SizeInBits{8}, 0ULL);
 						}
 						
 						// Determine the correct qualified name to use
@@ -1395,7 +1395,7 @@
 									// true_type -> 1, false_type -> 0
 									bool value = (alias_name == "true_type") ? true : false;
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-									return makeExprResult(Type::Bool, 8, static_cast<unsigned long long>(value));
+									return makeExprResult(Type::Bool, SizeInBits{8}, static_cast<unsigned long long>(value));
 								}
 								
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
@@ -1464,7 +1464,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = qsm_size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
@@ -1476,17 +1476,17 @@
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
 							deref_op.pointer.type = static_member->type;
-							deref_op.pointer.size_in_bits = get_type_size_bits(static_member->type);
+							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->type)};
 							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-							return makeExprResult(static_member->type, get_type_size_bits(static_member->type), IrOperand{deref_temp}, type_index);
+							return makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type)}, IrOperand{deref_temp}, type_index);
 						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-						return makeExprResult(static_member->type, qsm_size_bits, IrOperand{result_temp}, type_index);
+						return makeExprResult(static_member->type, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index);
 					}
 				}
 			}
@@ -1506,7 +1506,7 @@
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return makeExprResult(Type::Int, 32, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
+			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -1525,7 +1525,7 @@
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-					op.result.size_in_bits = size_bits;
+					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				// Use fully qualified name (ns::value) to match the global variable symbol
 				op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
@@ -1542,11 +1542,11 @@
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-					return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
+					return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index);
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-				return makeExprResult(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
+				return makeExprResult(type_node.type(), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
 			}
 		}
 
@@ -1563,7 +1563,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.type = type_node.type();
-			op.result.size_in_bits = size_bits;
+			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
 			// Use fully qualified name (ns::value) to match the global variable symbol
 			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
@@ -1581,13 +1581,13 @@
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-			return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
+			return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return makeExprResult(Type::Function, 64, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
+			return makeExprResult(Type::Function, SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		// If we get here, the symbol is not a supported type
@@ -1601,9 +1601,9 @@
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
-			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()));
+			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()));
 		} else {
 			// For integer literals, the value is stored as unsigned long long
-			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()));
+			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<unsigned long long>(numericLiteralNode.value()));
 		}
 	}

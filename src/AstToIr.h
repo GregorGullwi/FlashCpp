@@ -63,7 +63,7 @@ private:
 		bool is_global_or_static = false;
 		StringHandle store_name;
 		Type type = Type::Void;
-		int size_in_bits = 0;
+		SizeInBits size_in_bits;
 	};
 
 
@@ -285,7 +285,7 @@ private:
 	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index);
 
 	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
-	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
+	// Returns the IR operands {result_type, SizeInBits{result_size}, ret_var, result_type_index} on success,
 	// or std::nullopt if no overload was found.
 	std::optional<ExprResult> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
@@ -345,7 +345,7 @@ private:
 			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
 				value = std::get<unsigned long long>(eval_result.value);
 			}
-			return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{value});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value});
 		}
 		
 		// Return default ExprResult if evaluation failed
@@ -624,7 +624,7 @@ private:
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
 		Type type;
-		int size_in_bits;
+		SizeInBits size_in_bits;
 	};
 
 	// Map from local static variable name to info

@@ -122,13 +122,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
-					decl_op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 					
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
 					init_value.type = type_node.type();
-					init_value.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					init_value.type_index = TypeIndex{type_index};
 					init_value.value = exception_temp;
 					if (type_node.is_rvalue_reference()) {
@@ -262,13 +262,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 					VariableDeclOp materialized_throw_decl;
 					materialized_throw_decl.type = expr_type;
-					materialized_throw_decl.size_in_bits = static_cast<int>(type_size);
+					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
 					materialized_throw_decl.use_copy_constructor = (exception_type_index != 0);
 
 					TypedValue materialized_init;
 					materialized_init.type = expr_type;
-					materialized_init.size_in_bits = static_cast<int>(type_size);
+					materialized_init.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_init.value = exception_value;
 					materialized_init.type_index = TypeIndex{exception_type_index};
 					materialized_throw_decl.initializer = std::move(materialized_init);

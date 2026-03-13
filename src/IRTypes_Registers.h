@@ -273,7 +273,7 @@ struct TempVarMetadata {
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
 		meta.value_type = type;
-		meta.value_size_bits = size_bits;
+		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
@@ -284,7 +284,7 @@ struct TempVarMetadata {
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
 		meta.value_type = type;
-		meta.value_size_bits = size_bits;
+		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
@@ -318,7 +318,7 @@ struct TempVarMetadata {
 		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
 		meta.is_address = true;  // References hold addresses
 		meta.value_type = type;
-		meta.value_size_bits = size_bits;
+		meta.value_size_bits = SizeInBits{size_bits};
 		meta.is_rvalue_reference = is_rvalue_ref;
 		return meta;
 	}

@@ -604,7 +604,7 @@
 
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
@@ -752,7 +752,7 @@
 				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);

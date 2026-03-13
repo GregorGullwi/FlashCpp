@@ -122,7 +122,7 @@ int64_t member_offset, bool is_pointer_to_array,
 const Token& token) {
 	ArrayStoreOp payload;
 	payload.element_type = element_type;
-	payload.element_size_in_bits = element_size_bits;
+	payload.element_size_in_bits = SizeInBits{element_size_bits};
 	payload.array = array;
 	payload.index = index;
 	payload.value = value;
@@ -169,7 +169,7 @@ const Token& token) {
 	
 	// Populate pointer TypedValue
 	store_op.pointer.type = pointee_type;
-	store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
 	if (std::holds_alternative<StringHandle>(pointer)) {
@@ -262,7 +262,7 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 	AddressOfOp addr_op;
 	addr_op.result = addr_var;
 	addr_op.operand.type = type;
-	addr_op.operand.size_in_bits = size_in_bits;
+	addr_op.operand.size_in_bits = SizeInBits{size_in_bits};
 	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
@@ -276,7 +276,7 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 	DereferenceOp deref_op;
 	deref_op.result = result_var;
 	deref_op.pointer.type = pointee_type;
-	deref_op.pointer.size_in_bits = pointer_size_bits;
+	deref_op.pointer.size_in_bits = SizeInBits{static_cast<int>(pointer_size_bits)};
 	deref_op.pointer.pointer_depth = PointerDepth{pointer_depth};
 	deref_op.pointer.value = pointer_value;
 	ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));

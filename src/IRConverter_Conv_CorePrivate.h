@@ -276,7 +276,7 @@
 
 		// Update context for boolean result (1 byte)
 		ctx.result_value.type = Type::Bool;
-		ctx.result_value.size_in_bits = 8;
+		ctx.result_value.size_in_bits = SizeInBits{8};
 		ctx.result_physical_reg = bool_reg;
 
 		// Store the result to the appropriate destination
@@ -411,7 +411,7 @@
 		
 		// Create context with correct result type
 		ArithmeticOperationContext ctx = {
-			.result_value = TypedValue{result_type, result_size, bin_op.result},
+			.result_value = TypedValue{result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result},
 			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX,
 			.operand_type = operand_type,
@@ -427,7 +427,7 @@
 			Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
 			if (!is_comparison) {
 				ctx.result_value.type = int_type;
-				ctx.result_value.size_in_bits = ctx.operand_size_in_bits;
+				ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
 			}
 			ctx.operand_type = int_type;
 		}
@@ -442,10 +442,10 @@
 			// Pointer-like types: force 64-bit integer semantics
 			if (!is_comparison) {
 				ctx.result_value.type = Type::UnsignedLongLong;
-				ctx.result_value.size_in_bits = 64;
+				ctx.result_value.size_in_bits = SizeInBits{64};
 			}
 			ctx.operand_type = Type::UnsignedLongLong;
-			ctx.operand_size_in_bits = 64;
+			ctx.operand_size_in_bits = SizeInBits{64};
 		}
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
 			auto type_name = getTypeName(ctx.result_value.type);
@@ -1191,7 +1191,7 @@
 	};
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
-		int size_in_bits = 0;  // Size in bits
+		int size_in_bits = SizeInBits{0};  // Size in bits
 		bool is_array = false; // True if this is an array declaration (enables array-to-pointer decay in expressions and assignments)
 	};
 
@@ -1203,7 +1203,7 @@
 
 	struct ReferenceInfo {
 		Type value_type = Type::Invalid;
-		int value_size_bits = 0;
+		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
 		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
 		// not a reference that should be implicitly dereferenced.
@@ -1220,7 +1220,7 @@
 
 		reference_stack_info_[stack_offset] = ReferenceInfo{
 			.value_type = value_type,
-			.value_size_bits = value_size_bits,
+			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
 		};
@@ -1308,7 +1308,7 @@
 		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
 			return ReferenceInfo{
 				.value_type = getTempVarValueType(temp_var),
-				.value_size_bits = getTempVarValueSizeBits(temp_var),
+				.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 				.is_rvalue_reference = isTempVarRValueReference(temp_var),
 				.holds_address_only = false
 			};
@@ -1491,7 +1491,7 @@
 				
 				func_stack_space.named_vars_size += (total_size_bits / 8);
 				// Phase 5: Store StringHandle directly for efficient variable tracking
-				local_vars.push_back(VarDecl{ .var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = total_size_bits, .alignment = custom_alignment, .is_array = is_array });
+				local_vars.push_back(VarDecl{ .var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = SizeInBits{total_size_bits}, .alignment = custom_alignment, .is_array = is_array });
 			}
 			else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format

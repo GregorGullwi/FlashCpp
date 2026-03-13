@@ -382,8 +382,8 @@
 			
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
-				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_result.value)},
-				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = case_value_result.size_in_bits, .value = toIrValue(case_value_result.value)},
+				.lhs = TypedValue{.type = condition_type, .size_in_bits = SizeInBits{static_cast<int>(condition_size)}, .value = toIrValue(condition_result.value)},
+				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = SizeInBits{case_value_result.size_in_bits}, .value = toIrValue(case_value_result.value)},
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
@@ -399,7 +399,7 @@
 			CondBranchOp cond_branch;
 			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fall through to unconditional branch when TRUE
 			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
-			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
+			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 			// Unconditional branch to case label (when condition is true, we fall through here)

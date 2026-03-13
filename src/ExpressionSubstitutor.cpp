@@ -999,7 +999,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 						}
 						break;
 					default:
-						size_in_bits = 64; // Default to 64 bits if unknown
+						size_in_bits = SizeInBits{64}; // Default to 64 bits if unknown
 						break;
 				}
 			}

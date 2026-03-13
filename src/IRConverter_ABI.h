@@ -159,7 +159,7 @@ struct RegisterAllocator
 		bool isAllocated = false;
 		bool isDirty = false;	// Does the stack variable need to be updated on a flush
 		int32_t stackVariableOffset = INT_MIN;
-		int size_in_bits = 0;	// Size of the value stored in this register (for proper spilling)
+		int size_in_bits = SizeInBits{0};	// Size of the value stored in this register (for proper spilling)
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -206,7 +206,7 @@ struct RegisterAllocator
 		auto& reg_info = registers[static_cast<int>(reg)];
 		reg_info.stackVariableOffset = INT_MIN;
 		reg_info.isDirty = false;
-		reg_info.size_in_bits = 0;
+		reg_info.size_in_bits = SizeInBits{0};
 	}
 
 	// Find which register (if any) currently holds a value for the given stack offset
@@ -348,7 +348,7 @@ struct RegisterAllocator
 			}
 		}
 		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
-		registers[static_cast<int>(reg)].size_in_bits = size_in_bits;
+		registers[static_cast<int>(reg)].size_in_bits = SizeInBits{size_in_bits};
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
