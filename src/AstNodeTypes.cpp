@@ -1406,7 +1406,7 @@ void StructTypeInfo::buildRTTI() {
             base_bcd.mdisp = static_cast<int32_t>(base.offset);  // Offset of base in derived class
             base_bcd.pdisp = base.is_virtual ? 0 : -1;  // Virtual base handling
             base_bcd.vdisp = 0;
-            base_bcd.attributes = base.is_virtual ? 1 : TypeIndex{};  // Mark virtual bases
+            base_bcd.attributes = base.is_virtual ? 1 : 0;  // Mark virtual bases
             bcd_storage.push_back(base_bcd);
             rtti_info->base_descriptors.push_back(&bcd_storage.back());
         }
