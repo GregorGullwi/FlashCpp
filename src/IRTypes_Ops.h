@@ -311,7 +311,7 @@ inline void markTempVarAsReturnValue(const TempVar& temp) {
 // Get the value size in bits of a reference TempVar (returns 0 if not a reference)
 inline int getTempVarValueSizeBits(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.value_size_bits;
+	return meta.value_size_bits.value;
 }
 
 // Check if a TempVar is an rvalue reference

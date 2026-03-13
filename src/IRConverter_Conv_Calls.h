@@ -650,7 +650,7 @@
 			// Mark rvalue reference returns in indirect_stack_info_ so they are treated as pointers
 			// This is needed for proper handling when passing rvalue reference results to other functions
 			if (call_op.returns_rvalue_reference) {
-				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits, true, true, TempVar{0});
+				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits.value, true, true, TempVar{0});
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Marked function call result at offset {} as rvalue reference (holds address)",
 					result_offset);

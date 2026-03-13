@@ -269,7 +269,7 @@ struct TempVarMetadata {
 	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
 	Type value_type = Type::Invalid;
-	int value_size_bits = 0;
+	SizeInBits value_size_bits;
 	bool is_rvalue_reference = false;
 	
 	// Constructor
@@ -281,7 +281,7 @@ struct TempVarMetadata {
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
 		meta.value_type = type;
-		meta.value_size_bits = size_bits;
+		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
@@ -292,7 +292,7 @@ struct TempVarMetadata {
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
 		meta.value_type = type;
-		meta.value_size_bits = size_bits;
+		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
@@ -321,7 +321,7 @@ struct TempVarMetadata {
 	}
 	
 	// Helper to create reference metadata (for compatibility with IndirectStorageInfo)
-	static TempVarMetadata makeReference(Type type, int size_bits, ValueCategory category) {
+	static TempVarMetadata makeReference(Type type, SizeInBits size_bits, ValueCategory category) {
 		TempVarMetadata meta;
 		meta.category = category;
 		meta.is_address = true;  // References hold addresses
