@@ -1662,7 +1662,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
 				// In template contexts, actual alignment will be resolved at instantiation time
 				discard_saved_token(saved_pos);
-				return TypeIndex{8}; // Default to 8-byte alignment
+				return 8; // Default to 8-byte alignment
 			}
 		}
 	}

@@ -268,7 +268,7 @@
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 				Type element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
-				size_t element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
 
 				// Get element size for struct types
 				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index > 0) {

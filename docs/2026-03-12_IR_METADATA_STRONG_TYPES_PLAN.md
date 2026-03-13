@@ -1,10 +1,49 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Slice 3 complete 2026-03-13)  
+**Status**: In Progress (Slice 4 complete 2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
 
 ## Progress
+
+### Slice 4 (2026-03-13) — Completed
+
+Replaced `using TypeIndex = size_t` in `src/AstNodeTypes_TypeSystem.h` with an
+explicit strong wrapper struct:
+
+```cpp
+struct TypeIndex {
+    size_t value = 0;
+    constexpr TypeIndex() noexcept = default;
+    constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
+    constexpr operator size_t() const noexcept { return value; }
+    TypeIndex& operator++() noexcept;   // for loop variables
+    TypeIndex  operator++(int) noexcept;
+    // full set of relational operators
+};
+// std::hash<TypeIndex> and std::formatter<TypeIndex, char> specializations
+```
+
+Key properties:
+- **Explicit ctor**: `TypeIndex(size_t)` prevents bare integer → TypeIndex
+  implicit conversion at write sites.
+- **Implicit `operator size_t()`**: all `gTypeInfo[type_index]` array-index
+  uses and `if (type_index > 0)` comparisons work unchanged — zero churn at
+  the ~428 array-index read sites.
+- **Increment operators**: `for (TypeIndex ti{}; ti < n; ++ti)` loops work.
+- **`std::hash`/`std::formatter`**: unordered_map keys and FLASH_LOG_FORMAT
+  calls with TypeIndex values work without change.
+
+Fixes applied across 57 files:
+- ~43 `TypeIndex x = 0;` local variable declarations → `TypeIndex x{};`
+- ~12 ternary `: 0` arms in TypeIndex context → `: TypeIndex{}`
+- ~15 `static_cast<TypeIndex>(expr)` → `TypeIndex{expr}`
+- `MemberFunctionContext::struct_type_index` and `DelayedFunctionBody::struct_type_index` changed from `size_t` to `TypeIndex`
+- `addMember`, `addBaseClass`, `TypeSpecifierNode(Type, size_t, ...)` call sites wrapped
+- `TypeInfo(name, type, size_t, bits)` constructor call sites wrapped
+
+Build: clean (`make main CXX=clang++`, no warnings)
+Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
 
 ### Slice 3 (2026-03-13) — Completed
 
@@ -101,10 +140,7 @@
 
 ### Deferred
 
-- `TypeIndex` wrapper: `using TypeIndex = size_t` has ~268 array-index usages
-  (`gTypeInfo[type_index]`) and ~40+ `TypeIndex foo = 0` initializations across
-  the codebase. A proper wrapper with no implicit size_t conversion would be
-  high-churn. Deferred to Slice 4 after a broader callsite audit.
+- `TypeIndex` wrapper: **Completed in Slice 4 (2026-03-13).**
 
 - `SizeInBits` wrapper: large footprint; see plan Step 3.
 

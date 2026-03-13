@@ -152,7 +152,7 @@
 		// Only build debug string and log if Codegen is set to Debug or higher
 		if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
 			std::string bytes_str;
-			for (size_t i = 0; i < TypeIndex{opcodes.size_in_bytes}; i++) {
+			for (size_t i = 0; i < opcodes.size_in_bytes; i++) {
 				bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
 			}
 			FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} size_bits={} bytes={}", static_cast<int>(sourceRegister), offset, size_in_bits, bytes_str);
