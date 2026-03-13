@@ -145,7 +145,7 @@
 							return 0ULL;
 						}
 					}, argumentIrOperands.value);
-					arguments.push_back(TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value});
+					arguments.push_back(TypedValue{arg_type, SizeInBits{arg_size}, arg_value});
 				});
 
 				// Add the indirect call instruction
