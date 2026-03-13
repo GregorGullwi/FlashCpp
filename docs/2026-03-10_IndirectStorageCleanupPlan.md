@@ -121,21 +121,29 @@ That decision should eventually come from one shared helper rather than repeated
 
 - All files listed above have been migrated to use semantic helpers
 - `isPointerBaseStorage(...)` helper added
-- Ready for broader renaming (Track 1)
 
 ### Track 1: Rename the concept
 
 - introduce an `IndirectStorageInfo` type name (or alias)
 - rename `reference_stack_info_` only after Track 0 and after the broad EH work settles
 
-### Track 2: Extend TempVar metadata
+### Track 2: COMPLETED (2026-03-13)
 
-- add an explicit address-kind enum or equivalent
-- teach `AddressOf`, `AddressOfMember`, and similar pointer-producing ops to persist `AddressOnly` metadata on the temp itself
+- Added `holds_address_only` field to TempVarMetadata
+- Added `makeAddressOnly()` helper to create address-only metadata
+- Added `isTempVarAddressOnly()` helper function
+- Updated `isTempVarReference()` to exclude address-only values
+- Updated `setIndirectStorageInfo()` to sync AddressOnly metadata to TempVar
+- Updated `getReferenceInfo()` to handle AddressOnly TempVars
 
-### Track 3: Migrate backend consumers
+TempVar metadata now supports all three states:
+- `None` - no indirect storage
+- `Reference` (via `makeReference()`) - true reference, should implicitly dereference  
+- `AddressOnly` (via `makeAddressOnly()`) - plain address, should NOT implicitly dereference
 
-- replace raw map lookups in arithmetic/control-flow/var-decl/member/call lowering with semantic helpers
+### Track 3: Migrate backend consumers (partially done)
+
+- replace raw map lookups in arithmetic/control-flow/var-decl/member/call lowering with semantic helpers - largely done in Track 0
 - keep all implicit-deref decisions centralized
 
 ### Track 4: Add focused regression coverage

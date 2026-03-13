@@ -248,6 +248,10 @@ struct TempVarMetadata {
 	// Helps distinguish between &x (address-of) vs x (value)
 	bool is_address = false;
 	
+	// Whether this temp holds an address-only value (from AddressOf/AddressOfMember)
+	// Unlike true references, address-only values should NOT be implicitly dereferenced
+	bool holds_address_only = false;
+	
 	// Whether this temp is the result of std::move or similar
 	bool is_move_result = false;
 	
@@ -317,9 +321,23 @@ struct TempVarMetadata {
 		TempVarMetadata meta;
 		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
 		meta.is_address = true;  // References hold addresses
+		meta.holds_address_only = false;
 		meta.value_type = type;
 		meta.value_size_bits = size_bits;
 		meta.is_rvalue_reference = is_rvalue_ref;
+		return meta;
+	}
+	
+	// Helper to create address-only metadata (for AddressOf/AddressOfMember results)
+	// Address-only values should NOT be implicitly dereferenced
+	static TempVarMetadata makeAddressOnly(Type type, int size_bits) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		meta.is_address = true;  // It's an address/pointer
+		meta.holds_address_only = true;  // But not a true reference
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
+		meta.is_rvalue_reference = false;
 		return meta;
 	}
 };
