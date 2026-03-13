@@ -1225,10 +1225,13 @@
 			.holds_address_only = holds_address_only
 		};
 
-		// TempVar metadata currently models true references but not plain address-only values.
-		// Keep that asymmetry explicit here instead of open-coding it at each call site.
-		if (!holds_address_only && temp_var.var_number != 0) {
-			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
+		// Sync TempVar metadata with stack storage info
+		if (temp_var.var_number != 0) {
+			if (holds_address_only) {
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, value_size_bits));
+			} else {
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
+			}
 		}
 	}
 
@@ -1305,17 +1308,27 @@
 	}
 
 	// Helper function to get indirect-storage info for a TempVar or stack offset.
-	// Returns TempVar metadata first when the temp is a true reference, otherwise falls back
-	// to the stack-offset side table for named variables and address-only pointer temps.
+	// Returns TempVar metadata first when the temp is a true reference or address-only, 
+	// otherwise falls back to the stack-offset side table for named variables.
 	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
 		// Check TempVar metadata first
-		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
-			return ReferenceInfo{
-				.value_type = getTempVarValueType(temp_var),
-				.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
-				.is_rvalue_reference = isTempVarRValueReference(temp_var),
-				.holds_address_only = false
-			};
+		if (temp_var.var_number != 0) {
+			if (isTempVarReference(temp_var)) {
+				return ReferenceInfo{
+					.value_type = getTempVarValueType(temp_var),
+					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
+					.is_rvalue_reference = isTempVarRValueReference(temp_var),
+					.holds_address_only = false
+				};
+			}
+			if (isTempVarAddressOnly(temp_var)) {
+				return ReferenceInfo{
+					.value_type = getTempVarValueType(temp_var),
+					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
+					.is_rvalue_reference = false,
+					.holds_address_only = true
+				};
+			}
 		}
 
 		return getIndirectStackInfo(stack_offset);

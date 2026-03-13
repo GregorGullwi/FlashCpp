@@ -262,16 +262,22 @@ inline std::optional<LValueInfo> getTempVarLValueInfo(const TempVar& temp) {
 	return GlobalTempVarMetadataStorage::instance().getLValueInfo(temp);
 }
 
-// Check if a TempVar is a reference (has is_address flag set)
+// Check if a TempVar is a true reference (has is_address flag set and is NOT address-only)
 inline bool isTempVarReference(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.is_address && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
+	return meta.is_address && !meta.holds_address_only && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
 }
 
 // Get the value type of a reference TempVar (returns Invalid if not a reference)
 inline Type getTempVarValueType(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
 	return meta.value_type;
+}
+
+// Check if a TempVar holds an address-only value (from AddressOf/AddressOfMember)
+inline bool isTempVarAddressOnly(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.holds_address_only;
 }
 
 // ============================================================================
