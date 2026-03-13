@@ -59,7 +59,7 @@
 				op.result = result_var;
 				op.type = type;
 				op.size_in_bytes = size_in_bits / 8;
-				op.pointer_depth = pointer_depth;
+				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
 				op.address = toIrValue(address_operands.value);
 
@@ -168,7 +168,7 @@
 				op.result = result_var;
 				op.type = type;
 				op.size_in_bytes = size_in_bits / 8;
-				op.pointer_depth = pointer_depth;
+				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
 				IrValue count_value = op.count = toIrValue(size_operands.value);
 
@@ -346,7 +346,7 @@
 			op.result = result_var;
 			op.type = type;
 			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
+			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
 			op.address = toIrValue(address_operands.value);
 
@@ -392,7 +392,7 @@
 			op.result = result_var;
 			op.type = type;
 			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
+			op.pointer_depth = PointerDepth{pointer_depth};
 
 			ir_.addInstruction(IrInstruction(IrOpcode::HeapAlloc, std::move(op), Token()));
 

@@ -682,7 +682,7 @@ struct LoopBeginOp {
 struct FunctionParam {
 	Type type = Type::Invalid;
 	int size_in_bits = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 	StringHandle name;  // Pure StringHandle
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
@@ -701,7 +701,7 @@ struct FunctionParam {
 struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
-	int return_pointer_depth = 0;
+	PointerDepth return_pointer_depth = PointerDepth{};
 	TypeIndex return_type_index = 0;  // Type index for struct/class return types
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
@@ -846,7 +846,7 @@ struct HeapAllocOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 };
 
 // Heap array allocation (new[] operator)
@@ -854,7 +854,7 @@ struct HeapAllocArrayOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 	IrValue count;               // Array element count (TempVar or constant)
 	bool needs_cookie = false;   // If true, prepend 8-byte count cookie; result points past cookie
 };
@@ -875,7 +875,7 @@ struct PlacementNewOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
 };
 

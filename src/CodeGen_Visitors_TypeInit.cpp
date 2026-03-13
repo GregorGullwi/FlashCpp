@@ -1033,7 +1033,7 @@
 				ctor_decl_op.struct_name = type_info->name();
 				ctor_decl_op.return_type = Type::Void;
 				ctor_decl_op.return_size_in_bits = 0;
-				ctor_decl_op.return_pointer_depth = 0;
+				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
 				ctor_decl_op.is_variadic = false;
 				// Trivial constructors are implicitly inline (like constructors defined inside class body)
@@ -1683,7 +1683,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 	func_decl_op.return_type = return_type.type();
 	func_decl_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-	func_decl_op.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
+	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 	
 	// Add function name and struct name
 	func_decl_op.function_name = full_func_name;
@@ -1711,13 +1711,13 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 				Type concrete_type = inst_info.template_args[i];
 				func_param.type = concrete_type;
 				func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
-				func_param.pointer_depth = 0;  // pointer depth
+				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				func_param.type = param_type.type();
 				func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}
 			
 			// Handle empty parameter names

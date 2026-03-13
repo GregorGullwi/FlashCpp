@@ -558,7 +558,7 @@
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
-		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 		
@@ -643,7 +643,7 @@
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
 				
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
@@ -737,7 +737,7 @@
 		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
-		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 		
@@ -807,7 +807,7 @@
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
 				
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {

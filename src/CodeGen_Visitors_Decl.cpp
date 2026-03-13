@@ -127,7 +127,7 @@
 		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0) 
 			? 64 
 			: actual_return_size;
-		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
+		func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
 		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
@@ -292,7 +292,7 @@
 			// when bound to temporaries/literals. The pointer_depth increment is omitted to allow
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
-			param_info.pointer_depth = pointer_depth;
+			param_info.pointer_depth = PointerDepth{pointer_depth};
 			
 			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
@@ -1219,7 +1219,7 @@
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
 		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
-		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+		ctor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 		// Constructors defined inside class body are implicitly inline (C++ standard)
@@ -1262,7 +1262,7 @@
 			FunctionParam func_param;
 			func_param.type = param_type.type();
 			func_param.size_in_bits = getTypeSpecSizeBits(param_type);
-			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			
 			// Handle empty parameter names (e.g., from defaulted constructors)
 			std::string_view param_name = param_decl.identifier_token().value();
@@ -2055,7 +2055,7 @@
 	dtor_decl_op.struct_name = node.struct_name();
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
-	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+	dtor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 

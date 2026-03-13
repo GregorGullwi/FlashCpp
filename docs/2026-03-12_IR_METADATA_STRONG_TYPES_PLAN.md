@@ -1,10 +1,37 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Slice 2 complete 2026-03-13)  
+**Status**: In Progress (Slice 3 complete 2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
 
 ## Progress
+
+### Slice 3 (2026-03-13) — Completed
+
+- Migrated the five remaining `int pointer_depth` fields in IR op structs to
+  `PointerDepth`:
+
+  | Struct              | Field                 |
+  |---------------------|-----------------------|
+  | `FunctionParam`     | `pointer_depth`       |
+  | `FunctionDeclOp`    | `return_pointer_depth`|
+  | `HeapAllocOp`       | `pointer_depth`       |
+  | `HeapAllocArrayOp`  | `pointer_depth`       |
+  | `PlacementNewOp`    | `pointer_depth`       |
+
+- All fields use `= PointerDepth{}` default member initializer.
+
+- Updated write sites across:
+  - `src/CodeGen_Visitors_Decl.cpp` (5 sites)
+  - `src/CodeGen_Visitors_TypeInit.cpp` (4 sites)
+  - `src/CodeGen_Lambdas.cpp` (4 sites)
+  - `src/CodeGen_NewDeleteCast.cpp` (4 sites)
+
+- Read sites in `IRTypes_Instructions.h` and `IRConverter_Conv_VarDecl.h`
+  (comparisons, loop bounds, pass-to-int) work unchanged via `operator int()`.
+
+- Build: clean (`make main CXX=clang++`, no warnings)
+- Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
 
 ### Slice 2 (2026-03-13) — Completed
 
@@ -77,11 +104,7 @@
 - `TypeIndex` wrapper: `using TypeIndex = size_t` has ~268 array-index usages
   (`gTypeInfo[type_index]`) and ~40+ `TypeIndex foo = 0` initializations across
   the codebase. A proper wrapper with no implicit size_t conversion would be
-  high-churn. Deferred to Slice 3 after a broader callsite audit.
-
-- `FunctionParam::pointer_depth` / `FunctionDeclOp::return_pointer_depth` /
-  `HeapAllocOp::pointer_depth` etc.: separate structs, lower bug-prevention value
-  per-site. Deferred after `TypeIndex` lands.
+  high-churn. Deferred to Slice 4 after a broader callsite audit.
 
 - `SizeInBits` wrapper: large footprint; see plan Step 3.
 
