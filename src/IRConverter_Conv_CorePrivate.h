@@ -1238,7 +1238,7 @@
 
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar{0}) {
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var) {
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
