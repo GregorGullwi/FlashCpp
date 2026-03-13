@@ -42,10 +42,12 @@ enum class X64Register : uint8_t {
 /// to ensure correct operand size encoding.
 struct SizedRegister {
 	X64Register reg;
-	int size_in_bits;    // 8, 16, 32, or 64
+	SizeInBits size_in_bits;    // 8, 16, 32, or 64
 	bool is_signed;      // true = use MOVSX, false = use MOVZX for loads < 64-bit
 	
 	SizedRegister(X64Register r, int size, bool sign = false)
+		: reg(r), size_in_bits(SizeInBits{size}), is_signed(sign) {}
+	SizedRegister(X64Register r, SizeInBits size, bool sign = false)
 		: reg(r), size_in_bits(size), is_signed(sign) {}
 	
 	// Convenience constructors for common cases
@@ -64,10 +66,12 @@ struct SizedRegister {
 /// Use this to specify the source operand when loading from stack.
 struct SizedStackSlot {
 	int32_t offset;       // Offset from RBP
-	int size_in_bits;     // 8, 16, 32, or 64
+	SizeInBits size_in_bits;     // 8, 16, 32, or 64
 	bool is_signed;       // true = value is signed, false = unsigned
 	
 	SizedStackSlot(int32_t off, int size, bool sign = false)
+		: offset(off), size_in_bits(SizeInBits{size}), is_signed(sign) {}
+	SizedStackSlot(int32_t off, SizeInBits size, bool sign = false)
 		: offset(off), size_in_bits(size), is_signed(sign) {}
 	
 	// Convenience constructors for common cases

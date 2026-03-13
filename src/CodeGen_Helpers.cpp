@@ -169,8 +169,8 @@ const Token& token) {
 	
 	// Populate pointer TypedValue
 	store_op.pointer.type = pointee_type;
-	store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-	store_op.pointer.pointer_depth = 1;  // Single pointer dereference
+	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
+	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
 	if (std::holds_alternative<StringHandle>(pointer)) {
 		store_op.pointer.value = std::get<StringHandle>(pointer);
@@ -201,8 +201,8 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
 	if (type == Type::Struct) {
-		assert(type_index < gTypeInfo.size() && "Invalid type_index for struct");
-		const TypeInfo& type_info = gTypeInfo[type_index];
+		assert(type_index.value < gTypeInfo.size() && "Invalid type_index for struct");
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		assert(struct_info && "Struct type info not found");
 		return struct_info->total_size;
@@ -211,8 +211,8 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	// Note: TypeInfo::type_size_ is NOT set for fully-defined enums (only for
 	// forward-declared enums and typedef aliases), so we must read underlying_size
 	// from the EnumTypeInfo directly.  underlying_size is in bits.
-	if (type == Type::Enum && type_index > 0 && type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index];
+	if (type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
 			return enum_info->underlying_size / 8;
 		}
@@ -223,9 +223,9 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	}
 	// For UserDefined (typedef) types with a valid type_index, type_size_ is
 	// set from size_in_bits() at the typedef site, so it is in bits.
-	if (type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size()) {
-		if (gTypeInfo[type_index].type_size_ > 0) {
-			return gTypeInfo[type_index].type_size_ / 8;
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		if (gTypeInfo[type_index.value].type_size_ > 0) {
+			return gTypeInfo[type_index.value].type_size_ / 8;
 		}
 	}
 	// For primitive types, convert bits to bytes
@@ -262,8 +262,8 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 	AddressOfOp addr_op;
 	addr_op.result = addr_var;
 	addr_op.operand.type = type;
-	addr_op.operand.size_in_bits = size_in_bits;
-	addr_op.operand.pointer_depth = 0;
+	addr_op.operand.size_in_bits = SizeInBits{size_in_bits};
+	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 	return addr_var;
@@ -276,8 +276,8 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 	DereferenceOp deref_op;
 	deref_op.result = result_var;
 	deref_op.pointer.type = pointee_type;
-	deref_op.pointer.size_in_bits = pointer_size_bits;
-	deref_op.pointer.pointer_depth = pointer_depth;
+	deref_op.pointer.size_in_bits = SizeInBits{static_cast<int>(pointer_size_bits)};
+	deref_op.pointer.pointer_depth = PointerDepth{pointer_depth};
 	deref_op.pointer.value = pointer_value;
 	ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
 	return result_var;

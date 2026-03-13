@@ -194,7 +194,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// name in a parenthesized expression (e.g., "(x) < 8"), not a type cast.
 				// We should backtrack and let parse_primary_expression handle it.
 				bool is_valid_type = true;
-				if (type_spec.type() == Type::UserDefined && type_spec.type_index() == 0) {
+				if (type_spec.type() == Type::UserDefined && !type_spec.type_index().is_valid()) {
 					// Check if the token looks like a known type or is in a template context
 					// In template bodies, UserDefined with index 0 can be a valid template parameter placeholder
 					if (!(parsing_template_depth_ > 0)) {
@@ -609,8 +609,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Phase 2: Ensure the type is instantiated to Layout phase for sizeof
 				// This ensures size/alignment are computed for lazily instantiated classes
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-					StringHandle type_name = gTypeInfo[type_spec.type_index()].name();
+				if (type_spec.type() == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
+					StringHandle type_name = gTypeInfo[type_spec.type_index().value].name();
 					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 				}
 				
@@ -679,8 +679,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Phase 2: Ensure the type is instantiated to Layout phase for alignof
 			// This ensures size/alignment are computed for lazily instantiated classes
 			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-				StringHandle type_name = gTypeInfo[type_spec.type_index()].name();
+			if (type_spec.type() == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
+				StringHandle type_name = gTypeInfo[type_spec.type_index().value].name();
 				instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 			}
 			

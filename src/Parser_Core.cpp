@@ -100,8 +100,8 @@ static int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 		return static_cast<size_t>(get_type_size_bits(arg.base_type));
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
-	if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[arg.type_index];
+	if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[arg.type_index.value];
 		if (type_info.type_size_ > 0) {
 			return type_info.type_size_;
 		}
@@ -470,8 +470,8 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
-	if (type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index];
+	if (type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		if (type_info.struct_info_) {
 			return static_cast<int>(type_info.struct_info_->total_size * 8);
 		}
@@ -711,7 +711,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     // 2. Move other nodes to ast_discarded_nodes_ to keep them alive (prevent memory corruption)
     //    but not pollute the AST tree
     //
-    // This can happen when parsing expressions like `(all(1,1,1) ? 1 : 0)`:
+    // This can happen when parsing expressions like `(all(1,1,1) ? 1 : TypeIndex{})`:
     // 1. Parser tries fold expression patterns, saving position
     // 2. Parser parses `all(1,1,1)`, which instantiates the template
     // 3. Parser finds it's not a fold expression, restores position

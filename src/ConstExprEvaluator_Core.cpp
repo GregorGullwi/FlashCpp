@@ -481,9 +481,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						const TemplateTypeArg& arg = context.template_args[i];
 						if (arg.isTypeArgument()) {
 							size_t param_size = get_type_size_bits(arg.base_type) / 8;
-							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index > 0 &&
-									arg.type_index < gTypeInfo.size()) {
-								const StructTypeInfo* si = gTypeInfo[arg.type_index].getStructInfo();
+							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index.is_valid() &&
+									arg.type_index.value < gTypeInfo.size()) {
+								const StructTypeInfo* si = gTypeInfo[arg.type_index.value].getStructInfo();
 								if (si) param_size = si->total_size;
 							}
 							if (param_size > 0) {
@@ -643,7 +643,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			
 			// For struct types, look up alignment from type info
 			if (type_spec.type() == Type::Struct) {
-				size_t type_index = type_spec.type_index();
+				size_t type_index = type_spec.type_index().value;
 				if (type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_index];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -689,7 +689,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								
 								// Handle struct types
 								if (type_spec.type() == Type::Struct) {
-									size_t type_index = type_spec.type_index();
+									size_t type_index = type_spec.type_index().value;
 									if (type_index < gTypeInfo.size()) {
 										const TypeInfo& type_info = gTypeInfo[type_index];
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -736,13 +736,13 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
 
-	size_t type_index = type_spec.type_index();
-	if (type_index >= gTypeInfo.size()) {
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index.value >= gTypeInfo.size()) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 
 	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-		static_cast<TypeIndex>(type_index),
+		type_index,
 		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
 	if (!member_result) {
 		return EvalResult::error("Member not found in struct");
@@ -1168,8 +1168,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			if (type_spec.type() == Type::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
-				if (type_index != 0 && type_index < gTypeInfo.size()) {
-					const TypeInfo& ti = gTypeInfo[type_index];
+				if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+					const TypeInfo& ti = gTypeInfo[type_index.value];
 					const EnumTypeInfo* enum_info = ti.getEnumInfo();
 					if (enum_info) {
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
@@ -1216,7 +1216,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			// Preserve the older generic array materialization for declarations whose
 			// array element type is not represented as a TypeSpecifierNode (for example,
 			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(Type::Auto, 0, init_list, context);
+			return materialize_array_value(Type::Auto, TypeIndex{}, init_list, context);
 		}
 	}
 
@@ -2220,8 +2220,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// Check for incomplete class/struct types
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx != TypeIndex{0} && (base_type == Type::Struct || base_type == Type::UserDefined)) {
-						const TypeInfo& type_info = gTypeInfo[type_idx];
+					if (type_idx.is_valid() && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+						const TypeInfo& type_info = gTypeInfo[type_idx.value];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						
 						// If it's a struct/class type with no struct_info, it's incomplete
@@ -2786,7 +2786,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							return EvalResult::error("Statement executed (not a return)");
 						}
 
-						auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
+						auto array_result = materialize_array_value(Type::Auto, TypeIndex{}, init_list, context, &bindings);
 						if (!array_result.success()) {
 							return array_result;
 						}
@@ -2797,8 +2797,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
-							type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
 								if (!object_result.success()) {

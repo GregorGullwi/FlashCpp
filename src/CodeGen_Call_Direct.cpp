@@ -6,7 +6,7 @@
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
 			irOperands.emplace_back(result.type);
-			irOperands.emplace_back(result.size_in_bits);
+			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
 
@@ -73,8 +73,8 @@
 									}
 									
 									op.operand.type = operand_type;
-									op.operand.size_in_bits = operand_size;
-									op.operand.pointer_depth = 0;
+									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
+									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -82,10 +82,10 @@
 									// Return pointer type (64-bit address) with pointer depth 1
 									return makeExprResult(
 										operand_type,
-										64,
+										SizeInBits{64},
 										IrOperand{result_var},
-										0,
-										1
+										TypeIndex{},
+										PointerDepth{1}
 									);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
@@ -135,7 +135,7 @@
 					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
 					Type arg_type = argumentIrOperands.type;
-					int arg_size = argumentIrOperands.size_in_bits;
+					int arg_size = argumentIrOperands.size_in_bits.value;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
 						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -145,7 +145,7 @@
 							return 0ULL;
 						}
 					}, argumentIrOperands.value);
-					arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+					arguments.push_back(TypedValue{arg_type, SizeInBits{arg_size}, arg_value});
 				});
 
 				// Add the indirect call instruction
@@ -159,10 +159,10 @@
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, 64, IrOperand{ret_var});  // 64 bits for return value
+					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
 			
@@ -190,13 +190,13 @@
 					CallOp call_op;
 					call_op.result = ret_var;
 					call_op.return_type = Type::Int;  // Default, will be refined
-					call_op.return_size_in_bits = 32;
+					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
 					
 					// Add the object (self) as the first argument (this pointer)
 					call_op.args.push_back(TypedValue{
 						.type = Type::Struct,
-						.size_in_bits = 64,  // Pointer size
+						.size_in_bits = SizeInBits{64},  // Pointer size
 						.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
 					});
 					
@@ -204,7 +204,7 @@
 					std::vector<TypeSpecifierNode> arg_types;
 					
 					// Look up the closure type to get the proper type_index
-					TypeIndex closure_type_index = 0;
+					TypeIndex closure_type_index {};
 					auto it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (it != gTypesByName.end()) {
 						closure_type_index = it->second->type_index_;
@@ -227,7 +227,7 @@
 							// Don't call visitExpressionNode which would dereference it
 							call_op.args.push_back(TypedValue{
 								.type = Type::Struct,
-								.size_in_bits = 64,  // Reference/pointer size
+								.size_in_bits = SizeInBits{64},  // Reference/pointer size
 								.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
 							});
 							
@@ -239,7 +239,7 @@
 							// Normal argument - visit the expression
 							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 							Type arg_type = argumentIrOperands.type;
-							int arg_size = argumentIrOperands.size_in_bits;
+							int arg_size = argumentIrOperands.size_in_bits.value;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -249,16 +249,16 @@
 									return 0ULL;
 								}
 							}, argumentIrOperands.value);
-							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
+							call_op.args.push_back(TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value});
 							
 							// Type for mangling
-							TypeSpecifierNode type_node(arg_type, 0, arg_size, Token());
+							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
 							arg_types.push_back(type_node);
 						}
 					});
 					
 					// Generate mangled name for operator() call
-					TypeSpecifierNode return_type_node(Type::Int, 0, 32, Token());
+					TypeSpecifierNode return_type_node(Type::Int, TypeIndex{}, 32, Token());
 					std::string_view mangled_name = generateMangledNameForCall(
 						"operator()",
 						return_type_node,
@@ -270,7 +270,7 @@
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 					
-					return makeExprResult(Type::Int, 32, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
 		}
@@ -338,10 +338,10 @@
 				if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
-				if (type_info->type_index_ == 0 || type_info->type_index_ >= gTypeInfo.size()) {
+				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= gTypeInfo.size()) {
 					break;
 				}
-				const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+				const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
 				if (&underlying == type_info) {
 					break;
 				}
@@ -463,8 +463,8 @@
 					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
 						for (const auto& base_spec : current_struct->base_classes) {
 							// Look up base class in gTypeInfo
-							if (base_spec.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+							if (base_spec.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {
@@ -658,8 +658,8 @@
 						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
 						if (curr_struct) {
 							for (const auto& base_spec : curr_struct->base_classes) {
-								if (base_spec.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_spec.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 									if (base_type_info.isTemplateInstantiation() && 
 									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
 									base_type_info.isStruct()) {
@@ -802,7 +802,7 @@
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type) {
 				Type arg_type = argumentIrOperands.type;
-				int arg_size = argumentIrOperands.size_in_bits;
+				int arg_size = argumentIrOperands.size_in_bits.value;
 				Type param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
@@ -817,7 +817,7 @@
 				if (should_apply_standard_conversion) {
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
 					arg_type = argumentIrOperands.type;
-					arg_size = argumentIrOperands.size_in_bits;
+					arg_size = argumentIrOperands.size_in_bits.value;
 					arg_type_index = argumentIrOperands.type_index;
 				}
 
@@ -826,8 +826,8 @@
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 					
-					if (param_type_index > 0 && param_type_index < gTypeInfo.size()) {
-						const TypeInfo& target_type_info = gTypeInfo[param_type_index];
+					if (param_type_index.is_valid() && param_type_index.value < gTypeInfo.size()) {
+						const TypeInfo& target_type_info = gTypeInfo[param_type_index.value];
 						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
 						
 						// Look for a converting constructor that takes the argument type
@@ -851,7 +851,7 @@
 												param_matches = true;
 												// For class types, require exact type match, not just Type::Struct kind.
 												if ((arg_type == Type::Struct || arg_type == Type::UserDefined) &&
-													(arg_type_index == 0 || ctor_param_type.type_index() == 0 ||
+													(!arg_type_index.is_valid() || !ctor_param_type.type_index().is_valid() ||
 													ctor_param_type.type_index() != arg_type_index)) {
 													param_matches = false;
 												}
@@ -896,8 +896,8 @@
 				
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					if (arg_type_index > 0 && arg_type_index < gTypeInfo.size()) {
-						const TypeInfo& source_type_info = gTypeInfo[arg_type_index];
+					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
+						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
 						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 						
 						// Look for a conversion operator to the parameter type
@@ -946,7 +946,7 @@
 								call_op.result = result_var;
 								call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 								call_op.return_type = param_base_type;
-								call_op.return_size_in_bits = param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits());
+								call_op.return_size_in_bits = SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())};
 								call_op.return_type_index = param_type->type_index();
 								call_op.is_member_function = true;
 								call_op.is_variadic = false;
@@ -959,7 +959,7 @@
 									// Add 'this' as first argument
 									TypedValue this_arg;
 									this_arg.type = arg_type;
-									this_arg.size_in_bits = 64;  // Pointer size
+									this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 									this_arg.value = this_ptr;
 									this_arg.type_index = arg_type_index;
 									call_op.args.push_back(std::move(this_arg));
@@ -967,7 +967,7 @@
 									// It's already a temporary
 									TypedValue this_arg;
 									this_arg.type = arg_type;
-									this_arg.size_in_bits = 64;  // Pointer size for 'this'
+									this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 									this_arg.value = std::get<TempVar>(source_value);
 									this_arg.type_index = arg_type_index;
 									call_op.args.push_back(std::move(this_arg));
@@ -977,7 +977,7 @@
 								
 								// Replace argumentIrOperands with the result of the conversion
 								argumentIrOperands = makeExprResult(param_base_type,
-									param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits()),
+									SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())},
 									IrOperand{result_var});
 							}
 						}
@@ -1010,7 +1010,7 @@
 				// Check if this is an enumerator constant (not a variable of enum type)
 				// Enumerator constants should be passed as immediate values, not variable references
 				if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
-					size_t enum_type_index = type_node.type_index();
+					size_t enum_type_index = type_node.type_index().value;
 					if (enum_type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[enum_type_index];
 						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -1088,7 +1088,7 @@
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
 						Type literal_type = argumentIrOperands.type;
-						int literal_size = argumentIrOperands.size_in_bits;
+						int literal_size = argumentIrOperands.size_in_bits.value;
 						
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
@@ -1106,8 +1106,8 @@
 						}
 						
 						// Create TypedValue for lhs and rhs
-						assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
-						assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+						assign_op.lhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var};
+						assign_op.rhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value};
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
@@ -1122,7 +1122,7 @@
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
 							Type expr_type = argumentIrOperands.type;
-							int expr_size = argumentIrOperands.size_in_bits;
+							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 							
 							// Check if the TempVar already holds an address
@@ -1196,16 +1196,16 @@
 		call_op.return_type = return_type.type();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
-		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64 
-			: static_cast<int>(return_type.size_in_bits());
+			: static_cast<int>(return_type.size_in_bits())};
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
 			Type this_type = Type::Struct;
-			TypeIndex this_type_index = 0;
+			TypeIndex this_type_index {};
 			std::string_view parent_struct = matched_func_decl->parent_struct_name();
 			if (!parent_struct.empty()) {
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
@@ -1217,7 +1217,7 @@
 			}
 			call_op.args.push_back(TypedValue{
 				.type = this_type,
-				.size_in_bits = 64,
+				.size_in_bits = SizeInBits{64},
 				.value = IrValue(StringTable::getOrInternStringHandle("this")),
 				.type_index = this_type_index,
 			});
@@ -1274,8 +1274,8 @@
 				// the backend handles the implicit promotion.)
 				// applyTypeNodeMetadata is still used for default arguments where the
 				// parameter type IS the correct type.
-				arg.pointer_depth = static_cast<int>(param_type_spec->pointer_depth());
-				if (param_type_spec->type_index() != 0) {
+				arg.pointer_depth = PointerDepth{static_cast<int>(param_type_spec->pointer_depth())};
+				if (param_type_spec->type_index().is_valid()) {
 					arg.type_index = param_type_spec->type_index();
 				}
 				arg.cv_qualifier = param_type_spec->cv_qualifier();
@@ -1323,10 +1323,10 @@
 		// Return type_index for struct types so structured bindings can decompose the result
 		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
-			: 0;
+			: TypeIndex{};
 		return makeExprResult(
 			return_type.type(),
-			result_size,
+			SizeInBits{result_size},
 			IrOperand{ret_var},
 			type_index_result
 		);

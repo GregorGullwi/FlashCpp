@@ -103,10 +103,10 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
-		if (trailing_ts.type_index() < gTypeInfo.size()) {
+		if (trailing_ts.type_index().value < gTypeInfo.size()) {
 			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
-			          StringTable::getStringView(gTypeInfo[trailing_ts.type_index()].name()), 
-			          "', underlying_type=", static_cast<int>(gTypeInfo[trailing_ts.type_index()].type_));
+			          StringTable::getStringView(gTypeInfo[trailing_ts.type_index().value].name()), 
+			          "', underlying_type=", static_cast<int>(gTypeInfo[trailing_ts.type_index().value].type_));
 		}
 		
 		// Replace the auto type with the trailing return type
@@ -454,7 +454,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					
 					// Look up the struct type
 					auto type_it = gTypesByName.find(struct_name_handle);
-					size_t struct_type_index = 0;
+					TypeIndex struct_type_index{};
 					if (type_it != gTypesByName.end()) {
 						struct_type_index = type_it->second->type_index_;
 					}
@@ -1062,7 +1062,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
 		
 		// Get TypeInfo and StructTypeInfo for the type
-		const TypeInfo* type_info = (type_idx < gTypeInfo.size()) ? &gTypeInfo[type_idx] : nullptr;
+		const TypeInfo* type_info = (type_idx.value < gTypeInfo.size()) ? &gTypeInfo[type_idx.value] : nullptr;
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
 		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)

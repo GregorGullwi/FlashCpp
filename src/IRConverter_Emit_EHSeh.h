@@ -56,7 +56,7 @@
 			if (g_enable_debug_output) {
 				std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference()
 				          << " is_rvalue_ref=" << catch_op.is_rvalue_reference()
-				          << " type_index=" << catch_op.type_index
+				          << " type_index=" << catch_op.type_index.value
 				          << " stack_offset=" << stack_offset << std::endl;
 			}
 
@@ -102,8 +102,8 @@
 
 			if (is_builtin) {
 				type_size_bits = get_type_size_bits(catch_op.exception_type);
-			} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+			} else if (catch_op.type_index.is_valid() && catch_op.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[catch_op.type_index.value];
 				type_size_bits = type_info.type_size_;
 			}
 			size_t type_size = type_size_bits / 8;
@@ -247,8 +247,8 @@
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 				int catch_storage_bits = 64;
 				if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
-					if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
-						catch_storage_bits = gTypeInfo[catch_op.type_index].type_size_;
+					if (catch_op.type_index.is_valid() && catch_op.type_index.value < gTypeInfo.size()) {
+						catch_storage_bits = gTypeInfo[catch_op.type_index.value].type_size_;
 					} else {
 						int builtin_size = get_type_size_bits(catch_op.exception_type);
 						if (builtin_size > 0) {
@@ -571,8 +571,8 @@
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 		
 			const StructTypeInfo* thrown_exception_struct_info = nullptr;
-			if (throw_op.type_index < gTypeInfo.size()) {
-				const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+			if (throw_op.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index.value];
 				thrown_exception_struct_info = thrown_type_info.getStructInfo();
 			}
 
@@ -598,13 +598,13 @@
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 			
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
@@ -749,10 +749,10 @@
 			}
 
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index != 0 && !throw_op.value_is_materialized) {
+				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
 					TypedValue source_value;
 					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = static_cast<int>(exception_size * 8);
+					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
@@ -827,8 +827,8 @@
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
 					const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
-					if (thrown_struct_info && throw_op.type_index < gTypeInfo.size()) {
-						const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index];
+					if (thrown_struct_info && throw_op.type_index.value < gTypeInfo.size()) {
+						const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index.value];
 						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 				} else {

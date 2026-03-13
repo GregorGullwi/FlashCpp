@@ -5,6 +5,7 @@
 
 // Note: IrValue and all struct definitions (BinaryOp, etc.) are now in IRTypes.h
 // This file only contains helper functions for working with those types
+// PointerDepth is defined in IRTypes_Core.h (included transitively via IRTypes.h)
 
 // Helper function to extract IrValue from IrOperand using index-based mapping
 // IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>
@@ -33,18 +34,18 @@ inline IrValue toIrValue(const IrOperand& operand) {
 
 struct ExprResult {
 	Type type = Type::Void;
-	int size_in_bits = 0;
+	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrOperand value{};
-	TypeIndex type_index = 0;
-	int pointer_depth = 0;
+	TypeIndex type_index {};
+	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 };
 
 inline ExprResult makeExprResultImpl(
 	Type type,
-	int size_in_bits,
+	SizeInBits size_in_bits,
 	IrOperand value,
 	TypeIndex type_index,
-	int pointer_depth
+	PointerDepth pointer_depth
 ) {
 	return {
 		.type = type,
@@ -55,15 +56,16 @@ inline ExprResult makeExprResultImpl(
 	};
 }
 
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), 0, 0);
+inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), TypeIndex{}, PointerDepth{});
 }
 
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, 0);
+inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, PointerDepth{});
 }
 
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth) {
+// Requires PointerDepth to prevent accidental type_index/pointer_depth argument swap.
+inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
 }
 
@@ -74,10 +76,10 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	
 	TypedValue result;
 	result.type = std::get<Type>(operands[0]);
-	result.size_in_bits = std::get<int>(operands[1]);
+	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = 0;
-	result.pointer_depth = 0;
+	result.type_index = TypeIndex{};
+	result.pointer_depth = PointerDepth{};
 	
 	return result;
 }

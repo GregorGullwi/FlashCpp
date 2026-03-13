@@ -101,7 +101,7 @@ ParseResult Parser::parse_function_body_with_context(
 
 // Phase 5: Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
-void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index) {
+void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index) {
 	// Add member functions from the struct itself
 	if (struct_node) {
 		for (const auto& member_func : struct_node->member_functions()) {
@@ -113,8 +113,8 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 	}
 
 	// Also add inherited member functions from base classes
-	if (struct_type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[struct_type_index];
+	if (struct_type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (struct_info) {
 			std::vector<TypeIndex> base_classes_to_search;
@@ -123,8 +123,8 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 			}
 			for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
 				TypeIndex base_idx = base_classes_to_search[i];
-				if (base_idx >= gTypeInfo.size()) continue;
-				const TypeInfo& base_type_info = gTypeInfo[base_idx];
+				if (base_idx.value >= gTypeInfo.size()) continue;
+				const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				if (!base_struct_info) continue;
 				for (const auto& member_func : base_struct_info->member_functions) {
@@ -145,7 +145,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 }
 
 // Phase 5: Helper method to set up member function context and scope
-void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index) {
+void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index) {
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,

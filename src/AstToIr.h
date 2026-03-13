@@ -50,8 +50,8 @@ private:
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
 		Type final_type = Type::Void;                       // Type of final result
-		int final_size_bits = 0;                            // Size in bits
-		int pointer_depth = 0;                              // Pointer depth of final result
+		SizeInBits final_size_bits;                         // Size in bits
+		PointerDepth pointer_depth;                         // Pointer depth of final result
 	};
 
 	struct ScopeVariableInfo {
@@ -63,7 +63,7 @@ private:
 		bool is_global_or_static = false;
 		StringHandle store_name;
 		Type type = Type::Void;
-		int size_in_bits = 0;
+		SizeInBits size_in_bits;
 	};
 
 
@@ -204,21 +204,21 @@ private:
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		std::string_view error_context);
-	static ExprResult makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index = 0);
+	static ExprResult makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index = TypeIndex{});
 	bool setupBaseFromIdentifier(
 		std::string_view object_name,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	ExpressionContext context = ExpressionContext::Load);
@@ -285,7 +285,7 @@ private:
 	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index);
 
 	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.
-	// Returns the IR operands {result_type, result_size, ret_var, result_type_index} on success,
+	// Returns the IR operands {result_type, SizeInBits{result_size}, ret_var, result_type_index} on success,
 	// or std::nullopt if no overload was found.
 	std::optional<ExprResult> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
@@ -345,7 +345,7 @@ private:
 			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
 				value = std::get<unsigned long long>(eval_result.value);
 			}
-			return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{value});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value});
 		}
 		
 		// Return default ExprResult if evaluation failed
@@ -513,7 +513,7 @@ private:
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
 		Type target_type,
-		TypeIndex target_type_index = 0) const;
+		TypeIndex target_type_index = TypeIndex{}) const;
 
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
@@ -612,7 +612,7 @@ private:
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
-	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
+	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
@@ -624,7 +624,7 @@ private:
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
 		Type type;
-		int size_in_bits;
+		SizeInBits size_in_bits;
 	};
 
 	// Map from local static variable name to info
@@ -734,7 +734,7 @@ private:
 		std::unordered_set<StringHandle> captures;
 		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_kinds;
 		std::unordered_map<StringHandle, TypeSpecifierNode> capture_types;
-		TypeIndex enclosing_struct_type_index = 0;  // For [this] capture type resolution
+		TypeIndex enclosing_struct_type_index {};  // For [this] capture type resolution
 		bool has_copy_this = false;
 		bool has_this_pointer = false;
 		bool is_mutable = false;  // Whether the lambda is mutable (allows modifying captures)

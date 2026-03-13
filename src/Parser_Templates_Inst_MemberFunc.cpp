@@ -102,7 +102,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				FLASH_LOG(Templates, Debug, "Parsing specialization body for ", qualified_name.view());
 				
 				// Look up the struct type index and node for the member function context
-				TypeIndex struct_type_index = 0;
+				TypeIndex struct_type_index {};
 				StructDeclarationNode* struct_node_ptr = nullptr;
 				auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 				if (struct_type_it != gTypesByName.end()) {
@@ -295,8 +295,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type, type_index };
 		}
-		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_index];
+		if (type == Type::UserDefined && type_index.value < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_index.value];
 			std::string_view tn = StringTable::getStringView(ti.name());
 
 			// Check inner template params first

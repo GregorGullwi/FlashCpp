@@ -978,13 +978,13 @@ ParseResult Parser::parse_typedef_declaration()
 	bool is_inline_struct = false;
 	bool is_inline_union = false;  // true when keyword was 'union' (affects member layout)
 	StringHandle struct_name_for_typedef;
-	TypeIndex struct_type_index = 0;
+	TypeIndex struct_type_index {};
 
 	// Check if this is an inline enum definition: typedef enum { ... } alias;
 	// or typedef enum _Name { ... } alias;
 	bool is_inline_enum = false;
 	StringHandle enum_name_for_typedef;
-	TypeIndex enum_type_index = 0;
+	TypeIndex enum_type_index {};
 
 	if (peek() == "enum"_tok) {
 		// Look ahead to see if this is an inline definition
@@ -1114,7 +1114,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Store enum info early so ConstExprEvaluator can look up values during parsing
-		auto& enum_type_info_ref = gTypeInfo[enum_type_index];
+		auto& enum_type_info_ref = gTypeInfo[enum_type_index.value];
 		enum_type_info_ref.setEnumInfo(std::move(enum_info));
 		auto* live_enum_info = enum_type_info_ref.getEnumInfo();
 

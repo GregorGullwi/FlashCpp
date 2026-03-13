@@ -180,14 +180,14 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// If not found by type_index, try to find by matching type name with any substitution value
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
-			if (type_node.type() == Type::UserDefined && type_node.type_index() < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[type_node.type_index()].name());
+			if (type_node.type() == Type::UserDefined && type_node.type_index().value < gTypeInfo.size()) {
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[type_node.type_index().value].name());
 				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
 				
 				// Search substitution map for any entry where the key type_index has the same name
 				for (const auto& [key_type_index, arg] : type_substitution_map) {
-					if (key_type_index < gTypeInfo.size()) {
-						std::string_view param_name = StringTable::getStringView(gTypeInfo[key_type_index].name());
+					if (key_type_index.value < gTypeInfo.size()) {
+						std::string_view param_name = StringTable::getStringView(gTypeInfo[key_type_index.value].name());
 						if (param_name == type_name) {
 							FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
 							
@@ -412,8 +412,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		}
 		if (!arg.is_dependent && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
-		    arg.type_index < gTypeInfo.size()) {
-			StringHandle type_name = gTypeInfo[arg.type_index].name();
+		    arg.type_index.value < gTypeInfo.size()) {
+			StringHandle type_name = gTypeInfo[arg.type_index.value].name();
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
@@ -576,7 +576,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// During template parsing, template parameters are added to gTypeInfo
 			// We need to find the type_index that corresponds to this template parameter name
 			std::string_view param_name = tparam.name();
-			TypeIndex param_type_index = 0;
+			TypeIndex param_type_index {};
 			bool found_param = false;
 			
 			// IMPORTANT: If orig_type refers to a template parameter (Type::UserDefined),
@@ -585,8 +585,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// when multiple templates use the same parameter name (e.g., 'T').
 			if (orig_type.type() == Type::UserDefined) {
 				// Check if orig_type's type name matches this template parameter
-				if (orig_type.type_index() < gTypeInfo.size()) {
-					std::string_view orig_type_name = StringTable::getStringView(gTypeInfo[orig_type.type_index()].name());
+				if (orig_type.type_index().value < gTypeInfo.size()) {
+					std::string_view orig_type_name = StringTable::getStringView(gTypeInfo[orig_type.type_index().value].name());
 					if (orig_type_name == param_name) {
 						// Use the type_index from orig_type directly
 						param_type_index = orig_type.type_index();
@@ -600,10 +600,10 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			if (!found_param) {
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
-				for (TypeIndex ti = 0; ti < gTypeInfo.size(); ++ti) {
-					if (gTypeInfo[ti].type_ == Type::UserDefined || gTypeInfo[ti].type_ == Type::Template) {
-						if (StringTable::getStringView(gTypeInfo[ti].name()) == param_name) {
-							param_type_index = ti;
+				for (TypeIndex ti {}; ti.value < gTypeInfo.size(); ++ti) {
+					if (gTypeInfo[ti.value].type_ == Type::UserDefined || gTypeInfo[ti.value].type_ == Type::Template) {
+						if (StringTable::getStringView(gTypeInfo[ti.value].name()) == param_name) {
+							param_type_index = TypeIndex{ti};
 							found_param = true;
 							break;
 						}

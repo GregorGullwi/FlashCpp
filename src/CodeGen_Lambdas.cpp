@@ -31,10 +31,10 @@
 			if (type_it != gTypesByName.end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
-		} else if (current_lambda_context_.enclosing_struct_type_index > 0 &&
-			current_lambda_context_.enclosing_struct_type_index < gTypeInfo.size()) {
+		} else if (current_lambda_context_.enclosing_struct_type_index.is_valid() &&
+			current_lambda_context_.enclosing_struct_type_index.value < gTypeInfo.size()) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
-			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index].name());
+			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index.value].name());
 		}
 
 		info.lambda_body = lambda.body();
@@ -82,7 +82,7 @@
 
 		info.return_type = Type::Void;
 		info.return_size = 0;
-		info.return_type_index = 0;
+		info.return_type_index = TypeIndex{};
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
@@ -134,7 +134,7 @@
 		if (type_it == gTypesByName.end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
-			return makeExprResult(Type::Int, 32, IrOperand{dummy});
+			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy});
 		}
 
 		const TypeInfo* closure_type = type_it->second;
@@ -149,7 +149,7 @@
 			// Declare the closure variable with the target name
 			VariableDeclOp lambda_decl_op;
 			lambda_decl_op.type = Type::Struct;
-			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
 			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
@@ -165,7 +165,7 @@
 			// Declare the closure variable
 			VariableDeclOp lambda_decl_op;
 			lambda_decl_op.type = Type::Struct;
-			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
 			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
@@ -193,7 +193,7 @@
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
 							store_this.value.type = Type::Void;
-							store_this.value.size_in_bits = 64;
+							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
 							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 							store_this.member_name = StringTable::getOrInternStringHandle("__this");
@@ -210,7 +210,7 @@
 						// For [*this], we need to copy the entire object into the closure
 						// The closure should have a member named "__copy_this" of the enclosing struct type
 						const StructMember* member = struct_info->findMember("__copy_this");
-						if (member && lambda_info.enclosing_struct_type_index > 0) {
+						if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
 							// Copy each member of the enclosing struct into __copy_this
 							const TypeInfo* enclosing_type = nullptr;
 							for (const auto& ti : gTypeInfo) {
@@ -229,7 +229,7 @@
 									MemberLoadOp load_op;
 									load_op.result.value = loaded_value;
 									load_op.result.type = enclosing_member.type;
-									load_op.result.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
 									load_op.offset = static_cast<int>(enclosing_member.offset);
@@ -240,7 +240,7 @@
 									// Store into closure->__copy_this at the appropriate offset
 									MemberStoreOp store_copy_this;
 									store_copy_this.value.type = enclosing_member.type;
-									store_copy_this.value.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
@@ -275,15 +275,15 @@
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init result
 								Type init_type = init_result.type;
-								int init_size = init_result.size_in_bits;
+								int init_size = init_result.size_in_bits.value;
 
 								// Generate AddressOf for the initializer
 								TempVar addr_temp = var_counter.next();
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
 								addr_op.operand.type = init_type;
-								addr_op.operand.size_in_bits = init_size;
-								addr_op.operand.pointer_depth = 0;
+								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
+								addr_op.operand.pointer_depth = PointerDepth{};
 
 								if (std::holds_alternative<StringHandle>(init_value)) {
 									addr_op.operand.value = std::get<StringHandle>(init_value);
@@ -299,7 +299,7 @@
 								// Store the address in the closure member
 								MemberStoreOp member_store;
 								member_store.value.type = init_type;
-								member_store.value.size_in_bits = 64; // pointer size
+								member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 								member_store.value.value = addr_temp;
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 								member_store.member_name = member->getName();
@@ -311,7 +311,7 @@
 								// Init-capture by value [x = expr] - store the value directly
 								MemberStoreOp member_store;
 								member_store.value.type = member->type;
-								member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 								// Convert IrOperand to IrValue
 								if (std::holds_alternative<TempVar>(init_value)) {
@@ -363,7 +363,7 @@
 									MemberLoadOp member_load;
 									member_load.result.value = addr_temp;
 									member_load.result.type = orig_type.type();
-									member_load.result.size_in_bits = 64;
+									member_load.result.size_in_bits = SizeInBits{64};
 									member_load.object = StringTable::getOrInternStringHandle("this");
 									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
@@ -387,8 +387,8 @@
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
 									addr_op.operand.type = orig_type.type();
-									addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand.pointer_depth = 0;
+									addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
+									addr_op.operand.pointer_depth = PointerDepth{};
 									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
@@ -397,8 +397,8 @@
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
 								addr_op.operand.type = orig_type.type();
-								addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand.pointer_depth = 0;
+								addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
+								addr_op.operand.pointer_depth = PointerDepth{};
 								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
@@ -406,7 +406,7 @@
 							// Store the address in the closure member
 							MemberStoreOp member_store;
 							member_store.value.type = member->type;
-							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 							member_store.value.value = addr_temp;
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
@@ -418,7 +418,7 @@
 							// By-value: copy the value
 							MemberStoreOp member_store;
 							member_store.value.type = member->type;
-							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 							if (is_captured_from_enclosing) {
 								// Variable is captured from enclosing lambda - load it via member access first
@@ -426,7 +426,7 @@
 								MemberLoadOp member_load;
 								member_load.result.value = loaded_value;
 								member_load.result.type = member->type;
-								member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 								member_load.object = StringTable::getOrInternStringHandle("this");
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
@@ -473,10 +473,10 @@
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		TypeIndex closure_type_index = static_cast<TypeIndex>(closure_type->type_index_);
+		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
 		return makeExprResult(
 			Type::Struct,
-			closure_size_bits,
+			SizeInBits{static_cast<int>(closure_size_bits)},
 			IrOperand{StringTable::getOrInternStringHandle(closure_var_name)},
 			closure_type_index
 		);
@@ -557,8 +557,8 @@
 		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
 		func_decl_op.return_type = lambda_info.return_type;
-		func_decl_op.return_size_in_bits = lambda_info.return_size;
-		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 		
@@ -602,7 +602,7 @@
 						param_types.push_back(*deduced);
 					} else {
 						// No deduced type available, fallback to int
-						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
 						param_types.push_back(int_type);
 					}
 				} else {
@@ -643,25 +643,25 @@
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
 				
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						func_param.type = deduced->type();
-						func_param.size_in_bits = deduced->size_in_bits();
+						func_param.size_in_bits = SizeInBits{deduced->size_in_bits()};
 						// Use reference flags from the deduced type (set at call site)
 						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					} else {
 						// No deduced type available, fallback to int
 						func_param.type = Type::Int;
-						func_param.size_in_bits = 32;
+						func_param.size_in_bits = SizeInBits{32};
 						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					}
 				} else {
 					func_param.type = param_type.type();
-					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+					func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				}
 				func_param.cv_qualifier = param_type.cv_qualifier();
@@ -736,8 +736,8 @@
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
 		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
 		func_decl_op.return_type = lambda_info.return_type;
-		func_decl_op.return_size_in_bits = lambda_info.return_size;
-		func_decl_op.return_pointer_depth = 0;  // pointer depth
+		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
 		
@@ -767,7 +767,7 @@
 						// Use the deduced type from call site (already has reference flags)
 						param_types.push_back(*deduced);
 					} else {
-						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
 						param_types.push_back(int_type);
 					}
 				} else {
@@ -807,24 +807,24 @@
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
 				
-				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						func_param.type = deduced->type();
-						func_param.size_in_bits = deduced->size_in_bits();
+						func_param.size_in_bits = SizeInBits{deduced->size_in_bits()};
 						// Use reference flags from the deduced type (set at call site)
 						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					} else {
 						func_param.type = Type::Int;
-						func_param.size_in_bits = 32;
+						func_param.size_in_bits = SizeInBits{32};
 						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					}
 				} else {
 					func_param.type = param_type.type();
-					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
+					func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				}
 				func_param.cv_qualifier = param_type.cv_qualifier();
@@ -950,7 +950,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 		return_type = ret_type_node.type();
 		return_size = ret_type_node.size_in_bits();
 	}
-	TypeSpecifierNode return_type_node(return_type, 0, return_size, lambda.lambda_token());
+	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());
 	
 	// Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;
@@ -970,7 +970,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
 	op.result.type = Type::FunctionPointer;
-	op.result.size_in_bits = 64;
+	op.result.size_in_bits = SizeInBits{64};
 	op.result.value = func_addr_var;
 	op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 	op.mangled_name = StringTable::getOrInternStringHandle(mangled);
@@ -1037,7 +1037,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 		return std::nullopt;
 	}
 	const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
-	if (!copy_this_member || current_lambda_context_.enclosing_struct_type_index == 0) {
+	if (!copy_this_member || !current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 		return std::nullopt;
 	}
 
@@ -1045,7 +1045,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	MemberLoadOp load_op;
 	load_op.result.value = copy_this_temp;
 	load_op.result.type = Type::Struct;
-	load_op.result.size_in_bits = static_cast<int>(copy_this_member->size * 8);
+	load_op.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_member->size * 8)};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
 	load_op.offset = static_cast<int>(copy_this_member->offset);
@@ -1186,7 +1186,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	MemberLoadOp load_op;
 	load_op.result.value = this_ptr;
 	load_op.result.type = Type::Void;
-	load_op.result.size_in_bits = 64;
+	load_op.result.size_in_bits = SizeInBits{64};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__this");
 	load_op.offset = this_member_offset;

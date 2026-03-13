@@ -67,10 +67,10 @@
 		}
 
 		// Calculate member size in bytes
-		int member_size_bytes = op.result.size_in_bits / 8;
+		int member_size_bytes = op.result.size_in_bits.value / 8;
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 			op.result.type == Type::UserDefined &&
-			op.result.type_index == 0);
+			!op.result.type_index.is_valid());
 
 		// Flush all dirty registers to ensure values are saved before allocating
 		flushAllDirtyRegisters();
@@ -143,7 +143,7 @@
 			regAlloc.release(addr_reg);
 			
 			// Mark this temp var as containing a pointer/address
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, false, result_var);
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, false, result_var);
 			return;
 		}
 
@@ -291,7 +291,7 @@
 		if (op.is_reference()) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference(), result_var);
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
 			return;
 		}
 
@@ -409,11 +409,11 @@
 						return;
 					}
 					int32_t value_offset = it->second.offset;
-					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 				} else {
 					auto value_var = std::get<TempVar>(op.value.value);
 					int32_t value_offset = getStackOffsetFromTempVar(value_var);
-					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+					emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 				}
 				
 				// Now store to the global struct member using RIP-relative addressing with offset
@@ -448,7 +448,7 @@
 					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				} else {
 					// Integer store
-					int member_size_bytes = op.value.size_in_bits / 8;
+					int member_size_bytes = op.value.size_in_bits.value / 8;
 					FLASH_LOG_FORMAT(Codegen, Debug, "MemberStore global: size_in_bits={}, member_size_bytes={}", op.value.size_in_bits, member_size_bytes);
 					assert(member_size_bytes > 0 && "Global bitfield RMW: op.value.size_in_bits must be storage unit size (>= 8 bits), not bitfield width");
 					if (op.bitfield_width.has_value()) {
@@ -485,7 +485,7 @@
 						regAlloc.release(addr_reg);
 					} else {
 						// Non-bitfield integer store: MOV [RIP + disp32], reg
-						int size_in_bits = op.value.size_in_bits;
+						int size_in_bits = op.value.size_in_bits.value;
 						uint8_t src_val = static_cast<uint8_t>(value_reg);
 						uint8_t src_bits = src_val & 0x07;
 						uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
@@ -556,7 +556,7 @@
 		}
 
 		// Calculate member size in bytes
-		int member_size_bytes = op.value.size_in_bits / 8;
+		int member_size_bytes = op.value.size_in_bits.value / 8;
 
 		// Load the value into a register - allocate through register allocator to avoid conflicts
 		X64Register value_reg = allocateRegisterWithSpilling();
@@ -620,10 +620,10 @@
 			// If pointer_depth > 0, we need to store the address of the variable (LEA)
 			// not the value at that address (MOV). This is used for initializer_list
 			// backing arrays where we need to store &array[0], not array[0].
-			if (op.value.pointer_depth > 0) {
+			if (op.value.pointer_depth.is_pointer()) {
 				emitLeaFromFrame(value_reg, value_offset);
 			} else {
-				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 			}
 		} else {
 			auto value_var = std::get<TempVar>(op.value.value);
@@ -632,7 +632,7 @@
 			if (existing_reg.has_value()) {
 				value_reg = existing_reg.value();
 			} else {
-				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 			}
 		}
 
@@ -795,7 +795,7 @@
 			// However, we mark it in reference_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits);
+			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value);
 			
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -973,7 +973,7 @@
 		
 		// Step 2: Process each array index
 		for (const auto& arr_idx : op.array_indices) {
-			int element_size_bytes = arr_idx.element_size_bits / 8;
+			int element_size_bytes = arr_idx.element_size_bits.value / 8;
 			
 			// Load index into RCX
 			if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
@@ -994,7 +994,7 @@
 				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
 				);
 				
 				// Multiply RCX by element size
@@ -1017,7 +1017,7 @@
 				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
 				);
 				
 				// Multiply RCX by element size
@@ -1052,11 +1052,11 @@
 			// and the result is still a pointer (64 bits).
 			// If pointer_depth == 1, we're dereferencing to the final value (use pointer.size_in_bits).
 			int value_size;
-			if (op.pointer.pointer_depth > 1) {
+			if (op.pointer.pointer_depth.value > 1) {
 				value_size = 64;  // Result is still a pointer
 			} else {
 				// Final dereference - use the pointee size (stored in size_in_bits of the pointer's type)
-				value_size = op.pointer.size_in_bits;
+				value_size = op.pointer.size_in_bits.value;
 			}
 			
 			// Load the pointer into a register
@@ -1095,7 +1095,7 @@
 			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
 			bool is_float_type = (op.pointer.type == Type::Float || op.pointer.type == Type::Double);
 			
-			if (is_float_type && op.pointer.pointer_depth <= 1) {
+			if (is_float_type && op.pointer.pointer_depth.value <= 1) {
 				// Only use float instructions for final dereference
 				// Use XMM0 as the destination register for float loads
 				X64Register xmm_reg = X64Register::XMM0;
@@ -1111,7 +1111,7 @@
 			}
 
 			// Handle struct types (values > 64 bits) by doing a multi-step memory copy
-			if (value_size > 64 && op.pointer.pointer_depth <= 1) {
+			if (value_size > 64 && op.pointer.pointer_depth.value <= 1) {
 				int32_t result_offset = getStackOffsetFromTempVar(op.result);
 				int struct_size_bytes = (value_size + 7) / 8;
 				
@@ -1248,7 +1248,7 @@
 		// are written to their stack locations before we try to load them
 		flushAllDirtyRegisters();
 		
-		int value_size = op.value.size_in_bits;
+		int value_size = op.value.size_in_bits.value;
 		int value_size_bytes = value_size / 8;
 		
 		// Allocate registers through the register allocator to avoid conflicts
@@ -1350,7 +1350,7 @@
 
 			if (var_info) {
 				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
-				int load_size = var_info->size_in_bits > 0 ? var_info->size_in_bits : 32;
+				int load_size = var_info->size_in_bits.is_set() ? var_info->size_in_bits.value : 32;
 				
 				// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
 				// to canonicalize upper bits before TEST.
@@ -1512,7 +1512,7 @@
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+						SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 					);
 				}
 			} else if (std::holds_alternative<StringHandle>(arg.value)) {
@@ -1527,7 +1527,7 @@
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+						SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 					);
 				}
 			} else if (std::holds_alternative<unsigned long long>(arg.value)) {

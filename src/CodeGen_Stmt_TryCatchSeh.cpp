@@ -122,13 +122,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
-					decl_op.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 					
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
 					init_value.type = type_node.type();
-					init_value.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					init_value.type_index = type_index;
 					init_value.value = exception_temp;
 					if (type_node.is_rvalue_reference()) {
@@ -139,7 +139,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					decl_op.initializer = init_value;
 					decl_op.use_copy_constructor = !type_node.is_reference() &&
 					                               type_node.type() == Type::Struct &&
-					                               type_index != 0;
+					                               type_index.is_valid();
 					
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
@@ -220,7 +220,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
 			Type expr_type = expr_result.type;
-			size_t type_size = expr_result.size_in_bits;
+			size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
 			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
 			TypeIndex exception_type_index = expr_result.type_index;
@@ -262,13 +262,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 					VariableDeclOp materialized_throw_decl;
 					materialized_throw_decl.type = expr_type;
-					materialized_throw_decl.size_in_bits = static_cast<int>(type_size);
+					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
-					materialized_throw_decl.use_copy_constructor = (exception_type_index != 0);
+					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
 
 					TypedValue materialized_init;
 					materialized_init.type = expr_type;
-					materialized_init.size_in_bits = static_cast<int>(type_size);
+					materialized_init.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_init.value = exception_value;
 					materialized_init.type_index = exception_type_index;
 					materialized_throw_decl.initializer = std::move(materialized_init);

@@ -9,7 +9,7 @@
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				return generateQualifiedIdentifierIr(expr);
 			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-				return makeExprResult(Type::Bool, 8, IrOperand{expr.value() ? 1ULL : 0ULL});
+				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{expr.value() ? 1ULL : 0ULL});
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				return generateNumericLiteralIr(expr);
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -89,7 +89,7 @@
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		return makeExprResult(Type::Bool, 8, IrOperand{is_noexcept ? 1ULL : 0ULL});
+		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{is_noexcept ? 1ULL : 0ULL});
 	}
 
 	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
@@ -122,7 +122,7 @@
 		}
 		
 		if (is_struct_type(object_type.type())) {
-			size_t struct_type_index = object_type.type_index();
+			size_t struct_type_index = object_type.type_index().value;
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[struct_type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -145,13 +145,13 @@
 
 	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_result.type == Type::Void && object_result.size_in_bits == 0) {
+		if (object_result.type == Type::Void && !object_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
 		
 		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_result.type == Type::Void && ptr_result.size_in_bits == 0) {
+		if (ptr_result.type == Type::Void && !ptr_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
@@ -162,8 +162,8 @@
 				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
 				object_addr = std::get<TempVar>(object_result.value);
@@ -180,7 +180,7 @@
 					.type = object_result.type,
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
-					.pointer_depth = 0
+					.pointer_depth = PointerDepth{}
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
@@ -193,19 +193,19 @@
 		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+		add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
 		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 		
 		Type member_type = ptr_result.type;
-		int member_size = ptr_result.size_in_bits;
+		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(
 			member_type,
-			member_size,
+			SizeInBits{static_cast<int>(member_size)},
 			IrOperand{result_var},
 			member_type_index
 		);
@@ -239,10 +239,10 @@
 			Type type,
 			int size_bits,
 			IrOperand value,
-			TypeIndex type_index = 0,
-			int pointer_depth = 0
+			TypeIndex type_index = TypeIndex{},
+			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
-			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
+			return makeExprResult(type, SizeInBits{static_cast<int>(size_bits)}, std::move(value), type_index, pointer_depth);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
@@ -252,22 +252,22 @@
 			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
 			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index()].getEnumInfo()) {
+			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
+				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index().value].getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
 			}
 			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
-			if (type_node.type_index() > 0 && type_node.type_index() < gTypeInfo.size()) {
-				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index()].type_, type_node.type_index());
+			if (type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
+				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index().value].type_, type_node.type_index());
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
-			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
+			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,
 				size_bits,
 				std::move(value),
-				carries_type_index ? type_node.type_index() : 0,
+				carries_type_index ? type_node.type_index() : TypeIndex{},
 				pointer_depth
 			);
 		};
@@ -277,7 +277,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
-			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : 0;
+			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -308,7 +308,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = ptr_temp;
 						member_load.result.type = member->type;  // Base type (e.g., Int)
-						member_load.result.size_in_bits = 64;  // pointer size in bits
+						member_load.result.size_in_bits = SizeInBits{64};  // pointer size in bits
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -335,19 +335,19 @@
 							);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
+							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : TypeIndex{};
 							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 						}
 
 						// Fallback: return the pointer temp
-						return makeExprResult(member->type, 64, IrOperand{ptr_temp});
+						return makeExprResult(member->type, SizeInBits{64}, IrOperand{ptr_temp});
 					} else {
 						// By-value capture: direct member access
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -370,7 +370,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 						}
 						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -378,7 +378,7 @@
 		}
 
 		// If we're inside a [*this] lambda, prefer resolving to members of the copied object
-		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index > 0) {
+		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 			auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str);
 			if (result) {
 				const StructMember* member = result.member;
@@ -387,7 +387,7 @@
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
 					member_load.result.type = member->type;
-					member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = *copy_this_temp;
 					member_load.member_name = member->getName();
 					member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -403,7 +403,7 @@
 					lvalue_info.member_name = member->getName();
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 					
-					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 					return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 				}
 			}
@@ -468,7 +468,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
-						op.result.size_in_bits = size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
 						op.is_array = is_array_type;
@@ -487,13 +487,13 @@
 						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
 						// Check for enum constant
 						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
-							size_t enum_idx = type_n.type_index();
+							size_t enum_idx = type_n.type_index().value;
 							if (enum_idx < gTypeInfo.size()) {
 								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
 								if (enum_info) {
 									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
 									if (enumerator) {
-										return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+										return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 											static_cast<unsigned long long>(enumerator->value));
 									}
 								}
@@ -504,7 +504,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
-						op.result.size_in_bits = size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
 						op.is_array = is_array_type;
@@ -527,7 +527,7 @@
 		// If binding is NonStaticMember, handle member access directly
 		if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
 			if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
-				current_lambda_context_.enclosing_struct_type_index > 0) {
+				current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 				if (auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
 					const StructMember* member = result.member;
 					if (auto this_ptr = emitLoadThisPointer(Token())) {
@@ -535,7 +535,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = *this_ptr;
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -555,7 +555,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -571,7 +571,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -590,7 +590,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -740,7 +740,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
 						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
 						member_load.offset = static_cast<int>(result.adjusted_offset);
@@ -767,7 +767,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
 						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 					
@@ -781,8 +781,8 @@
 						
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (member_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index].getStructInfo();
+						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
+							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index.value].getStructInfo();
 							if (member_si) {
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
 							}
@@ -791,12 +791,12 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = member_size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
 						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
 					}
 				}
@@ -813,12 +813,12 @@
 				if (struct_info) {
 					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
-						if (enum_idx < gTypeInfo.size()) {
-							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+						if (enum_idx.value < gTypeInfo.size()) {
+							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
-									return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+									return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 									static_cast<unsigned long long>(enumerator->value));
 								}
 							}
@@ -845,7 +845,7 @@
 			// We must verify the identifier actually exists as an enumerator before treating it as a constant
 			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
 				// Check if this identifier is actually an enumerator (not just a variable of enum type)
-				size_t enum_type_index = type_node.type_index();
+				size_t enum_type_index = type_node.type_index().value;
 				if (enum_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -854,7 +854,7 @@
 						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
-							return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+							return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 							static_cast<unsigned long long>(enumerator->value));
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
@@ -871,7 +871,7 @@
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = size_bits;
+				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
 				// If we resolved this via a using declaration, use the resolved qualified name
@@ -924,7 +924,7 @@
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
+					return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 				}
 				
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -951,8 +951,8 @@
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					AssignmentOp assign_op;
 					assign_op.result = lvalue_temp;
-					assign_op.lhs = TypedValue{pointee_type, 64, lvalue_temp};  // 64-bit pointer dest
-					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+					assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, lvalue_temp};  // 64-bit pointer dest
+					assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -983,8 +983,8 @@
 				
 				// For enum references, treat dereferenced value as underlying type
 				// This allows enum variables to work in arithmetic/bitwise operations
-				if (pointee_type == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+				if (pointee_type == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						pointee_type = enum_info->underlying_type;
@@ -1016,8 +1016,8 @@
 			// For non-pointer enum variables (not enumerators), return the underlying integer type
 			// This allows enum variables to work in arithmetic/bitwise operations
 			Type return_type = type_node.type();
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 				if (enum_info) {
 					return_type = enum_info->underlying_type;
@@ -1032,10 +1032,10 @@
 			// - Otherwise return 0
 			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? type_node.type_index()
-				: 0;
-			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+				: TypeIndex{};
+			PointerDepth pointer_depth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 				? 0
-				: type_node.pointer_depth();
+				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
 				return_type,
 				size_bits,
@@ -1061,7 +1061,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-				op.result.size_in_bits = size_bits;
+				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
 				// If we resolved this via a using declaration, use the resolved qualified name
@@ -1108,7 +1108,7 @@
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						return makeExprResult(type_node.type(), POINTER_SIZE_BITS, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
+						return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 					}
 					
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1131,8 +1131,8 @@
 						// Use AssignmentOp to copy the pointer value to a temp
 						AssignmentOp assign_op;
 						assign_op.result = addr_temp;
-						assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
-						assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+						assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, addr_temp};  // 64-bit pointer dest
+						assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
 						assign_op.is_pointer_store = false;
 						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1192,10 +1192,10 @@
 					StringTable::getOrInternStringHandle(identifierNode.name()),
 					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
 						? type_node.type_index()
-						: 0,
-					(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+						: TypeIndex{},
+					PointerDepth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 						? 0
-						: static_cast<int>(type_node.pointer_depth()));
+						: static_cast<int>(type_node.pointer_depth())});
 			}
 		}
 		
@@ -1212,14 +1212,14 @@
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
-			op.result.size_in_bits = 64;
+			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;
 			op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
 			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return makeExprResult(Type::FunctionPointer, 64, IrOperand{func_addr_var});
+			return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var});
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1251,7 +1251,7 @@
 					// This is a scoped enum - look up the enumerator value
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-					return makeExprResult(enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+					return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
 					static_cast<unsigned long long>(enum_value));
 				}
 			}
@@ -1332,8 +1332,8 @@
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
-				if (!struct_info && struct_type_it->second->type_index_ < gTypeInfo.size()) {
-					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_];
+				if (!struct_info && struct_type_it->second->type_index_.value < gTypeInfo.size()) {
+					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_.value];
 					if (resolved_type && resolved_type->isStruct()) {
 						struct_info = resolved_type->getStructInfo();
 					}
@@ -1352,7 +1352,7 @@
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
-							return makeExprResult(Type::Bool, 8, 0ULL);
+							return makeExprResult(Type::Bool, SizeInBits{8}, 0ULL);
 						}
 						
 						// Determine the correct qualified name to use
@@ -1369,8 +1369,8 @@
 							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
 							if (accessed_struct) {
 								for (const auto& base : accessed_struct->base_classes) {
-									if (base.type_index < gTypeInfo.size()) {
-										const TypeInfo& base_type = gTypeInfo[base.type_index];
+									if (base.type_index.value < gTypeInfo.size()) {
+										const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 										const StructTypeInfo* base_struct = base_type.getStructInfo();
 										if (base_struct && base_struct->getName() == owner_struct->getName()) {
 											is_inheritance = true;
@@ -1395,17 +1395,17 @@
 									// true_type -> 1, false_type -> 0
 									bool value = (alias_name == "true_type") ? true : false;
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-									return makeExprResult(Type::Bool, 8, static_cast<unsigned long long>(value));
+									return makeExprResult(Type::Bool, SizeInBits{8}, static_cast<unsigned long long>(value));
 								}
 								
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type && 
-								resolved_type->type_index_ < gTypeInfo.size() && 
-								resolved_type->type_index_ != 0 &&
+								resolved_type->type_index_.value < gTypeInfo.size() && 
+								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
-									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_.value];
 									
 									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 										// Use the target struct's name
@@ -1413,7 +1413,7 @@
 										FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
 										
 										// If target is also an alias, continue following
-										if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
+										if (target_type->type_index_.is_valid() && target_type->type_index_ != resolved_type->type_index_) {
 											resolved_type = target_type;
 										} else {
 											break;
@@ -1455,8 +1455,8 @@
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (qsm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index].getStructInfo();
+						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
+							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index.value].getStructInfo();
 							if (qsm_si) {
 								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
 							}
@@ -1464,7 +1464,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
-						op.result.size_in_bits = qsm_size_bits;
+						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
 						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
@@ -1476,17 +1476,17 @@
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
 							deref_op.pointer.type = static_member->type;
-							deref_op.pointer.size_in_bits = get_type_size_bits(static_member->type);
-							deref_op.pointer.pointer_depth = 1;
+							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->type)};
+							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
-							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-							return makeExprResult(static_member->type, get_type_size_bits(static_member->type), IrOperand{deref_temp}, type_index);
+							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
+							return makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type)}, IrOperand{deref_temp}, type_index);
 						}
 
 						// Return the temp variable that will hold the loaded value
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
-						return makeExprResult(static_member->type, qsm_size_bits, IrOperand{result_temp}, type_index);
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
+						return makeExprResult(static_member->type, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index);
 					}
 				}
 			}
@@ -1506,7 +1506,7 @@
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return makeExprResult(Type::Int, 32, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
+			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -1525,7 +1525,7 @@
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
-					op.result.size_in_bits = size_bits;
+					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				// Use fully qualified name (ns::value) to match the global variable symbol
 				op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
@@ -1541,12 +1541,12 @@
 					}
 
 				// Return the temp variable that will hold the loaded value
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-					return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+					return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index);
 			} else {
 				// Local variable - just return the name
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return makeExprResult(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				return makeExprResult(type_node.type(), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
 			}
 		}
 
@@ -1563,7 +1563,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.type = type_node.type();
-			op.result.size_in_bits = size_bits;
+			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
 			// Use fully qualified name (ns::value) to match the global variable symbol
 			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
@@ -1580,14 +1580,14 @@
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
+			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+			return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return makeExprResult(Type::Function, 64, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
+			return makeExprResult(Type::Function, SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())});
 		}
 
 		// If we get here, the symbol is not a supported type
@@ -1601,9 +1601,9 @@
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
-			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<double>(numericLiteralNode.value()));
+			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()));
 		} else {
 			// For integer literals, the value is stored as unsigned long long
-			return makeExprResult(numericLiteralNode.type(), static_cast<int>(numericLiteralNode.sizeInBits()), std::get<unsigned long long>(numericLiteralNode.value()));
+			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<unsigned long long>(numericLiteralNode.value()));
 		}
 	}

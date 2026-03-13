@@ -186,16 +186,16 @@ struct TemplatePattern {
 		}
 		// Check if p is a UserDefined type — could be a param name or a nested template instantiation
 		if (!p.is_value && (p.base_type == Type::UserDefined || p.base_type == Type::Struct)) {
-			if (p.type_index > 0 && p.type_index < gTypeInfo.size()) {
-				const TypeInfo& p_ti = gTypeInfo[p.type_index];
+			if (p.type_index.is_valid() && p.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& p_ti = gTypeInfo[p.type_index.value];
 				if (p_ti.isTemplateInstantiation()) {
 					// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
 					if (c.base_type != Type::UserDefined && c.base_type != Type::Struct) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested pattern is template instantiation but concrete is not UserDefined/Struct");
 						return false;
 					}
-					if (c.type_index >= gTypeInfo.size()) return false;
-					const TypeInfo& c_ti = gTypeInfo[c.type_index];
+					if (c.type_index.value >= gTypeInfo.size()) return false;
+					const TypeInfo& c_ti = gTypeInfo[c.type_index.value];
 					StringHandle p_base = p_ti.baseTemplateName();
 					StringHandle c_base = c_ti.isTemplateInstantiation() ? c_ti.baseTemplateName() : c_ti.name();
 					if (p_base != c_base) {
@@ -394,8 +394,8 @@ struct TemplatePattern {
 			// template) must reach the template instantiation handler below, not the concrete
 			// type check. Detect that case up front.
 			bool is_struct_template_inst = (pattern_arg.base_type == Type::Struct &&
-				pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size() &&
-				gTypeInfo[pattern_arg.type_index].isTemplateInstantiation());
+				pattern_arg.type_index.is_valid() && pattern_arg.type_index.value < gTypeInfo.size() &&
+				gTypeInfo[pattern_arg.type_index.value].isTemplateInstantiation());
 
 			if (pattern_arg.base_type != Type::UserDefined && !is_struct_template_inst) {
 				// This is a concrete type or value in the pattern
@@ -438,8 +438,8 @@ struct TemplatePattern {
 			// Check if this UserDefined/Struct pattern arg is a dependent template instantiation
 			// (e.g., ratio<_Num, _Den> stored as UserDefined, or Pair<A,B> stored as Struct)
 			// If so, the concrete arg must be a template instantiation of the same base template
-			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
-				const TypeInfo& pattern_type_info = gTypeInfo[pattern_arg.type_index];
+			if (pattern_arg.type_index.is_valid() && pattern_arg.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& pattern_type_info = gTypeInfo[pattern_arg.type_index.value];
 				if (pattern_type_info.isTemplateInstantiation()) {
 					// Pattern is a template instantiation — concrete must match base template
 					StringHandle pattern_base = pattern_type_info.baseTemplateName();
@@ -449,10 +449,10 @@ struct TemplatePattern {
 						          "' but concrete is fundamental type");
 						return false;
 					}
-					if (concrete_arg.type_index >= gTypeInfo.size()) {
+					if (concrete_arg.type_index.value >= gTypeInfo.size()) {
 						return false;
 					}
-					const TypeInfo& concrete_type_info = gTypeInfo[concrete_arg.type_index];
+					const TypeInfo& concrete_type_info = gTypeInfo[concrete_arg.type_index.value];
 					StringHandle concrete_base = concrete_type_info.isTemplateInstantiation() 
 						? concrete_type_info.baseTemplateName() 
 						: concrete_type_info.name();
@@ -505,8 +505,8 @@ struct TemplatePattern {
 			StringHandle param_name;
 			bool found_param = false;
 			
-			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
-				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
+			if (pattern_arg.type_index.is_valid() && pattern_arg.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index.value];
 				param_name = param_type_info.name();
 				found_param = true;
 				FLASH_LOG(Templates, Trace, "  Found parameter name '", StringTable::getStringView(param_name), "' from pattern_arg.type_index=", pattern_arg.type_index);
@@ -565,8 +565,8 @@ struct TemplatePattern {
 				const TemplateTypeArg& concrete_arg = concrete_args[cond.template_param_index];
 				
 				// Check if the concrete type has the required member type
-				if (concrete_arg.type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[concrete_arg.type_index];
+				if (concrete_arg.type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[concrete_arg.type_index.value];
 					
 					// Build the qualified member name (e.g., "WithType::type")
 					StringBuilder qualified_name;
@@ -610,8 +610,8 @@ struct TemplatePattern {
 			}
 			if (!inner_arg.is_value &&
 			    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
-				if (inner_arg.type_index > 0 && inner_arg.type_index < gTypeInfo.size()) {
-					const TypeInfo& inner_ti = gTypeInfo[inner_arg.type_index];
+				if (inner_arg.type_index.is_valid() && inner_arg.type_index.value < gTypeInfo.size()) {
+					const TypeInfo& inner_ti = gTypeInfo[inner_arg.type_index.value];
 					if (inner_ti.isTemplateInstantiation()) {
 						// Nested template instantiation: structural constraint adds specificity.
 						// e.g., Pair<A,B> is more specific than a bare T.
@@ -648,8 +648,8 @@ struct TemplatePattern {
 		
 			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
 			if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) &&
-			    arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-				const TypeInfo& ti = gTypeInfo[arg.type_index];
+			    arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& ti = gTypeInfo[arg.type_index.value];
 				if (ti.isTemplateInstantiation()) {
 					score += 2 + static_cast<int>(ti.templateArgs().size());
 					// Each inner arg contributes to specificity, including nested instantiations

@@ -337,7 +337,7 @@
 
 		// Get the condition type and value
 		Type condition_type = condition_result.type;
-		int condition_size = condition_result.size_in_bits;
+		int condition_size = condition_result.size_in_bits.value;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
 		// Continue is not allowed in switch, but break is
@@ -382,7 +382,7 @@
 			
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
-				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_result.value)},
+				.lhs = TypedValue{.type = condition_type, .size_in_bits = SizeInBits{static_cast<int>(condition_size)}, .value = toIrValue(condition_result.value)},
 				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = case_value_result.size_in_bits, .value = toIrValue(case_value_result.value)},
 				.result = cmp_result,
 			};
@@ -399,7 +399,7 @@
 			CondBranchOp cond_branch;
 			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fall through to unconditional branch when TRUE
 			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
-			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
+			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 			// Unconditional branch to case label (when condition is true, we fall through here)
@@ -624,8 +624,8 @@
 		} else if (array_type.type() == Type::Struct) {
 			// Array of structs - lookup size from type info
 			TypeIndex type_index = array_type.type_index();
-			if (type_index > 0 && type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_index];
+			if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_index.value];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -775,12 +775,12 @@
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Get the struct type info
-		if (range_type.type_index() >= gTypeInfo.size()) {
+		if (range_type.type_index().value >= gTypeInfo.size()) {
 			FLASH_LOG(Codegen, Error, "Invalid type index for range expression");
 			return;
 		}
 
-		const TypeInfo& type_info = gTypeInfo[range_type.type_index()];
+		const TypeInfo& type_info = gTypeInfo[range_type.type_index().value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
 			FLASH_LOG(Codegen, Error, "Range expression is not a struct type");

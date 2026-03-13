@@ -367,7 +367,7 @@ private:
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
                 StringHandle struct_name;  // Points directly into source text from lexer token
-                size_t struct_type_index;
+                TypeIndex struct_type_index;
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
         };
@@ -399,7 +399,7 @@ private:
                 SaveHandle body_start;                   // Handle to saved position at '{'
                 SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
                 StringHandle struct_name;                // For member function context
-                size_t struct_type_index;                // For member function context
+                TypeIndex struct_type_index;                // For member function context
                 StructDeclarationNode* struct_node;      // Pointer to struct being parsed
                 bool has_initializer_list;               // True if constructor has an initializer list to re-parse
                 bool is_constructor;                     // Special handling for constructors
@@ -741,8 +741,8 @@ private:
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
         ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
-        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
-        void register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
+        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
+        void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
@@ -881,7 +881,7 @@ public:  // Public methods for template instantiation
 		const InlineVector<std::string_view, 4>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
-		TypeIndex struct_type_index = 0     // Optional: for member functions
+		TypeIndex struct_type_index = TypeIndex{}     // Optional: for member functions
 	);
 
 	// Substitute template parameters in an AST node with concrete types/values
@@ -1284,8 +1284,8 @@ public:  // Public methods for template instantiation
 
             auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
                 const StructTypeInfo* current_struct_info = local_struct_info;
-                if (!current_struct_info && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-                    current_struct_info = gTypeInfo[struct_type_index].getStructInfo();
+                if (!current_struct_info && struct_type_index.is_valid() && struct_type_index.value < gTypeInfo.size()) {
+                    current_struct_info = gTypeInfo[struct_type_index.value].getStructInfo();
                 }
                 if (!current_struct_info) return false;
                 bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
@@ -1296,7 +1296,7 @@ public:  // Public methods for template instantiation
                 // Only own-declared members are safe to bind eagerly; names inherited from concrete
                 // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
                 bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
-                if (!skip_base_traversal && struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+                if (!skip_base_traversal && struct_type_index.is_valid() && struct_type_index.value < gTypeInfo.size()) {
                     auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
                     if (!member_result) return false;
                     if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
@@ -1316,8 +1316,8 @@ public:  // Public methods for template instantiation
                 if (!member_function_context_stack_.empty()) {
                     const auto& member_ctx = member_function_context_stack_.back();
                     const StructTypeInfo* struct_info = member_ctx.local_struct_info;
-                    if (!struct_info && member_ctx.struct_type_index > 0 && member_ctx.struct_type_index < gTypeInfo.size()) {
-                        struct_info = gTypeInfo[member_ctx.struct_type_index].getStructInfo();
+                    if (!struct_info && member_ctx.struct_type_index.is_valid() && member_ctx.struct_type_index.value < gTypeInfo.size()) {
+                        struct_info = gTypeInfo[member_ctx.struct_type_index.value].getStructInfo();
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
                     if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info)) return true;
@@ -1332,7 +1332,7 @@ public:  // Public methods for template instantiation
                         }
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
-                    TypeIndex struct_type_index = 0;
+                    TypeIndex struct_type_index {};
                     if (!struct_ctx.struct_name.empty()) {
                         auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
                         if (struct_it != gTypesByName.end()) {
@@ -1387,7 +1387,7 @@ public:  // Public methods for template instantiation
                 if (decl.type_node().is<TypeSpecifierNode>()) {
                     const auto& ts = decl.type_node().as<TypeSpecifierNode>();
                     if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
-                        size_t enum_idx = ts.type_index();
+                        size_t enum_idx = ts.type_index().value;
                         if (enum_idx < gTypeInfo.size()) {
                             const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
                             if (enum_info && enum_info->findEnumerator(token.handle())) {

@@ -124,10 +124,10 @@
 		// For pointer return types, use 64-bit size (pointer size on x64)
 		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
 		// but we display it as the base type with a reference qualifier)
-		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0) 
+		func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0) 
 			? 64 
-			: actual_return_size;
-		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
+			: actual_return_size};
+		func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
 		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
@@ -279,7 +279,7 @@
 
 			FunctionParam param_info;
 			param_info.type = param_type.type();
-			param_info.size_in_bits = getTypeSpecSizeBits(param_type);
+			param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 			
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
@@ -292,7 +292,7 @@
 			// when bound to temporaries/literals. The pointer_depth increment is omitted to allow
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
-			param_info.pointer_depth = pointer_depth;
+			param_info.pointer_depth = PointerDepth{pointer_depth};
 			
 			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
@@ -407,8 +407,8 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type == Type::Struct && member.type_index > 0 && member.type_index < gTypeInfo.size()) {
-							const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
+							const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
 							// Find operator<=> in the member struct and generate its mangled name
@@ -434,7 +434,7 @@
 								MemberLoadOp lhs_load;
 								lhs_load.result.value = lhs_val;
 								lhs_load.result.type = member.type;
-								lhs_load.result.size_in_bits = member_bits;
+								lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								lhs_load.object = this_handle;
 								lhs_load.member_name = member.getName();
 								lhs_load.offset = static_cast<int>(member.offset);
@@ -446,7 +446,7 @@
 								MemberLoadOp rhs_load;
 								rhs_load.result.value = rhs_val;
 								rhs_load.result.type = member.type;
-								rhs_load.result.size_in_bits = member_bits;
+								rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								rhs_load.object = other_handle;
 								rhs_load.member_name = member.getName();
 								rhs_load.offset = static_cast<int>(member.offset);
@@ -460,19 +460,19 @@
 								call_op.function_name = member_spaceship_mangled;
 								call_op.is_member_function = true;
 								call_op.return_type = Type::Int;
-								call_op.return_size_in_bits = 32;
+								call_op.return_size_in_bits = SizeInBits{32};
 								call_op.result = call_result;
 
 								TypedValue lhs_arg;
 								lhs_arg.type = Type::Struct;
-								lhs_arg.size_in_bits = 64;
+								lhs_arg.size_in_bits = SizeInBits{64};
 								lhs_arg.value = lhs_val;
-								lhs_arg.pointer_depth = 1;
+								lhs_arg.pointer_depth = PointerDepth{1};
 								call_op.args.push_back(std::move(lhs_arg));
 
 								TypedValue rhs_arg;
 								rhs_arg.type = Type::Struct;
-								rhs_arg.size_in_bits = 64;
+								rhs_arg.size_in_bits = SizeInBits{64};
 								rhs_arg.value = rhs_val;
 								rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 								call_op.args.push_back(std::move(rhs_arg));
@@ -482,8 +482,8 @@
 								// Check if result != 0 (members not equal)
 								TempVar ne_result = var_counter.next();
 								BinaryOp ne_op{
-									.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
-									.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
+									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
+									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
 									.result = IrValue{ne_result}
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -492,7 +492,7 @@
 								CondBranchOp ne_branch;
 								ne_branch.label_true = diff_label;
 								ne_branch.label_false = next_label;
-								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{ne_result}};
+								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
 								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 								// Label: diff - return the inner <=> result
@@ -513,7 +513,7 @@
 						MemberLoadOp lhs_load;
 						lhs_load.result.value = lhs_val;
 						lhs_load.result.type = member.type;
-						lhs_load.result.size_in_bits = member_bits;
+						lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						lhs_load.object = this_handle;
 						lhs_load.member_name = member.getName();
 						lhs_load.offset = static_cast<int>(member.offset);
@@ -525,7 +525,7 @@
 						MemberLoadOp rhs_load;
 						rhs_load.result.value = rhs_val;
 						rhs_load.result.type = member.type;
-						rhs_load.result.size_in_bits = member_bits;
+						rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						rhs_load.object = other_handle;
 						rhs_load.member_name = member.getName();
 						rhs_load.offset = static_cast<int>(member.offset);
@@ -536,8 +536,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -546,7 +546,7 @@
 						CondBranchOp ne_branch;
 						ne_branch.label_true = diff_label;
 						ne_branch.label_false = next_label;
-						ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{ne_result}};
+						ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 						// Label: diff - members are not equal
@@ -555,8 +555,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = member_bits, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -565,7 +565,7 @@
 						CondBranchOp lt_branch;
 						lt_branch.label_true = lt_label;
 						lt_branch.label_false = gt_label;
-						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 8, .value = IrValue{lt_result}};
+						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{lt_result}};
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
 						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
@@ -657,16 +657,16 @@
 				call_op.function_name = spaceship_mangled;
 				call_op.is_member_function = true;
 				call_op.return_type = Type::Int;
-				call_op.return_size_in_bits = 32;
+				call_op.return_size_in_bits = SizeInBits{32};
 				call_op.result = call_result;
 
 				// Pass 'this' as first arg
 				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
 				TypedValue this_arg;
 				this_arg.type = Type::Struct;
-				this_arg.size_in_bits = 64;
+				this_arg.size_in_bits = SizeInBits{64};
 				this_arg.value = this_handle;
-				this_arg.pointer_depth = 1;
+				this_arg.pointer_depth = PointerDepth{1};
 				call_op.args.push_back(std::move(this_arg));
 
 				// Pass 'other' as second arg (reference = pointer)
@@ -682,7 +682,7 @@
 				}
 				TypedValue other_arg;
 				other_arg.type = Type::Struct;
-				other_arg.size_in_bits = 64;
+				other_arg.size_in_bits = SizeInBits{64};
 				other_arg.value = other_handle;
 				other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 				call_op.args.push_back(std::move(other_arg));
@@ -692,8 +692,8 @@
 				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
 				BinaryOp cmp_op{
-					.lhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{call_result}, .is_signed = true},
-					.rhs = TypedValue{.type = Type::Int, .size_in_bits = 32, .value = IrValue{0ULL}, .is_signed = true},
+					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
+					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
 					.result = IrValue{cmp_result}
 				};
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
@@ -797,7 +797,7 @@
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
-							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
@@ -810,7 +810,7 @@
 							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
-							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
@@ -830,7 +830,7 @@
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
 						deref_op.pointer.type = Type::Struct;
-						deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
@@ -1127,7 +1127,7 @@
 
 							GlobalVariableDeclOp op;
 							op.type = static_member.type;
-							op.size_in_bits = static_cast<int>(static_member.size * 8);
+							op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 							op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
 							// Check if static member has an initializer
@@ -1144,7 +1144,7 @@
 										double d = std::get<double>(init_operands.value);
 										std::memcpy(&value, &d, sizeof(double));
 									}
-									size_t byte_count = op.size_in_bits / 8;
+									size_t byte_count = op.size_in_bits.value / 8;
 									for (size_t i = 0; i < byte_count; ++i) {
 										op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 									}
@@ -1218,8 +1218,8 @@
 		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
 		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
-		ctor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
-		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+		ctor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
+		ctor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 		// Constructors defined inside class body are implicitly inline (C++ standard)
@@ -1261,8 +1261,8 @@
 
 			FunctionParam func_param;
 			func_param.type = param_type.type();
-			func_param.size_in_bits = getTypeSpecSizeBits(param_type);
-			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
+			func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			
 			// Handle empty parameter names (e.g., from defaulted constructors)
 			std::string_view param_name = param_decl.identifier_token().value();
@@ -1381,8 +1381,8 @@
 						// For template instantiations, the base initializer stores the un-substituted
 						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
 						// Also match against the base template name.
-						if (base.type_index < gTypeInfo.size()) {
-							const TypeInfo& base_ti = gTypeInfo[base.type_index];
+						if (base.type_index.value < gTypeInfo.size()) {
+							const TypeInfo& base_ti = gTypeInfo[base.type_index.value];
 							if (base_ti.isTemplateInstantiation() && init.getBaseClassName() == base_ti.baseTemplateName()) {
 								base_init = &init;
 								break;
@@ -1391,10 +1391,10 @@
 					}
 
 					// Get base class type info
-					if (base.type_index >= gTypeInfo.size()) {
+					if (base.type_index.value >= gTypeInfo.size()) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+					const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 
 					// Build constructor call: Base::Base(this, args...)
 					ConstructorCallOp ctor_op;
@@ -1454,7 +1454,7 @@
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
 					// The actual symbol will be loaded using the vtable_symbol field
 					vptr_store.value.type = Type::Void;
-					vptr_store.value.size_in_bits = 64;
+					vptr_store.value.size_in_bits = SizeInBits{64};
 					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
@@ -1494,10 +1494,10 @@
 						// Step 1: Call base class copy/move constructors (in declaration order)
 						for (const auto& base : struct_info->base_classes) {
 							// Get base class type info
-							if (base.type_index >= gTypeInfo.size()) {
+							if (base.type_index.value >= gTypeInfo.size()) {
 								continue;  // Invalid base type index
 							}
-							const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+							const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 
 							// Only call base copy/move constructor if the base class actually has constructors
 							// This avoids link errors when inheriting from classes without constructors
@@ -1520,7 +1520,7 @@
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
 							other_arg.type = Type::Struct;  // Parameter type (struct reference)
-							other_arg.size_in_bits = static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8);
+							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8)};
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
 							if (is_copy_constructor) {
@@ -1536,8 +1536,8 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type == Type::Struct && member.type_index != 0 && member.type_index < gTypeInfo.size()) {
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
 									TempVar member_source_addr = var_counter.next();
@@ -1557,7 +1557,7 @@
 
 									TypedValue other_arg;
 									other_arg.type = Type::Struct;
-									other_arg.size_in_bits = static_cast<int>(member.size * 8);
+									other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									other_arg.value = member_source_addr;
 									other_arg.type_index = member.type_index;
 									if (is_copy_constructor) {
@@ -1578,7 +1578,7 @@
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
-							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
@@ -1591,7 +1591,7 @@
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
-							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this"sv);
 							member_store.member_name = member.getName();
@@ -1635,7 +1635,7 @@
 									if (member.offset == offset && member.bitfield_width.has_value()) {
 										MemberStoreOp combined_store;
 										combined_store.value.type = member.type;
-										combined_store.value.size_in_bits = static_cast<int>(member.size * 8);
+										combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 										combined_store.value.value = combined_bitfield_values[offset];
 										combined_store.object = StringTable::getOrInternStringHandle("this");
 										combined_store.member_name = member.getName();
@@ -1683,8 +1683,8 @@
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
-									if (member_type_index < gTypeInfo.size()) {
-										const TypeInfo& member_type_info = gTypeInfo[member_type_index];
+									if (member_type_index.value < gTypeInfo.size()) {
+										const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
 										
 										// If this is a struct type, we need to initialize its members
 										if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
@@ -1723,8 +1723,8 @@
 															
 														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
-														if (nested_member_type_index < gTypeInfo.size()) {
-															const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index];
+														if (nested_member_type_index.value < gTypeInfo.size()) {
+															const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
 																
 															// If this is a struct type, use the recursive helper
 															if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
@@ -1771,7 +1771,7 @@
 													// Generate nested member store
 													MemberStoreOp nested_member_store;
 													nested_member_store.value.type = nested_member.type;
-													nested_member_store.value.size_in_bits = static_cast<int>(nested_member.size * 8);
+													nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
 													nested_member_store.value.value = nested_member_value.value();
 													nested_member_store.object = StringTable::getOrInternStringHandle("this");
 													nested_member_store.member_name = nested_member.getName();
@@ -1824,8 +1824,8 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
-									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								if (member.type == Type::Struct && member.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
 									}
@@ -1833,7 +1833,7 @@
 								
 								if (is_struct_with_constructor) {
 									// Call the nested struct's default constructor instead of zero-initializing
-									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 									ConstructorCallOp ctor_op;
 									ctor_op.struct_name = member_type_info.name();
 									ctor_op.object = StringTable::getOrInternStringHandle("this");
@@ -1860,7 +1860,7 @@
 	
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
-							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
 							member_store.member_name = member.getName();
@@ -1969,8 +1969,8 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+							if (member.type == Type::Struct && member.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
 								}
@@ -1978,7 +1978,7 @@
 							
 							if (is_struct_with_constructor) {
 								// Call the nested struct's default constructor instead of zero-initializing
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = member_type_info.name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
@@ -2005,7 +2005,7 @@
 	
 						MemberStoreOp member_store;
 						member_store.value.type = member.type;
-						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 						member_store.value.value = member_value;
 						member_store.object = StringTable::getOrInternStringHandle("this");
 						member_store.member_name = member.getName();
@@ -2054,8 +2054,8 @@
 	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
 	dtor_decl_op.struct_name = node.struct_name();
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
-	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
-	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
+	dtor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
+	dtor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
@@ -2116,10 +2116,10 @@
 					const auto& base = *it;
 
 					// Get base class type info
-					if (base.type_index >= gTypeInfo.size()) {
+					if (base.type_index.value >= gTypeInfo.size()) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+					const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
@@ -2169,7 +2169,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			element_operands.push_back(operands);
 			if (i == 0) {
 				element_type = operands.type;
-				element_size_bits = operands.size_in_bits;
+				element_size_bits = operands.size_in_bits.value;
 			}
 		}
 	}
@@ -2187,7 +2187,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
 	array_decl.type = element_type;
-	array_decl.size_in_bits = static_cast<int>(total_size_bits);
+	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
 	array_decl.array_element_type = element_type;
 	array_decl.array_element_size = element_size_bits;
@@ -2200,7 +2200,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_op.element_type = element_type;
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
-		store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i)};
+		store_op.index = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i)};
 		store_op.value = toTypedValue(element_operands[i]);
 		store_op.member_offset = 0;  // Not a member array - direct local array
 		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
@@ -2209,12 +2209,12 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	
 	// Step 3: Create the initializer_list struct
 	TypeIndex init_list_type_index = target_type.type_index();
-	if (init_list_type_index >= gTypeInfo.size()) {
+	if (init_list_type_index.value >= gTypeInfo.size()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
 		return ExprResult{};
 	}
 	
-	const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index];
+	const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index.value];
 	const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
 	if (!init_list_struct_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
@@ -2232,7 +2232,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	VariableDeclOp init_list_decl;
 	init_list_decl.var_name = init_list_name;
 	init_list_decl.type = Type::Struct;
-	init_list_decl.size_in_bits = init_list_size_bits;
+	init_list_decl.size_in_bits = SizeInBits{static_cast<int>(init_list_size_bits)};
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
 	
 	// Store pointer to array (first member)
@@ -2245,9 +2245,9 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		// Create TypedValue for pointer to array - need to set pointer_depth explicitly
 		TypedValue ptr_value;
 		ptr_value.type = element_type;
-		ptr_value.size_in_bits = 64;  // pointer size
+		ptr_value.size_in_bits = SizeInBits{64};  // pointer size
 		ptr_value.value = array_name;
-		ptr_value.pointer_depth = 1;  // This is a pointer to the array
+		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array
 		store_ptr.value = ptr_value;
 		store_ptr.struct_type_info = nullptr;
 		store_ptr.ref_qualifier = CVReferenceQualifier::None;
@@ -2261,7 +2261,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.object = init_list_name;  // Use StringHandle
 		store_size.member_name = size_member.getName();
 		store_size.offset = static_cast<int>(size_member.offset);
-		store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size)};
+		store_size.value = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size)};
 		store_size.struct_type_info = nullptr;
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
@@ -2271,9 +2271,9 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Return the StringHandle for the variable name so the caller can use it
 	return makeExprResult(
 		Type::Struct,
-		init_list_size_bits,
+		SizeInBits{static_cast<int>(init_list_size_bits)},
 		IrOperand{init_list_name},
-		static_cast<TypeIndex>(init_list_type_index)
+		TypeIndex{init_list_type_index}
 	);
 }
 
@@ -2294,15 +2294,15 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	StringHandle constructor_name;
 	if (is_struct_type(type_spec.type())) {
 		// If type_index is set, use it
-		if (type_spec.type_index() != 0) {
-			constructor_name = gTypeInfo[type_spec.type_index()].name();
+		if (type_spec.type_index().is_valid()) {
+			constructor_name = gTypeInfo[type_spec.type_index().value].name();
 		} else {
 			// Otherwise, use the token value (the identifier name)
 			constructor_name = type_spec.token().handle();
 		}
 	} else {
 		// For basic types, constructors might not exist, but we can handle them as value construction
-		constructor_name = gTypeInfo[type_spec.type_index()].name();
+		constructor_name = gTypeInfo[type_spec.type_index().value].name();
 	}
 
 	// Create a temporary variable for the result (the constructed object)
@@ -2311,8 +2311,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+	if (type_spec.type() == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 		if (type_info.struct_info_) {
 			actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
 			struct_info = type_info.struct_info_.get();
@@ -2437,8 +2437,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
 					member.type == Type::Struct &&
-					member.type_index > 0 && member.type_index < gTypeInfo.size()) {
-					const TypeInfo& nested_ti = gTypeInfo[member.type_index];
+					member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
+					const TypeInfo& nested_ti = gTypeInfo[member.type_index.value];
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
 						TypeSpecifierNode nested_spec(member.type, member.type_index, nested_bits);
@@ -2479,9 +2479,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			TypeIndex result_type_index = type_spec.type_index();
 			return makeExprResult(
 				type_spec.type(),
-				actual_size_bits,
+				SizeInBits{actual_size_bits},
 				IrOperand{ret_var},
-				static_cast<TypeIndex>(result_type_index)
+				TypeIndex{result_type_index}
 			);
 		}
 	}
@@ -2520,14 +2520,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						AddressOfOp addr_op;
 						addr_op.result = addr_var;
 						addr_op.operand.type = arg_type.type();
-						addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+						addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
+						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
 						
 						// Create TypedValue with the address
 						tv.type = arg_type.type();
-						tv.size_in_bits = 64;  // Pointer size
+						tv.size_in_bits = SizeInBits{64};  // Pointer size
 						tv.value = addr_var;
 						tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
 						tv.cv_qualifier = param_type->cv_qualifier();  // Set CV qualifier from parameter
@@ -2543,7 +2543,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			
 			// If we have parameter type information, use it to set pointer depth and CV qualifiers
 			if (param_type) {
-				tv.pointer_depth = static_cast<int>(param_type->pointer_depth());
+				tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
 				// For pointer types, also extract CV qualifiers from pointer levels
 				if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 					// Use CV qualifier from the first pointer level (T* const -> const)
@@ -2557,7 +2557,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					tv.cv_qualifier = param_type->cv_qualifier();
 				}
 				// Also update type_index if it's a struct type
-				if (param_type->type() == Type::Struct && param_type->type_index() != 0) {
+				if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
 					tv.type_index = param_type->type_index();
 				}
 			}
@@ -2640,8 +2640,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	TypeIndex result_type_index = type_spec.type_index();
 	return makeExprResult(
 		type_spec.type(),
-		actual_size_bits,
+		SizeInBits{actual_size_bits},
 		IrOperand{ret_var},
-		static_cast<TypeIndex>(result_type_index)
+		TypeIndex{result_type_index}
 	);
 }

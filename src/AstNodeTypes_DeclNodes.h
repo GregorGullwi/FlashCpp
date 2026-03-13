@@ -748,7 +748,7 @@ struct TypeInfo
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
 		Type base_type = Type::Invalid;  // For primitive types
-		TypeIndex type_index = 0;        // For user-defined types
+		TypeIndex type_index {};        // For user-defined types
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth = 0;        // Pointer indirection level
 		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
@@ -1118,8 +1118,8 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	Type t = type_spec.type();
 	if (t == Type::Struct || t == Type::UserDefined || t == Type::Enum) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx > 0 && idx < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[idx];
+		if (idx.is_valid() && idx.value < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[idx.value];
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
 			}

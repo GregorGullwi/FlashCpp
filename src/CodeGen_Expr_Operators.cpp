@@ -22,7 +22,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
 		info.type = ts.type();
-		info.size_in_bits = static_cast<int>(ts.size_in_bits());
+		info.size_in_bits = SizeInBits{ts.size_in_bits()};
 	};
 
 	switch (identifier.binding()) {
@@ -83,7 +83,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		}
 		if (static_member) {
 			info.type = static_member->type;
-			info.size_in_bits = static_cast<int>(static_member->size * 8);
+			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
 		}
 		return info;
 	}
@@ -120,8 +120,8 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
 	// Look up the struct type info
 	TypeIndex type_idx = param_type.type_index();
-	if (type_idx == 0 || type_idx >= gTypeInfo.size()) return std::nullopt;
-	const TypeInfo& type_info = gTypeInfo[type_idx];
+	if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) return std::nullopt;
+	const TypeInfo& type_info = gTypeInfo[type_idx.value];
 	const StructTypeInfo* struct_info = type_info.getStructInfo();
 	if (!struct_info) return std::nullopt;
 
@@ -150,15 +150,15 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		if (init_expr.is<ExpressionNode>()) {
 			ExprResult init_result = visitExpressionNode(init_expr.as<ExpressionNode>());
 			store_type = init_result.type;
-			store_size = init_result.size_in_bits;
+			store_size = init_result.size_in_bits.value;
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
-				   member.type_index > 0 && member.type_index < gTypeInfo.size()) {
+				   member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
 			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
 			// initialize sub-aggregate members recursively.
-			const TypeInfo& nested_type_info = gTypeInfo[member.type_index];
+			const TypeInfo& nested_type_info = gTypeInfo[member.type_index.value];
 			if (nested_type_info.getStructInfo()) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
 				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
@@ -166,7 +166,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
 					store_type = nested_result->type;
-					store_size = nested_result->size_in_bits;
+					store_size = nested_result->size_in_bits.value;
 					store_value = nested_result->value;
 					store_value_set = true;
 				} else {
@@ -186,7 +186,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		// Emit MemberStoreOp
 		MemberStoreOp ms;
-		ms.value = TypedValue{ .type = store_type, .size_in_bits = store_size, .value = store_value, .type_index = member.type_index};
+		ms.value = TypedValue{ .type = store_type, .size_in_bits = SizeInBits{store_size}, .value = store_value, .type_index = member.type_index};
 		ms.object = temp;
 		ms.member_name = member.name;
 		ms.offset = static_cast<int>(member.offset);
@@ -198,7 +198,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
 	TypedValue result;
 	result.type = Type::Struct;
-	result.size_in_bits = actual_size_bits;
+	result.size_in_bits = SizeInBits{static_cast<int>(actual_size_bits)};
 	result.value = IrValue(temp);
 	result.type_index = type_idx;
 	return result;
@@ -212,23 +212,23 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		|| type_node.is_function_pointer()
 		|| type_node.is_member_function_pointer()
 		|| type_node.is_member_object_pointer()) {
-		value.size_in_bits = POINTER_SIZE_BITS;
-	} else if (type_node.type() == Type::Struct && type_node.type_index() > 0 && type_node.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+	} else if (type_node.type() == Type::Struct && type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (struct_info) {
-			value.size_in_bits = static_cast<int>(struct_info->total_size * 8);
+			value.size_in_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
 		} else {
-			value.size_in_bits = static_cast<int>(type_node.size_in_bits());
+			value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 		}
 	} else {
-		value.size_in_bits = static_cast<int>(type_node.size_in_bits());
-		if (value.size_in_bits == 0) {
-			value.size_in_bits = get_type_size_bits(type_node.type());
+		value.size_in_bits = SizeInBits{type_node.size_in_bits()};
+		if (!value.size_in_bits.is_set()) {
+			value.size_in_bits = SizeInBits{get_type_size_bits(type_node.type())};
 		}
 	}
 	value.type_index = type_node.type_index();
-	value.pointer_depth = static_cast<int>(type_node.pointer_depth());
+	value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 	value.cv_qualifier = type_node.cv_qualifier();
 	if (type_node.is_rvalue_reference()) {
 		value.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -347,13 +347,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Create result variable to hold the final value
 		TempVar result_var = var_counter.next();
 		Type result_type = true_result.type;
-		int result_size = true_result.size_in_bits;
+		int result_size = true_result.size_in_bits.value;
 
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
 		assign_true_op.result = result_var;
 		assign_true_op.lhs.type = result_type;
-		assign_true_op.lhs.size_in_bits = result_size;
+		assign_true_op.lhs.size_in_bits = SizeInBits{static_cast<int>(result_size)};
 		assign_true_op.lhs.value = result_var;
 		assign_true_op.rhs = toTypedValue(true_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
@@ -371,7 +371,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		AssignmentOp assign_false_op;
 		assign_false_op.result = result_var;
 		assign_false_op.lhs.type = result_type;
-		assign_false_op.lhs.size_in_bits = result_size;
+		assign_false_op.lhs.size_in_bits = SizeInBits{static_cast<int>(result_size)};
 		assign_false_op.lhs.value = result_var;
 		assign_false_op.rhs = toTypedValue(false_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
@@ -380,7 +380,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 
 		// Return the result variable
-		return makeExprResult(result_type, result_size, IrOperand{result_var});
+		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_var});
 	}
 
 	ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
@@ -415,7 +415,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
-				int lhs_size = lhsExprResult.size_in_bits;
+				int lhs_size = lhsExprResult.size_in_bits.value;
 				bool use_unified_handler = lhs_size > 0;
 				if (use_unified_handler && lhs_size > 1024) {
 					FLASH_LOG(Codegen, Info, "Unified handler skipped: invalid size (", lhs_size, ")");
@@ -469,7 +469,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 						// This shouldn't happen with proper metadata, but log for debugging
 						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
-						return makeExprResult(Type::Int, 32, IrOperand{TempVar{0}});
+						return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}});
 					}
 				}
 			}
@@ -501,7 +501,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						return rhsExprResult;
 					}
 					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
-					return makeExprResult(Type::Int, 32, IrOperand{TempVar{0}});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}});
 				}
 			}
 		}
@@ -530,13 +530,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						AssignmentOp assign_op;
 						assign_op.result = result_var;
 						assign_op.lhs.type = lhs_type.type();
-						assign_op.lhs.size_in_bits = static_cast<int>(lhs_type.size_in_bits());
+						assign_op.lhs.size_in_bits = SizeInBits{lhs_type.size_in_bits()};
 						assign_op.lhs.value = StringTable::getOrInternStringHandle(lhs_name);
 						assign_op.rhs = toTypedValue(rhs_result);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 
 						// Return the result
-						return makeExprResult(lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), IrOperand{result_var});
+						return makeExprResult(lhs_type.type(), SizeInBits{static_cast<int>(lhs_type.size_in_bits())}, IrOperand{result_var});
 					}
 				}
 			}
@@ -596,7 +596,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits > 0) {
+				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits.is_set()) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
@@ -658,7 +658,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check
-				int lhs_size = lhsExprResult.size_in_bits;
+				int lhs_size = lhsExprResult.size_in_bits.value;
 				bool use_unified_handler = lhs_size > 0;
 				if (use_unified_handler && lhs_size > 1024) {
 					FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: invalid size (", lhs_size, ")");
@@ -713,8 +713,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Get the types and sizes of the operands
 		Type lhsType = lhsExprResult.type;
 		Type rhsType = rhsExprResult.type;
-		int lhsSize = lhsExprResult.size_in_bits;
-		int rhsSize = rhsExprResult.size_in_bits;
+		int lhsSize = lhsExprResult.size_in_bits.value;
+		int rhsSize = rhsExprResult.size_in_bits.value;
 
 		auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 			if (!parser_) {
@@ -740,18 +740,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return false;
 				}
 			Type base_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
-			return (base_type == Type::Struct || base_type == Type::UserDefined) && type_spec.type_index() > 0;
+			return (base_type == Type::Struct || base_type == Type::UserDefined) && type_spec.type_index().is_valid();
 		};
 
 		auto requiresUserDefinedBinaryOperatorByBase = [](Type base_type, TypeIndex type_index) {
 			base_type = resolve_type_alias(base_type, type_index);
-			return (base_type == Type::Struct || base_type == Type::UserDefined) && type_index > 0;
+			return (base_type == Type::Struct || base_type == Type::UserDefined) && type_index.is_valid();
 		};
 
 		auto makeReferenceArgument = [&](const ExprResult& operand_result, Type operand_type, int operand_size) -> std::optional<TypedValue> {
 			TypedValue arg;
 			arg.type = operand_type;
-			arg.size_in_bits = 64;
+			arg.size_in_bits = SizeInBits{64};
 
 			if (std::holds_alternative<StringHandle>(operand_result.value)) {
 				arg.value = emitAddressOf(operand_type, operand_size, IrValue(std::get<StringHandle>(operand_result.value)));
@@ -789,7 +789,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar temp_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = temp_var;
-			assign_op.lhs = TypedValue{operand_type, operand_size, temp_var};
+			assign_op.lhs = TypedValue{operand_type, SizeInBits{static_cast<int>(operand_size)}, temp_var};
 
 			IrValue rhs_value;
 			if (std::holds_alternative<unsigned long long>(operand_result.value)) {
@@ -797,7 +797,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			} else {
 				rhs_value = std::get<double>(operand_result.value);
 			}
-			assign_op.rhs = TypedValue{operand_type, operand_size, rhs_value};
+			assign_op.rhs = TypedValue{operand_type, SizeInBits{static_cast<int>(operand_size)}, rhs_value};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 			arg.value = emitAddressOf(operand_type, operand_size, IrValue(temp_var));
@@ -807,14 +807,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for struct assignment with user-defined operator=(non-struct)
 		// This handles patterns like: struct_var = primitive_value
 		// where struct has operator=(int), operator=(double), etc.
-		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsExprResult.type_index != 0) {
+		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsExprResult.type_index.is_valid()) {
 			// Get the type index of the struct
 			TypeIndex lhs_type_index = lhsExprResult.type_index;
 			TypeIndex rhs_type_index = (rhsType == Type::Enum || rhsType == Type::UserDefined)
 				? rhsExprResult.type_index
-				: 0;
+				: TypeIndex{};
 
-			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
+			if (lhs_type_index.is_valid() && lhs_type_index.value < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
 				OperatorOverloadResult overload_result;
 				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
@@ -850,7 +850,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Found matching operator=(primitive_type)! Generate function call
 							FLASH_LOG_FORMAT(Codegen, Debug, "Found operator= with primitive param for struct type index {}", lhs_type_index);
 
-							std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
+							std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index.value].name());
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
 							// Get parameter types for mangling
@@ -886,8 +886,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
 							addr_op.operand.type = lhsType;
-							addr_op.operand.size_in_bits = lhsSize;
-							addr_op.operand.pointer_depth = 0;
+							addr_op.operand.size_in_bits = SizeInBits{lhsSize};
+							addr_op.operand.pointer_depth = PointerDepth{};
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
@@ -899,7 +899,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
 							this_arg.type = lhsType;
-							this_arg.size_in_bits = 64;  // 'this' is always a pointer (64-bit)
+							this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
 							call_op.args.push_back(this_arg);
 
@@ -907,12 +907,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							call_op.args.push_back(toTypedValue(rhsExprResult));
 
 							call_op.return_type = return_type.type();
-							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+							call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 							// Return result
-							return makeExprResult(return_type.type(), static_cast<int>(return_type.size_in_bits()), IrOperand{result_var});
+							return makeExprResult(return_type.type(), SizeInBits{static_cast<int>(return_type.size_in_bits())}, IrOperand{result_var});
 						}
 					}
 				}
@@ -932,13 +932,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 
 			auto patchTypeSpecFromIr = [](TypeSpecifierNode& type_spec, Type ir_type, TypeIndex ir_type_index) {
-				if (ir_type_index == 0) {
+				if (!ir_type_index.is_valid()) {
 					return;
 				}
 
 				Type resolved_ir_type = resolve_type_alias(ir_type, ir_type_index);
-				if (ir_type_index < gTypeInfo.size()) {
-					resolved_ir_type = resolve_type_alias(gTypeInfo[ir_type_index].type_, ir_type_index);
+				if (ir_type_index.value < gTypeInfo.size()) {
+					resolved_ir_type = resolve_type_alias(gTypeInfo[ir_type_index.value].type_, ir_type_index);
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
 					return;
@@ -957,8 +957,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 
 		auto normalizeSyntaxTypeSpec = [](const TypeSpecifierNode& type_spec) {
-			if (type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
-				const TypeInfo& owner_type_info = gTypeInfo[type_spec.type_index()];
+			if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+				const TypeInfo& owner_type_info = gTypeInfo[type_spec.type_index().value];
 				if (const StructTypeInfo* owner_struct = owner_type_info.getStructInfo()) {
 					std::string_view token_name = type_spec.token().value();
 					if (!token_name.empty() && token_name != StringTable::getStringView(owner_struct->name)) {
@@ -987,8 +987,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (semantic_type == Type::Struct || semantic_type == Type::Enum) {
 				return true;
 			}
-			if (type_spec.type_index() > 0 && type_spec.type_index() < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+			if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
@@ -1080,10 +1080,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				&& isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second);
 		} else {
 			auto hasUserDefinedIdentityFromIr = [](Type lowered_type, TypeIndex type_index) {
-				if (type_index == 0 || type_index >= gTypeInfo.size()) {
+				if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
 					return false;
 				}
-				const TypeInfo& type_info = gTypeInfo[type_index];
+				const TypeInfo& type_info = gTypeInfo[type_index.value];
 				Type semantic_type = resolve_type_alias(lowered_type, type_index);
 				if (semantic_type == Type::Struct || semantic_type == Type::Enum) {
 					return true;
@@ -1149,7 +1149,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						op_kind,
 						op,
 						sym_table);
-					if (!overload_result.has_match && !overload_result.is_ambiguous && (lhs_type_index > 0 || rhs_type_index > 0)) {
+					if (!overload_result.has_match && !overload_result.is_ambiguous && (lhs_type_index.is_valid() || rhs_type_index.is_valid())) {
 						overload_result = findBinaryOperatorOverloadWithFreeFunction(
 							lhs_type_index,
 							rhs_type_index,
@@ -1243,14 +1243,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.return_type = return_type.type();
 				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
-				if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index() > 0) {
-					if (return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
-						actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+				if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index().is_valid()) {
+					if (return_type.type_index().value < gTypeInfo.size() && gTypeInfo[return_type.type_index().value].struct_info_) {
+						actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index().value].struct_info_->total_size * 8);
 					}
 				}
-				call_op.return_size_in_bits = actual_return_size;
+				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 
-				bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
+				bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
 				if (needs_hidden_return) {
 					call_op.return_slot = result_var;
 				}
@@ -1282,7 +1282,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 				return makeExprResult(
 					return_type.type(),
-					actual_return_size,
+					SizeInBits{actual_return_size},
 					IrOperand{result_var},
 					return_type.type_index()
 				);
@@ -1297,7 +1297,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 				// Get struct name for mangling
-				std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
+				std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index.value].name());
 
 				// Get the return type from the function declaration
 				TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
@@ -1349,8 +1349,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AddressOfOp addr_op;
 				addr_op.result = lhs_addr;
 				addr_op.operand.type = lhsType;
-				addr_op.operand.size_in_bits = lhsSize;
-				addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+				addr_op.operand.size_in_bits = SizeInBits{lhsSize};
+				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 				// Convert std::variant<StringHandle, TempVar> to IrValue
 				if (std::holds_alternative<StringHandle>(lhs_value)) {
 					addr_op.operand.value = std::get<StringHandle>(lhs_value);
@@ -1372,15 +1372,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					resolved_return_type = Type::Int;
 					actual_return_size = 32;
 				}
-				if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index() > 0) {
+				if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index().is_valid()) {
 					// Look up struct size from type info
-					if (return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
-						actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8);
+					if (return_type.type_index().value < gTypeInfo.size() && gTypeInfo[return_type.type_index().value].struct_info_) {
+						actual_return_size = static_cast<int>(gTypeInfo[return_type.type_index().value].struct_info_->total_size * 8);
 					}
 				}
 				call_op.return_type = resolved_return_type;
 				call_op.return_type_index = return_type.type_index();
-				call_op.return_size_in_bits = actual_return_size;
+				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 				call_op.is_member_function = true;  // This is a member function call
 
 				// Detect if returning struct by value (needs hidden return parameter for RVO)
@@ -1403,7 +1403,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Add 'this' pointer as first argument
 				TypedValue this_arg;
 				this_arg.type = lhsType;
-				this_arg.size_in_bits = 64;  // 'this' is always a pointer (64-bit)
+				this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 				this_arg.value = lhs_addr;
 				call_op.args.push_back(this_arg);
 
@@ -1426,7 +1426,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Return the result with resolved types
 				return makeExprResult(
 					resolved_return_type,
-					actual_return_size,
+					SizeInBits{static_cast<int>(actual_return_size)},
 					IrOperand{result_var},
 					return_type.type_index()
 				);
@@ -1448,7 +1448,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Get the LHS value - can be an identifier, member access, or other expression
 				std::variant<StringHandle, TempVar> lhs_value;
-				TypeIndex spaceship_lhs_type_index = 0;
+				TypeIndex spaceship_lhs_type_index {};
 
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Simple identifier case: p1 <=> p2
@@ -1477,7 +1477,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Generate IR for the member access expression
 					ExprResult member_ir = generateMemberAccessIr(member_access);
-					if (member_ir.type == Type::Void && member_ir.size_in_bits == 0) {
+					if (member_ir.type == Type::Void && !member_ir.size_in_bits.is_set()) {
 						return ExprResult{};
 					}
 
@@ -1494,7 +1494,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					}
 
 					// Try to get type index from the evaluated ExprResult if available
-					if (lhsExprResult.type_index != 0) {
+					if (lhsExprResult.type_index.is_valid()) {
 						spaceship_lhs_type_index = lhsExprResult.type_index;
 					} else {
 						// Can't determine type index for complex expression
@@ -1503,8 +1503,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				// Look up the operator<=> function in the struct
-				if (spaceship_lhs_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[spaceship_lhs_type_index];
+				if (spaceship_lhs_type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[spaceship_lhs_type_index.value];
 					if (type_info.struct_info_) {
 						const StructTypeInfo& struct_info = *type_info.struct_info_;
 
@@ -1563,7 +1563,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							call_op.result = result_var;
 							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 							call_op.return_type = return_type;
-							call_op.return_size_in_bits = return_size;
+							call_op.return_size_in_bits = SizeInBits{return_size};
 							call_op.is_member_function = true;
 							call_op.is_variadic = func_decl.is_variadic();
 
@@ -1586,7 +1586,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// For member functions, the this pointer is passed by name or temp var
 							TypedValue lhs_arg;
 							lhs_arg.type = lhsType;
-							lhs_arg.size_in_bits = lhsSize;
+							lhs_arg.size_in_bits = SizeInBits{lhsSize};
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
 							if (std::holds_alternative<StringHandle>(lhs_value)) {
 								lhs_arg.value = IrValue(std::get<StringHandle>(lhs_value));
@@ -1612,13 +1612,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 								if (op == "<=>") {
-									return makeExprResult(return_type, return_size, IrOperand{result_var});
+									return makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var});
 								}
 
 								TempVar cmp_result = var_counter.next();
 								BinaryOp cmp_op{
-									.lhs = { Type::Int, 32, result_var },
-									.rhs = { Type::Int, 32, 0ULL },
+									.lhs = { Type::Int, SizeInBits{32}, result_var },
+									.rhs = { Type::Int, SizeInBits{32}, 0ULL },
 									.result = cmp_result,
 								};
 
@@ -1631,7 +1631,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								else if (op == "!=") cmp_opcode = IrOpcode::NotEqual;
 
 								ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), binaryOperatorNode.get_token()));
-								return makeExprResult(Type::Bool, 8, IrOperand{cmp_result});
+								return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{cmp_result});
 						}
 					}
 				}
@@ -1677,7 +1677,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Fallback: use the evaluated ExprResult pointer depth for expressions like
 		// &member or function calls returning pointers.
 		if (lhs_pointer_depth == 0) {
-			lhs_pointer_depth = lhsExprResult.pointer_depth;
+			lhs_pointer_depth = lhsExprResult.pointer_depth.value;
 		}
 
 		// Try to get pointer depth for RHS as well (for ptr - ptr case)
@@ -1710,8 +1710,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 1: Subtract the pointers (gives byte difference)
 			TempVar byte_diff = var_counter.next();
 			BinaryOp sub_op{
-				.lhs = { lhsType, 64, toIrValue(lhsExprResult.value) },
-				.rhs = { rhsType, 64, toIrValue(rhsExprResult.value) },
+				.lhs = { lhsType, SizeInBits{64}, toIrValue(lhsExprResult.value) },
+				.rhs = { rhsType, SizeInBits{64}, toIrValue(rhsExprResult.value) },
 				.result = byte_diff,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
@@ -1728,14 +1728,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 3: Divide byte difference by element size to get element count
 			TempVar result_var = var_counter.next();
 			BinaryOp div_op{
-				.lhs = { Type::Long, 64, byte_diff },
-				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.lhs = { Type::Long, SizeInBits{64}, byte_diff },
+				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
 
 			// Return result as Long (ptrdiff_t) with 64-bit size
-			return makeExprResult(Type::Long, 64, IrOperand{result_var});
+			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{result_var});
 		}
 
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
@@ -1767,7 +1767,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Use typed BinaryOp for the multiply operation
 		BinaryOp scale_op{
 			.lhs = toTypedValue(rhsExprResult),
-			.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+			.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
 			.result = scaled_offset,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
@@ -1777,8 +1777,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Use typed BinaryOp for pointer addition/subtraction
 		BinaryOp ptr_arith_op{
-			.lhs = { lhsType, lhsSize, toIrValue(lhsExprResult.value) },
-			.rhs = { Type::Int, 32, scaled_offset },
+			.lhs = { lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value) },
+			.rhs = { Type::Int, SizeInBits{32}, scaled_offset },
 			.result = result_var,
 		};
 
@@ -1786,7 +1786,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
 			// Return pointer type with 64-bit size
-			return makeExprResult(lhsType, 64, IrOperand{result_var});
+			return makeExprResult(lhsType, SizeInBits{64}, IrOperand{result_var});
 		}
 
 		// Check for logical operations BEFORE type promotions
@@ -1794,13 +1794,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "&&" || op == "||") {
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
-				.lhs = { Type::Bool, 8, toIrValue(lhsExprResult.value) },
-				.rhs = { Type::Bool, 8, toIrValue(rhsExprResult.value) },
+				.lhs = { Type::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value) },
+				.rhs = { Type::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value) },
 				.result = result_var,
 			};
 			IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
-			return makeExprResult(Type::Bool, 8, IrOperand{result_var});  // Logical operations return bool8
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});  // Logical operations return bool8
 		}
 
 		// Special handling for pointer compound assignment (ptr += int or ptr -= int)
@@ -1823,7 +1823,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar scaled_offset = var_counter.next();
 			BinaryOp scale_op{
 				.lhs = toTypedValue(rhsExprResult),
-				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
 				.result = scaled_offset,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
@@ -1831,8 +1831,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// ptr = ptr + scaled_offset (or ptr - scaled_offset)
 			TempVar result_var = var_counter.next();
 			BinaryOp ptr_arith_op{
-				.lhs = { lhsType, lhsSize, toIrValue(lhsExprResult.value) },
-				.rhs = { Type::Int, 32, scaled_offset },
+				.lhs = { lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value) },
+				.rhs = { Type::Int, SizeInBits{32}, scaled_offset },
 				.result = result_var,
 			};
 
@@ -1843,7 +1843,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsExprResult.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsExprResult.value) };
+				assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<StringHandle>(lhsExprResult.value) };
 
 				// Check if LHS is a reference variable
 				StringHandle lhs_handle = std::get<StringHandle>(lhsExprResult.value);
@@ -1852,12 +1852,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
 				}
 
-				assign_op.rhs = { lhsType, lhsSize, result_var };
+				assign_op.rhs = { lhsType, SizeInBits{lhsSize}, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsExprResult.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsExprResult.value) };
+				assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<TempVar>(lhsExprResult.value) };
 
 				// Check if LHS TempVar corresponds to a reference variable
 				TempVar lhs_temp = std::get<TempVar>(lhsExprResult.value);
@@ -1870,12 +1870,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
 				}
 
-				assign_op.rhs = { lhsType, lhsSize, result_var };
+				assign_op.rhs = { lhsType, SizeInBits{lhsSize}, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			}
 
 			// Return the pointer result
-			return makeExprResult(lhsType, lhsSize, IrOperand{result_var});
+			return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{result_var});
 		}
 
 		// Apply integer promotions and find common type
@@ -1890,7 +1890,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsExprResult.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsExprResult.value) };
+				assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<StringHandle>(lhsExprResult.value) };
 
 				// Check if LHS is a reference variable
 				StringHandle lhs_handle = std::get<StringHandle>(lhsExprResult.value);
@@ -1902,12 +1902,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsExprResult);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<StringHandle>(lhsExprResult.value)});
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<StringHandle>(lhsExprResult.value)});
 			} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
 				[[maybe_unused]] TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsExprResult.value);
-				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsExprResult.value) };
+				assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<TempVar>(lhsExprResult.value) };
 
 				// Check if LHS TempVar corresponds to a reference variable
 				TempVar lhs_temp = std::get<TempVar>(lhsExprResult.value);
@@ -1923,7 +1923,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsExprResult);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, lhsSize, IrOperand{std::get<TempVar>(lhsExprResult.value)});
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<TempVar>(lhsExprResult.value)});
 			}
 		}
 
@@ -2030,9 +2030,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& opcode) {
 			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
 				bin_op.lhs.type = Type::UnsignedLongLong;
-				bin_op.lhs.size_in_bits = 64;
+				bin_op.lhs.size_in_bits = SizeInBits{64};
 				bin_op.rhs.type = Type::UnsignedLongLong;
-				bin_op.rhs.size_in_bits = 64;
+				bin_op.rhs.size_in_bits = SizeInBits{64};
 
 				// For ordered comparisons, ensure we use unsigned comparison for pointers
 				if (opcode == IrOpcode::LessThan) opcode = IrOpcode::UnsignedLessThan;
@@ -2218,7 +2218,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			};
 
 			ir_.addInstruction(IrInstruction(float_opcode, std::move(bin_op), binaryOperatorNode.get_token()));			// Return the result variable with float type and size
-				return makeExprResult(commonType, get_type_size_bits(commonType), IrOperand{result_var});
+				return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var});
 			}
 
 			// Float comparison operations use typed BinaryOp
@@ -2246,7 +2246,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 				// Float comparisons return boolean (bool8)
-				return makeExprResult(Type::Bool, 8, IrOperand{result_var});
+				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 			}
 			else {
 				// Unsupported floating-point operator
@@ -2258,11 +2258,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-			return makeExprResult(Type::Bool, 8, IrOperand{result_var});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 		} else {
 			// Return the result variable with its type and size
 			// Note: Assignment is handled earlier and returns before reaching this point
-			return makeExprResult(commonType, get_type_size_bits(commonType), IrOperand{result_var});
+			return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var});
 		}
 	}
 
@@ -2292,8 +2292,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
 				// Check return type for self-referential struct
-				if (return_type.type() == Type::Struct && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size()) {
-					auto& rti = gTypeInfo[return_type.type_index()];
+				if (return_type.type() == Type::Struct && return_type.type_index().is_valid() && return_type.type_index().value < gTypeInfo.size()) {
+					auto& rti = gTypeInfo[return_type.type_index().value];
 					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
 						needs_resolution = true;
 					}
@@ -2302,8 +2302,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					for (const auto& param : func_node.parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
 							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-							if (pt.type() == Type::Struct && pt.type_index() > 0 && pt.type_index() < gTypeInfo.size()) {
-								auto& ti = gTypeInfo[pt.type_index()];
+							if (pt.type() == Type::Struct && pt.type_index().is_valid() && pt.type_index().value < gTypeInfo.size()) {
+								auto& ti = gTypeInfo[pt.type_index().value];
 								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 									needs_resolution = true;
 									break;
@@ -2392,7 +2392,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
-			return makeExprResult(Type::Long, 64, IrOperand{0ULL});
+			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{0ULL});
 		}
 
 		// Get the argument
@@ -2401,14 +2401,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract argument details
 		Type arg_type = arg_result.type;
-		int arg_size = arg_result.size_in_bits;
+		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
 		// Step 1: Arithmetic shift right by 63 to get sign mask (all 1s if negative, all 0s if positive)
 		TempVar sign_mask = var_counter.next();
 		BinaryOp shift_op{
 			.lhs = arg_value,
-			.rhs = TypedValue{Type::Int, 32, 63ULL},
+			.rhs = TypedValue{Type::Int, SizeInBits{32}, 63ULL},
 			.result = sign_mask
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(shift_op), functionCallNode.called_from()));
@@ -2417,7 +2417,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		TempVar xor_result = var_counter.next();
 		BinaryOp xor_op{
 			.lhs = arg_value,
-			.rhs = TypedValue{arg_type, arg_size, sign_mask},
+			.rhs = TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask},
 			.result = xor_result
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(xor_op), functionCallNode.called_from()));
@@ -2425,19 +2425,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Step 3: Subtract sign mask
 		TempVar abs_result = var_counter.next();
 		BinaryOp sub_op{
-			.lhs = TypedValue{arg_type, arg_size, xor_result},
-			.rhs = TypedValue{arg_type, arg_size, sign_mask},
+			.lhs = TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, xor_result},
+			.rhs = TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask},
 			.result = abs_result
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), functionCallNode.called_from()));
 
-		return makeExprResult(arg_type, arg_size, IrOperand{abs_result});
+		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result});
 	}
 
 	ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
-			return makeExprResult(Type::Double, 64, IrOperand{0ULL});
+			return makeExprResult(Type::Double, SizeInBits{64}, IrOperand{0ULL});
 		}
 
 		// Get the argument
@@ -2446,7 +2446,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract argument details
 		Type arg_type = arg_result.type;
-		int arg_size = arg_result.size_in_bits;
+		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
 		// For floating point abs, clear the sign bit using bitwise AND
@@ -2457,12 +2457,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		TempVar abs_result = var_counter.next();
 		BinaryOp and_op{
 			.lhs = arg_value,
-			.rhs = TypedValue{Type::UnsignedLongLong, arg_size, mask},
+			.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{static_cast<int>(arg_size)}, mask},
 			.result = abs_result
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), functionCallNode.called_from()));
 
-		return makeExprResult(arg_type, arg_size, IrOperand{abs_result});
+		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result});
 	}
 
 	bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const {
@@ -2481,7 +2481,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (ir_result.size_in_bits == POINTER_SIZE_BITS) {
+		if (ir_result.size_in_bits == SizeInBits{POINTER_SIZE_BITS}) {
 			return true;
 		}
 
@@ -2493,7 +2493,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg requires exactly 2 arguments (va_list and type)");
-			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 		}
 
 		// Get the first argument (va_list variable)
@@ -2553,7 +2553,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			va_list_var = std::get<StringHandle>(vaListExprResult.value);
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
-			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
@@ -2582,8 +2582,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Use Assignment to load the pointer value from the variable
 				AssignmentOp load_pointer;
 				load_pointer.result = va_list_struct_ptr;
-				load_pointer.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				load_pointer.rhs = TypedValue{Type::UnsignedLongLong, 64, var_name_handle};
+				load_pointer.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+				load_pointer.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, var_name_handle};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), functionCallNode.called_from()));
 			}
 
@@ -2593,15 +2593,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
 			load_offset.pointer.type = Type::UnsignedInt;  // Reading a 32-bit unsigned offset
-			load_offset.pointer.size_in_bits = 32;  // gp_offset/fp_offset is 32 bits
-			load_offset.pointer.pointer_depth = 1;
+			load_offset.pointer.size_in_bits = SizeInBits{32};  // gp_offset/fp_offset is 32 bits
+			load_offset.pointer.pointer_depth = PointerDepth{1};
 
 			if (is_float_type) {
 				// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
 				TempVar fp_offset_addr = var_counter.next();
 				BinaryOp fp_offset_calc;
-				fp_offset_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				fp_offset_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+				fp_offset_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+				fp_offset_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 4ULL};
 				fp_offset_calc.result = fp_offset_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
 
@@ -2609,8 +2609,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar materialized_fp_addr = var_counter.next();
 				AssignmentOp materialize;
 				materialize.result = materialized_fp_addr;
-				materialize.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_fp_addr};
-				materialize.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_addr};
+				materialize.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_fp_addr};
+				materialize.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, fp_offset_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 
 				// Read 32-bit fp_offset value from [va_list_struct + 4]
@@ -2645,9 +2645,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			unsigned long long offset_limit = is_float_type ? 176ULL : 48ULL;
 			TempVar cmp_result = var_counter.next();
 			BinaryOp compare_op;
-			compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+			compare_op.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
 			// Adjust limit: need to have slot_size bytes remaining
-			compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit - slot_size + 8};
+			compare_op.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, offset_limit - slot_size + 8};
 			compare_op.result = cmp_result;
 			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
 
@@ -2655,7 +2655,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			CondBranchOp cond_branch;
 			cond_branch.label_true = reg_path_label;
 			cond_branch.label_false = overflow_path_label;
-			cond_branch.condition = TypedValue{Type::Bool, 1, cmp_result};
+			cond_branch.condition = TypedValue{Type::Bool, SizeInBits{1}, cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
 
 			// ============ REGISTER PATH ============
@@ -2664,8 +2664,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 4: Load reg_save_area pointer (at offset 16)
 			TempVar reg_save_area_field_addr = var_counter.next();
 			BinaryOp reg_save_addr;
-			reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-			reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
+			reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+			reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 16ULL};
 			reg_save_addr.result = reg_save_area_field_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
 
@@ -2673,32 +2673,32 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar materialized_reg_save_addr = var_counter.next();
 			AssignmentOp materialize_reg;
 			materialize_reg.result = materialized_reg_save_addr;
-			materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_reg_save_addr};
-			materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_field_addr};
+			materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_reg_save_addr};
+			materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, reg_save_area_field_addr};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
 
 			TempVar reg_save_area_ptr = var_counter.next();
 			DereferenceOp load_reg_save_ptr;
 			load_reg_save_ptr.result = reg_save_area_ptr;
 			load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
-			load_reg_save_ptr.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			load_reg_save_ptr.pointer.pointer_depth = 1;
+			load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
+			load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 
 			// Step 5: Compute address: reg_save_area + current_offset
 			TempVar arg_addr = var_counter.next();
 			BinaryOp compute_addr;
-			compute_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_ptr};
+			compute_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, reg_save_area_ptr};
 			// Need to convert offset from uint32 to uint64 for addition
 			TempVar offset_64 = var_counter.next();
 			AssignmentOp convert_offset;
 			convert_offset.result = offset_64;
-			convert_offset.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
-			convert_offset.rhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+			convert_offset.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, offset_64};
+			convert_offset.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
 
-			compute_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+			compute_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, offset_64};
 			compute_addr.result = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
 
@@ -2707,24 +2707,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp read_reg_value;
 			read_reg_value.result = reg_value;
 			read_reg_value.pointer.type = requested_type;
-			read_reg_value.pointer.size_in_bits = requested_size;
-			read_reg_value.pointer.pointer_depth = 1;
+			read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+			read_reg_value.pointer.pointer_depth = PointerDepth{1};
 			read_reg_value.pointer.value = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
 
 			// Assign to result variable
 			AssignmentOp assign_reg_result;
 			assign_reg_result.result = value;
-			assign_reg_result.lhs = TypedValue{requested_type, requested_size, value};
-			assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
+			assign_reg_result.lhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, value};
+			assign_reg_result.rhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, reg_value};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
 
 			// Step 7: Increment the offset by slot_size and store back
 			// slot_size is 16 for floats (XMM regs), or rounded up to 8-byte boundary for integers/structs
 			TempVar new_offset = var_counter.next();
 			BinaryOp increment_offset;
-			increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-			increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, slot_size};
+			increment_offset.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
+			increment_offset.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, slot_size};
 			increment_offset.result = new_offset;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 
@@ -2732,28 +2732,28 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar materialized_offset = var_counter.next();
 			AssignmentOp materialize;
 			materialize.result = materialized_offset;
-			materialize.lhs = TypedValue{Type::UnsignedInt, 32, materialized_offset};
-			materialize.rhs = TypedValue{Type::UnsignedInt, 32, new_offset};
+			materialize.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, materialized_offset};
+			materialize.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, new_offset};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 
 			DereferenceStoreOp store_offset;
 			store_offset.pointer.type = Type::UnsignedInt;
-			store_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			store_offset.pointer.pointer_depth = 1;
+			store_offset.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
+			store_offset.pointer.pointer_depth = PointerDepth{1};
 			if (is_float_type) {
 				// Store to fp_offset field at offset 4
 				TempVar fp_offset_store_addr = var_counter.next();
 				BinaryOp fp_store_addr_calc;
-				fp_store_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				fp_store_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+				fp_store_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+				fp_store_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 4ULL};
 				fp_store_addr_calc.result = fp_offset_store_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
 
 				TempVar materialized_addr = var_counter.next();
 				AssignmentOp materialize_addr;
 				materialize_addr.result = materialized_addr;
-				materialize_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_addr};
-				materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_store_addr};
+				materialize_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_addr};
+				materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, fp_offset_store_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
 
 				store_offset.pointer.value = materialized_addr;
@@ -2761,7 +2761,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Store to gp_offset field at offset 0
 				store_offset.pointer.value = va_list_struct_ptr;
 			}
-			store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+			store_offset.value = TypedValue{Type::UnsignedInt, SizeInBits{32}, materialized_offset};
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
 
 			// Jump to end
@@ -2773,8 +2773,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Load overflow_arg_area pointer (at offset 8)
 			TempVar overflow_field_addr = var_counter.next();
 			BinaryOp overflow_addr_calc;
-			overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-			overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+			overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 8ULL};
 			overflow_addr_calc.result = overflow_field_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
 
@@ -2782,16 +2782,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar materialized_overflow_addr = var_counter.next();
 			AssignmentOp materialize_overflow;
 			materialize_overflow.result = materialized_overflow_addr;
-			materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_overflow_addr};
-			materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_field_addr};
+			materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_overflow_addr};
+			materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_field_addr};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
 
 			TempVar overflow_ptr = var_counter.next();
 			DereferenceOp load_overflow_ptr;
 			load_overflow_ptr.result = overflow_ptr;
 			load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
-			load_overflow_ptr.pointer.size_in_bits = 64;
-			load_overflow_ptr.pointer.pointer_depth = 1;
+			load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
+			load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_overflow_ptr.pointer.value = materialized_overflow_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
 
@@ -2800,16 +2800,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp read_overflow_value;
 			read_overflow_value.result = overflow_value;
 			read_overflow_value.pointer.type = requested_type;
-			read_overflow_value.pointer.size_in_bits = requested_size;
-			read_overflow_value.pointer.pointer_depth = 1;
+			read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+			read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 			read_overflow_value.pointer.value = overflow_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
 
 			// Assign to result variable
 			AssignmentOp assign_overflow_result;
 			assign_overflow_result.result = value;
-			assign_overflow_result.lhs = TypedValue{requested_type, requested_size, value};
-			assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
+			assign_overflow_result.lhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, value};
+			assign_overflow_result.rhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, overflow_value};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
 
 			// Advance overflow_arg_area by the actual stack argument size (always 8 bytes on x64 stack)
@@ -2817,24 +2817,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			unsigned long long overflow_advance = (requested_size + 63) / 64 * 8;  // Round up to 8-byte boundary
 			TempVar new_overflow_ptr = var_counter.next();
 			BinaryOp advance_overflow;
-			advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
-			advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_advance};
+			advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_ptr};
+			advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_advance};
 			advance_overflow.result = new_overflow_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
 
 			// Store updated overflow_arg_area back to structure
 			DereferenceStoreOp store_overflow;
 			store_overflow.pointer.type = Type::UnsignedLongLong;
-			store_overflow.pointer.size_in_bits = 64;
-			store_overflow.pointer.pointer_depth = 1;
+			store_overflow.pointer.size_in_bits = SizeInBits{64};
+			store_overflow.pointer.pointer_depth = PointerDepth{1};
 			store_overflow.pointer.value = materialized_overflow_addr;
-			store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
+			store_overflow.value = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, new_overflow_ptr};
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
 
 			// ============ END LABEL ============
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
 
-			return makeExprResult(requested_type, requested_size, IrOperand{value});
+			return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value});
 
 		} else {
 			// Windows/MSVC ABI or Linux with simple char* va_list
@@ -2849,11 +2849,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar va_list_struct_ptr = var_counter.next();
 				AssignmentOp load_ptr_op;
 				load_ptr_op.result = va_list_struct_ptr;
-				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
 				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 				} else {
-					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
 
@@ -2862,15 +2862,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp load_offset;
 				load_offset.result = current_offset;
 				load_offset.pointer.type = Type::UnsignedInt;
-				load_offset.pointer.size_in_bits = 32;
-				load_offset.pointer.pointer_depth = 1;
+				load_offset.pointer.size_in_bits = SizeInBits{32};
+				load_offset.pointer.pointer_depth = PointerDepth{1};
 
 				if (is_float_type) {
 					// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
 					TempVar fp_offset_addr = var_counter.next();
 					BinaryOp fp_offset_calc;
-					fp_offset_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-					fp_offset_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+					fp_offset_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+					fp_offset_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 4ULL};
 					fp_offset_calc.result = fp_offset_addr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
 
@@ -2878,8 +2878,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar materialized_fp_addr = var_counter.next();
 					AssignmentOp materialize;
 					materialize.result = materialized_fp_addr;
-					materialize.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_fp_addr};
-					materialize.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_addr};
+					materialize.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_fp_addr};
+					materialize.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, fp_offset_addr};
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 
 					// Read 32-bit fp_offset value from [va_list_struct + 4]
@@ -2909,9 +2909,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				unsigned long long offset_limit = is_float_type ? 176ULL : 48ULL;
 				TempVar cmp_result = var_counter.next();
 				BinaryOp compare_op;
-				compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+				compare_op.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
 				// Adjust limit: need to have slot_size bytes remaining
-				compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit - slot_size + 8};
+				compare_op.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, offset_limit - slot_size + 8};
 				compare_op.result = cmp_result;
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
 
@@ -2919,7 +2919,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				CondBranchOp cond_branch;
 				cond_branch.label_true = reg_path_label;
 				cond_branch.label_false = overflow_path_label;
-				cond_branch.condition = TypedValue{Type::Bool, 1, cmp_result};
+				cond_branch.condition = TypedValue{Type::Bool, SizeInBits{1}, cmp_result};
 				ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
 
 				// ============ REGISTER PATH ============
@@ -2928,24 +2928,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Load reg_save_area pointer (at offset 16)
 				TempVar reg_save_area_field_addr = var_counter.next();
 				BinaryOp reg_save_addr;
-				reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
+				reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+				reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 16ULL};
 				reg_save_addr.result = reg_save_area_field_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
 
 				TempVar materialized_reg_save_addr = var_counter.next();
 				AssignmentOp materialize_reg;
 				materialize_reg.result = materialized_reg_save_addr;
-				materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_reg_save_addr};
-				materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_field_addr};
+				materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_reg_save_addr};
+				materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, reg_save_area_field_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
 
 				TempVar reg_save_area_ptr = var_counter.next();
 				DereferenceOp load_reg_save_ptr;
 				load_reg_save_ptr.result = reg_save_area_ptr;
 				load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
-				load_reg_save_ptr.pointer.size_in_bits = 64;
-				load_reg_save_ptr.pointer.pointer_depth = 1;
+				load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};
+				load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 				load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 
@@ -2953,14 +2953,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar offset_64 = var_counter.next();
 				AssignmentOp convert_offset;
 				convert_offset.result = offset_64;
-				convert_offset.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
-				convert_offset.rhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+				convert_offset.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, offset_64};
+				convert_offset.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
 
 				TempVar arg_addr = var_counter.next();
 				BinaryOp compute_addr;
-				compute_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_ptr};
-				compute_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+				compute_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, reg_save_area_ptr};
+				compute_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, offset_64};
 				compute_addr.result = arg_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
 
@@ -2969,51 +2969,51 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp read_reg_value;
 				read_reg_value.result = reg_value;
 				read_reg_value.pointer.type = requested_type;
-				read_reg_value.pointer.size_in_bits = requested_size;
-				read_reg_value.pointer.pointer_depth = 1;
+				read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+				read_reg_value.pointer.pointer_depth = PointerDepth{1};
 				read_reg_value.pointer.value = arg_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
 
 				// Assign to result
 				AssignmentOp assign_reg_result;
 				assign_reg_result.result = value;
-				assign_reg_result.lhs = TypedValue{requested_type, requested_size, value};
-				assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
+				assign_reg_result.lhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, value};
+				assign_reg_result.rhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, reg_value};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
 
 				// Increment gp_offset by slot_size, or fp_offset by 16
 				TempVar new_offset = var_counter.next();
 				BinaryOp increment_offset;
-				increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-				increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, slot_size};
+				increment_offset.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, current_offset};
+				increment_offset.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, slot_size};
 				increment_offset.result = new_offset;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 
 				TempVar materialized_offset = var_counter.next();
 				AssignmentOp materialize_off;
 				materialize_off.result = materialized_offset;
-				materialize_off.lhs = TypedValue{Type::UnsignedInt, 32, materialized_offset};
-				materialize_off.rhs = TypedValue{Type::UnsignedInt, 32, new_offset};
+				materialize_off.lhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, materialized_offset};
+				materialize_off.rhs = TypedValue{Type::UnsignedInt, SizeInBits{32}, new_offset};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_off), functionCallNode.called_from()));
 
 				DereferenceStoreOp store_offset;
 				store_offset.pointer.type = Type::UnsignedInt;
-				store_offset.pointer.size_in_bits = 64;
-				store_offset.pointer.pointer_depth = 1;
+				store_offset.pointer.size_in_bits = SizeInBits{64};
+				store_offset.pointer.pointer_depth = PointerDepth{1};
 				if (is_float_type) {
 					// Store to fp_offset field at offset 4
 					TempVar fp_offset_store_addr = var_counter.next();
 					BinaryOp fp_store_addr_calc;
-					fp_store_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-					fp_store_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 4ULL};
+					fp_store_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+					fp_store_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 4ULL};
 					fp_store_addr_calc.result = fp_offset_store_addr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
 
 					TempVar materialized_addr = var_counter.next();
 					AssignmentOp materialize_addr;
 					materialize_addr.result = materialized_addr;
-					materialize_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_addr};
-					materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_store_addr};
+					materialize_addr.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_addr};
+					materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, fp_offset_store_addr};
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
 
 					store_offset.pointer.value = materialized_addr;
@@ -3021,7 +3021,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Store to gp_offset field at offset 0
 					store_offset.pointer.value = va_list_struct_ptr;
 				}
-				store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+				store_offset.value = TypedValue{Type::UnsignedInt, SizeInBits{32}, materialized_offset};
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
 
 				// Jump to end
@@ -3033,24 +3033,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Load overflow_arg_area (at offset 8)
 				TempVar overflow_field_addr = var_counter.next();
 				BinaryOp overflow_addr_calc;
-				overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr};
+				overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 8ULL};
 				overflow_addr_calc.result = overflow_field_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
 
 				TempVar materialized_overflow_addr = var_counter.next();
 				AssignmentOp materialize_overflow;
 				materialize_overflow.result = materialized_overflow_addr;
-				materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_overflow_addr};
-				materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_field_addr};
+				materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, materialized_overflow_addr};
+				materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_field_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
 
 				TempVar overflow_ptr = var_counter.next();
 				DereferenceOp load_overflow_ptr;
 				load_overflow_ptr.result = overflow_ptr;
 				load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
-				load_overflow_ptr.pointer.size_in_bits = 64;
-				load_overflow_ptr.pointer.pointer_depth = 1;
+				load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
+				load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 				load_overflow_ptr.pointer.value = materialized_overflow_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
 
@@ -3059,39 +3059,39 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp read_overflow_value;
 				read_overflow_value.result = overflow_value;
 				read_overflow_value.pointer.type = requested_type;
-				read_overflow_value.pointer.size_in_bits = requested_size;
-				read_overflow_value.pointer.pointer_depth = 1;
+				read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+				read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 				read_overflow_value.pointer.value = overflow_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
 
 				// Assign to result
 				AssignmentOp assign_overflow_result;
 				assign_overflow_result.result = value;
-				assign_overflow_result.lhs = TypedValue{requested_type, requested_size, value};
-				assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
+				assign_overflow_result.lhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, value};
+				assign_overflow_result.rhs = TypedValue{requested_type, SizeInBits{static_cast<int>(requested_size)}, overflow_value};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
 
 				// Advance overflow_arg_area by the actual stack argument size (always 8 bytes per slot on x64 stack)
 				unsigned long long overflow_advance = (requested_size + 63) / 64 * 8;  // Round up to 8-byte boundary
 				TempVar new_overflow_ptr = var_counter.next();
 				BinaryOp advance_overflow;
-				advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
-				advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_advance};
+				advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_ptr};
+				advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, overflow_advance};
 				advance_overflow.result = new_overflow_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
 
 				DereferenceStoreOp store_overflow;
 				store_overflow.pointer.type = Type::UnsignedLongLong;
-				store_overflow.pointer.size_in_bits = 64;
-				store_overflow.pointer.pointer_depth = 1;
+				store_overflow.pointer.size_in_bits = SizeInBits{64};
+				store_overflow.pointer.pointer_depth = PointerDepth{1};
 				store_overflow.pointer.value = materialized_overflow_addr;
-				store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
+				store_overflow.value = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, new_overflow_ptr};
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
 
 				// ============ END LABEL ============
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
 
-				return makeExprResult(requested_type, requested_size, IrOperand{value});
+				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value});
 
 			} else {
 				// Windows/MSVC ABI: Simple pointer-based approach
@@ -3101,11 +3101,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar current_ptr = var_counter.next();
 				AssignmentOp load_ptr_op;
 				load_ptr_op.result = current_ptr;
-				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
+				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, current_ptr};
 				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 				} else {
-					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
 
@@ -3123,8 +3123,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					DereferenceOp deref_ptr_op;
 					deref_ptr_op.result = struct_ptr;
 					deref_ptr_op.pointer.type = Type::UnsignedLongLong;
-					deref_ptr_op.pointer.size_in_bits = 64;
-					deref_ptr_op.pointer.pointer_depth = 1;
+					deref_ptr_op.pointer.size_in_bits = SizeInBits{64};
+					deref_ptr_op.pointer.pointer_depth = PointerDepth{1};
 					deref_ptr_op.pointer.value = current_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
 
@@ -3132,8 +3132,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					DereferenceOp deref_struct_op;
 					deref_struct_op.result = value;
 					deref_struct_op.pointer.type = requested_type;
-					deref_struct_op.pointer.size_in_bits = requested_size;
-					deref_struct_op.pointer.pointer_depth = 1;
+					deref_struct_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+					deref_struct_op.pointer.pointer_depth = PointerDepth{1};
 					deref_struct_op.pointer.value = struct_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_struct_op), functionCallNode.called_from()));
 				} else {
@@ -3141,8 +3141,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					DereferenceOp deref_value_op;
 					deref_value_op.result = value;
 					deref_value_op.pointer.type = requested_type;
-					deref_value_op.pointer.size_in_bits = requested_size;
-					deref_value_op.pointer.pointer_depth = 1;
+					deref_value_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
+					deref_value_op.pointer.pointer_depth = PointerDepth{1};
 					deref_value_op.pointer.value = current_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
 				}
@@ -3151,8 +3151,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// since the stack slot holds a pointer, not the struct itself)
 				TempVar next_ptr = var_counter.next();
 				BinaryOp add_op;
-				add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
-				add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, current_ptr};
+				add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 8ULL};
 				add_op.result = next_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 
@@ -3160,14 +3160,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AssignmentOp assign_op;
 				assign_op.result = var_counter.next();  // unused but required
 				if (std::holds_alternative<TempVar>(va_list_var)) {
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 				} else {
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 				}
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, next_ptr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 
-				return makeExprResult(requested_type, requested_size, IrOperand{value});
+				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value});
 			}
 		}
 	}
@@ -3176,7 +3176,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
-			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 		}
 
 		// Get the first argument (va_list variable)
@@ -3203,7 +3203,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			last_param_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start second argument must be a parameter name");
-			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 		}
 
 		// Platform-specific varargs implementation:
@@ -3229,18 +3229,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
-				return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 			}
 
 			AssignmentOp final_assign;
 			if (std::holds_alternative<StringHandle>(va_list_var)) {
 				final_assign.result = std::get<StringHandle>(va_list_var);
-				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				final_assign.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 			} else {
 				final_assign.result = std::get<TempVar>(va_list_var);
-				final_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				final_assign.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 			}
-			final_assign.rhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_addr};
+			final_assign.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_addr};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), functionCallNode.called_from()));
 
 		} else {
@@ -3257,7 +3257,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
-				return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 			}
 
 			if (context_->isItaniumMangling()) {
@@ -3272,12 +3272,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AssignmentOp assign_op;
 				if (std::holds_alternative<StringHandle>(va_list_var)) {
 					assign_op.result = std::get<StringHandle>(va_list_var);
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 				} else {
 					assign_op.result = std::get<TempVar>(va_list_var);
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 				}
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_struct_addr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_struct_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 			} else {
 				// Windows/MSVC ABI: Compute &last_param + 8 (variadic args are on stack)
@@ -3290,22 +3290,22 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				auto param_symbol = symbol_table.lookup(last_param_name);
 				if (!param_symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
-					return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+					return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 				}
 				const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 				addr_op.operand.type = param_type.type();
-				addr_op.operand.size_in_bits = static_cast<int>(param_type.size_in_bits());
-				addr_op.operand.pointer_depth = param_type.pointer_depth();
+				addr_op.operand.size_in_bits = SizeInBits{param_type.size_in_bits()};
+				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
 
 				// Add 8 bytes (64 bits) to get to the next parameter slot
 				TempVar va_start_addr = var_counter.next();
 				BinaryOp add_op;
-				add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
-				add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, last_param_addr};
+				add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, 8ULL};
 				add_op.result = va_start_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 
@@ -3313,18 +3313,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AssignmentOp assign_op;
 				if (std::holds_alternative<StringHandle>(va_list_var)) {
 					assign_op.result = std::get<StringHandle>(va_list_var);
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var)};
 				} else {
 					assign_op.result = std::get<TempVar>(va_list_var);
-					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var)};
 				}
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, va_start_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 			}
 		}
 
 		// __builtin_va_start returns void
-		return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 	}
 
 	ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -3342,13 +3342,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_unreachable encountered - marking code path as unreachable");
 
 		// Return void (this intrinsic doesn't produce a value)
-		return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 	}
 
 	ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
-			return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 		}
 
 		// Evaluate the condition expression (but we don't use the result)
@@ -3365,14 +3365,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_assume encountered - assumption recorded (not yet used for optimization)");
 
 		// Return void (this intrinsic doesn't produce a value)
-		return makeExprResult(Type::Void, 0, IrOperand{0ULL});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 	}
 
 	ExprResult AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
 			// Return a default value matching typical usage (long type)
-			return makeExprResult(Type::LongLong, 64, IrOperand{0ULL});
+			return makeExprResult(Type::LongLong, SizeInBits{64}, IrOperand{0ULL});
 		}
 
 		// Evaluate the first argument (the expression)
@@ -3398,7 +3398,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
-			return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{0ULL});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{0ULL});
 		}
 
 		// Evaluate the pointer argument
@@ -3407,7 +3407,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract pointer details
 		[[maybe_unused]] Type ptr_type = ptrExprResult.type;
-		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits;
+		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits.value;
 
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -3446,7 +3446,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			op.result = result;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
 		}
-		return makeExprResult(Type::UnsignedInt, 32, IrOperand{result});
+		return makeExprResult(Type::UnsignedInt, SizeInBits{32}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -3454,7 +3454,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		SehAbnormalTerminationOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::Int, 32, IrOperand{result});
+		return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -3462,7 +3462,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		SehExceptionIntrinsicOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::UnsignedLongLong, 64, IrOperand{result});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{result});
 	}
 
 
@@ -3503,8 +3503,8 @@ const Token& token) {
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
-			if (lhs_operands.type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index];
+			if (lhs_operands.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index.value];
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
 				} else {
@@ -3518,7 +3518,7 @@ const Token& token) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = lhs_operands.size_in_bits;
+			inferred_size_bits = lhs_operands.size_in_bits.value;
 		}
 		return inferred_size_bits;
 	};
@@ -3544,7 +3544,7 @@ const Token& token) {
 			TypedValue index_tv;
 			index_tv.value = index_value;
 			index_tv.type = Type::Int;  // Index type (typically int)
-			index_tv.size_in_bits = 32;  // Standard index size
+			index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 
 			// Build TypedValue for value with LHS type/size but RHS value
 			// This is important: the size must match the array element type
@@ -3556,7 +3556,7 @@ const Token& token) {
 			// Emit the store using helper
 			emitArrayStore(
 				lhs_operands.type,                 // element_type
-				lhs_operands.size_in_bits,         // element_size_bits
+				lhs_operands.size_in_bits.value,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
 				value_tv,                          // value (with LHS type/size, RHS value)
@@ -3578,7 +3578,7 @@ const Token& token) {
 			}
 
 			// Safety check: validate size is reasonable (not 0 or negative)
-			int lhs_size = lhs_operands.size_in_bits;
+			int lhs_size = lhs_operands.size_in_bits.value;
 			if (lhs_size <= 0 || lhs_size > 1024) {
 				FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
 				return false;
@@ -3588,7 +3588,7 @@ const Token& token) {
 			// This is important: the size must match the member being stored to, not the RHS
 			TypedValue value_tv;
 			value_tv.type = lhs_operands.type;
-			value_tv.size_in_bits = lhs_size;
+			value_tv.size_in_bits = SizeInBits{static_cast<int>(lhs_size)};
 			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
@@ -3614,7 +3614,7 @@ const Token& token) {
 			int pointee_size_bits = inferLValueSizeBits();
 			TypedValue value_tv;
 			value_tv.type = pointee_type;
-			value_tv.size_in_bits = pointee_size_bits;
+			value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
 			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
@@ -3671,8 +3671,8 @@ std::string_view op) {
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
-			if (lhs_operands.type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index];
+			if (lhs_operands.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index.value];
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
 				} else {
@@ -3686,7 +3686,7 @@ std::string_view op) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = lhs_operands.size_in_bits;
+			inferred_size_bits = lhs_operands.size_in_bits.value;
 		}
 		return inferred_size_bits;
 	};
@@ -3733,8 +3733,8 @@ std::string_view op) {
 		DereferenceOp deref_op;
 		deref_op.result = current_value_temp;
 		deref_op.pointer.type = lvalue_type;
-		deref_op.pointer.size_in_bits = 64;  // pointer size
-		deref_op.pointer.pointer_depth = 1;
+		deref_op.pointer.size_in_bits = SizeInBits{64};  // pointer size
+		deref_op.pointer.pointer_depth = PointerDepth{1};
 
 		// Extract the base (TempVar or StringHandle)
 		std::variant<TempVar, StringHandle> base_value;
@@ -3757,7 +3757,7 @@ std::string_view op) {
 		// Create the binary operation
 		BinaryOp bin_op;
 		bin_op.lhs.type = lvalue_type;
-		bin_op.lhs.size_in_bits = lvalue_size_bits;
+		bin_op.lhs.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3767,7 +3767,7 @@ std::string_view op) {
 		// Store result back through the pointer using DereferenceStore
 		TypedValue result_tv;
 		result_tv.type = lvalue_type;
-		result_tv.size_in_bits = lvalue_size_bits;
+		result_tv.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		result_tv.value = result_temp;
 
 		// Handle both TempVar and StringHandle bases for DereferenceStore
@@ -3784,8 +3784,8 @@ std::string_view op) {
 			// Generate DereferenceStore with StringHandle directly
 			DereferenceStoreOp store_op;
 			store_op.pointer.type = lvalue_type;
-			store_op.pointer.size_in_bits = 64;
-			store_op.pointer.pointer_depth = 1;
+			store_op.pointer.size_in_bits = SizeInBits{64};
+			store_op.pointer.pointer_depth = PointerDepth{1};
 			store_op.pointer.value = std::get<StringHandle>(base_value);
 			store_op.value = result_tv;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
@@ -3809,13 +3809,13 @@ std::string_view op) {
 		TypedValue index_tv;
 		index_tv.value = index_value;
 		index_tv.type = Type::Int;  // Index type (typically int)
-		index_tv.size_in_bits = 32;  // Standard index size
+		index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 
 		// Create ArrayAccessOp to load current value
 		ArrayAccessOp load_op;
 		load_op.result = current_value_temp;
 		load_op.element_type = lhs_operands.type;
-		load_op.element_size_in_bits = lhs_operands.size_in_bits;
+		load_op.element_size_in_bits = lhs_operands.size_in_bits.value;
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;
 		load_op.member_offset = lv_info.offset;
@@ -3845,7 +3845,7 @@ std::string_view op) {
 		// Emit the store using helper
 		emitArrayStore(
 			lhs_operands.type,                 // element_type
-			lhs_operands.size_in_bits,         // element_size_bits
+			lhs_operands.size_in_bits.value,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index
 			result_tv,                         // value (result of operation)
@@ -3914,7 +3914,7 @@ std::string_view op) {
 				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
 				if (is_struct_type(type_node.type())) {
 					TypeIndex type_index = type_node.type_index();
-					if (type_index < gTypeInfo.size()) {
+					if (type_index.value < gTypeInfo.size()) {
 						auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
 						if (result) {
 							member_is_reference = result.member->is_reference();
@@ -3945,7 +3945,7 @@ std::string_view op) {
 	// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 	TempVar result_temp = var_counter.next();
 
-	// Create the binary operation
+	// Create the binary operation (size_in_bits is already SizeInBits — direct assignment)
 	BinaryOp bin_op;
 	bin_op.lhs.type = lhs_operands.type;
 	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;

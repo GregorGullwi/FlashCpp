@@ -1,16 +1,175 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: Proposed  
+**Status**: Completed (2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
+
+## Progress
+
+### Slice 5 (2026-03-13) — Completed
+
+Added `SizeInBits` strong wrapper struct to `src/IRTypes_Core.h`:
+
+```cpp
+struct SizeInBits {
+    int value = 0;
+    constexpr SizeInBits() noexcept = default;
+    constexpr explicit SizeInBits(int v) noexcept : value(v) {}
+    // full set of relational operators + std::formatter specialization
+};
+```
+
+Applied to all `*size_in_bits*` / `*size_bits*` fields in:
+`ExprResult`, `TypedValue`, all IR op structs in `IRTypes_Ops.h`,
+`StaticLocalInfo`, `GlobalStaticBindingInfo`, `ReferenceInfo::value_size_bits`.
+
+Write sites (~249 across ~26 files) migrated. Build clean, 1457 tests pass.
+
+### Slice 4 (2026-03-13) — Completed
+
+Replaced `using TypeIndex = size_t` in `src/AstNodeTypes_TypeSystem.h` with an
+explicit strong wrapper struct:
+
+```cpp
+struct TypeIndex {
+    size_t value = 0;
+    constexpr TypeIndex() noexcept = default;
+    constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
+    TypeIndex& operator++() noexcept;   // for loop variables
+    TypeIndex  operator++(int) noexcept;
+    // full set of relational operators
+};
+// std::hash<TypeIndex> and std::formatter<TypeIndex, char> specializations
+```
+
+Key properties:
+- **Explicit ctor**: `TypeIndex(size_t)` prevents bare integer → TypeIndex
+  implicit conversion at write sites.
+- **No implicit read conversion**: array-index reads and comparisons now use
+  `.value` or semantic helpers such as `.is_valid()`.
+- **Increment operators**: `for (TypeIndex ti{}; ti.value < n; ++ti)` loops work.
+- **`std::hash`/`std::formatter`**: unordered_map keys and `FLASH_LOG_FORMAT`
+  calls with TypeIndex values work without extra adapters.
+
+Fixes applied across 57 files:
+- ~43 `TypeIndex x = 0;` local variable declarations → `TypeIndex x{};`
+- ~12 ternary `: 0` arms in TypeIndex context → `: TypeIndex{}`
+- ~15 `static_cast<TypeIndex>(expr)` → `TypeIndex{expr}`
+- `MemberFunctionContext::struct_type_index` and `DelayedFunctionBody::struct_type_index` changed from `size_t` to `TypeIndex`
+- `addMember`, `addBaseClass`, `TypeSpecifierNode(Type, size_t, ...)` call sites wrapped
+- `TypeInfo(name, type, size_t, bits)` constructor call sites wrapped
+
+Build: clean (`make main CXX=clang++`, no warnings)
+Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
+
+### Slice 3 (2026-03-13) — Completed
+
+- Migrated the five remaining `int pointer_depth` fields in IR op structs to
+  `PointerDepth`:
+
+  | Struct              | Field                 |
+  |---------------------|-----------------------|
+  | `FunctionParam`     | `pointer_depth`       |
+  | `FunctionDeclOp`    | `return_pointer_depth`|
+  | `HeapAllocOp`       | `pointer_depth`       |
+  | `HeapAllocArrayOp`  | `pointer_depth`       |
+  | `PlacementNewOp`    | `pointer_depth`       |
+
+- All fields use `= PointerDepth{}` default member initializer.
+
+- Updated write sites across:
+  - `src/CodeGen_Visitors_Decl.cpp` (5 sites)
+  - `src/CodeGen_Visitors_TypeInit.cpp` (4 sites)
+  - `src/CodeGen_Lambdas.cpp` (4 sites)
+  - `src/CodeGen_NewDeleteCast.cpp` (4 sites)
+
+- Read sites in `IRTypes_Instructions.h` and `IRConverter_Conv_VarDecl.h`
+  were migrated to explicit `.value` access or helper predicates.
+
+- Build: clean (`make main CXX=clang++`, no warnings)
+- Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
+
+### Slice 2 (2026-03-13) — Completed
+
+- Moved `PointerDepth` definition from `src/IROperandHelpers.h` to
+  `src/IRTypes_Core.h` so that both `TypedValue` (in `IRTypes_Ops.h`) and
+  `ExprResult` (in `IROperandHelpers.h`) use the same type.
+
+- Added `#include <format>` to `IRTypes_Core.h` and a
+  `std::formatter<PointerDepth, char>` specialization (delegates to `int`)
+  so that `PointerDepth` values work in `FLASH_LOG_FORMAT` calls.
+
+- Changed `TypedValue::pointer_depth` from `int pointer_depth = 0` to
+  `PointerDepth pointer_depth = PointerDepth{}`. The explicit default member
+  initializer `= PointerDepth{}` suppresses `-Wmissing-field-initializers` for
+  positional aggregate initializations.
+
+- Updated all ~40 `TypedValue`-embedded write sites across:
+  - `src/IROperandHelpers.h` (`toTypedValue` helpers)
+  - `src/CodeGen_Helpers.cpp`
+  - `src/CodeGen_Visitors_Decl.cpp`
+  - `src/CodeGen_Visitors_Namespace.cpp`
+  - `src/CodeGen_Stmt_Decl.cpp`
+  - `src/CodeGen_Call_Direct.cpp`
+  - `src/CodeGen_Call_Indirect.cpp`
+  - `src/CodeGen_Expr_Conversions.cpp`
+  - `src/CodeGen_Expr_Operators.cpp`
+  - `src/CodeGen_Expr_Primitives.cpp`
+  - `src/CodeGen_Lambdas.cpp`
+  - `src/CodeGen_NewDeleteCast.cpp`
+
+  Note: `FunctionParam::pointer_depth`, `HeapAllocOp::pointer_depth`,
+  `HeapAllocArrayOp::pointer_depth`, `PlacementNewOp::pointer_depth`, and
+  `FunctionDeclOp::return_pointer_depth` were intentionally left as `int`
+  — they are separate structs that do not participate in the arg-ordering
+  bug class targeted by this plan.
+
+- Build: clean (`make main CXX=clang++`, no warnings)
+- Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
+
+### Slice 1 (2026-03-13) — Completed
+
+- Introduced `PointerDepth` strong wrapper type in `src/IROperandHelpers.h`
+  - Explicit single-arg constructor `PointerDepth(int)` prevents bare-integer
+    construction at call sites
+  - Non-explicit default constructor keeps `ExprResult{}` aggregate init working
+  - read sites were later migrated to explicit `.value` access and
+    `PointerDepth::is_pointer()`
+  - Full set of comparison operators
+
+- Upgraded `ExprResult::pointer_depth` from `int` to `PointerDepth`
+
+- Changed `makeExprResultImpl` to accept `PointerDepth` for the depth parameter
+
+- Changed `makeExprResult` 5-arg overload to require `PointerDepth`:
+  `makeExprResult(type, bits, value, type_index, PointerDepth{n})`
+  — any caller that passes a bare int `n` now fails to compile
+
+- Updated all affected call sites:
+  - `src/CodeGen_Expr_Primitives.cpp`: `makeIdentifierResult` lambda upgraded
+  - `src/CodeGen_Expr_Conversions.cpp`: all 5-arg makeExprResult calls wrapped
+  - `src/CodeGen_Call_Direct.cpp`: literal `1` wrapped in `PointerDepth{1}`
+  - `src/CodeGen_MemberAccess.cpp`: `makeArrayResult` lambda upgraded
+  - `src/CodeGen_NewDeleteCast.cpp`: `target_pointer_depth` wrapped
+
+- Build: clean (`make main CXX=clang++`, no warnings)
+- Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
+
+### Deferred
+
+- `TypeIndex` wrapper: **Completed in Slice 4 (2026-03-13).**
+
+- `SizeInBits` wrapper: **Completed in Slice 5 (2026-03-13).**
+
+- User-defined literals: optional; see plan UDL section.
 
 ## Problem
 
 The `ExprResult` migration surfaced a broader API-design question:
 
-- `TypeIndex` is still effectively an alias-like scalar in many APIs
-- `pointer_depth` is still an `int`
-- `size_in_bits` is still an `int`
+- `TypeIndex` was effectively an alias-like scalar in many APIs
+- `pointer_depth` was still an `int`
+- `size_in_bits` was still an `int`
 - helper factories such as `makeExprResult(...)` still accept combinations of
   plain scalar arguments that are easy to misorder
 
@@ -186,3 +345,28 @@ The best next step is:
 3. measure churn before deciding whether `SizeInBits` and UDLs are worth adding
 
 That keeps the scope narrow, the safety wins real, and the rollout reviewable.
+
+## Final Status
+
+This refactor is now complete for the originally planned strong-wrapper scope:
+
+- `SizeInBits`, `PointerDepth`, and `TypeIndex` are strong wrapper types with
+  explicit single-argument construction.
+- Their implicit scalar conversion operators have been removed.
+- Comparison operators were simplified to defaulted spaceship operators.
+- Call sites were migrated to explicit `.value` access or semantic helpers such
+  as `.is_set()`, `.is_pointer()`, and `.is_valid()`.
+- `SizeInBytes` was added as an available wrapper type, but no broader rollout
+  was required because the repository did not have a compelling bug-prone byte
+  metadata channel comparable to the bits / pointer-depth / type-index cases.
+
+Validation on 2026-03-13:
+
+- `make main CXX=clang++` ✅
+- `tests/run_all_tests.sh` ✅ (`1457` compile/link/runtime pass, `35` expected-fail correct)
+
+Remaining work:
+
+- No mandatory follow-up remains for this plan.
+- Future code may adopt `SizeInBytes` opportunistically where it improves local
+  clarity, but that is optional cleanup rather than unfinished refactor work.

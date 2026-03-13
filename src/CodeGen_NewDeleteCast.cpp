@@ -59,7 +59,7 @@
 				op.result = result_var;
 				op.type = type;
 				op.size_in_bytes = size_in_bits / 8;
-				op.pointer_depth = pointer_depth;
+				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
 				op.address = toIrValue(address_operands.value);
 
@@ -72,8 +72,8 @@
 					// For struct types, call constructor for each element
 					if (type == Type::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_index.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
@@ -93,8 +93,8 @@
 									
 									// Generate: element_ptr = result_var + (i * element_size)
 									BinaryOp offset_op{
-										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
-										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
+										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -147,8 +147,8 @@
 								
 								// Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
-									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
-									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
+									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -168,7 +168,7 @@
 				op.result = result_var;
 				op.type = type;
 				op.size_in_bytes = size_in_bits / 8;
-				op.pointer_depth = pointer_depth;
+				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
 				IrValue count_value = op.count = toIrValue(size_operands.value);
 
@@ -178,8 +178,8 @@
 				StringHandle array_struct_name_handle{};
 				if (type == Type::Struct) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_index.value < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index.value];
 						if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 							array_struct_info = type_info.struct_info_.get();
 							array_struct_name_handle = type_info.name();
@@ -197,8 +197,8 @@
 					// For struct types, call constructor for each element
 					if (type == Type::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_index.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
@@ -214,8 +214,8 @@
 									
 									TempVar element_ptr = var_counter.next();
 									BinaryOp offset_op{
-										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
-										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
+										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -252,8 +252,8 @@
 							if (init.is<ExpressionNode>()) {
 								TempVar element_ptr = var_counter.next();
 								BinaryOp offset_op{
-									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
-									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
+									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -277,8 +277,8 @@
 					TempVar i_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 						.result = i_var,
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 0ULL},
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 0ULL},
 					}, Token()));
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -286,15 +286,15 @@
 					// cmp = (i_var < count)
 					TempVar cmp_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = count_value},
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = count_value},
 						.result = cmp_var,
 					}, Token()));
 
 					CondBranchOp cond;
 					cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
 					cond.label_false = loop_end;
-					cond.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_var};
+					cond.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_var};
 					// We use a body label right after the branch
 					auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
 					cond.label_true = loop_body;
@@ -305,16 +305,16 @@
 					// offset_var = i_var * elem_sz
 					TempVar offset_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(elem_sz)},
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(elem_sz)},
 						.result = offset_var,
 					}, Token()));
 
 					// elem_ptr = result_var + offset_var
 					TempVar elem_ptr = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = offset_var},
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = offset_var},
 						.result = elem_ptr,
 					}, Token()));
 
@@ -327,8 +327,8 @@
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 1ULL},
+						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 1ULL},
 						.result = i_var,
 					}, Token()));
 
@@ -346,7 +346,7 @@
 			op.result = result_var;
 			op.type = type;
 			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
+			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
 			op.address = toIrValue(address_operands.value);
 
@@ -355,8 +355,8 @@
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index.value];
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
@@ -392,15 +392,15 @@
 			op.result = result_var;
 			op.type = type;
 			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
+			op.pointer_depth = PointerDepth{pointer_depth};
 
 			ir_.addInstruction(IrInstruction(IrOpcode::HeapAlloc, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index.value];
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
@@ -434,7 +434,7 @@
 		
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(type, size_in_bits, IrOperand{result_var});
+		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var});
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -451,8 +451,8 @@
 		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
-		(ptr_operands.type_index != 0)) {
-			unsigned long long type_idx_val = ptr_operands.type_index;
+		(ptr_operands.type_index.is_valid())) {
+			unsigned long long type_idx_val = ptr_operands.type_index.value;
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
 			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx_val];
@@ -478,8 +478,8 @@
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
 			if (ptr_type == Type::Struct &&
-			(ptr_operands.type_index != 0)) {
-				unsigned long long type_idx_val = ptr_operands.type_index;
+			(ptr_operands.type_index.is_valid())) {
+				unsigned long long type_idx_val = ptr_operands.type_index.value;
 				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_idx_val];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -490,8 +490,8 @@
 						// Read count from cookie: raw_ptr = ptr - 8
 						TempVar raw_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = ptr_value},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 8ULL},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = ptr_value},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 8ULL},
 							.result = raw_ptr,
 						}, Token()));
 
@@ -499,7 +499,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = raw_ptr, .pointer_depth = 1},
+							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = raw_ptr, .pointer_depth = PointerDepth{1}},
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -514,8 +514,8 @@
 						TempVar i_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 							.result = i_var,
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = count_var},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = count_var},
 						}, Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -523,36 +523,36 @@
 						// if i_var == 0 goto loop_end
 						TempVar cmp_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 0ULL},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 0ULL},
 							.result = cmp_var,
 						}, Token()));
 						CondBranchOp cond;
 						cond.label_true  = loop_body;
 						cond.label_false = loop_end;
-						cond.condition   = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_var};
+						cond.condition   = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_var};
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
 						// i_var = i_var - 1  (decrement first, so index runs count-1..0)
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = 1ULL},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 1ULL},
 							.result = i_var,
 						}, Token()));
 
 						// elem_ptr = ptr + i_var * elem_sz
 						TempVar offset_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(elem_sz)},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(elem_sz)},
 							.result = offset_var,
 						}, Token()));
 						TempVar elem_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = ptr_value},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = offset_var},
+							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = ptr_value},
+							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = offset_var},
 							.result = elem_ptr,
 						}, Token()));
 
@@ -637,8 +637,8 @@
 			AddressOfOp addr_op;
 			addr_op.result = result_var;
 			addr_op.operand.type = target_type;
-			addr_op.operand.size_in_bits = target_size;
-			addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+			addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(target_size)};
+			addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 			addr_op.operand.value = std::get<StringHandle>(base);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 		} else {
@@ -647,8 +647,8 @@
 			const TempVar& source_var = std::get<TempVar>(base);
 			AssignmentOp assign_op;
 			assign_op.result = result_var;
-			assign_op.lhs = TypedValue{target_type, 64, result_var};  // 64-bit pointer dest
-			assign_op.rhs = TypedValue{target_type, 64, source_var};  // 64-bit pointer source
+			assign_op.lhs = TypedValue{target_type, SizeInBits{64}, result_var};  // 64-bit pointer dest
+			assign_op.rhs = TypedValue{target_type, SizeInBits{64}, source_var};  // 64-bit pointer source
 			assign_op.is_pointer_store = false;
 			assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
@@ -675,7 +675,7 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the xvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, 64, result_var);
+		return makeExprResult(target_type, SizeInBits{64}, result_var);
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
@@ -698,7 +698,7 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 		
 		// Return the lvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, 64, result_var);
+		return makeExprResult(target_type, SizeInBits{64}, result_var);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -720,15 +720,15 @@
 
 		// Get the source type
 		Type source_type = expr_operands.type;
-		int source_size = expr_operands.size_in_bits;
+		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
-			if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
+			if (!source_type_index.is_valid() || source_type_index.value >= gTypeInfo.size()) {
 				return false;
 			}
 			Type semantic_type = resolve_type_alias(source_type, source_type_index);
 			if (semantic_type != Type::Struct && semantic_type != Type::Enum && semantic_type != Type::UserDefined) {
-				semantic_type = resolve_type_alias(gTypeInfo[source_type_index].type_, source_type_index);
+				semantic_type = resolve_type_alias(gTypeInfo[source_type_index.value].type_, source_type_index);
 			}
 			return semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 		};
@@ -755,7 +755,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return makeExprResult(target_type, 64, expr_operands.value);
+			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -765,7 +765,7 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
-				return makeExprResult(target_type, target_size, expr_operands.value);
+				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
 			}
 			return expr_operands;
 		}
@@ -776,7 +776,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return makeExprResult(target_type, target_size, expr_operands.value);
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -798,12 +798,12 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, source_size, from_value},
+				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
 				.to_type = target_type,
-				.to_size_in_bits = target_size
-			};
+				.to_size_in_bits = SizeInBits{target_size
+			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, target_size, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -822,12 +822,12 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, source_size, from_value},
+				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
 				.to_type = target_type,
-				.to_size_in_bits = target_size
-			};
+				.to_size_in_bits = SizeInBits{target_size
+			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, target_size, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -846,12 +846,12 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, source_size, from_value},
+				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
 				.to_type = target_type,
-				.to_size_in_bits = target_size
-			};
+				.to_size_in_bits = SizeInBits{target_size
+			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, target_size, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -860,11 +860,11 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = TypedValue{source_type, source_size, 0ULL},
+				.rhs = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, 0ULL},
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp});
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -872,16 +872,16 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = TypedValue{source_type, source_size, 0.0},
+				.rhs = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, 0.0},
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, 8, IrOperand{result_temp});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp});
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return makeExprResult(target_type, target_size, expr_operands.value);
+		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
 	}
 
 	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -899,8 +899,8 @@
 			StringHandle type_name;
 			if (type_node.type() == Type::Struct) {
 				TypeIndex type_idx = type_node.type_index();
-				if (type_idx < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_idx];
+				if (type_idx.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_idx.value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						type_name = struct_info->getName();
@@ -941,7 +941,7 @@
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return makeExprResult(Type::Void, 64, IrOperand{result_temp});
+		return makeExprResult(Type::Void, SizeInBits{64}, IrOperand{result_temp});
 	}
 
 	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
@@ -965,8 +965,8 @@
 		std::string target_type_name;
 		if (target_type_node.type() == Type::Struct) {
 			TypeIndex type_idx = target_type_node.type_index();
-			if (type_idx < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_idx];
+			if (type_idx.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx.value];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					target_type_name = StringTable::getStringView(struct_info->getName());
@@ -1022,7 +1022,7 @@
 		}
 
 		// Return the casted pointer/reference
-		return makeExprResult(result_type, result_size, IrOperand{result_temp});
+		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp});
 	}
 
 	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
@@ -1050,7 +1050,7 @@
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return makeExprResult(target_type, target_size, expr_operands.value);
+		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
 	}
 
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1080,5 +1080,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return makeExprResult(target_type, result_size, expr_operands.value, 0, target_pointer_depth);
+		return makeExprResult(target_type, SizeInBits{static_cast<int>(result_size)}, expr_operands.value, TypeIndex{}, PointerDepth{target_pointer_depth});
 	}

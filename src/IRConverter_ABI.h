@@ -159,7 +159,7 @@ struct RegisterAllocator
 		bool isAllocated = false;
 		bool isDirty = false;	// Does the stack variable need to be updated on a flush
 		int32_t stackVariableOffset = INT_MIN;
-		int size_in_bits = 0;	// Size of the value stored in this register (for proper spilling)
+		SizeInBits size_in_bits;	// Size of the value stored in this register (for proper spilling)
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -173,7 +173,7 @@ struct RegisterAllocator
 
 	void reset() {
 		for (auto& reg : registers) {
-			reg = AllocatedRegister{ .reg = reg.reg };
+			reg = AllocatedRegister{ .reg = reg.reg, .size_in_bits = {} };
 		}
 		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
 		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
@@ -183,7 +183,7 @@ struct RegisterAllocator
 	void flushAllDirtyRegisters(Func func) {
 		for (auto& reg : registers) {
 			if (reg.isDirty) {
-				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits);
+				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits.value);
 				reg.isDirty = false;
 				// Clear the stack variable mapping after flushing to prevent stale register lookups.
 				// This ensures that subsequent code will reload from memory rather than using
@@ -206,7 +206,7 @@ struct RegisterAllocator
 		auto& reg_info = registers[static_cast<int>(reg)];
 		reg_info.stackVariableOffset = INT_MIN;
 		reg_info.isDirty = false;
-		reg_info.size_in_bits = 0;
+		reg_info.size_in_bits = SizeInBits{0};
 	}
 
 	// Find which register (if any) currently holds a value for the given stack offset
@@ -309,7 +309,7 @@ struct RegisterAllocator
 
 	void release(X64Register reg) {
 		if (reg == X64Register::Count) return; // No register to release
-		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg };
+		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg, .size_in_bits = {} };
 	}
 
 	bool is_allocated(X64Register reg) const {
@@ -348,7 +348,7 @@ struct RegisterAllocator
 			}
 		}
 		registers[static_cast<int>(reg)].stackVariableOffset = stackVariableOffset;
-		registers[static_cast<int>(reg)].size_in_bits = size_in_bits;
+		registers[static_cast<int>(reg)].size_in_bits = SizeInBits{size_in_bits};
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 

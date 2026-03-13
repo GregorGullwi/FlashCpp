@@ -218,13 +218,13 @@
 			// If the current function has auto return type, deduce it from the return expression
 			if (current_function_return_type_ == Type::Auto) {
 				Type expr_type = operands.type;
-				int expr_size = operands.size_in_bits;
+				int expr_size = operands.size_in_bits.value;
 				
 				// Build a TypeSpecifierNode for the deduced type
 				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
 				
 				// If we have type_index information (for structs), include it
-				if (operands.type_index != 0) {
+				if (operands.type_index.is_valid()) {
 					deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
 					deduced_type.set_type_index(operands.type_index);
 				}
@@ -243,7 +243,7 @@
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
 				Type expr_type = operands.type;
-				int expr_size = operands.size_in_bits;
+				int expr_size = operands.size_in_bits.value;
 		
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
@@ -258,13 +258,13 @@
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 						
-						if (expr_type_index > 0 && expr_type_index < gTypeInfo.size()) {
-							const TypeInfo& source_type_info = gTypeInfo[expr_type_index];
+						if (expr_type_index.is_valid() && expr_type_index.value < gTypeInfo.size()) {
+							const TypeInfo& source_type_info = gTypeInfo[expr_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 							
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, 0);
+								source_struct_info, return_type, TypeIndex{});
 							
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ", 
@@ -311,8 +311,8 @@
 									call_op.result = result_var;
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 									call_op.return_type = return_type;
-									call_op.return_size_in_bits = return_size;
-									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : 0;
+									call_op.return_size_in_bits = SizeInBits{return_size};
+									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
 									
@@ -323,17 +323,17 @@
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
 										addr_op.operand.type = expr_type;
-										addr_op.operand.size_in_bits = expr_size;
-										addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(expr_size)};
+										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 										
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = expr_type;
-										this_arg.size_in_bits = 64;  // Pointer size
+										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 										this_arg.value = this_ptr;
-										this_arg.type_index = expr_type_index;
+										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									} else if (std::holds_alternative<TempVar>(source_value)) {
 										// It's already a temporary
@@ -341,16 +341,16 @@
 										// represent the address of the object (not the object value itself).
 										TypedValue this_arg;
 										this_arg.type = expr_type;
-										this_arg.size_in_bits = 64;  // Pointer size for 'this'
+										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
-										this_arg.type_index = expr_type_index;
+										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									}
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
 									
 									// Replace operands with the result of the conversion
-									operands = makeExprResult(return_type, return_size, IrOperand{result_var});
+									operands = makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var});
 								}
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion

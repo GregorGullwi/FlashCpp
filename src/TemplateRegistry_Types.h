@@ -119,11 +119,11 @@ enum class MemberPointerKind : uint8_t {
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
 	Type type = Type::Invalid;
-	TypeIndex type_index = 0;
+	TypeIndex type_index {};
 	int64_t value = 0;
 	
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx = 0) {
+	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateArgumentValue v;
 		v.type = t;
 		v.type_index = idx;
@@ -261,7 +261,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods (match the former TemplateTypeArg API)
-	static TemplateTypeArg makeType(Type t, TypeIndex idx = 0) {
+	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateTypeArg arg;
 		arg.base_type = t;
 		arg.type_index = idx;
@@ -291,7 +291,7 @@ struct TemplateTypeArg {
 		    ? Type::Int : base_type;
 		size_t h = std::hash<int>{}(static_cast<int>(effective_type));
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
-			h ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -407,8 +407,8 @@ struct TemplateTypeArg {
 				case Type::Struct:
 				case Type::Enum:
 					// For user-defined types, look up the name from gTypeInfo
-					if (type_index < gTypeInfo.size()) {
-						result += StringTable::getStringView(gTypeInfo[type_index].name());
+					if (type_index.value < gTypeInfo.size()) {
+						result += StringTable::getStringView(gTypeInfo[type_index.value].name());
 					} else {
 						result += "?";
 					}
@@ -456,7 +456,7 @@ struct TemplateTypeArg {
 		    ? Type::Int : base_type;
 		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
-			hash ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -491,7 +491,7 @@ struct TemplateTypeArgHash {
 		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		// Only include type_index in hash for user-defined types (to match operator==)
 		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
-			hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<size_t>{}(arg.type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);

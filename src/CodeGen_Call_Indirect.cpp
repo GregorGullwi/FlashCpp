@@ -68,16 +68,16 @@
 				
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(Type::Void, 0, 0, memberFunctionCallNode.called_from());
+				TypeSpecifierNode return_type_node(Type::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
 					call_op.return_type = ret_type.type();
-					call_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
+					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
 					call_op.return_type = Type::Void;
-					call_op.return_size_in_bits = 0;
+					call_op.return_size_in_bits = SizeInBits{0};
 				}
 				
 				// Build TypeSpecifierNodes for parameters (needed for mangling)
@@ -123,7 +123,7 @@
 							arg_types.push_back(TypeSpecifierNode(
 								operand_result.type,
 								TypeQualifier::None,
-								static_cast<unsigned char>(operand_result.size_in_bits)
+								static_cast<unsigned char>(operand_result.size_in_bits.value)
 							));
 						}
 					});
@@ -221,7 +221,7 @@
 						// Convert to TypedValue
 						TypedValue arg;
 						arg.type = type_node.type();
-						arg.size_in_bits = static_cast<int>(type_node.size_in_bits());
+						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
 						call_op.args.push_back(arg);
 					} else {
@@ -233,16 +233,16 @@
 
 				// Capture return type info before moving call_op (use-after-move is UB)
 				Type lambda_return_type = call_op.return_type;
-				int lambda_return_size = call_op.return_size_in_bits;
+				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 				// Return the result with actual return type from lambda
-				return makeExprResult(lambda_return_type, lambda_return_size, IrOperand{ret_var});
+				return makeExprResult(lambda_return_type, SizeInBits{static_cast<int>(lambda_return_size)}, IrOperand{ret_var});
 			}
 
-			if (!std::holds_alternative<StringHandle>(lambda_result.value) || lambda_result.type_index == 0) {
+			if (!std::holds_alternative<StringHandle>(lambda_result.value) || !lambda_result.type_index.is_valid()) {
 				throw InternalError("Immediate capturing lambda did not produce a named closure object");
 			}
 
@@ -250,7 +250,7 @@
 			immediate_lambda_object_type = TypeSpecifierNode(
 				Type::Struct,
 				lambda_result.type_index,
-				static_cast<int>(lambda_result.size_in_bits),
+				static_cast<int>(lambda_result.size_in_bits.value),
 				memberFunctionCallNode.called_from()
 			);
 
@@ -390,8 +390,8 @@
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && (resolved_member->type == Type::Struct || resolved_member->type == Type::UserDefined)) {
 					// Get the struct info for the member's type
-					if (resolved_member->type_index < gTypeInfo.size()) {
-						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index];
+					if (resolved_member->type_index.value < gTypeInfo.size()) {
+						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index.value];
 						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 						if (member_struct_info) {
 							// Look for the called function name in this struct's members
@@ -414,7 +414,7 @@
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
 									member_load.result.type = Type::FunctionPointer;
-									member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;
 									member_load.member_name = func_name_handle;
 									member_load.offset = static_cast<int>(member.offset);
@@ -448,7 +448,7 @@
 									}
 									Type ret_type = member.function_signature->return_type;
 									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-									return makeExprResult(ret_type, ret_size, IrOperand{ret_var});
+									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var});
 								}
 							}
 							
@@ -590,7 +590,7 @@
 		bool is_virtual_call = false;
 		int vtable_index = -1;
 
-		size_t struct_type_index = object_type.type_index();
+		size_t struct_type_index = object_type.type_index().value;
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 
@@ -634,8 +634,8 @@
 				if (!called_member_func && !struct_info->base_classes.empty()) {
 					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
-							if (base_spec.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+							if (base_spec.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {
@@ -700,7 +700,7 @@
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
 						member_load.result.type = member.type;
-						member_load.result.size_in_bits = static_cast<int>(member.size * 8);  // Convert bytes to bits
+						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand
 						if (object_name.empty()) {
@@ -752,7 +752,7 @@
 						}
 						Type ret_type = member.function_signature->return_type;
 						int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-						return makeExprResult(ret_type, ret_size, IrOperand{ret_var});
+						return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var});
 					}
 				}
 			}
@@ -791,11 +791,11 @@
 					
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back({Type::Bool, 0});
+						arg_types.push_back({Type::Bool, TypeIndex{}});
 					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 						// DEBUG removed
-						arg_types.push_back({lit.type(), 0});
+						arg_types.push_back({lit.type(), TypeIndex{}});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -962,9 +962,9 @@
 			" is_rref=", return_type.is_rvalue_reference(),
 			" size_bits=", return_type.size_in_bits());
 			if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
-				vcall_op.result.size_in_bits = 64;
+				vcall_op.result.size_in_bits = SizeInBits{64};
 			} else {
-				vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
+				vcall_op.result.size_in_bits = SizeInBits{return_type.size_in_bits()};
 			}
 			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
@@ -999,7 +999,7 @@
 					
 					TypedValue tv;
 					tv.type = type_node.type();
-					tv.size_in_bits = static_cast<int>(type_node.size_in_bits());
+					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());
 					vcall_op.arguments.push_back(tv);
 				}
@@ -1216,7 +1216,7 @@
 			const auto& return_type = *return_type_ptr;
 			call_op.return_type = return_type.type();
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
-			call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits());
+			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
 			call_op.is_member_function = true;
 			
 			// Get the actual function declaration to check if it's variadic
@@ -1274,8 +1274,8 @@
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
 					addr_op.operand.type = object_type.type();
-					addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
-					addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
+					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 					addr_op.operand.value = obj_temp;
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
 					this_arg_value = IrValue(this_addr);
@@ -1289,15 +1289,15 @@
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
 				addr_op.operand.type = object_type.type();
-				addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
-				addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
+				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
 				this_arg_value = IrValue(this_addr);
 			}
 			call_op.args.push_back(TypedValue{
 				.type = object_type.type(),
-				.size_in_bits = 64,  // Pointer size - always 64 bits on x64 architecture
+				.size_in_bits = SizeInBits{64},  // Pointer size - always 64 bits on x64 architecture
 				.value = this_arg_value
 			});
 
@@ -1344,7 +1344,7 @@
 						// Function being passed as function pointer - just pass its name
 						call_op.args.push_back(TypedValue{
 							.type = Type::FunctionPointer,
-							.size_in_bits = 64,  // Pointer size
+							.size_in_bits = SizeInBits{64},  // Pointer size
 							.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 						});
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
@@ -1359,7 +1359,7 @@
 								// Use 64-bit pointer size since references are passed as pointers
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
+									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
@@ -1370,7 +1370,7 @@
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = 64,  // Pointer size
+									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
@@ -1379,7 +1379,7 @@
 							// Regular pass by value
 							call_op.args.push_back(TypedValue{
 								.type = type_node.type(),
-								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+								.size_in_bits = SizeInBits{type_node.size_in_bits()},
 								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 							});
 						}
@@ -1397,7 +1397,7 @@
 								// Use 64-bit pointer size since references are passed as pointers
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
+									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
@@ -1408,7 +1408,7 @@
 								// Pass the address with pointer size
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = 64,  // Pointer size
+									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
@@ -1417,7 +1417,7 @@
 							// Regular pass by value
 							call_op.args.push_back(TypedValue{
 								.type = type_node.type(),
-								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+								.size_in_bits = SizeInBits{type_node.size_in_bits()},
 								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 							});
 						}
@@ -1444,7 +1444,7 @@
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
 							Type literal_type = argument_result.type;
-							int literal_size = argument_result.size_in_bits;
+							int literal_size = argument_result.size_in_bits.value;
 							
 							// Create a temporary variable to hold the literal value
 							TempVar temp_var = var_counter.next();
@@ -1462,8 +1462,8 @@
 							}
 							
 							// Create TypedValue for lhs and rhs
-							assign_op.lhs = TypedValue{literal_type, literal_size, temp_var};
-							assign_op.rhs = TypedValue{literal_type, literal_size, rhs_value};
+							assign_op.lhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var};
+							assign_op.rhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value};
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 							
@@ -1473,7 +1473,7 @@
 							// Pass the address
 							call_op.args.push_back(TypedValue{
 								.type = literal_type,
-								.size_in_bits = 64,  // Pointer size
+								.size_in_bits = SizeInBits{64},  // Pointer size
 								.value = IrValue(addr_var),
 								.ref_qualifier = ReferenceQualifier::LValueReference
 							});
@@ -1481,14 +1481,14 @@
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
 								Type expr_type = argument_result.type;
-								int expr_size = argument_result.size_in_bits;
+								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 								
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
 								call_op.args.push_back(TypedValue{
 									.type = expr_type,
-									.size_in_bits = 64,  // Pointer size
+									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
@@ -1539,10 +1539,10 @@
 		
 		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
-			: 0;
+			: TypeIndex{};
 		return makeExprResult(
 			return_type.type(),
-			return_size_bits,
+			SizeInBits{return_size_bits},
 			IrOperand{ret_var},
 			ret_type_index
 		);

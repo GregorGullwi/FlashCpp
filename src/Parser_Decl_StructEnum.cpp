@@ -271,10 +271,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			if (type_spec_opt.has_value() && 
 			    type_spec_opt->type() == Type::Struct && 
-			    type_spec_opt->type_index() > 0 &&
-			    type_spec_opt->type_index() < gTypeInfo.size()) {
+			    type_spec_opt->type_index().is_valid() &&
+			    type_spec_opt->type_index().value < gTypeInfo.size()) {
 				// Successfully evaluated - add as regular base class
-				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index()];
+				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index().value];
 				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
 				
 				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
@@ -362,8 +362,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							info.is_dependent = targ.is_dependent;
 							
 							StringHandle dep_name = targ.dependent_name;
-							if (!dep_name.isValid() && targ.type_index < gTypeInfo.size()) {
-								dep_name = gTypeInfo[targ.type_index].name_;
+							if (!dep_name.isValid() && targ.type_index.value < gTypeInfo.size()) {
+								dep_name = gTypeInfo[targ.type_index.value].name_;
 							}
 							if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
 								dep_name = current_template_param_names_[arg_idx];
@@ -494,8 +494,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
 				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
-					if (arg.type_index < gTypeInfo.size()) {
-						StringHandle type_name_handle = gTypeInfo[arg.type_index].name();
+					if (arg.type_index.value < gTypeInfo.size()) {
+						StringHandle type_name_handle = gTypeInfo[arg.type_index.value].name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
 						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
 						if (contains_template_param(type_name_handle)) {
@@ -514,8 +514,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
 						// Check if the type name contains template parameters
-						if (type_spec.type_index() < gTypeInfo.size()) {
-							StringHandle type_name_handle = gTypeInfo[type_spec.type_index()].name();
+						if (type_spec.type_index().value < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_spec.type_index().value].name();
 							// Check if this type is a template (has nested template args)
 							// If it's a template class and we're inside a template body, 
 							// and it was registered with the same name as the primary template,
@@ -578,8 +578,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Type aliases have a type_index that points to the actual struct/class
 				const TypeInfo* resolved_type = alias_type_info;
 				size_t max_alias_depth = 10;  // Prevent infinite loops
-				while (resolved_type->type_index_ < gTypeInfo.size() && max_alias_depth-- > 0) {
-					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_];
+				while (resolved_type->type_index_.value < gTypeInfo.size() && max_alias_depth-- > 0) {
+					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_.value];
 					// Stop if we're pointing to ourselves (not a valid alias)
 					if (&underlying == resolved_type) break;
 					
@@ -1356,7 +1356,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				
 				// Push struct context so static member references can be resolved
 				// This enables expressions like `!is_signed` to find `is_signed` as a static member
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				auto type_it = gTypesByName.find(qualified_struct_name);
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
@@ -1652,7 +1652,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// Look up the struct type
 					auto type_it = gTypesByName.find(struct_name);
-					size_t struct_type_index = 0;
+					TypeIndex struct_type_index{};
 					if (type_it != gTypesByName.end()) {
 						struct_type_index = type_it->second->type_index_;
 					}
@@ -1796,7 +1796,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
@@ -2050,7 +2050,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Look up the struct type to get its type index
 				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
@@ -2720,11 +2720,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	    !parsing_template_class_) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
-			if (base_class.type_index >= gTypeInfo.size()) {
+			if (base_class.type_index.value >= gTypeInfo.size()) {
 				continue;
 			}
 			
-			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index];
+			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index.value];
 			const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 			
 			if (!base_struct_info) {
@@ -3105,7 +3105,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Bool,
-				0,  // type_index for bool
+				TypeIndex{},  // type_index for bool
 				8,  // size in bits
 				name_token,
 				CVQualifier::None
@@ -3297,7 +3297,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
 			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
-			deferred.struct_type_index = delayed.struct_type_index;
+			deferred.struct_type_index = delayed.struct_type_index.value;
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
 			deferred.is_const_method = is_const_method;
@@ -3642,7 +3642,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	StructMember member{
 		funcptr_name_handle,
 		Type::FunctionPointer,
-		0,  // type_index for function pointers
+		TypeIndex{},  // type_index for function pointers
 		0,  // offset will be calculated later
 		pointer_size,
 		pointer_alignment,
@@ -3960,8 +3960,8 @@ ParseResult Parser::parse_friend_declaration()
 		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
 		// Use the type_index to look up the full qualified name from gTypeInfo,
 		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
-		StringHandle friend_name = (type_spec.type_index() < gTypeInfo.size())
-			? gTypeInfo[type_spec.type_index()].name()
+		StringHandle friend_name = (type_spec.type_index().value < gTypeInfo.size())
+			? gTypeInfo[type_spec.type_index().value].name()
 			: type_spec.token().handle();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
 		return saved_position.success(friend_node);
@@ -4069,7 +4069,7 @@ ParseResult Parser::parse_friend_declaration()
 			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
 				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
 			} else {
-				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, 0, 0, Token());
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, TypeIndex{}, 0, Token());
 			}
 
 			// Build the declaration and function declaration nodes
@@ -4091,7 +4091,7 @@ ParseResult Parser::parse_friend_declaration()
 				body_start,
 				{},       // initializer_list_start (not used)
 				{},       // struct_name (not needed for free function)
-				0,        // struct_type_index (not needed for free function)
+				TypeIndex{},  // struct_type_index (not needed for free function)
 				nullptr,  // struct_node (not needed for free function)
 				false,    // has_initializer_list
 				false,    // is_constructor

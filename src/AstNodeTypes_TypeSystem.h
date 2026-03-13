@@ -1,6 +1,8 @@
 #pragma once
 #include "AstNodeTypes_Core.h"
 #include <cassert>
+#include <format>
+#include <functional>
 
 
 enum class TypeQualifier {
@@ -316,7 +318,40 @@ enum class Type : int_fast16_t {
 	Template,             // Nested template param
 };
 
-using TypeIndex = size_t;
+// Strong wrapper for type indices into gTypeInfo[].
+// Explicit construction prevents accidental int/size_t → TypeIndex implicit
+// conversion at write sites; read sites use .value explicitly.
+struct TypeIndex {
+	size_t value = 0;
+	// Non-explicit default ctor: keeps TypeIndex{} and aggregate-init working.
+	constexpr TypeIndex() noexcept = default;
+	// Explicit single-arg ctor: prevents bare integer → TypeIndex conversion.
+	constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
+	// Increment operators for loop variables.
+	TypeIndex& operator++() noexcept { ++value; return *this; }
+	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
+	// Spaceship operator covers all relational and equality comparisons.
+	constexpr auto operator<=>(const TypeIndex&) const noexcept = default;
+	// True when the index is non-zero (i.e., refers to a real type entry).
+	constexpr bool is_valid() const noexcept { return value > 0; }
+};
+
+namespace std {
+template<>
+struct hash<TypeIndex> {
+	size_t operator()(TypeIndex idx) const noexcept { return std::hash<size_t>{}(idx.value); }
+};
+template<>
+struct formatter<TypeIndex, char> : formatter<size_t, char> {
+	auto format(const TypeIndex& idx, format_context& ctx) const {
+		return formatter<size_t, char>::format(idx.value, ctx);
+	}
+};
+}  // namespace std
+inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
+	return os << idx.value;
+}
+
 
 /// Helper function to get the C++ name string for a Type
 /// Returns the string used in C++ source code (e.g., "int", "unsigned long")

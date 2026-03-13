@@ -541,8 +541,8 @@ public:
 				}
 				
 				// If no member name was extracted, check the type name via type_index
-				if (!member_name.isValid() && first_arg.type_index > 0 && first_arg.type_index < gTypeInfo.size()) {
-					std::string_view type_name = StringTable::getStringView(gTypeInfo[first_arg.type_index].name());
+				if (!member_name.isValid() && first_arg.type_index.is_valid() && first_arg.type_index.value < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[first_arg.type_index.value].name());
 					size_t scope_pos = type_name.rfind("::");
 					if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
 						std::string_view extracted_member = type_name.substr(scope_pos + 2);

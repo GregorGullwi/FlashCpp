@@ -44,9 +44,9 @@
 
 		if (std::holds_alternative<TempVar>(arg.value)) {
 			TempVar temp_var = std::get<TempVar>(arg.value);
-			int32_t var_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits);
+			int32_t var_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits.value);
 			auto ref_info = getIndirectStackInfo(var_offset);
-			if (!ref_info.has_value() && arg.size_in_bits != 64) {
+			if (!ref_info.has_value() && arg.size_in_bits != SizeInBits{64}) {
 				int32_t pointer_source_offset = getStackOffsetFromTempVar(temp_var, 64);
 				if (pointer_source_offset != var_offset) {
 					auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
@@ -107,7 +107,7 @@
 			flushAllDirtyRegisters();
 			
 			// Determine effective return size; fall back to type size if not provided
-			int return_size_bits = call_op.return_size_in_bits;
+			int return_size_bits = call_op.return_size_in_bits.value;
 			if (return_size_bits == 0) {
 				int computed_size = get_type_size_bits(call_op.return_type);
 				if (computed_size > 0) {
@@ -462,7 +462,7 @@
 					unsigned long long value = std::get<unsigned long long>(arg.value);
 					// Use 32-bit mov for 32-bit arguments (automatically zero-extends to 64-bit)
 					// This ensures proper handling of signed 32-bit values like -1
-					if (arg.size_in_bits == 32) {
+					if (arg.size_in_bits == SizeInBits{32}) {
 						// Cast to uint32_t truncates to lower 32 bits (intended behavior)
 						// For signed values like -1 (0xFFFFFFFFFFFFFFFF), this gives 0xFFFFFFFF
 						emitMovImm32(target_reg, static_cast<uint32_t>(value));
@@ -493,7 +493,7 @@
 						// Both sizes are explicit for clarity
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -520,7 +520,7 @@
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -674,11 +674,11 @@
 	}
 
 	bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
-		if (type_index == 0 || type_index >= gTypeInfo.size()) {
+		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
 			return false;
 		}
 
-		const TypeInfo& type_info = gTypeInfo[type_index];
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
 			return false;
@@ -710,9 +710,9 @@
 			// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
 			// metadata is populated during IR generation and later reused across multiple
 			// functions. Use only current-function stack-side indirect-storage info.
-			int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits);
+			int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits.value);
 			auto source_ref_info = getIndirectStackInfo(source_offset);
-			if (!source_ref_info.has_value() && source_arg.size_in_bits != 64) {
+			if (!source_ref_info.has_value() && source_arg.size_in_bits != SizeInBits{64}) {
 				int32_t pointer_source_offset = getStackOffsetFromTempVar(source_temp, 64);
 				if (pointer_source_offset != source_offset) {
 					auto pointer_ref_info = getIndirectStackInfo(pointer_source_offset);
@@ -751,7 +751,7 @@
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(Type::Void, 0, 0);
+		TypeSpecifierNode void_return(Type::Void, TypeIndex{}, 0);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -904,7 +904,7 @@
 					const TypedValue& arg = ctor_op.arguments[0];
 					bool arg_is_same_struct = (arg.type == Type::Struct &&
 						arg.type_index == struct_type_it->second->type_index_);
-					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
+					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == SizeInBits{64});
 
 					if (arg_is_same_struct && arg_is_ref_or_pointer) {
 						bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
@@ -925,10 +925,10 @@
 					arg_types.reserve(num_params);
 					for (const auto& arg : ctor_op.arguments) {
 						TypeSpecifierNode arg_type = (arg.type == Type::Struct || arg.type == Type::UserDefined)
-							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits)
-							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits);
-						if (arg.pointer_depth > 0) {
-							for (int i = 0; i < arg.pointer_depth; ++i) {
+							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
+							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
+						if (arg.pointer_depth.is_pointer()) {
+							for (int i = 0; i < arg.pointer_depth.value; ++i) {
 								arg_type.add_pointer_level();
 							}
 						}
@@ -991,17 +991,17 @@
 				}
 				// Fallback: if we can't get the param type, create a default one
 				const TypedValue& arg = ctor_op.arguments[i];
-				parameter_types.push_back(TypeSpecifierNode(arg.type, TypeQualifier::None, static_cast<unsigned char>(arg.size_in_bits), Token{}));
+				parameter_types.push_back(TypeSpecifierNode(arg.type, TypeQualifier::None, static_cast<unsigned char>(arg.size_in_bits.value), Token{}));
 			}
 		} else {
 			// Fallback to old logic: infer from argument types
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
 				Type paramType = arg.type;
-				int paramSize = arg.size_in_bits;
+				int paramSize = arg.size_in_bits.value;
 				TypeIndex arg_type_index = arg.type_index;
 				bool arg_is_reference = arg.is_reference();  // Check if marked as reference
-				int arg_pointer_depth = arg.pointer_depth;
+				int arg_pointer_depth = arg.pointer_depth.value;
 				CVQualifier arg_cv_qualifier = arg.cv_qualifier;
 				
 				// Build TypeSpecifierNode for this parameter
@@ -1033,7 +1033,7 @@
 				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
 				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 				bool is_same_struct_type = false;
-				if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
+				if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
 					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 				}
 				
@@ -1067,7 +1067,7 @@
 						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
-				} else if (paramType == Type::Struct && arg_type_index != 0) {
+				} else if (paramType == Type::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
 					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
 					// Add pointer levels (rebuild after creating with type_index)
@@ -1178,18 +1178,17 @@
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			Type paramType = arg.type;
-			int paramSize = arg.size_in_bits;
+			int paramSize = arg.size_in_bits.value;
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
-			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
+			bool arg_is_reference = arg.is_reference();
 			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
-			// Check if this is a floating-point parameter
 			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;
 
 			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
 			bool is_same_struct_type = false;
-			if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
+			if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
 				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 			}
 			bool is_reference_param = arg_is_reference || (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
@@ -1629,7 +1628,7 @@
 		if (op.result.type != Type::Void) {
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-				SizedStackSlot{result_offset, op.result.size_in_bits, isSignedType(op.result.type)}  // dest
+				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.type)}  // dest
 			);
 		}
 

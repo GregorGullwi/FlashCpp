@@ -217,8 +217,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
 	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
-		if (type == Type::Struct && type_index > 0 && type_index < gTypeInfo.size()) {
-			if (gTypeInfo[type_index].name() == lazy_info.class_template_name) {
+		if (type == Type::Struct && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+			if (gTypeInfo[type_index.value].name() == lazy_info.class_template_name) {
 				// This type refers to the template base class — resolve to the instantiated class
 				auto it = gTypesByName.find(lazy_info.instantiated_class_name);
 				if (it != gTypesByName.end()) {
@@ -956,8 +956,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get size for the member
 		size_t member_size = 0;
-		if (substituted_type_index < gTypeInfo.size()) {
-			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index];
+		if (substituted_type_index.value < gTypeInfo.size()) {
+			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
 			if (member_type_info.getStructInfo()) {
 				member_size = member_type_info.getStructInfo()->total_size;
 			} else {
@@ -969,8 +969,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get alignment for the member
 		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (substituted_type_index < gTypeInfo.size()) {
-			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index];
+		if (substituted_type_index.value < gTypeInfo.size()) {
+			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
 			if (member_type_info.getStructInfo()) {
 				member_alignment = member_type_info.getStructInfo()->alignment;
 			}

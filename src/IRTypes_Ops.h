@@ -389,12 +389,12 @@ private:
 // Typed value - combines IrValue with its type information
 struct TypedValue {
 	Type type = Type::Void;	// 4 bytes (enum)
-	int size_in_bits = 0;	// 4 bytes
+	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrValue value;          // 32 bytes (variant)
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
-	TypeIndex type_index = 0;   // Index into gTypeInfo for struct/enum types (0 = not set)
-	int pointer_depth = 0;      // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
+	TypeIndex type_index {};   // Index into gTypeInfo for struct/enum types (0 = not set)
+	PointerDepth pointer_depth = PointerDepth{};  // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
 	
 	// Helper methods for reference checks
@@ -448,8 +448,8 @@ struct CallOp {
 	std::vector<TypedValue> args;         // 24 bytes (using TypedValue instead of CallArg)
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
-	int return_size_in_bits;              // 4 bytes
-	TypeIndex return_type_index = 0;      // Type index for struct/class return types
+	SizeInBits return_size_in_bits;              // 4 bytes
+	TypeIndex return_type_index {};      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
@@ -587,9 +587,9 @@ struct ComputeAddressOp {
 	// Array indexing (optional, can have multiple for nested arrays)
 	struct ArrayIndex {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
-		int element_size_bits;                       // Size of array element
+		SizeInBits element_size_bits;                // Size of array element
 		Type index_type;                             // Type of the index (for proper sign extension)
-		int index_size_bits;                         // Size of the index in bits
+		SizeInBits index_size_bits;                  // Size of the index in bits
 	};
 	std::vector<ArrayIndex> array_indices;
 	
@@ -597,7 +597,7 @@ struct ComputeAddressOp {
 	int total_member_offset = 0;                     // Sum of all member offsets
 	
 	Type result_type = Type::Invalid;                // Type of final address
-	int result_size_bits;                            // Size in bits
+	SizeInBits result_size_bits;                            // Size in bits
 };
 
 // Dereference operator (*ptr)
@@ -653,7 +653,7 @@ struct StringLiteralOp {
 struct StackAllocOp {
 	std::variant<StringHandle, TempVar> result;  // Result variable
 	Type type = Type::Invalid;                        // Type being allocated
-	int size_in_bits = 0;                             // Size in bits
+	SizeInBits size_in_bits = SizeInBits{0};                             // Size in bits
 };
 
 // Assignment operation
@@ -681,8 +681,8 @@ struct LoopBeginOp {
 // Function parameter information
 struct FunctionParam {
 	Type type = Type::Invalid;
-	int size_in_bits = 0;
-	int pointer_depth = 0;
+	SizeInBits size_in_bits = SizeInBits{0};
+	PointerDepth pointer_depth = PointerDepth{};
 	StringHandle name;  // Pure StringHandle
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
@@ -700,9 +700,9 @@ struct FunctionParam {
 // Function declaration
 struct FunctionDeclOp {
 	Type return_type = Type::Void;
-	int return_size_in_bits = 0;
-	int return_pointer_depth = 0;
-	TypeIndex return_type_index = 0;  // Type index for struct/class return types
+	SizeInBits return_size_in_bits;
+	PointerDepth return_pointer_depth = PointerDepth{};
+	TypeIndex return_type_index {};  // Type index for struct/class return types
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
 	StringHandle function_name;  // Pure StringHandle
@@ -802,7 +802,7 @@ struct FunctionAddressOp {
 // Variable declaration (local)
 struct VariableDeclOp {
 	Type type = Type::Invalid;
-	int size_in_bits = 0;
+	SizeInBits size_in_bits = SizeInBits{0};
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
@@ -828,7 +828,7 @@ struct VariableDeclOp {
 // Global variable declaration
 struct GlobalVariableDeclOp {
 	Type type = Type::Invalid;
-	int size_in_bits = 0;          // Size of one element in bits
+	SizeInBits size_in_bits = SizeInBits{0};          // Size of one element in bits
 	StringHandle var_name;  // Pure StringHandle
 	bool is_initialized = false;
 	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
@@ -846,7 +846,7 @@ struct HeapAllocOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 };
 
 // Heap array allocation (new[] operator)
@@ -854,7 +854,7 @@ struct HeapAllocArrayOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 	IrValue count;               // Array element count (TempVar or constant)
 	bool needs_cookie = false;   // If true, prepend 8-byte count cookie; result points past cookie
 };
@@ -875,7 +875,7 @@ struct PlacementNewOp {
 	TempVar result;              // Result pointer variable
 	Type type = Type::Invalid;
 	int size_in_bytes = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth = PointerDepth{};
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
 };
 
@@ -884,7 +884,7 @@ struct TypeConversionOp {
 	TempVar result;              // Result variable
 	TypedValue from;             // Source value with type information
 	Type to_type = Type::Invalid;   // Target type
-	int to_size_in_bits = 0;     // Target size
+	SizeInBits to_size_in_bits;     // Target size
 };
 
 // RTTI: typeid operation

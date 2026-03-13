@@ -139,8 +139,8 @@ ASTNode Parser::substituteTemplateParameters(
 						arg.cv_qualifier = parg.cv_qualifier;
 						
 						// Check if this arg is a template parameter that should be substituted
-						if (parg.type_index < gTypeInfo.size()) {
-							std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[parg.type_index].name());
+						if (parg.type_index.value < gTypeInfo.size()) {
+							std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[parg.type_index.value].name());
 							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
 								if (!template_params[p].is<TemplateParameterNode>()) continue;
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -780,8 +780,8 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) && type_spec.type_index() < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					if ((type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) && type_spec.type_index().value < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
 						// Check if this type name matches a template parameter
@@ -901,8 +901,8 @@ ASTNode Parser::substituteTemplateParameters(
 				template_args);
 			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
 				int substituted_size_bits = get_type_size_bits(substituted_type);
-				if (substituted_type_index > 0 && substituted_type_index < gTypeInfo.size() && gTypeInfo[substituted_type_index].type_size_ > 0) {
-					substituted_size_bits = gTypeInfo[substituted_type_index].type_size_;
+				if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size() && gTypeInfo[substituted_type_index.value].type_size_ > 0) {
+					substituted_size_bits = gTypeInfo[substituted_type_index.value].type_size_;
 				}
 				TypeSpecifierNode substituted_spec(
 					substituted_type,

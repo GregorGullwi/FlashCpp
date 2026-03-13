@@ -5,7 +5,7 @@
 				variable_scopes.back().scope_stack_space = reg_info.stackVariableOffset;
 			}
 
-			int spill_size_in_bits = reg_info.size_in_bits > 0 ? reg_info.size_in_bits : 64;
+			int spill_size_in_bits = reg_info.size_in_bits.is_set() ? reg_info.size_in_bits.value : 64;
 			emitMovToFrameSized(
 				SizedRegister{target_reg, 64, false},
 				SizedStackSlot{reg_info.stackVariableOffset, spill_size_in_bits, false}
@@ -24,7 +24,7 @@
 		global_info.name = op.var_name;
 		global_info.type = op.type;
 		global_info.is_initialized = op.is_initialized;
-		global_info.size_in_bytes = (op.size_in_bits / 8) * op.element_count;
+		global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 		global_info.reloc_target = op.reloc_target;
 		
 		// Copy raw init data if present
@@ -61,7 +61,7 @@
 		
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		StringHandle global_name_handle = op.getGlobalName();
-		int size_in_bits = op.result.size_in_bits;
+		int size_in_bits = op.result.size_in_bits.value;
 		Type result_type = op.result.type;
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
 		bool is_float = (result_type == Type::Float);
@@ -185,11 +185,11 @@
 		if (is_reference) {
 			// For references, we need to determine the size of the VALUE being referenced,
 			// not the size of the reference itself (which is always 64 bits for a pointer)
-			int value_size_bits = op.size_in_bits;
+			int value_size_bits = op.size_in_bits.value;
 			
 			// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
 			// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
-			if (op.size_in_bits == 64) {
+			if (op.size_in_bits == SizeInBits{64}) {
 				// Try to get the actual size from the type
 				int calculated_size = get_type_size_bits(var_type);
 				if (calculated_size > 0 && calculated_size != 64) {
@@ -208,7 +208,7 @@
 				const TypedValue& init = op.initializer.value();
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-					int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+					int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits.value);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
 					          " init.type=", static_cast<int>(init.type), 
 					          " init.size_in_bits=", init.size_in_bits);
@@ -224,7 +224,7 @@
 						// For __range_begin_ and similar, which are int64 pointers
 						// Also check for struct types that returned as pointers (reference returns)
 						// And function pointers which are always 64-bit addresses
-						bool is_likely_pointer = (init.size_in_bits == 64 && 
+						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} && 
 						                          (init.type == Type::Long || init.type == Type::Int || 
 						                           init.type == Type::UnsignedLong || init.type == Type::LongLong ||
 						                           init.type == Type::Struct || init.type == Type::FunctionPointer));  // Struct references and function references return 64-bit pointers
@@ -265,7 +265,7 @@
 					// C++ allows binding rvalue references and const lvalue references
 					// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
 					// extending the lifetime of a temporary.
-					int lit_size = op.size_in_bits;
+					int lit_size = op.size_in_bits.value;
 					if (lit_size == 64) {
 						// For references, size_in_bits is 64 (pointer size);
 						// use the actual value size from get_type_size_bits
@@ -392,7 +392,7 @@
 					// Store the value from register to stack (size-aware)
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
-						SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}  // dest
+						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}  // dest
 					);
 
 					// Release the register since the value is now in the stack
@@ -406,13 +406,13 @@
 				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
-						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits);
+						src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits.value);
 						// Backend lowering must use current-function indirect-storage state here.
 						// Frontend TempVar metadata can describe a different function by the time
 						// we lower this VariableDecl, which can misclassify inline struct storage
 						// (such as large return-slot results) as an indirect pointer source.
 						auto ref_info = getIndirectStackInfo(src_offset);
-						if (!ref_info.has_value() && init.size_in_bits != 64) {
+						if (!ref_info.has_value() && init.size_in_bits != SizeInBits{64}) {
 							int32_t pointer_src_offset = getStackOffsetFromTempVar(temp_var, 64);
 							if (pointer_src_offset != src_offset) {
 								auto pointer_ref_info = getIndirectStackInfo(pointer_src_offset);
@@ -459,7 +459,7 @@
 						}
 				}
 
-						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
+						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index.is_valid()) {
 							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 							return;
 						}
@@ -477,15 +477,15 @@
 						// For integer types, use regular mov
 						// Use the actual size from the variable type, not hardcoded 64 bits
 						emitMovToFrameSized(
-							SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits), false},
-							SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}
+							SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
 						);
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
 					if (var_type == Type::Struct) {
 						// For struct types, copy entire struct using 8-byte chunks
-						int struct_size_bytes = (op.size_in_bits + 7) / 8;
+						int struct_size_bytes = (op.size_in_bits.value + 7) / 8;
 						
 						FLASH_LOG(Codegen, Info, "==================== STRUCT COPY IN HANDLEVARIABLE ====================");
 						FLASH_LOG(Codegen, Info, "size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset, ", src_is_pointer=", src_is_pointer);
@@ -612,10 +612,10 @@
 					} else {
 						// For integer types, use GPR and integer moves
 						allocated_reg_val = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits);
+						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits.value);
 						emitMovToFrameSized(
 							SizedRegister{allocated_reg_val, 64, false},
-							SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
 						);
 						regAlloc.release(allocated_reg_val);
 					}
@@ -788,16 +788,16 @@
 		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 		
 		// Construct return type
-		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits));
-		for (int i = 0; i < func_decl.return_pointer_depth; ++i) {
+		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
+		for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 			return_type.add_pointer_level();
 		}
 		
 		// Extract parameters
 		std::vector<TypeSpecifierNode> parameter_types;
 		for (const auto& param : func_decl.parameters) {
-			TypeSpecifierNode param_type(param.type, TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits));
-			for (int i = 0; i < param.pointer_depth; ++i) {
+			TypeSpecifierNode param_type(param.type, TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value));
+			for (int i = 0; i < param.pointer_depth.value; ++i) {
 				param_type.add_pointer_level();
 			}
 			parameter_types.push_back(param_type);
@@ -1095,7 +1095,7 @@
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
 		current_function_return_type_ = func_decl.return_type;
-		current_function_return_size_in_bits_ = func_decl.return_size_in_bits;
+		current_function_return_size_in_bits_ = func_decl.return_size_in_bits.value;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
 		current_function_this_offset_ = 0;
@@ -1189,8 +1189,8 @@
 						
 						// Populate base class names for RTTI
 						for (const auto& base : struct_info->base_classes) {
-							if (base.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type = gTypeInfo[base.type_index];
+							if (base.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
@@ -1385,7 +1385,7 @@
 						int32_t offset = -(static_cast<int32_t>(base_named_vars_size) + static_cast<int32_t>(reserved_offset));
 						auto& temp_info = variable_scopes.back().variables[temp_handle];
 						temp_info.offset = offset;
-						temp_info.size_in_bits = 64;
+						temp_info.size_in_bits = SizeInBits{64};
 						reserved_offset += 8;
 					}
 				}
@@ -1553,7 +1553,7 @@
 				StringHandle param_name_handle = instruction.getOperandAs<StringHandle>(paramIndex + FunctionDeclLayout::PARAM_NAME);
 				std::string_view param_name = StringTable::getStringView(param_name_handle);
 				variable_scopes.back().variables[param_name_handle].offset = offset;
-				variable_scopes.back().variables[param_name_handle].size_in_bits = param_size;
+				variable_scopes.back().variables[param_name_handle].size_in_bits = SizeInBits{static_cast<int>(param_size)};
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
@@ -1662,14 +1662,14 @@
 				// For variadic callees, the register-save-area prologue handles all register args,
 				// so this path is gated on !is_variadic.
 				bool is_two_reg_struct = !is_variadic &&
-				                        isTwoRegisterStructRaw(param.type, param.size_in_bits, param.is_reference(), param.pointer_depth);
+				                        isTwoRegisterStructRaw(param.type, param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0 && !param.is_reference();
+				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && !param.pointer_depth.is_pointer() && !param.is_reference();
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -1718,14 +1718,14 @@
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				bool is_passed_by_reference = param.is_reference() ||
-				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits > 64);
+				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits.value > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference());
+					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference());
 				}
 
 				// Add parameter to debug information
 				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
-				if (param.pointer_depth > 0) {
+				if (param.pointer_depth.is_pointer()) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
 					switch (param.type) {
@@ -1780,7 +1780,7 @@
 						// it does not need to be registered in regAlloc.
 					}
 
-					parameters.push_back({param.type, param.size_in_bits, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference(), second_reg});
+					parameters.push_back({param.type, param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
 				}
 			}
 		}
@@ -1803,7 +1803,7 @@
 		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
-				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0 && !param.is_reference;
+				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && !param.pointer_depth && !param.is_reference;
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
@@ -1957,8 +1957,8 @@
 		auto var_it = current_scope.variables.find(var_name);
 		if (var_it != current_scope.variables.end()) {
 			// Return the stored size if it's non-zero, otherwise use default
-			if (var_it->second.size_in_bits > 0) {
-				return var_it->second.size_in_bits;
+			if (var_it->second.size_in_bits.is_set()) {
+				return var_it->second.size_in_bits.value;
 			}
 		}
 		
@@ -2329,7 +2329,7 @@
 								spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 								emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 								// Dereference to get the value
-								int value_size_bytes = ref_it->second.value_size_bits / 8;
+								int value_size_bytes = ref_it->second.value_size_bits.value / 8;
 								emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 								// Value is now in RAX, ready to return
 							}
@@ -2549,7 +2549,7 @@
 							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
-							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							int value_size_bytes = ref_it->second.value_size_bits.value / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
 						} else if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && current_function_returns_reference_) {

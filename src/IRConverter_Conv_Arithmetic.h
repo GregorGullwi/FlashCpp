@@ -105,15 +105,15 @@
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
-		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Division requires special handling: dividend must be in RAX
 		// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
-		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
 		// Sign extend RAX into RDX:RAX (CQO for 64-bit)
-		if (ctx.result_value.size_in_bits == 64) {
+		if (ctx.result_value.size_in_bits.value == 64) {
 			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
 			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 }; // REX.W + CQO
 			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
@@ -125,7 +125,7 @@
 
 	    // idiv divisor_reg
 		uint8_t rex = 0x40; // Base REX prefix
-		if (ctx.result_value.size_in_bits == 64) {
+		if (ctx.result_value.size_in_bits.value == 64) {
 			rex |= 0x08; // Set REX.W for 64-bit operation
 		}
 
@@ -154,11 +154,11 @@
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
 
 		// Perform the shift left operation: shl r/m, cl
-		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -173,12 +173,12 @@
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
 
 		// Perform the shift right operation: sar r/m, cl (arithmetic right shift)
 		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
-		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -192,11 +192,11 @@
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned division");
-		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Division requires special handling: dividend must be in RAX
 		// Move result_physical_reg to RAX (dividend must be in RAX for div)
-		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
 		// xor edx, edx - clear upper 32 bits of dividend for unsigned division
@@ -204,7 +204,7 @@
 		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
 
 		// div divisor_reg (unsigned division)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
 
 		// Store the result from RAX (quotient) to the appropriate destination
 		storeArithmeticResult(ctx, X64Register::RAX);
@@ -219,12 +219,12 @@
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
 
 		// Perform the unsigned shift right operation: shr r/m, cl (logical right shift)
 		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
-		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHR, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
@@ -259,21 +259,21 @@
 
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo");
-		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// For x86-64, modulo is implemented using division
 		// idiv instruction computes both quotient (RAX) and remainder (RDX)
 		// We need the remainder in RDX
 
 		// Move dividend to RAX (dividend must be in RAX for idiv)
-		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits / 8);
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
 		// Release the original result register since we moved its value to RAX
 		regAlloc.release(ctx.result_physical_reg);
 
 		// Sign extend RAX into RDX:RAX
-		if (ctx.result_value.size_in_bits == 64) {
+		if (ctx.result_value.size_in_bits.value == 64) {
 			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
 			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 }; // REX.W + CQO
 			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
@@ -285,7 +285,7 @@
 
 	    // idiv divisor_reg
 		uint8_t rex = 0x40; // Base REX prefix
-		if (ctx.result_value.size_in_bits == 64) {
+		if (ctx.result_value.size_in_bits.value == 64) {
 			rex |= 0x08; // Set REX.W for 64-bit operation
 		}
 
@@ -311,7 +311,7 @@
 			);
 		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
-			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits);
+			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
 				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
@@ -930,7 +930,7 @@
 		auto load_ptr = generatePtrMovFromFrame(target_reg, offset);
 		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 			               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
-		loadValuePointedByRegister(target_reg, ref_info.value_size_bits);
+		loadValuePointedByRegister(target_reg, ref_info.value_size_bits.value);
 	}
 
 	bool loadAddressForOperand(const IrInstruction& instruction, size_t operand_index, X64Register target_reg) {
@@ -1097,7 +1097,7 @@
 		// Extract UnaryOp from typed payload
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
-		int size_in_bits = unary_op.value.size_in_bits;
+		int size_in_bits = unary_op.value.size_in_bits.value;
 		UnaryOperandLocation operand_location = resolveTypedValueLocation(unary_op.value);
 		X64Register target_reg = X64Register::RAX;
 		loadUnaryOperandValue(operand_location, size_in_bits, target_reg);
@@ -1153,7 +1153,7 @@
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
 		[[maybe_unused]] Type type = unary_op.value.type;
-		int size_in_bits = unary_op.value.size_in_bits;
+		int size_in_bits = unary_op.value.size_in_bits.value;
 
 		// Load the operand into a register
 		X64Register result_physical_reg;
@@ -1252,7 +1252,7 @@
 	void handleSignExtend(const IrInstruction& instruction) {
 		// Sign extension: movsx dest, src
 		const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
-		int fromSize = conv_op.from.size_in_bits;
+		int fromSize = conv_op.from.size_in_bits.value;
 		int toSize = conv_op.to_size;
 
 		// Get source value into a register
@@ -1304,7 +1304,7 @@
 	void handleZeroExtend(const IrInstruction& instruction) {
 		// Zero extension: movzx dest, src
 		const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
-		int fromSize = conv_op.from.size_in_bits;
+		int fromSize = conv_op.from.size_in_bits.value;
 		int toSize = conv_op.to_size;
 
 		// If source size is 0 (unknown/auto type) or equal to target size, this is a no-op.
@@ -1460,7 +1460,7 @@
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 		
 		// Only use REX.W for 64-bit result
-		bool need_rex_w = (op.to_size_in_bits == 64);
+		bool need_rex_w = (op.to_size_in_bits == SizeInBits{64});
 		uint8_t rex = need_rex_w ? 0x48 : 0x40;
 		
 		// Add REX.R if result register >= 8
@@ -1485,7 +1485,7 @@
 		regAlloc.release(source_xmm);
 
 		// Store result
-		storeConversionResult(instruction, result_reg, op.to_size_in_bits);
+		storeConversionResult(instruction, result_reg, op.to_size_in_bits.value);
 	}
 
 	void handleIntToFloat(const IrInstruction& instruction) {
@@ -1519,7 +1519,7 @@
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
 		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float);
-		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
+		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits.value);
 	}
 
 	void handleFloatToFloat(const IrInstruction& instruction) {
@@ -1567,7 +1567,7 @@
 		auto result_offset = getStackOffsetFromTempVar(op.result);
 		bool is_float_result = (op.to_type == Type::Float);
 		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
-		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
+		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits.value);
 	}
 
 	void handleAddAssign(const IrInstruction& instruction) {
@@ -1773,19 +1773,19 @@
 
 	void handleAndAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise and assignment");
-		emitBinaryOpInstruction(0x21, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitBinaryOpInstruction(0x21, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 		storeArithmeticResult(ctx);
 	}
 
 	void handleOrAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise or assignment");
-		emitBinaryOpInstruction(0x09, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitBinaryOpInstruction(0x09, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 		storeArithmeticResult(ctx);
 	}
 
 	void handleXorAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "bitwise xor assignment");
-		emitBinaryOpInstruction(0x31, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitBinaryOpInstruction(0x31, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 		storeArithmeticResult(ctx);
 	}
 
@@ -1794,10 +1794,10 @@
 		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
 		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
 		
 		// Emit SHL instruction with correct size
-		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 		
 		storeArithmeticResult(ctx);
 	}
@@ -1807,10 +1807,10 @@
 		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
 		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
 		
 		// Emit SAR instruction with correct size
-		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 		
 		storeArithmeticResult(ctx);
 	}
@@ -1838,7 +1838,7 @@
 			
 			// Get the value to store
 			X64Register value_reg = allocateRegisterWithSpilling();
-			int value_size_bytes = op.rhs.size_in_bits / 8;
+			int value_size_bytes = op.rhs.size_in_bits.value / 8;
 			
 			if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
 				// Immediate integer value
@@ -1858,7 +1858,7 @@
 				// Load from temp var
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-				emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits);
+				emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits.value);
 			} else {
 				throw InternalError("Unsupported RHS type for pointer store");
 				return;
@@ -1968,7 +1968,7 @@
 			}
 
 			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
-			int struct_size_bytes = (op.lhs.size_in_bits + 7) / 8;
+			int struct_size_bytes = (op.lhs.size_in_bits.value + 7) / 8;
 			
 			// Copy struct using 8-byte chunks, then handle remaining bytes
 			int offset = 0;
@@ -2131,11 +2131,11 @@
 			int value_size_bits;
 			if (lhs_ref_it != reference_stack_info_.end()) {
 				value_type = lhs_ref_it->second.value_type;
-				value_size_bits = lhs_ref_it->second.value_size_bits;
+				value_size_bits = lhs_ref_it->second.value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
 				value_type = op.lhs.type;
-				value_size_bits = op.lhs.size_in_bits;
+				value_size_bits = op.lhs.size_in_bits.value;
 			}
 			int value_size_bytes = value_size_bits / 8;
 			
@@ -2231,7 +2231,7 @@
 					X64Register ptr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
 					// Dereference to get the value
-					int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+					int value_size_bytes = rhs_ref_it->second.value_size_bits.value / 8;
 					emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 					source_reg = ptr_reg;
 				} else if (is_floating_point_type(rhs_type)) {
@@ -2242,7 +2242,7 @@
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
 					);
 				}
 			}
@@ -2281,7 +2281,7 @@
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
 				// Dereference to get the value
-				int value_size_bytes = rhs_ref_it->second.value_size_bits / 8;
+				int value_size_bytes = rhs_ref_it->second.value_size_bits.value / 8;
 				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 				source_reg = ptr_reg;
 			} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
@@ -2296,7 +2296,7 @@
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
 					);
 				}
 			}
@@ -2330,7 +2330,7 @@
 			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 			
 			// Now store the value to the address pointed to by ptr_reg
-			int value_size_bits = ref_it->second.value_size_bits;
+			int value_size_bits = ref_it->second.value_size_bits.value;
 			int size_bytes = value_size_bits / 8;
 			
 			if (is_floating_point_type(rhs_type)) {
@@ -2354,7 +2354,7 @@
 			} else {
 				emitMovToFrameSized(
 					SizedRegister{source_reg, 64, false},  // source: 64-bit register
-					SizedStackSlot{lhs_offset, op.lhs.size_in_bits, isSignedType(lhs_type)}  // dest: sized stack slot
+					SizedStackSlot{lhs_offset, op.lhs.size_in_bits.value, isSignedType(lhs_type)}  // dest: sized stack slot
 				);
 				// Clear any stale register associations for this stack offset
 				regAlloc.clearStackVariableAssociations(lhs_offset);
