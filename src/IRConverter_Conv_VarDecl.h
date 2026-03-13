@@ -1482,7 +1482,7 @@
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64);
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
 			}
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -1642,7 +1642,7 @@
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64);
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
 			}
 		
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)

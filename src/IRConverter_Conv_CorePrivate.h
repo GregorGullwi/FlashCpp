@@ -1256,7 +1256,7 @@
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
-	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var = TempVar{0}) {
+	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var) {
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, temp_var);
 	}
 
