@@ -424,14 +424,14 @@
 		// (transition period: not all TypedValue construction sites populate ir_type).
 		IrType operand_ir_type = bin_op.lhs.effectiveIrType();
 
-		// Enum types already map to IrType::Integer via toIrType(), so no
-		// special-case coercion is needed — the size_in_bits from the IR is
-		// already correct for the underlying integer representation.
 		if (operand_ir_type == IrType::Integer) {
-			// Integer-like types (including enums): coerce semantic type to
-			// a concrete integer type matching the IR size, so downstream
-			// register allocation picks the right width.
-			if (operand_type == Type::Enum) {
+			// IrType::Integer covers all integer-like types including enums.
+			// If the semantic type is not recognized by is_integer_type()
+			// (e.g. Type::Enum), coerce to a concrete integer type matching
+			// the IR size so downstream register allocation picks the right width.
+			// This coercion will become unnecessary once ArithmeticOperationContext
+			// uses IrType instead of Type for operand_type (Phase 3).
+			if (!is_integer_type(operand_type)) {
 				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
 				if (!is_comparison) {
 					ctx.result_value.type = int_type;

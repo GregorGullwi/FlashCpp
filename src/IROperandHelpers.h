@@ -41,8 +41,10 @@ struct ExprResult {
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 
 	// Returns the effective runtime representation type.
-	// During the transition period, computes from semantic type if ir_type
-	// is still the default.
+	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
+	// and TypedValue are independent structs during the transition period.
+	// Both will be unified when ExprResult's type field is replaced by IrType
+	// (Phase 5).
 	IrType effectiveIrType() const {
 		if (ir_type != IrType::Void || type == Type::Void)
 			return ir_type;

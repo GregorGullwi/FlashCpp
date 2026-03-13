@@ -420,6 +420,8 @@ struct TypedValue {
 	// ir_type is still the default.  Once all sites are migrated, this method
 	// can be replaced by a direct ir_type read.
 	IrType effectiveIrType() const {
+		// Return ir_type if it was explicitly set (non-Void), or if the semantic
+		// type IS Void (to avoid toIrType recomputation for genuinely void values).
 		if (ir_type != IrType::Void || type == Type::Void)
 			return ir_type;
 		return toIrType(type);

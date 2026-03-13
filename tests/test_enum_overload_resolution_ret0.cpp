@@ -26,7 +26,8 @@ int main() {
 	int i = 5;
 	int result2 = overloaded(i);
 
-	// When bug is fixed: result == 2, result2 == 1, sum == 3
-	// Current behavior: result == 1, result2 == 1, sum == 2
+	// When bug is fixed: result == 2, result2 == 1 → 2 + 1 - 2 = 1 (will fail!)
+	// Current behavior: result == 1, result2 == 1 → 1 + 1 - 2 = 0 (passes)
+	// TODO: When overload resolution is fixed, change to: return (result == 2 && result2 == 1) ? 0 : 1;
 	return result + result2 - 2;
 }
