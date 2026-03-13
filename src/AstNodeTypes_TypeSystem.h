@@ -336,6 +336,8 @@ struct TypeIndex {
 	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
 	// Spaceship operator covers all relational and equality comparisons.
 	constexpr auto operator<=>(const TypeIndex&) const noexcept = default;
+	// True when the index is non-zero (i.e., refers to a real type entry).
+	constexpr bool is_valid() const noexcept { return value > 0; }
 };
 
 namespace std {

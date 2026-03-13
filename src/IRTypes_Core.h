@@ -33,6 +33,8 @@ struct SizeInBits {
 	constexpr explicit SizeInBits(int v) noexcept : value(v) {}
 	constexpr operator int() const noexcept { return value; }
 	constexpr auto operator<=>(const SizeInBits&) const noexcept = default;
+	// True when a bit-size has been set (non-zero).
+	constexpr bool is_set() const noexcept { return value != 0; }
 };
 
 template<>
@@ -87,6 +89,8 @@ struct PointerDepth {
 	// Implicit conversion to int for backward-compatible reads.
 	constexpr operator int() const noexcept { return value; }
 	constexpr auto operator<=>(const PointerDepth&) const noexcept = default;
+	// True when pointer_depth > 0 (i.e., this is a pointer or reference type).
+	constexpr bool is_pointer() const noexcept { return value > 0; }
 };
 
 // Allow PointerDepth to be used directly in std::format / FLASH_LOG_FORMAT.
