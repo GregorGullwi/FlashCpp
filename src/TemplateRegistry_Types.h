@@ -126,7 +126,7 @@ struct TemplateArgumentValue {
 	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateArgumentValue v;
 		v.type = t;
-		v.type_index = TypeIndex{idx};
+		v.type_index = idx;
 		return v;
 	}
 	
