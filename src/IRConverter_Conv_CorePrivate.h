@@ -1229,10 +1229,11 @@
 		if (temp_var.var_number != 0) {
 			reference_temp_var_numbers_.push_back(temp_var.var_number);
 			if (holds_address_only) {
-				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, value_size_bits, is_rvalue_ref));
+				ValueCategory cat = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, SizeInBits{value_size_bits}, cat));
 			} else {
 				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, category));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, SizeInBits{value_size_bits}, category));
 			}
 		}
 	}
