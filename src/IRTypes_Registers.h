@@ -321,14 +321,14 @@ struct TempVarMetadata {
 	}
 	
 	// Helper to create reference metadata (for compatibility with IndirectStorageInfo)
-	static TempVarMetadata makeReference(Type type, int size_bits, bool is_rvalue_ref = false) {
+	static TempVarMetadata makeReference(Type type, int size_bits, ValueCategory category) {
 		TempVarMetadata meta;
-		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
+		meta.category = category;
 		meta.is_address = true;  // References hold addresses
 		meta.holds_address_only = false;
 		meta.value_type = type;
 		meta.value_size_bits = size_bits;
-		meta.is_rvalue_reference = is_rvalue_ref;
+		meta.is_rvalue_reference = (category == ValueCategory::XValue);
 		return meta;
 	}
 	
