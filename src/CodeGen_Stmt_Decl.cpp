@@ -1018,7 +1018,7 @@
 														addr_op.result = addr_var;
 														addr_op.operand.type = arg_type.type();
 														addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-														addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+														addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 														
@@ -1357,7 +1357,7 @@
 										addr_op.result = this_ptr;
 										addr_op.operand.type = init_type;
 										addr_op.operand.size_in_bits = init_size;
-										addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 										
@@ -1810,7 +1810,7 @@
 												addr_op.result = addr_var;
 												addr_op.operand.type = arg_type.type();
 												addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-												addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 												
@@ -1832,7 +1832,7 @@
 									
 									// If we have parameter type information, use it to set pointer depth and CV qualifiers
 									if (param_type) {
-										tv.pointer_depth = static_cast<int>(param_type->pointer_depth());
+										tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
 										// For pointer types, also extract CV qualifiers from pointer levels
 										if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 											// Use CV qualifier from the first pointer level (T* const -> const)
@@ -1982,7 +1982,7 @@
 											addr_op.result = addr_var;
 											addr_op.operand.type = init_type.type();
 											addr_op.operand.size_in_bits = static_cast<int>(init_type.size_in_bits());
-											addr_op.operand.pointer_depth = 0;
+											addr_op.operand.pointer_depth = PointerDepth{};
 											addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 											
@@ -2271,7 +2271,7 @@
 					addr_op.result = addr_temp;
 					addr_op.operand.type = init_type;
 					addr_op.operand.size_in_bits = init_size;
-					addr_op.operand.pointer_depth = 0;
+					addr_op.operand.pointer_depth = PointerDepth{};
 					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_op, Token()));
 					

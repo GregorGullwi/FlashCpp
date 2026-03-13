@@ -499,7 +499,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = raw_ptr, .pointer_depth = 1},
+							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = raw_ptr, .pointer_depth = PointerDepth{1}},
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -638,7 +638,7 @@
 			addr_op.result = result_var;
 			addr_op.operand.type = target_type;
 			addr_op.operand.size_in_bits = target_size;
-			addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+			addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 			addr_op.operand.value = std::get<StringHandle>(base);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 		} else {

@@ -74,7 +74,7 @@
 									
 									op.operand.type = operand_type;
 									op.operand.size_in_bits = operand_size;
-									op.operand.pointer_depth = 0;
+									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -1274,7 +1274,7 @@
 				// the backend handles the implicit promotion.)
 				// applyTypeNodeMetadata is still used for default arguments where the
 				// parameter type IS the correct type.
-				arg.pointer_depth = static_cast<int>(param_type_spec->pointer_depth());
+				arg.pointer_depth = PointerDepth{static_cast<int>(param_type_spec->pointer_depth())};
 				if (param_type_spec->type_index() != 0) {
 					arg.type_index = param_type_spec->type_index();
 				}

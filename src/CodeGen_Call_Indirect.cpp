@@ -1275,7 +1275,7 @@
 					addr_op.result = this_addr;
 					addr_op.operand.type = object_type.type();
 					addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
-					addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 					addr_op.operand.value = obj_temp;
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
 					this_arg_value = IrValue(this_addr);
@@ -1290,7 +1290,7 @@
 				addr_op.result = this_addr;
 				addr_op.operand.type = object_type.type();
 				addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
-				addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
 				this_arg_value = IrValue(this_addr);

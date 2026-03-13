@@ -283,7 +283,7 @@
 								addr_op.result = addr_temp;
 								addr_op.operand.type = init_type;
 								addr_op.operand.size_in_bits = init_size;
-								addr_op.operand.pointer_depth = 0;
+								addr_op.operand.pointer_depth = PointerDepth{};
 
 								if (std::holds_alternative<StringHandle>(init_value)) {
 									addr_op.operand.value = std::get<StringHandle>(init_value);
@@ -388,7 +388,7 @@
 									addr_op.result = addr_temp;
 									addr_op.operand.type = orig_type.type();
 									addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand.pointer_depth = 0;
+									addr_op.operand.pointer_depth = PointerDepth{};
 									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
@@ -398,7 +398,7 @@
 								addr_op.result = addr_temp;
 								addr_op.operand.type = orig_type.type();
 								addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand.pointer_depth = 0;
+								addr_op.operand.pointer_depth = PointerDepth{};
 								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}

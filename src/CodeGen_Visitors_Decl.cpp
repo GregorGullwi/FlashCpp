@@ -467,7 +467,7 @@
 								lhs_arg.type = Type::Struct;
 								lhs_arg.size_in_bits = 64;
 								lhs_arg.value = lhs_val;
-								lhs_arg.pointer_depth = 1;
+								lhs_arg.pointer_depth = PointerDepth{1};
 								call_op.args.push_back(std::move(lhs_arg));
 
 								TypedValue rhs_arg;
@@ -666,7 +666,7 @@
 				this_arg.type = Type::Struct;
 				this_arg.size_in_bits = 64;
 				this_arg.value = this_handle;
-				this_arg.pointer_depth = 1;
+				this_arg.pointer_depth = PointerDepth{1};
 				call_op.args.push_back(std::move(this_arg));
 
 				// Pass 'other' as second arg (reference = pointer)
@@ -2247,7 +2247,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		ptr_value.type = element_type;
 		ptr_value.size_in_bits = 64;  // pointer size
 		ptr_value.value = array_name;
-		ptr_value.pointer_depth = 1;  // This is a pointer to the array
+		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array
 		store_ptr.value = ptr_value;
 		store_ptr.struct_type_info = nullptr;
 		store_ptr.ref_qualifier = CVReferenceQualifier::None;
@@ -2521,7 +2521,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						addr_op.result = addr_var;
 						addr_op.operand.type = arg_type.type();
 						addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
 						
@@ -2543,7 +2543,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			
 			// If we have parameter type information, use it to set pointer depth and CV qualifiers
 			if (param_type) {
-				tv.pointer_depth = static_cast<int>(param_type->pointer_depth());
+				tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
 				// For pointer types, also extract CV qualifiers from pointer levels
 				if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 					// Use CV qualifier from the first pointer level (T* const -> const)

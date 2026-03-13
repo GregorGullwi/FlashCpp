@@ -5,33 +5,7 @@
 
 // Note: IrValue and all struct definitions (BinaryOp, etc.) are now in IRTypes.h
 // This file only contains helper functions for working with those types
-
-// ============================================================================
-// Strong wrapper for pointer indirection depth.
-//
-// Design intent:
-//   - Explicit construction prevents accidentally passing a bare integer literal
-//     or TypeIndex value where pointer_depth is expected (the primary bug class).
-//   - operator int() is provided for backward-compatible reads at existing
-//     comparison and assignment sites; it will be narrowed once migration is done.
-//   - The makeExprResult() 5-arg overload requires PointerDepth so that
-//     swapping the type_index and pointer_depth arguments is a compile error.
-// ============================================================================
-struct PointerDepth {
-	int value = 0;
-	// Default construction is non-explicit so ExprResult{} aggregate init compiles.
-	constexpr PointerDepth() noexcept = default;
-	// Single-arg construction is explicit to prevent int→PointerDepth implicit conversion.
-	constexpr explicit PointerDepth(int v) noexcept : value(v) {}
-	// Implicit conversion to int for backward-compatible reads.
-	constexpr operator int() const noexcept { return value; }
-	constexpr bool operator==(PointerDepth o) const noexcept { return value == o.value; }
-	constexpr bool operator!=(PointerDepth o) const noexcept { return value != o.value; }
-	constexpr bool operator<(PointerDepth o)  const noexcept { return value <  o.value; }
-	constexpr bool operator<=(PointerDepth o) const noexcept { return value <= o.value; }
-	constexpr bool operator>(PointerDepth o)  const noexcept { return value >  o.value; }
-	constexpr bool operator>=(PointerDepth o) const noexcept { return value >= o.value; }
-};
+// PointerDepth is defined in IRTypes_Core.h (included transitively via IRTypes.h)
 
 // Helper function to extract IrValue from IrOperand using index-based mapping
 // IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>
@@ -105,7 +79,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.size_in_bits = std::get<int>(operands[1]);
 	result.value = toIrValue(operands[2]);
 	result.type_index = 0;
-	result.pointer_depth = 0;
+	result.pointer_depth = PointerDepth{};
 	
 	return result;
 }

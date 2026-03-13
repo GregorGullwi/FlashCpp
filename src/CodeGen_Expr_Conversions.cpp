@@ -1006,7 +1006,7 @@
 				DereferenceStoreOp store_op;
 				store_op.pointer.type = member->type;
 				store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				store_op.pointer.pointer_depth = 1;  // Single pointer dereference
+				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
 				store_op.value = { member->type, member_size_bits, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
@@ -1325,7 +1325,7 @@
 			// Populate TypedValue with full type information
 			op.operand.type = operandType;
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
-			op.operand.pointer_depth = static_cast<int>(operand_ptr_depth);
+			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 			
 			// Get the operand value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
@@ -1493,7 +1493,7 @@
 			op.pointer.type = operandType;
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = element_size;
-			op.pointer.pointer_depth = pointer_depth;
+			op.pointer.pointer_depth = PointerDepth{pointer_depth};
 			
 			// Get the pointer value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
@@ -1631,7 +1631,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	AddressOfOp addr_op;
 	addr_op.result = this_addr;
 	addr_op.operand = toTypedValue(operandIrResult);
-	addr_op.operand.pointer_depth = 0;
+	addr_op.operand.pointer_depth = PointerDepth{};
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
@@ -1693,7 +1693,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
-			typed_value.pointer_depth = operand_pointer_depth;
+			typed_value.pointer_depth = PointerDepth{operand_pointer_depth};
 			typed_value.size_in_bits = 64;
 		}
 	};

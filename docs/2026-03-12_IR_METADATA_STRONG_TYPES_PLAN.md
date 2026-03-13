@@ -1,10 +1,48 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Slice 1 complete 2026-03-13)  
+**Status**: In Progress (Slice 2 complete 2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
 
 ## Progress
+
+### Slice 2 (2026-03-13) — Completed
+
+- Moved `PointerDepth` definition from `src/IROperandHelpers.h` to
+  `src/IRTypes_Core.h` so that both `TypedValue` (in `IRTypes_Ops.h`) and
+  `ExprResult` (in `IROperandHelpers.h`) use the same type.
+
+- Added `#include <format>` to `IRTypes_Core.h` and a
+  `std::formatter<PointerDepth, char>` specialization (delegates to `int`)
+  so that `PointerDepth` values work in `FLASH_LOG_FORMAT` calls.
+
+- Changed `TypedValue::pointer_depth` from `int pointer_depth = 0` to
+  `PointerDepth pointer_depth = PointerDepth{}`. The explicit default member
+  initializer `= PointerDepth{}` suppresses `-Wmissing-field-initializers` for
+  positional aggregate initializations.
+
+- Updated all ~40 `TypedValue`-embedded write sites across:
+  - `src/IROperandHelpers.h` (`toTypedValue` helpers)
+  - `src/CodeGen_Helpers.cpp`
+  - `src/CodeGen_Visitors_Decl.cpp`
+  - `src/CodeGen_Visitors_Namespace.cpp`
+  - `src/CodeGen_Stmt_Decl.cpp`
+  - `src/CodeGen_Call_Direct.cpp`
+  - `src/CodeGen_Call_Indirect.cpp`
+  - `src/CodeGen_Expr_Conversions.cpp`
+  - `src/CodeGen_Expr_Operators.cpp`
+  - `src/CodeGen_Expr_Primitives.cpp`
+  - `src/CodeGen_Lambdas.cpp`
+  - `src/CodeGen_NewDeleteCast.cpp`
+
+  Note: `FunctionParam::pointer_depth`, `HeapAllocOp::pointer_depth`,
+  `HeapAllocArrayOp::pointer_depth`, `PlacementNewOp::pointer_depth`, and
+  `FunctionDeclOp::return_pointer_depth` were intentionally left as `int`
+  — they are separate structs that do not participate in the arg-ordering
+  bug class targeted by this plan.
+
+- Build: clean (`make main CXX=clang++`, no warnings)
+- Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
 
 ### Slice 1 (2026-03-13) — Completed
 
@@ -39,13 +77,11 @@
 - `TypeIndex` wrapper: `using TypeIndex = size_t` has ~268 array-index usages
   (`gTypeInfo[type_index]`) and ~40+ `TypeIndex foo = 0` initializations across
   the codebase. A proper wrapper with no implicit size_t conversion would be
-  high-churn. Deferred to Slice 2 after a broader callsite audit.
+  high-churn. Deferred to Slice 3 after a broader callsite audit.
 
-- `TypedValue::pointer_depth` migration: TypedValue is used in >30 IR op
-  structs with many `int pointer_depth = 0` field defaults and
-  `.pointer_depth = N` aggregate initializations. Deferred to Slice 2.
-  The `toTypedValue(ExprResult)` bridge function already passes the
-  `PointerDepth` value through `operator int()` transparently.
+- `FunctionParam::pointer_depth` / `FunctionDeclOp::return_pointer_depth` /
+  `HeapAllocOp::pointer_depth` etc.: separate structs, lower bug-prevention value
+  per-site. Deferred after `TypeIndex` lands.
 
 - `SizeInBits` wrapper: large footprint; see plan Step 3.
 

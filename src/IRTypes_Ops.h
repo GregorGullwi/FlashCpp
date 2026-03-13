@@ -394,7 +394,7 @@ struct TypedValue {
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
 	TypeIndex type_index = 0;   // Index into gTypeInfo for struct/enum types (0 = not set)
-	int pointer_depth = 0;      // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
+	PointerDepth pointer_depth = PointerDepth{};  // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
 	
 	// Helper methods for reference checks

@@ -170,7 +170,7 @@ const Token& token) {
 	// Populate pointer TypedValue
 	store_op.pointer.type = pointee_type;
 	store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-	store_op.pointer.pointer_depth = 1;  // Single pointer dereference
+	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
 	if (std::holds_alternative<StringHandle>(pointer)) {
 		store_op.pointer.value = std::get<StringHandle>(pointer);
@@ -263,7 +263,7 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 	addr_op.result = addr_var;
 	addr_op.operand.type = type;
 	addr_op.operand.size_in_bits = size_in_bits;
-	addr_op.operand.pointer_depth = 0;
+	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 	return addr_var;
@@ -277,7 +277,7 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 	deref_op.result = result_var;
 	deref_op.pointer.type = pointee_type;
 	deref_op.pointer.size_in_bits = pointer_size_bits;
-	deref_op.pointer.pointer_depth = pointer_depth;
+	deref_op.pointer.pointer_depth = PointerDepth{pointer_depth};
 	deref_op.pointer.value = pointer_value;
 	ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
 	return result_var;

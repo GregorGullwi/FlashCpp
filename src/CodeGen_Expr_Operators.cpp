@@ -228,7 +228,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		}
 	}
 	value.type_index = type_node.type_index();
-	value.pointer_depth = static_cast<int>(type_node.pointer_depth());
+	value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 	value.cv_qualifier = type_node.cv_qualifier();
 	if (type_node.is_rvalue_reference()) {
 		value.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -887,7 +887,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							addr_op.result = lhs_addr;
 							addr_op.operand.type = lhsType;
 							addr_op.operand.size_in_bits = lhsSize;
-							addr_op.operand.pointer_depth = 0;
+							addr_op.operand.pointer_depth = PointerDepth{};
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
@@ -1350,7 +1350,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				addr_op.result = lhs_addr;
 				addr_op.operand.type = lhsType;
 				addr_op.operand.size_in_bits = lhsSize;
-				addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 				// Convert std::variant<StringHandle, TempVar> to IrValue
 				if (std::holds_alternative<StringHandle>(lhs_value)) {
 					addr_op.operand.value = std::get<StringHandle>(lhs_value);
@@ -2594,7 +2594,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			load_offset.result = current_offset;
 			load_offset.pointer.type = Type::UnsignedInt;  // Reading a 32-bit unsigned offset
 			load_offset.pointer.size_in_bits = 32;  // gp_offset/fp_offset is 32 bits
-			load_offset.pointer.pointer_depth = 1;
+			load_offset.pointer.pointer_depth = PointerDepth{1};
 
 			if (is_float_type) {
 				// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
@@ -2682,7 +2682,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			load_reg_save_ptr.result = reg_save_area_ptr;
 			load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
 			load_reg_save_ptr.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			load_reg_save_ptr.pointer.pointer_depth = 1;
+			load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 
@@ -2708,7 +2708,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			read_reg_value.result = reg_value;
 			read_reg_value.pointer.type = requested_type;
 			read_reg_value.pointer.size_in_bits = requested_size;
-			read_reg_value.pointer.pointer_depth = 1;
+			read_reg_value.pointer.pointer_depth = PointerDepth{1};
 			read_reg_value.pointer.value = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
 
@@ -2739,7 +2739,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceStoreOp store_offset;
 			store_offset.pointer.type = Type::UnsignedInt;
 			store_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			store_offset.pointer.pointer_depth = 1;
+			store_offset.pointer.pointer_depth = PointerDepth{1};
 			if (is_float_type) {
 				// Store to fp_offset field at offset 4
 				TempVar fp_offset_store_addr = var_counter.next();
@@ -2791,7 +2791,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			load_overflow_ptr.result = overflow_ptr;
 			load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
 			load_overflow_ptr.pointer.size_in_bits = 64;
-			load_overflow_ptr.pointer.pointer_depth = 1;
+			load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_overflow_ptr.pointer.value = materialized_overflow_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
 
@@ -2801,7 +2801,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			read_overflow_value.result = overflow_value;
 			read_overflow_value.pointer.type = requested_type;
 			read_overflow_value.pointer.size_in_bits = requested_size;
-			read_overflow_value.pointer.pointer_depth = 1;
+			read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 			read_overflow_value.pointer.value = overflow_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
 
@@ -2826,7 +2826,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceStoreOp store_overflow;
 			store_overflow.pointer.type = Type::UnsignedLongLong;
 			store_overflow.pointer.size_in_bits = 64;
-			store_overflow.pointer.pointer_depth = 1;
+			store_overflow.pointer.pointer_depth = PointerDepth{1};
 			store_overflow.pointer.value = materialized_overflow_addr;
 			store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
@@ -2863,7 +2863,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				load_offset.result = current_offset;
 				load_offset.pointer.type = Type::UnsignedInt;
 				load_offset.pointer.size_in_bits = 32;
-				load_offset.pointer.pointer_depth = 1;
+				load_offset.pointer.pointer_depth = PointerDepth{1};
 
 				if (is_float_type) {
 					// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
@@ -2945,7 +2945,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				load_reg_save_ptr.result = reg_save_area_ptr;
 				load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
 				load_reg_save_ptr.pointer.size_in_bits = 64;
-				load_reg_save_ptr.pointer.pointer_depth = 1;
+				load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 				load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 
@@ -2970,7 +2970,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				read_reg_value.result = reg_value;
 				read_reg_value.pointer.type = requested_type;
 				read_reg_value.pointer.size_in_bits = requested_size;
-				read_reg_value.pointer.pointer_depth = 1;
+				read_reg_value.pointer.pointer_depth = PointerDepth{1};
 				read_reg_value.pointer.value = arg_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
 
@@ -2999,7 +2999,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceStoreOp store_offset;
 				store_offset.pointer.type = Type::UnsignedInt;
 				store_offset.pointer.size_in_bits = 64;
-				store_offset.pointer.pointer_depth = 1;
+				store_offset.pointer.pointer_depth = PointerDepth{1};
 				if (is_float_type) {
 					// Store to fp_offset field at offset 4
 					TempVar fp_offset_store_addr = var_counter.next();
@@ -3050,7 +3050,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				load_overflow_ptr.result = overflow_ptr;
 				load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
 				load_overflow_ptr.pointer.size_in_bits = 64;
-				load_overflow_ptr.pointer.pointer_depth = 1;
+				load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 				load_overflow_ptr.pointer.value = materialized_overflow_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
 
@@ -3060,7 +3060,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				read_overflow_value.result = overflow_value;
 				read_overflow_value.pointer.type = requested_type;
 				read_overflow_value.pointer.size_in_bits = requested_size;
-				read_overflow_value.pointer.pointer_depth = 1;
+				read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 				read_overflow_value.pointer.value = overflow_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
 
@@ -3083,7 +3083,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceStoreOp store_overflow;
 				store_overflow.pointer.type = Type::UnsignedLongLong;
 				store_overflow.pointer.size_in_bits = 64;
-				store_overflow.pointer.pointer_depth = 1;
+				store_overflow.pointer.pointer_depth = PointerDepth{1};
 				store_overflow.pointer.value = materialized_overflow_addr;
 				store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
@@ -3124,7 +3124,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					deref_ptr_op.result = struct_ptr;
 					deref_ptr_op.pointer.type = Type::UnsignedLongLong;
 					deref_ptr_op.pointer.size_in_bits = 64;
-					deref_ptr_op.pointer.pointer_depth = 1;
+					deref_ptr_op.pointer.pointer_depth = PointerDepth{1};
 					deref_ptr_op.pointer.value = current_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
 
@@ -3133,7 +3133,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					deref_struct_op.result = value;
 					deref_struct_op.pointer.type = requested_type;
 					deref_struct_op.pointer.size_in_bits = requested_size;
-					deref_struct_op.pointer.pointer_depth = 1;
+					deref_struct_op.pointer.pointer_depth = PointerDepth{1};
 					deref_struct_op.pointer.value = struct_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_struct_op), functionCallNode.called_from()));
 				} else {
@@ -3142,7 +3142,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					deref_value_op.result = value;
 					deref_value_op.pointer.type = requested_type;
 					deref_value_op.pointer.size_in_bits = requested_size;
-					deref_value_op.pointer.pointer_depth = 1;
+					deref_value_op.pointer.pointer_depth = PointerDepth{1};
 					deref_value_op.pointer.value = current_ptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
 				}
@@ -3297,7 +3297,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				addr_op.operand.type = param_type.type();
 				addr_op.operand.size_in_bits = static_cast<int>(param_type.size_in_bits());
-				addr_op.operand.pointer_depth = param_type.pointer_depth();
+				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
 
@@ -3734,7 +3734,7 @@ std::string_view op) {
 		deref_op.result = current_value_temp;
 		deref_op.pointer.type = lvalue_type;
 		deref_op.pointer.size_in_bits = 64;  // pointer size
-		deref_op.pointer.pointer_depth = 1;
+		deref_op.pointer.pointer_depth = PointerDepth{1};
 
 		// Extract the base (TempVar or StringHandle)
 		std::variant<TempVar, StringHandle> base_value;
@@ -3785,7 +3785,7 @@ std::string_view op) {
 			DereferenceStoreOp store_op;
 			store_op.pointer.type = lvalue_type;
 			store_op.pointer.size_in_bits = 64;
-			store_op.pointer.pointer_depth = 1;
+			store_op.pointer.pointer_depth = PointerDepth{1};
 			store_op.pointer.value = std::get<StringHandle>(base_value);
 			store_op.value = result_tv;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));

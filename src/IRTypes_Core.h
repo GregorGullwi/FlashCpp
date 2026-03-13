@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <string>
+#include <format>
 #include <variant>
 #include <vector>
 #include <unordered_map>
@@ -15,6 +16,44 @@
 
 // Forward declare IrInstruction for circular dependency resolution
 class IrInstruction;
+
+// ============================================================================
+// Strong wrapper for pointer indirection depth.
+//
+// Design intent:
+//   - Explicit construction prevents accidentally passing a bare integer literal
+//     or TypeIndex value where pointer_depth is expected.
+//   - operator int() is provided for backward-compatible reads at existing
+//     comparison and read sites so they require no changes.
+//   - Defined here (IRTypes_Core.h) so both TypedValue (IRTypes_Ops.h) and
+//     ExprResult (IROperandHelpers.h) can use the same type.
+// ============================================================================
+struct PointerDepth {
+	int value = 0;
+	// Default construction is non-explicit so aggregate-init with omitted
+	// fields (e.g. TypedValue{}, ExprResult{}) keeps working.
+	constexpr PointerDepth() noexcept = default;
+	// Single-arg construction is explicit to prevent int→PointerDepth
+	// implicit conversion at construction sites.
+	constexpr explicit PointerDepth(int v) noexcept : value(v) {}
+	// Implicit conversion to int for backward-compatible reads.
+	constexpr operator int() const noexcept { return value; }
+	constexpr bool operator==(PointerDepth o) const noexcept { return value == o.value; }
+	constexpr bool operator!=(PointerDepth o) const noexcept { return value != o.value; }
+	constexpr bool operator<(PointerDepth o)  const noexcept { return value <  o.value; }
+	constexpr bool operator<=(PointerDepth o) const noexcept { return value <= o.value; }
+	constexpr bool operator>(PointerDepth o)  const noexcept { return value >  o.value; }
+	constexpr bool operator>=(PointerDepth o) const noexcept { return value >= o.value; }
+};
+
+// Allow PointerDepth to be used directly in std::format / FLASH_LOG_FORMAT.
+// The value is formatted as the underlying int.
+template<>
+struct std::formatter<PointerDepth, char> : std::formatter<int, char> {
+	auto format(const PointerDepth& pd, std::format_context& ctx) const {
+		return std::formatter<int, char>::format(pd.value, ctx);
+	}
+};
 
 enum class IrOpcode : int_fast16_t {
 	Add,

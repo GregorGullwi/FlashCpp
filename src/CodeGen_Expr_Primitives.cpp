@@ -180,7 +180,7 @@
 					.type = object_result.type,
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
-					.pointer_depth = 0
+					.pointer_depth = PointerDepth{}
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
@@ -1477,7 +1477,7 @@
 							deref_op.result = deref_temp;
 							deref_op.pointer.type = static_member->type;
 							deref_op.pointer.size_in_bits = get_type_size_bits(static_member->type);
-							deref_op.pointer.pointer_depth = 1;
+							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;

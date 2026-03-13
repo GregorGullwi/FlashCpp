@@ -324,7 +324,7 @@
 										addr_op.result = this_ptr;
 										addr_op.operand.type = expr_type;
 										addr_op.operand.size_in_bits = expr_size;
-										addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 										
