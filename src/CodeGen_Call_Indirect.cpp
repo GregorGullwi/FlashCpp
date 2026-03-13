@@ -221,7 +221,7 @@
 						// Convert to TypedValue
 						TypedValue arg;
 						arg.type = type_node.type();
-						arg.size_in_bits = SizeInBits{type_node.size_in_bits()};
+						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
 						call_op.args.push_back(arg);
 					} else {
