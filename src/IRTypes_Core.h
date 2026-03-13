@@ -32,17 +32,35 @@ struct SizeInBits {
 	constexpr SizeInBits() noexcept = default;
 	constexpr explicit SizeInBits(int v) noexcept : value(v) {}
 	constexpr operator int() const noexcept { return value; }
-	constexpr bool operator==(SizeInBits o) const noexcept { return value == o.value; }
-	constexpr bool operator!=(SizeInBits o) const noexcept { return value != o.value; }
-	constexpr bool operator<(SizeInBits o)  const noexcept { return value <  o.value; }
-	constexpr bool operator<=(SizeInBits o) const noexcept { return value <= o.value; }
-	constexpr bool operator>(SizeInBits o)  const noexcept { return value >  o.value; }
-	constexpr bool operator>=(SizeInBits o) const noexcept { return value >= o.value; }
+	constexpr auto operator<=>(const SizeInBits&) const noexcept = default;
 };
 
 template<>
 struct std::formatter<SizeInBits, char> : std::formatter<int, char> {
 	auto format(const SizeInBits& s, std::format_context& ctx) const {
+		return std::formatter<int, char>::format(s.value, ctx);
+	}
+};
+
+// ============================================================================
+// Strong wrapper for a size expressed in bytes (e.g. 1, 2, 4, 8).
+//
+// Design intent:
+//   - Explicit construction prevents accidentally passing a plain int where a
+//     byte-size is expected (e.g. mixing up bytes and bits).
+//   - No implicit conversion to int to prevent mixing bytes and bits.
+//   - Use .value explicitly at callsites that need the raw integer.
+// ============================================================================
+struct SizeInBytes {
+	int value = 0;
+	constexpr SizeInBytes() noexcept = default;
+	constexpr explicit SizeInBytes(int v) noexcept : value(v) {}
+	constexpr auto operator<=>(const SizeInBytes&) const noexcept = default;
+};
+
+template<>
+struct std::formatter<SizeInBytes, char> : std::formatter<int, char> {
+	auto format(const SizeInBytes& s, std::format_context& ctx) const {
 		return std::formatter<int, char>::format(s.value, ctx);
 	}
 };
@@ -68,12 +86,7 @@ struct PointerDepth {
 	constexpr explicit PointerDepth(int v) noexcept : value(v) {}
 	// Implicit conversion to int for backward-compatible reads.
 	constexpr operator int() const noexcept { return value; }
-	constexpr bool operator==(PointerDepth o) const noexcept { return value == o.value; }
-	constexpr bool operator!=(PointerDepth o) const noexcept { return value != o.value; }
-	constexpr bool operator<(PointerDepth o)  const noexcept { return value <  o.value; }
-	constexpr bool operator<=(PointerDepth o) const noexcept { return value <= o.value; }
-	constexpr bool operator>(PointerDepth o)  const noexcept { return value >  o.value; }
-	constexpr bool operator>=(PointerDepth o) const noexcept { return value >= o.value; }
+	constexpr auto operator<=>(const PointerDepth&) const noexcept = default;
 };
 
 // Allow PointerDepth to be used directly in std::format / FLASH_LOG_FORMAT.

@@ -334,13 +334,8 @@ struct TypeIndex {
 	// Increment operators for loop variables.
 	TypeIndex& operator++() noexcept { ++value; return *this; }
 	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
-	// Relational operators.
-	constexpr bool operator==(TypeIndex o) const noexcept { return value == o.value; }
-	constexpr bool operator!=(TypeIndex o) const noexcept { return value != o.value; }
-	constexpr bool operator< (TypeIndex o) const noexcept { return value <  o.value; }
-	constexpr bool operator<=(TypeIndex o) const noexcept { return value <= o.value; }
-	constexpr bool operator> (TypeIndex o) const noexcept { return value >  o.value; }
-	constexpr bool operator>=(TypeIndex o) const noexcept { return value >= o.value; }
+	// Spaceship operator covers all relational and equality comparisons.
+	constexpr auto operator<=>(const TypeIndex&) const noexcept = default;
 };
 
 namespace std {
