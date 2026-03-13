@@ -38,6 +38,7 @@ struct ExprResult {
 	IrOperand value{};
 	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
+	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 };
 
 inline ExprResult makeExprResultImpl(
@@ -52,7 +53,8 @@ inline ExprResult makeExprResultImpl(
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
 		.type_index = type_index,
-		.pointer_depth = pointer_depth
+		.pointer_depth = pointer_depth,
+		.ir_type = toIrType(type)
 	};
 }
 
@@ -76,6 +78,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	
 	TypedValue result;
 	result.type = std::get<Type>(operands[0]);
+	result.ir_type = toIrType(result.type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
 	result.type_index = TypeIndex{};
@@ -91,6 +94,7 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
 	tv.type = result.type;
+	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
 	tv.type_index = result.type_index;

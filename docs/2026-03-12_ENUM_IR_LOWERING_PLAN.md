@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: Proposed  
+**Status**: In Progress (Phase 0-1 started 2026-03-13)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -318,15 +318,19 @@ Once all consumers read `ir_type`, remove the old `type` field. Any remaining
 code that tries to match on `Type::Enum` inside a codegen helper will fail to
 compile — the bug class becomes structurally impossible.
 
-### Phase 5 — Simplify `ExprResult` / slot-4 compatibility
+### Phase 5 — Simplify `ExprResult`
 
-With `IrType` in place:
+**UPDATE (2026-03-13)**: The ExprResult migration is **already complete**. The old
+slot-4 positional encoding, `encoded_metadata`, `preserveEncodedExprMetadata`, and
+`toExprResult(...)` shim have all been removed. `ExprResult` now uses named fields
+(`type`, `size_in_bits`, `value`, `type_index`, `pointer_depth`). The original
+slot-4 ambiguity (same slot for `type_index` and `pointer_depth`) no longer exists.
+
+Remaining work for this phase:
 
 - `ExprResult` can carry `IrType` instead of `Type` for its runtime fields
-- the slot-4 encoding/decoding heuristics in `toExprResult(...)` become trivial
-  or unnecessary (no more guessing whether metadata means `type_index` or
-  `pointer_depth` for enum types)
-- `encoded_metadata` can be removed once all producers emit `ExprResult` directly
+- `makeExprResult(...)` helpers should accept `IrType` instead of `Type`
+- `toTypedValue(const ExprResult&)` can copy `ir_type` directly
 
 ### Phase 6 — Audit and cleanup
 
@@ -399,12 +403,13 @@ The migration must distinguish between "real" user-defined types and template
 parameters. Template parameters should NOT reach codegen - they must be resolved
 earlier in template instantiation.
 
-### 6. **NEW** ExprResult slot-4 encoding is structurally flawed
+### 6. ~~ExprResult slot-4 encoding is structurally flawed~~ (RESOLVED)
 
-The current slot-4 encoding in `IROperandHelpers.h` uses the same storage slot
-for both `type_index` and `pointer_depth`. Simply adding `IrType` doesn't fix
-this - the encoding scheme itself needs redesign to use separate fields or a
-discriminated union.
+**UPDATE (2026-03-13)**: This risk is **resolved**. The ExprResult migration
+(completed 2026-03-12, see `docs/EXPR_RESULT_MIGRATION.md`) removed the slot-4
+encoding entirely. `ExprResult` now uses named fields with strong wrapper types
+(`TypeIndex`, `PointerDepth`, `SizeInBits`), making the ambiguity structurally
+impossible.
 
 ---
 
@@ -457,7 +462,7 @@ The phased approach allows incremental migration:
 - **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum
 - **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined)
 - **Phase 4** (remove old `Type` field): Low risk once Phase 3 is complete — compile errors guide remaining sites
-- **Phase 5-6** (ExprResult + audit): Medium risk - slot-4 encoding redesign needed
+- **Phase 5-6** (ExprResult + audit): Low risk - slot-4 encoding already resolved by ExprResult migration
 
 **Revised Estimate**: Work is approximately **3-4x larger** than originally estimated 
 due to extensive codegen usage of Type::Enum and Type::UserDefined.
@@ -469,12 +474,9 @@ due to extensive codegen usage of Type::Enum and Type::UserDefined.
 The narrowest, safest starting point:
 
 1. add `src/IrType.h` with the `IrType` enum and `toIrType(Type, TypeIndex)`
-2. add `IrType ir_type` field to `TypedValue` and populate it at all
+2. add `IrType ir_type` field to `TypedValue` and `ExprResult`, populate it at all
    construction sites (mechanical, no behavior change)
-3. **CRITICAL**: Redesign `IROperandHelpers.h` slot-4 encoding - the current
-   design uses the same slot for both `type_index` and `pointer_depth`,
-   which is the root cause of the ambiguity. Simply adding `IrType` won't
-   fix this - the encoding needs separate fields or a discriminated union.
+3. update `toTypedValue(const ExprResult&)` and `makeExprResult(...)` to carry `ir_type`
 4. add a static assert or `[[deprecated]]` on `TypedValue::type` to catch any
    new code that sets it directly — this surfaces sites that still need updating
 5. add focused tests that would fail if `Type::Enum` leaked into IR arithmetic:
@@ -482,6 +484,10 @@ The narrowest, safest starting point:
    - enum pointer array subscript
    - overload resolution still preferring enum overloads over integer overloads
    - mangling for enum parameters unchanged
+
+**Note**: The original item 3 ("redesign IROperandHelpers.h slot-4 encoding") is
+**no longer needed** — the ExprResult migration already removed the slot-4 encoding
+and replaced it with named fields.
 
 ---
 
@@ -616,5 +622,6 @@ This plan proposes:
   built, keeping enum identity in the AST/semantic layer where it belongs
 - The backend (`IRConverter`) never sees `Type::Enum` or `Type::UserDefined` —
   this is already true in practice; `IrType` makes it a compile-time guarantee
-- The slot-4 encoding ambiguity, enum-pointer stride bugs, and `getSizeInBytes`
-  special cases all disappear as natural consequences of the type boundary
+- The slot-4 encoding ambiguity has already been resolved by the ExprResult migration.
+  The remaining enum-pointer stride bugs, and `getSizeInBytes` special cases all
+  disappear as natural consequences of the type boundary
