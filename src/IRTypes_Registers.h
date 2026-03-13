@@ -333,15 +333,16 @@ struct TempVarMetadata {
 	}
 	
 	// Helper to create address-only metadata (for AddressOf/AddressOfMember results)
-	// Address-only values should NOT be implicitly dereferenced
-	static TempVarMetadata makeAddressOnly(Type type, int size_bits) {
+	// Address-only values should NOT be implicitly dereferenced.
+	// Pass is_rvalue_ref=true for rvalue-reference address-only values (e.g. function returning T&&)
+	static TempVarMetadata makeAddressOnly(Type type, int size_bits, bool is_rvalue_ref = false) {
 		TempVarMetadata meta;
-		meta.category = ValueCategory::PRValue;
+		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
 		meta.is_address = true;  // It's an address/pointer
 		meta.holds_address_only = true;  // But not a true reference
 		meta.value_type = type;
 		meta.value_size_bits = size_bits;
-		meta.is_rvalue_reference = false;
+		meta.is_rvalue_reference = is_rvalue_ref;
 		return meta;
 	}
 };

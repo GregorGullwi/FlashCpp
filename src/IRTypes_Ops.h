@@ -195,6 +195,11 @@ public:
 	void clear() {
 		metadata_.clear();
 	}
+
+	// Clear metadata for a single TempVar (reset to default PRValue state)
+	void clearEntry(size_t var_number) {
+		metadata_.erase(var_number);
+	}
 	
 	// Get statistics
 	size_t size() const {

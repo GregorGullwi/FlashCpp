@@ -88,6 +88,10 @@
 
 	// Track which stack offsets hold indirect storage (references or address-only pointers)
 	std::unordered_map<int32_t, IndirectStorageInfo> indirect_stack_info_;
+	// Track TempVar var_numbers that were given reference/address-only metadata by setIndirectStorageInfo.
+	// These must be cleared at function boundaries alongside indirect_stack_info_ to prevent
+	// stale metadata from polluting later functions (TempVar var_numbers are reused across functions).
+	std::vector<size_t> reference_temp_var_numbers_;
 	// Map from variable names to their offsets (for reference lookup by name)
 	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
