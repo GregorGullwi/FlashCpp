@@ -501,13 +501,15 @@
 								.value = IrValue(identifier_handle)
 							});
 							
+							// Capture return metadata before the move invalidates call_op.
+							SizeInBits ret_size_in_bits = call_op.return_size_in_bits;
 							// Add the function call instruction
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
 							
 							// Return the result
 							return makeExprResult(
 								return_type.type(),
-								call_op.return_size_in_bits,
+								ret_size_in_bits,
 								IrOperand{ret_var},
 								return_type.type_index(),
 								PointerDepth{static_cast<int>(return_type.pointer_depth())}
