@@ -736,13 +736,13 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
 
-	size_t type_index = type_spec.type_index().value;
-	if (type_index >= gTypeInfo.size()) {
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index.value >= gTypeInfo.size()) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 
 	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-		TypeIndex{type_index},
+		type_index,
 		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
 	if (!member_result) {
 		return EvalResult::error("Member not found in struct");
