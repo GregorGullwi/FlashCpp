@@ -961,7 +961,7 @@
 									this_arg.type = arg_type;
 									this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 									this_arg.value = this_ptr;
-									this_arg.type_index = TypeIndex{arg_type_index};
+									this_arg.type_index = arg_type_index;
 									call_op.args.push_back(std::move(this_arg));
 								} else if (std::holds_alternative<TempVar>(source_value)) {
 									// It's already a temporary
@@ -969,7 +969,7 @@
 									this_arg.type = arg_type;
 									this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 									this_arg.value = std::get<TempVar>(source_value);
-									this_arg.type_index = TypeIndex{arg_type_index};
+									this_arg.type_index = arg_type_index;
 									call_op.args.push_back(std::move(this_arg));
 								}
 								

@@ -3829,7 +3829,7 @@ std::string_view op) {
 		// Create the binary operation
 		BinaryOp bin_op;
 		bin_op.lhs.type = lhs_operands.type;
-		bin_op.lhs.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3839,7 +3839,7 @@ std::string_view op) {
 		// Finally, store the result back to the array element
 		TypedValue result_tv;
 		result_tv.type = lhs_operands.type;
-		result_tv.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+		result_tv.size_in_bits = lhs_operands.size_in_bits;
 		result_tv.value = result_temp;
 
 		// Emit the store using helper
@@ -3870,7 +3870,7 @@ std::string_view op) {
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
 		bin_op.lhs.type = lhs_operands.type;
-		bin_op.lhs.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = lhs_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
 		bin_op.result = result_temp;
@@ -3945,7 +3945,7 @@ std::string_view op) {
 	// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 	TempVar result_temp = var_counter.next();
 
-	// Create the binary operation
+	// Create the binary operation (size_in_bits is already SizeInBits — direct assignment)
 	BinaryOp bin_op;
 	bin_op.lhs.type = lhs_operands.type;
 	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
