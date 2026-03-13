@@ -1191,7 +1191,7 @@
 	};
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
-		int size_in_bits = SizeInBits{0};  // Size in bits
+		SizeInBits size_in_bits;  // Size in bits
 		bool is_array = false; // True if this is an array declaration (enables array-to-pointer decay in expressions and assignments)
 	};
 
@@ -1331,7 +1331,7 @@
 
 		struct VarDecl {
 			StringHandle var_name{};  // Phase 5: StringHandle for efficient storage
-			int size_in_bits{};
+			SizeInBits size_in_bits;
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
 			bool is_array{};     // True if this variable is an array (for array-to-pointer decay)
 		};

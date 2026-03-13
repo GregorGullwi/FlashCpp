@@ -49,7 +49,7 @@ inline ExprResult makeExprResultImpl(
 ) {
 	return {
 		.type = type,
-		.size_in_bits = SizeInBits{size_in_bits},
+		.size_in_bits = size_in_bits,
 		.value = std::move(value),
 		.type_index = type_index,
 		.pointer_depth = pointer_depth
@@ -57,16 +57,16 @@ inline ExprResult makeExprResultImpl(
 }
 
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value) {
-	return makeExprResultImpl(type, SizeInBits{size_in_bits}, std::move(value), TypeIndex{}, PointerDepth{});
+	return makeExprResultImpl(type, size_in_bits, std::move(value), TypeIndex{}, PointerDepth{});
 }
 
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index) {
-	return makeExprResultImpl(type, SizeInBits{size_in_bits}, std::move(value), type_index, PointerDepth{});
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, PointerDepth{});
 }
 
 // Requires PointerDepth to prevent accidental type_index/pointer_depth argument swap.
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
-	return makeExprResultImpl(type, SizeInBits{size_in_bits}, std::move(value), type_index, pointer_depth);
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {

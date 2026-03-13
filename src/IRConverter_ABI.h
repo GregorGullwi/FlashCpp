@@ -159,7 +159,7 @@ struct RegisterAllocator
 		bool isAllocated = false;
 		bool isDirty = false;	// Does the stack variable need to be updated on a flush
 		int32_t stackVariableOffset = INT_MIN;
-		int size_in_bits = SizeInBits{0};	// Size of the value stored in this register (for proper spilling)
+		SizeInBits size_in_bits;	// Size of the value stored in this register (for proper spilling)
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -173,7 +173,7 @@ struct RegisterAllocator
 
 	void reset() {
 		for (auto& reg : registers) {
-			reg = AllocatedRegister{ .reg = reg.reg };
+			reg = AllocatedRegister{ .reg = reg.reg, .size_in_bits = {} };
 		}
 		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
 		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
@@ -309,7 +309,7 @@ struct RegisterAllocator
 
 	void release(X64Register reg) {
 		if (reg == X64Register::Count) return; // No register to release
-		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg };
+		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg, .size_in_bits = {} };
 	}
 
 	bool is_allocated(X64Register reg) const {

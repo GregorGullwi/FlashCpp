@@ -1,10 +1,30 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Slice 4 complete 2026-03-13)  
+**Status**: In Progress (Slice 5 complete 2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
 
 ## Progress
+
+### Slice 5 (2026-03-13) — Completed
+
+Added `SizeInBits` strong wrapper struct to `src/IRTypes_Core.h`:
+
+```cpp
+struct SizeInBits {
+    int value = 0;
+    constexpr SizeInBits() noexcept = default;
+    constexpr explicit SizeInBits(int v) noexcept : value(v) {}
+    constexpr operator int() const noexcept { return value; }
+    // full set of relational operators + std::formatter specialization
+};
+```
+
+Applied to all `*size_in_bits*` / `*size_bits*` fields in:
+`ExprResult`, `TypedValue`, all IR op structs in `IRTypes_Ops.h`,
+`StaticLocalInfo`, `GlobalStaticBindingInfo`, `ReferenceInfo::value_size_bits`.
+
+Write sites (~249 across ~26 files) migrated. Build clean, 1457 tests pass.
 
 ### Slice 4 (2026-03-13) — Completed
 
@@ -142,7 +162,7 @@ Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
 
 - `TypeIndex` wrapper: **Completed in Slice 4 (2026-03-13).**
 
-- `SizeInBits` wrapper: large footprint; see plan Step 3.
+- `SizeInBits` wrapper: **Completed in Slice 5 (2026-03-13).**
 
 - User-defined literals: optional; see plan UDL section.
 
