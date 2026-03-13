@@ -483,7 +483,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
-			if (member_ctx.struct_type_index < gTypeInfo.size()) {
+			if (member_ctx.struct_type_index.value < gTypeInfo.size()) {
 				TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index.value];
 				if (type_info.struct_info_) {
 					// Search for the operator member function
@@ -1850,7 +1850,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!found_member_function_in_context) {
 					// Get the struct's base classes and search recursively
 					TypeIndex struct_type_index = mf_ctx.struct_type_index;
-					if (struct_type_index < gTypeInfo.size()) {
+					if (struct_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info) {
@@ -1863,7 +1863,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Search through base classes
 							for (size_t i = 0; i < base_classes_to_search.size() && !found_member_function_in_context; ++i) {
 								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx >= gTypeInfo.size()) continue;
+								if (base_idx.value >= gTypeInfo.size()) continue;
 								
 								const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
 								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -2897,7 +2897,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 					
 					// Fall back to TypeInfo lookup if no local_struct_info
-					if (!struct_info && member_func_ctx.struct_type_index != 0 && member_func_ctx.struct_type_index < gTypeInfo.size()) {
+					if (!struct_info && member_func_ctx.struct_type_index.is_valid() && member_func_ctx.struct_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& struct_type_info = gTypeInfo[member_func_ctx.struct_type_index.value];
 						struct_info = struct_type_info.getStructInfo();
 					}
@@ -3015,7 +3015,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!found) {
 						// Get the struct's base classes and search recursively
 						TypeIndex struct_type_index = mf_ctx.struct_type_index;
-						if (struct_type_index < gTypeInfo.size()) {
+						if (struct_type_index.value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
@@ -3028,7 +3028,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Search through base classes
 								for (size_t i = 0; i < base_classes_to_search.size() && !found; ++i) {
 									TypeIndex base_idx = base_classes_to_search[i];
-									if (base_idx >= gTypeInfo.size()) continue;
+									if (base_idx.value >= gTypeInfo.size()) continue;
 									
 									const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -4206,7 +4206,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (!member_function_context_stack_.empty()) {
 									const auto& mf_ctx2 = member_function_context_stack_.back();
 									TypeIndex struct_type_index = mf_ctx2.struct_type_index;
-									if (struct_type_index < gTypeInfo.size()) {
+									if (struct_type_index.value < gTypeInfo.size()) {
 										const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
@@ -4219,7 +4219,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											StringHandle id_handle = identifier_token.handle();
 											for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
 												TypeIndex base_idx = base_classes_to_search[i];
-												if (base_idx >= gTypeInfo.size()) continue;
+												if (base_idx.value >= gTypeInfo.size()) continue;
 												
 												const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
 												const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();

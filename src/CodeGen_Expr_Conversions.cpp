@@ -1244,7 +1244,7 @@
 				}
 			}
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
+				const TypeInfo& type_info = gTypeInfo[struct_type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && isLambdaClosureStruct(*struct_info)) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));

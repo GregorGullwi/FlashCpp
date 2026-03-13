@@ -1456,7 +1456,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
 			std::string_view full_type_name;
 			TypeIndex idx = type_node.type_index();
-			if (idx < gTypeInfo.size()) {
+			if (idx.value < gTypeInfo.size()) {
 				full_type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
 			}
@@ -1498,7 +1498,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || (idx < gTypeInfo.size() && gTypeInfo[idx.value].is_incomplete_instantiation_)) {
+				if (is_template_param || (idx.value < gTypeInfo.size() && gTypeInfo[idx.value].is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -1548,7 +1548,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
-			if (idx < gTypeInfo.size()) {
+			if (idx.value < gTypeInfo.size()) {
 				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);

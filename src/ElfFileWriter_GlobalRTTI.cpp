@@ -614,7 +614,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 		const StructTypeInfo* this_struct = nullptr;
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
 		for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
-			const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo();
+			const StructTypeInfo* si = gTypeInfo[ti].getStructInfo();
 			if (si && si->getName() == class_name_handle) {
 				this_struct = si;
 				break;

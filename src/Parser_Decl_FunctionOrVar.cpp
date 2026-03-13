@@ -247,7 +247,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (!struct_info) {
 			// Type alias resolution: follow type_index_ to find the actual struct type
 			// e.g., using Alias = SomeStruct; then Alias::member() needs to resolve to SomeStruct
-			if (type_info->type_index_ < gTypeInfo.size() && &gTypeInfo[type_info->type_index_.value] != type_info) {
+			if (type_info->type_index_.value < gTypeInfo.size() && &gTypeInfo[type_info->type_index_.value] != type_info) {
 				TypeInfo& resolved_type = gTypeInfo[type_info->type_index_.value];
 				struct_info = resolved_type.getStructInfo();
 			}

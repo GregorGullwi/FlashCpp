@@ -449,7 +449,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
 						const auto& member_ctx = member_function_context_stack_.back();
-						if (member_ctx.struct_type_index < gTypeInfo.size()) {
+						if (member_ctx.struct_type_index.value < gTypeInfo.size()) {
 							const TypeInfo& struct_type_info = gTypeInfo[member_ctx.struct_type_index.value];
 							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 							if (struct_info) {
@@ -963,7 +963,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->type_ == Type::Struct && type_info->type_index_ < gTypeInfo.size()) {
+					if (type_info->type_ == Type::Struct && type_info->type_index_.value < gTypeInfo.size()) {
 						const TypeInfo& actual_type = gTypeInfo[type_info->type_index_.value];
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {
@@ -1295,7 +1295,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto subst_it = sfinae_type_map_.find(obj_name_handle);
 				if (subst_it != sfinae_type_map_.end()) {
 					TypeIndex concrete_idx = subst_it->second;
-					if (concrete_idx < gTypeInfo.size()) {
+					if (concrete_idx.value < gTypeInfo.size()) {
 						object_struct_name = StringTable::getStringView(gTypeInfo[concrete_idx.value].name());
 					}
 				}

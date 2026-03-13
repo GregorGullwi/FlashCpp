@@ -452,10 +452,10 @@
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
 		(ptr_operands.type_index.is_valid())) {
-			unsigned long long type_idx_val = ptr_operands.type_index;
+			unsigned long long type_idx_val = ptr_operands.type_index.value;
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
 			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_idx_val.value];
+				const TypeInfo& type_info = gTypeInfo[type_idx_val];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					DestructorCallOp dtor_op;
@@ -479,9 +479,9 @@
 			bool has_dtor_loop = false;
 			if (ptr_type == Type::Struct &&
 			(ptr_operands.type_index.is_valid())) {
-				unsigned long long type_idx_val = ptr_operands.type_index;
+				unsigned long long type_idx_val = ptr_operands.type_index.value;
 				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_idx_val.value];
+					const TypeInfo& type_info = gTypeInfo[type_idx_val];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && struct_info->hasDestructor()) {
 						has_dtor_loop = true;

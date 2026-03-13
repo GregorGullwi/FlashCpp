@@ -271,10 +271,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			if (type_spec_opt.has_value() && 
 			    type_spec_opt->type() == Type::Struct && 
-			    type_spec_opt->type_index() > 0 &&
-			    type_spec_opt->type_index() < gTypeInfo.size()) {
+			    type_spec_opt->type_index().is_valid() &&
+			    type_spec_opt->type_index().value < gTypeInfo.size()) {
 				// Successfully evaluated - add as regular base class
-				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index()];
+				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index().value];
 				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
 				
 				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
@@ -3297,7 +3297,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
 			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
-			deferred.struct_type_index = delayed.struct_type_index;
+			deferred.struct_type_index = delayed.struct_type_index.value;
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
 			deferred.is_const_method = is_const_method;

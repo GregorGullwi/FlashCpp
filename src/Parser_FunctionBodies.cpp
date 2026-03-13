@@ -113,7 +113,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 	}
 
 	// Also add inherited member functions from base classes
-	if (struct_type_index < gTypeInfo.size()) {
+	if (struct_type_index.value < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (struct_info) {
@@ -123,7 +123,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 			}
 			for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
 				TypeIndex base_idx = base_classes_to_search[i];
-				if (base_idx >= gTypeInfo.size()) continue;
+				if (base_idx.value >= gTypeInfo.size()) continue;
 				const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				if (!base_struct_info) continue;

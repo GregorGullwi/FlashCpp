@@ -31,8 +31,8 @@
 			if (type_it != gTypesByName.end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
-		} else if (current_lambda_context_.enclosing_struct_type_index > 0 &&
-			current_lambda_context_.enclosing_struct_type_index < gTypeInfo.size()) {
+		} else if (current_lambda_context_.enclosing_struct_type_index.is_valid() &&
+			current_lambda_context_.enclosing_struct_type_index.value < gTypeInfo.size()) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
 			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index.value].name());
 		}
@@ -210,7 +210,7 @@
 						// For [*this], we need to copy the entire object into the closure
 						// The closure should have a member named "__copy_this" of the enclosing struct type
 						const StructMember* member = struct_info->findMember("__copy_this");
-						if (member && lambda_info.enclosing_struct_type_index > 0) {
+						if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
 							// Copy each member of the enclosing struct into __copy_this
 							const TypeInfo* enclosing_type = nullptr;
 							for (const auto& ti : gTypeInfo) {
@@ -1037,7 +1037,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 		return std::nullopt;
 	}
 	const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
-	if (!copy_this_member || current_lambda_context_.enclosing_struct_type_index == 0) {
+	if (!copy_this_member || !current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 		return std::nullopt;
 	}
 

@@ -374,10 +374,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					TypeIndex right_type_idx = resolve_operand_type_index(*rightNode);
 					auto left_type_spec = get_expression_type(*leftNode);
 					auto right_type_spec = get_expression_type(*rightNode);
-					if (left_type_spec.has_value() && left_type_idx == 0) {
+					if (left_type_spec.has_value() && !left_type_idx.is_valid()) {
 						left_type_idx = resolve_sfinae_type_index(left_type_spec->type_index());
 					}
-					if (right_type_spec.has_value() && right_type_idx == 0) {
+					if (right_type_spec.has_value() && !right_type_idx.is_valid()) {
 						right_type_idx = resolve_sfinae_type_index(right_type_spec->type_index());
 					}
 					apply_resolved_sfinae_type(left_type_spec, left_type_idx);

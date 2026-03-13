@@ -218,7 +218,7 @@ void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_i
             if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 LocalVariableInfo var_info;
                 var_info.name = name;
-                var_info.type_index = TypeIndex{type_index};
+                var_info.type_index = type_index;
                 var_info.flags = flags;
                 var_info.locations = locations;
                 func.local_variables.push_back(var_info);
@@ -235,7 +235,7 @@ void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t ty
             if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 ParameterInfo param_info;
                 param_info.name = name;
-                param_info.type_index = TypeIndex{type_index};
+                param_info.type_index = type_index;
                 param_info.stack_offset = stack_offset;
 
                 func.parameters.push_back(param_info);

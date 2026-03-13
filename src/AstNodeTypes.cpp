@@ -735,9 +735,9 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     // Direct match (works for non-template types and properly substituted template params)
     if (param_type_index == *own_type_index_) return true;
     // Template instantiation fallback: check if param refers to our base template pattern
-    if (*own_type_index_ >= gTypeInfo.size() || param_type_index >= gTypeInfo.size())
+    if ((*own_type_index_).value >= gTypeInfo.size() || param_type_index.value >= gTypeInfo.size())
         return false;
-    const TypeInfo& own_info = gTypeInfo[*own_type_index_.value];
+    const TypeInfo& own_info = gTypeInfo[(*own_type_index_).value];
     if (!own_info.isTemplateInstantiation()) return false;
     const TypeInfo& param_info = gTypeInfo[param_type_index.value];
     // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
@@ -1282,7 +1282,7 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 			constexpr size_t MAX_ALIAS_DEPTH = 64;
 			size_t depth = 0;
 			while (depth < MAX_ALIAS_DEPTH) {
-				if (base_type->type_index_ == 0 || base_type->type_index_ >= gTypeInfo.size()) {
+				if (!base_type->type_index_.is_valid() || base_type->type_index_.value >= gTypeInfo.size()) {
 					break;
 				}
 				const TypeInfo* next = &gTypeInfo[base_type->type_index_.value];
@@ -1501,7 +1501,7 @@ void StructTypeInfo::buildRTTI() {
         
         // Get base class type info
         if (base_classes[0].type_index.value < gTypeInfo.size()) {
-            const TypeInfo& base_type = gTypeInfo[base_classes[0.value].type_index];
+            const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index.value];
             const StructTypeInfo* base_info = base_type.getStructInfo();
             if (base_info && base_info->rtti_info && base_info->rtti_info->itanium_type_info) {
                 si_ti.base_type = base_info->rtti_info->itanium_type_info;

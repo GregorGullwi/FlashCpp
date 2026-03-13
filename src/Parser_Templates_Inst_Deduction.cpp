@@ -581,7 +581,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			auto& ts = type_node.as<TypeSpecifierNode>();
 			if (ts.type() != Type::UserDefined) return;
 			TypeIndex idx = ts.type_index();
-			if (idx >= gTypeInfo.size()) return;
+			if (idx.value >= gTypeInfo.size()) return;
 
 			std::string_view type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 			if (const StructTypeInfo* owner_struct = gTypeInfo[idx.value].getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
@@ -1033,8 +1033,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// to deduce any template parameters that appear as dependent entries.
 			TypeIndex fp_idx = fp_type.type_index();
 			TypeIndex ca_idx = ca_type.type_index();
-			if (fp_idx > 0 && fp_idx < gTypeInfo.size() &&
-			    ca_idx > 0 && ca_idx < gTypeInfo.size()) {
+			if (fp_idx.is_valid() && fp_idx.value < gTypeInfo.size() &&
+			    ca_idx.is_valid() && ca_idx.value < gTypeInfo.size()) {
 				const TypeInfo& fp_info = gTypeInfo[fp_idx.value];
 				const TypeInfo& ca_info = gTypeInfo[ca_idx.value];
 				if (fp_info.isTemplateInstantiation() && ca_info.isTemplateInstantiation() &&
@@ -1166,7 +1166,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							return std::nullopt;
 						}
 					} else {
-						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index));
+						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index.value));
 
 						return std::nullopt;
 					}
@@ -1546,7 +1546,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		);
 		
 		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
-		if (return_type_index > 0 && return_type_index < gTypeInfo.size()) {
+		if (return_type_index.is_valid() && return_type_index.value < gTypeInfo.size()) {
 			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(gTypeInfo[return_type_index.value].name()), "'");
 		}
 		
@@ -1578,7 +1578,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto& ts = type_node.as<TypeSpecifierNode>();
 		if (ts.type() != Type::UserDefined) return;
 		TypeIndex idx = ts.type_index();
-		if (idx >= gTypeInfo.size()) return;
+		if (idx.value >= gTypeInfo.size()) return;
 		
 		std::string_view type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 			if (const StructTypeInfo* owner_struct = gTypeInfo[idx.value].getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
@@ -1890,7 +1890,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// for a single function parameter, breaking the correspondence.
 					if (subst_type == Type::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
-					    subst_type_index > 0 && subst_type_index < gTypeInfo.size() &&
+					    subst_type_index.is_valid() && subst_type_index.value < gTypeInfo.size() &&
 					    gTypeInfo[subst_type_index.value].isTemplateInstantiation() &&
 					    i < arg_types.size() &&
 					    arg_types[i].type() == Type::Struct) {

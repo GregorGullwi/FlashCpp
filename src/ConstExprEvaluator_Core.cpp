@@ -643,9 +643,9 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			
 			// For struct types, look up alignment from type info
 			if (type_spec.type() == Type::Struct) {
-				size_t type_index = type_spec.type_index();
-				if (type_index.value < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index.value];
+				size_t type_index = type_spec.type_index().value;
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -689,9 +689,9 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								
 								// Handle struct types
 								if (type_spec.type() == Type::Struct) {
-									size_t type_index = type_spec.type_index();
-									if (type_index.value < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[type_index.value];
+									size_t type_index = type_spec.type_index().value;
+									if (type_index < gTypeInfo.size()) {
+										const TypeInfo& type_info = gTypeInfo[type_index];
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
 											return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -736,8 +736,8 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
 
-	size_t type_index = type_spec.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	size_t type_index = type_spec.type_index().value;
+	if (type_index >= gTypeInfo.size()) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 
@@ -2220,7 +2220,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// Check for incomplete class/struct types
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx != TypeIndex{0} && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+					if (type_idx.is_valid() && (base_type == Type::Struct || base_type == Type::UserDefined)) {
 						const TypeInfo& type_info = gTypeInfo[type_idx.value];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						

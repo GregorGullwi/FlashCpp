@@ -653,7 +653,7 @@ ParseResult Parser::parse_type_specifier()
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
+			if (!struct_info && struct_type_info->type_index_.value < gTypeInfo.size()) {
 				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
@@ -1085,7 +1085,7 @@ ParseResult Parser::parse_type_specifier()
 							StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
 							
 							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
-								if (gTypeInfo[i.value].name() == target_handle) {
+								if (gTypeInfo[i].name() == target_handle) {
 									type_idx = TypeIndex{i};
 									found = true;
 									break;
@@ -1397,7 +1397,7 @@ ParseResult Parser::parse_type_specifier()
 					// Fallback: no template args - just reference the template parameter type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
-						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0.value])};
+						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0])};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							Type::UserDefined,
 							type_idx,
@@ -2230,7 +2230,7 @@ ParseResult Parser::parse_type_specifier()
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
+			if (!struct_info && struct_type_info->type_index_.value < gTypeInfo.size()) {
 				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
@@ -2311,7 +2311,7 @@ ParseResult Parser::parse_type_specifier()
 					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
-			} else if (user_type_index < gTypeInfo.size()) {
+			} else if (user_type_index.value < gTypeInfo.size()) {
 				// Not a typedef - might be a struct type without size set in TypeInfo
 				// Look up actual size from struct info if available
 				const TypeInfo& actual_type_info = gTypeInfo[user_type_index.value];
