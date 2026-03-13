@@ -91,7 +91,7 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
 	tv.type = result.type;
-	tv.size_in_bits = SizeInBits{result.size_in_bits};
+	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
 	tv.type_index = result.type_index;
 	tv.pointer_depth = result.pointer_depth;
