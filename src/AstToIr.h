@@ -80,6 +80,10 @@ private:
 	// resolution bug).
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	void fillInConstructorDefaultArguments(
+		ConstructorCallOp& ctor_op,
+		const ConstructorDeclarationNode& ctor_node,
+		size_t explicit_arg_count);
 	TypedValue materializeDefaultArgument(
 		const ASTNode& default_expr,
 		const TypeSpecifierNode& param_type_spec,

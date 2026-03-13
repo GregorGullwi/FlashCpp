@@ -132,6 +132,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
+	fillInDefaultConstructorArguments(ctor_op, *struct_info);
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
 	// Emit member stores for each initializer
@@ -286,22 +287,26 @@ TypedValue AstToIr::materializeDefaultArgument(
 	throw InternalError("Unhandled default argument AST node type for " + std::string(error_context));
 }
 
-void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info) {
-	const StructMemberFunction* default_ctor = struct_info.findDefaultConstructor();
-	if (!default_ctor || !default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-		return;
-	}
-
-	const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+void AstToIr::fillInConstructorDefaultArguments(
+	ConstructorCallOp& ctor_op,
+	const ConstructorDeclarationNode& ctor_node,
+	size_t explicit_arg_count) {
 	const auto& params = ctor_node.parameter_nodes();
-	for (const auto& param : params) {
-		if (!param.is<DeclarationNode>()) {
+	for (size_t i = explicit_arg_count; i < params.size(); ++i) {
+		if (!params[i].is<DeclarationNode>()) {
 			continue;
 		}
-		const auto& param_decl = param.as<DeclarationNode>();
-		if (!param_decl.has_default_value()) {
+
+		const auto& param_decl = params[i].as<DeclarationNode>();
+		if (param_decl.is_parameter_pack()) {
 			break;
 		}
+		if (!param_decl.has_default_value()) {
+			throw InternalError("Missing default constructor argument for parameter '" +
+				std::string(param_decl.identifier_token().value()) +
+				"' (constructor resolution should have rejected this call)");
+		}
+
 		ctor_op.arguments.push_back(materializeDefaultArgument(
 			param_decl.default_value(),
 			param_decl.type_node().as<TypeSpecifierNode>(),
@@ -311,6 +316,18 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 				.append("'")
 				.commit()));
 	}
+}
+
+void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info) {
+	const StructMemberFunction* default_ctor = struct_info.findDefaultConstructor();
+	if (!default_ctor || !default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+		return;
+	}
+
+	fillInConstructorDefaultArguments(
+		ctor_op,
+		default_ctor->function_decl.as<ConstructorDeclarationNode>(),
+		ctor_op.arguments.size());
 }
 
 void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
