@@ -13,22 +13,20 @@ The recent `AddressOfMember` bug fix exposed that backend code currently mixes t
 
 The current representation is workable for small fixes, but the naming and split of responsibility make it easy for new code to accidentally treat any `reference_stack_info_` entry as a true reference.
 
-## Status Check (2026-03-11)
+## Status Check (2026-03-13)
 
 Parts of this plan have already landed:
 
 - helper registration now exists via `setIndirectStorageInfo(...)`, `setReferenceInfo(...)`, and `setAddressOnlyInfo(...)`
 - helper queries now exist via `getIndirectStackInfo(...)`, `hasIndirectStackStorage(...)`, `hasIndirectStorage(...)`, and `shouldImplicitlyDeref(...)`
 - `AddressOf` and `AddressOfMember` already record address-only pointer results through helpers instead of open-coding side-table writes
+- `reference_stack_info_` has been renamed to `indirect_stack_info_`
+- `ReferenceInfo` has been renamed to `IndirectStorageInfo`
+- TempVar metadata now supports `AddressOnly` via `holds_address_only` field
 
 What has **not** landed yet:
 
-- `reference_stack_info_` is still the concrete storage name everywhere
-- raw `.find()` / `.count()` lookups still exist in several backend files
-- TempVar metadata still cannot represent `AddressOnly`
-- there is still no single shared “is this valid as a pointer base?” helper for member access / compute-address lowering
-
-So this document should now be read as a **migration checklist from partially-landed helper groundwork**, not as a greenfield plan.
+- there is still no single shared "is this valid as a pointer base?" helper for member access / compute-address lowering (partially addressed via `isPointerBaseStorage`)
 
 ## What was intentionally kept small in the current patch
 
@@ -42,7 +40,10 @@ Status today (2026-03-13):
 
 - factor address-only registration behind helpers ✅
 - stop duplicating the `AddressOf` vs `AddressOfMember` side-table setup ✅
-- prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code ✅ (2026-03-13)
+- prefer helper predicates over raw `reference_stack_info_.count()/find()` checks in touched code ✅
+- rename `reference_stack_info_` to `indirect_stack_info_` ✅
+- TempVar metadata supports `AddressOnly` ✅
+- `makeReference()` uses `ValueCategory` enum instead of bool ✅
 
 ### Track 0 Completed (2026-03-13)
 
