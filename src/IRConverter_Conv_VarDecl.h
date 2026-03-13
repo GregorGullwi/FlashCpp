@@ -198,7 +198,7 @@
 				}
 			}
 			
-			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference);
+			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference, TempVar{0});
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -1565,7 +1565,7 @@
 				                              (!is_two_reg_struct && param_type == Type::Struct && param_size > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param_type, param_size,
-						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
+						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 				}
 
 				// Add parameter to debug information
@@ -1718,7 +1718,7 @@
 				bool is_passed_by_reference = param.is_reference() ||
 				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference());
+					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference(), TempVar{0});
 				}
 
 				// Add parameter to debug information
