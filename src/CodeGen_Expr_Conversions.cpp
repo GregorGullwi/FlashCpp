@@ -365,7 +365,7 @@
 			
 			// Capture index type information for proper sign extension
 			arr_idx.index_type = index_operands.type;
-			arr_idx.index_size_bits = SizeInBits{index_operands.size_in_bits};
+			arr_idx.index_size_bits = index_operands.size_in_bits;
 			
 			// Set index value
 			if (std::holds_alternative<unsigned long long>(index_operands.value)) {

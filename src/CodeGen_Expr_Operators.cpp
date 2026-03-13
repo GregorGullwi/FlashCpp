@@ -48,7 +48,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		info.is_global_or_static = true;
 		info.store_name = it->second.mangled_name;
 		info.type = it->second.type;
-		info.size_in_bits = SizeInBits{it->second.size_in_bits};
+		info.size_in_bits = it->second.size_in_bits;
 		return info;
 	}
 	case IdentifierBinding::StaticMember: {
@@ -100,7 +100,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		info.is_global_or_static = true;
 		info.store_name = static_local_it->second.mangled_name;
 		info.type = static_local_it->second.type;
-		info.size_in_bits = SizeInBits{static_local_it->second.size_in_bits};
+		info.size_in_bits = static_local_it->second.size_in_bits;
 		return info;
 	}
 
@@ -200,7 +200,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	result.type = Type::Struct;
 	result.size_in_bits = SizeInBits{static_cast<int>(actual_size_bits)};
 	result.value = IrValue(temp);
-	result.type_index = TypeIndex{type_idx};
+	result.type_index = type_idx;
 	return result;
 }
 
@@ -569,7 +569,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						AssignmentOp assign_op;
 						assign_op.result = temp;
 						assign_op.lhs.type = rhsExprResult.type;
-						assign_op.lhs.size_in_bits = SizeInBits{rhsExprResult.size_in_bits};
+						assign_op.lhs.size_in_bits = rhsExprResult.size_in_bits;
 						assign_op.lhs.value = temp;
 						assign_op.rhs = toTypedValue(rhsExprResult);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -601,7 +601,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
 					load_op.result.type = gsi.type;
-					load_op.result.size_in_bits = SizeInBits{gsi.size_in_bits};
+					load_op.result.size_in_bits = gsi.size_in_bits;
 					load_op.result.value = loaded;
 					load_op.global_name = gsi.store_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
@@ -638,7 +638,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					store_operands.emplace_back(result_var);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return makeExprResult(gsi.type, SizeInBits{gsi.size_in_bits}, IrOperand{result_var});
+					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{result_var});
 				}
 			}
 		}
@@ -3550,7 +3550,7 @@ const Token& token) {
 			// This is important: the size must match the array element type
 			TypedValue value_tv;
 			value_tv.type = lhs_operands.type;
-			value_tv.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+			value_tv.size_in_bits = lhs_operands.size_in_bits;
 			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
@@ -3931,7 +3931,7 @@ std::string_view op) {
 	MemberLoadOp load_op;
 	load_op.result.value = current_value_temp;
 	load_op.result.type = lhs_operands.type;
-	load_op.result.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+	load_op.result.size_in_bits = lhs_operands.size_in_bits;
 	load_op.object = lv_info.base;
 	load_op.member_name = lv_info.member_name.value();
 	load_op.offset = lv_info.offset;
@@ -3948,7 +3948,7 @@ std::string_view op) {
 	// Create the binary operation
 	BinaryOp bin_op;
 	bin_op.lhs.type = lhs_operands.type;
-	bin_op.lhs.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 	bin_op.lhs.value = current_value_temp;
 	bin_op.rhs = toTypedValue(rhs_operands);
 	bin_op.result = result_temp;
@@ -3958,7 +3958,7 @@ std::string_view op) {
 	// Finally, store the result back to the lvalue
 	TypedValue result_tv;
 	result_tv.type = lhs_operands.type;
-	result_tv.size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+	result_tv.size_in_bits = lhs_operands.size_in_bits;
 	result_tv.value = result_temp;
 	CVReferenceQualifier member_ref_qualifier = member_is_rvalue_reference
 		? CVReferenceQualifier::RValueReference

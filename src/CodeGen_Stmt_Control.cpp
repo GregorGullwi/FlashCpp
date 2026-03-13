@@ -383,7 +383,7 @@
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
 				.lhs = TypedValue{.type = condition_type, .size_in_bits = SizeInBits{static_cast<int>(condition_size)}, .value = toIrValue(condition_result.value)},
-				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = SizeInBits{case_value_result.size_in_bits}, .value = toIrValue(case_value_result.value)},
+				.rhs = TypedValue{.type = case_value_result.type, .size_in_bits = case_value_result.size_in_bits, .value = toIrValue(case_value_result.value)},
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));

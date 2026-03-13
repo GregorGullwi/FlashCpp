@@ -471,7 +471,7 @@
 
 									// Set index as TypedValue
 									payload.index.type = index_result.type;
-									payload.index.size_in_bits = SizeInBits{index_result.size_in_bits};
+									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
 
 									// Propagate type_index for struct element types so downstream member access

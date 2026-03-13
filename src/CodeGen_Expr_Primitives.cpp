@@ -178,7 +178,7 @@
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
 					.type = object_result.type,
-					.size_in_bits = SizeInBits{object_result.size_in_bits},
+					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = PointerDepth{}
 				};
@@ -420,20 +420,20 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return makeExprResult(info.type, SizeInBits{info.size_in_bits}, IrOperand{info.mangled_name});
+				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name});
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
 			op.result.type = info.type;
-			op.result.size_in_bits = SizeInBits{info.size_in_bits};
+			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
-			return makeExprResult(info.type, SizeInBits{info.size_in_bits}, IrOperand{result_temp});
+			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp});
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the

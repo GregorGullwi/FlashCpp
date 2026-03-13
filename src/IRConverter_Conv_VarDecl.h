@@ -1710,7 +1710,7 @@
 
 				// Phase 4: Use helper to get param name for map key
 				variable_scopes.back().variables[param.getName()].offset = offset;
-				variable_scopes.back().variables[param.getName()].size_in_bits = SizeInBits{param.size_in_bits};
+				variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing)
 				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
