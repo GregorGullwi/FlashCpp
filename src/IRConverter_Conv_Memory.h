@@ -792,7 +792,7 @@
 			);
 			
 			// NOTE: The result of addressof is a POINTER value, not a reference.
-			// However, we mark it in reference_stack_info_ so that subsequent operations
+			// However, we mark it in indirect_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
 			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value);

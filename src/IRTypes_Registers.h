@@ -266,7 +266,7 @@ struct TempVarMetadata {
 	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in destination
 	bool eligible_for_nrvo = false;      // True if this named variable can use NRVO
 	
-	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
+	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
 	Type value_type = Type::Invalid;
 	int value_size_bits = 0;
@@ -320,7 +320,7 @@ struct TempVarMetadata {
 		return meta;
 	}
 	
-	// Helper to create reference metadata (for compatibility with old ReferenceInfo usage)
+	// Helper to create reference metadata (for compatibility with IndirectStorageInfo)
 	static TempVarMetadata makeReference(Type type, int size_bits, bool is_rvalue_ref = false) {
 		TempVarMetadata meta;
 		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
