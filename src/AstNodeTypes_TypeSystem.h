@@ -349,7 +349,7 @@ struct formatter<TypeIndex, char> : formatter<size_t, char> {
 };
 }  // namespace std
 inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
-return os << idx.value;
+	return os << idx.value;
 }
 
 
