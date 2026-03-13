@@ -692,9 +692,6 @@
 						// Generate an indirect call instead of a member function call
 
 						TempVar ret_var = var_counter.next();
-						ExprOperands func_ptr_call_operands;
-						func_ptr_call_operands.emplace_back(ret_var);
-
 						// Get the function pointer member
 						// We need to generate member access to get the pointer value
 						TempVar func_ptr_temp = var_counter.next();
@@ -1547,11 +1544,7 @@
 			return_type.type(),
 			return_size_bits,
 			IrOperand{ret_var},
-			ret_type_index,
-			0,
-			preserveEncodedExprMetadata(
-				ret_type_index ? std::optional<unsigned long long>{static_cast<unsigned long long>(ret_type_index)} : std::nullopt
-			)
+			ret_type_index
 		);
 	}
 

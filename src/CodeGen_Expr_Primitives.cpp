@@ -207,9 +207,7 @@
 			member_type,
 			member_size,
 			IrOperand{result_var},
-			member_type_index,
-			0,
-			preserveEncodedExprMetadata(static_cast<unsigned long long>(member_type_index))
+			member_type_index
 		);
 	}
 
@@ -242,19 +240,8 @@
 			int size_bits,
 			IrOperand value,
 			TypeIndex type_index = 0,
-			int pointer_depth = 0,
-			std::optional<unsigned long long> encoded_metadata = std::nullopt
+			int pointer_depth = 0
 		) -> ExprResult {
-			if (encoded_metadata.has_value()) {
-				return makeExprResult(
-					type,
-					size_bits,
-					std::move(value),
-					type_index,
-					pointer_depth,
-					preserveEncodedExprMetadata(encoded_metadata)
-				);
-			}
 			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
@@ -276,33 +263,14 @@
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
-			const std::optional<unsigned long long> encoded_metadata =
-				(type_node.type() == Type::Enum && !is_enum_pointer)
-				? std::optional<unsigned long long>{static_cast<unsigned long long>(type_node.type_index())}
-				: std::nullopt;
 			return makeIdentifierResult(
 				result_type,
 				size_bits,
 				std::move(value),
 				carries_type_index ? type_node.type_index() : 0,
-				pointer_depth,
-				encoded_metadata
+				pointer_depth
 			);
 		};
-		auto preserveEnumIdentifierEncoding = [](ExprResult&& result, const TypeSpecifierNode& type_node) -> ExprResult {
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0) {
-				return makeExprResult(
-					result.type,
-					result.size_in_bits,
-					std::move(result.value),
-					result.type_index,
-					result.pointer_depth,
-					preserveEncodedExprMetadata(static_cast<unsigned long long>(type_node.type_index()))
-				);
-			}
-			return std::move(result);
-		};
-
 		// Check if this is a captured variable in a lambda.
 		// Explicit captures ([x], [&x]) have binding set at parse time.
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
@@ -1038,9 +1006,7 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-				return preserveEnumIdentifierEncoding(
-					makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
-					type_node);
+				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 			}
 			
 			// Regular local variable
@@ -1070,12 +1036,13 @@
 			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 				? 0
 				: type_node.pointer_depth();
-			return preserveEnumIdentifierEncoding(makeIdentifierResult(
-					return_type,
-					size_bits,
-					StringTable::getOrInternStringHandle(identifierNode.name()),
-					type_index,
-					pointer_depth), type_node);
+			return makeIdentifierResult(
+				return_type,
+				size_bits,
+				StringTable::getOrInternStringHandle(identifierNode.name()),
+				type_index,
+				pointer_depth
+			);
 		}
 
 		// Check if it's a VariableDeclarationNode
@@ -1208,9 +1175,7 @@
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-					return preserveEnumIdentifierEncoding(
-						makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index),
-						type_node);
+					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
 				
 				// Regular local variable (not a reference) - return variable name
@@ -1221,7 +1186,7 @@
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
-				ExprResult result = makeIdentifierResult(
+				return makeIdentifierResult(
 					type_node.type(),
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
@@ -1231,7 +1196,6 @@
 					(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 						? 0
 						: static_cast<int>(type_node.pointer_depth()));
-				return preserveEnumIdentifierEncoding(std::move(result), type_node);
 			}
 		}
 		

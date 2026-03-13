@@ -105,8 +105,7 @@
 				toSize,
 				operands.value,
 				operands.type_index,
-				operands.pointer_depth,
-				preserveEncodedExprMetadata(operands.encoded_metadata)
+				operands.pointer_depth
 			);
 		}
 
@@ -506,18 +505,12 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
 							
 							// Return the result
-							unsigned long long fourth_element = static_cast<unsigned long long>(return_type.pointer_depth());
-							if (fourth_element == 0 && return_type.type() == Type::Struct) {
-								fourth_element = static_cast<unsigned long long>(return_type.type_index());
-							}
-							
 							return makeExprResult(
 								return_type.type(),
 								call_op.return_size_in_bits,
 								IrOperand{ret_var},
-								0,
-								0,
-								preserveEncodedExprMetadata(fourth_element)
+								return_type.type_index(),
+								static_cast<int>(return_type.pointer_depth())
 							);
 						}
 					}
@@ -551,16 +544,12 @@
 						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
 						type_node->type(), size_bits));
 
-					unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
-						? static_cast<unsigned long long>(type_node->type_index())
-						: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
 					out = makeExprResult(
 						type_node->type(),
 						size_bits,
 						IrOperand{result_temp},
 						type_node->type_index(),
-						type_node->pointer_depth(),
-						preserveEncodedExprMetadata(encoded_metadata)
+						type_node->pointer_depth()
 					);
 					return true;
 				}
@@ -571,14 +560,12 @@
 			if (static_local_it != static_local_names_.end()) {
 				constexpr TypeIndex kStaticLocalTypeIndex = 0;
 				constexpr int kStaticLocalPointerDepth = 0;
-				constexpr unsigned long long kStaticLocalEncodedMetadata = 0ULL;
 				out = makeExprResult(
 					static_local_it->second.type,
 					static_cast<int>(static_local_it->second.size_in_bits),
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,
-					kStaticLocalPointerDepth,
-					preserveEncodedExprMetadata(kStaticLocalEncodedMetadata)
+					kStaticLocalPointerDepth
 				); // pointer depth/type_index metadata are assumed 0 for static locals here
 				return true;
 			}
@@ -591,16 +578,12 @@
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
-			unsigned long long encoded_metadata = (type_node->type() == Type::Struct)
-				? static_cast<unsigned long long>(type_node->type_index())
-				: ((type_node->pointer_depth() > 0) ? static_cast<unsigned long long>(type_node->pointer_depth()) : 0ULL);
 			out = makeExprResult(
 				type_node->type(),
 				static_cast<int>(type_node->size_in_bits()),
 				IrOperand{identifier_handle},
 				type_node->type_index(),
-				type_node->pointer_depth(),
-				preserveEncodedExprMetadata(encoded_metadata)
+				type_node->pointer_depth()
 			);
 			return true;
 		};
@@ -1233,9 +1216,7 @@
 								member_result.member->type,
 								64,
 								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
-								static_cast<TypeIndex>(member_result.member->type_index),
-								0,
-								preserveEncodedExprMetadata(static_cast<unsigned long long>(member_result.member->type_index))
+								static_cast<TypeIndex>(member_result.member->type_index)
 							);
 						}
 					}
@@ -1363,8 +1344,7 @@
 				64,
 				IrOperand{result_var},
 				operandIrOperands.type_index,
-				static_cast<int>(operand_ptr_depth + 1),
-				preserveEncodedExprMetadata(operand_ptr_depth + 1)
+				static_cast<int>(operand_ptr_depth + 1)
 			);
 		}
 		else if (unaryOperatorNode.op() == "*") {
@@ -1459,8 +1439,7 @@
 					64,
 					IrOperand{lvalue_temp},
 					operandIrOperands.type_index,
-					static_cast<int>(result_ptr_depth),
-					preserveEncodedExprMetadata(result_ptr_depth)
+					static_cast<int>(result_ptr_depth)
 				);
 			}
 			
@@ -1551,8 +1530,7 @@
 				element_size,
 				IrOperand{result_var},
 				operandIrOperands.type_index,
-				static_cast<int>(result_ptr_depth),
-				preserveEncodedExprMetadata(result_ptr_depth)
+				static_cast<int>(result_ptr_depth)
 			);
 		}
 		else {
@@ -1707,8 +1685,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			64,
 			value_var,
 			operandIrResult.type_index,
-			operand_pointer_depth,
-			preserveEncodedExprMetadata(operandIrResult.encoded_metadata)
+			operand_pointer_depth
 		);
 	};
 
@@ -1833,8 +1810,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				64,
 				IrOperand{result_var},
 				0,
-				0,
-				preserveEncodedExprMetadata(static_cast<unsigned long long>(operand_pointer_depth))
+				operand_pointer_depth
 			);
 		} else {
 			// Postfix: save old value, modify, return old value
@@ -1861,8 +1837,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				64,
 				IrOperand{old_value},
 				0,
-				0,
-				preserveEncodedExprMetadata(static_cast<unsigned long long>(operand_pointer_depth))
+				operand_pointer_depth
 			);
 		}
 	} else {
