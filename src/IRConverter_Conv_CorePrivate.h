@@ -1263,8 +1263,24 @@
 		return !info.holds_address_only;
 	}
 
-	bool isPointerBaseStorage(int32_t stack_offset) const {
-		return hasIndirectStackStorage(stack_offset);
+	// Check if the base is already a pointer (holds an address).
+	// Returns true if:
+	//   - stack_offset is registered in indirect_stack_info_ (true reference or address-only like 'this')
+	//   - OR TempVar (if provided) is a true reference or address-only
+	// This is used for member access / compute-address decisions:
+	// - if true, emit MOV (load existing address) rather than LEA (compute address of stack slot)
+	bool isPointerBaseStorage(int32_t stack_offset, TempVar temp_var = TempVar{0}) const {
+		// Check stack-offset map first (covers named variables including 'this')
+		if (hasIndirectStackStorage(stack_offset)) {
+			return true;
+		}
+		// Check TempVar metadata if provided
+		if (temp_var.var_number != 0) {
+			if (isTempVarReference(temp_var) || isTempVarAddressOnly(temp_var)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// Build the mangled symbol name for the complete-object destructor of a class.

@@ -32,17 +32,16 @@
 					return;
 				}
 			} else {
-				object_base_offset = it->second.offset;
+			object_base_offset = it->second.offset;
 
-				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-				bool is_this = (StringTable::getStringView(object_name_handle) == "this"sv);
-				bool in_ref_stack_info = hasIndirectStackStorage(object_base_offset);
+				// Check if base is a pointer (reference, 'this', or pointer-to-member)
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				bool in_indirect_storage = isPointerBaseStorage(object_base_offset);
 				FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
 				          "' offset=", object_base_offset,
-				          " is_this=", is_this,
-				          " in_ref_stack_info=", in_ref_stack_info,
+				          " in_indirect_storage=", in_indirect_storage,
 				          " is_pointer_to_member=", op.is_pointer_to_member);
-				if (is_this || in_ref_stack_info || op.is_pointer_to_member) {
+				if (in_indirect_storage || op.is_pointer_to_member) {
 					is_pointer_access = true;
 				}
 			}
@@ -52,7 +51,7 @@
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
 			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
-				if (hasIndirectStackStorage(object_base_offset) || op.is_pointer_to_member) {
+			if (isPointerBaseStorage(object_base_offset, object_temp) || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}
@@ -530,10 +529,9 @@
 			}
 			object_base_offset = it->second.offset;
 
-				// Check if this is the 'this' pointer or a reference parameter or pointer-to-member access
-				if (StringTable::getStringView(object_name_handle) == "this"sv ||
-					hasIndirectStackStorage(object_base_offset) ||
-					op.is_pointer_to_member) {
+			// Check if base is a pointer (reference, 'this', or pointer-to-member)
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+			if (isPointerBaseStorage(object_base_offset) || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		} else {
@@ -542,7 +540,7 @@
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
 			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
-				if (hasIndirectStackStorage(object_base_offset) || op.is_pointer_to_member) {
+			if (isPointerBaseStorage(object_base_offset, object_temp) || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}
@@ -877,12 +875,11 @@
 		
 		// Calculate the address:
 		// - For regular stack objects, use LEA [RBP + obj_offset + member_offset]
-		// - For references and the implicit 'this' parameter, first load the base pointer value
+		// - For references and 'this' (registered in indirect_stack_info_), load the base pointer value
 		//   from the stack slot, then add the member offset
 		// Use register allocator to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
-		auto ref_info = getIndirectStackInfo(obj_offset);
-		if (op.base_object == this_handle || ref_info.has_value()) {
+		if (isPointerBaseStorage(obj_offset)) {
 			emitMovFromFrame(target_reg, obj_offset);
 			if (op.member_offset != 0) {
 				emitAddImmToReg(textSectionData, target_reg, op.member_offset);
@@ -940,24 +937,19 @@
 			} else {
 				base_offset = it->second.offset;
 
-				// Check if base is 'this' - it's a pointer, so we need to load its value
-				// instead of computing the address of the 'this' variable
-				std::string_view base_name_str = StringTable::getStringView(base_name);
-				if (base_name_str == "this") {
-					base_is_pointer = true;
-				}
-
-				// Check if base is a reference - if so, we need to load the address it contains
-				// instead of computing the address of the variable itself
-					base_is_reference = hasIndirectStackStorage(static_cast<int32_t>(base_offset));
+				// Check if base is a pointer (reference or 'this')
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				base_is_pointer = isPointerBaseStorage(static_cast<int32_t>(base_offset));
+				base_is_reference = base_is_pointer;
 			}
 		} else {
 			// TempVar - get its stack offset
 			TempVar base_temp = std::get<TempVar>(op.base);
 			base_offset = getStackOffsetFromTempVar(base_temp);
 			
-			// Check if TempVar is a reference
-				base_is_reference = hasIndirectStackStorage(static_cast<int32_t>(base_offset));
+			// Check if TempVar is a reference or address-only
+			base_is_pointer = isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
+			base_is_reference = base_is_pointer;
 		}
 		
 		if (base_is_global) {
