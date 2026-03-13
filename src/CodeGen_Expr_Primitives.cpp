@@ -240,7 +240,7 @@
 			int size_bits,
 			IrOperand value,
 			TypeIndex type_index = 0,
-			int pointer_depth = 0
+			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
 			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
 		};
@@ -262,7 +262,7 @@
 				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index()].type_, type_node.type_index());
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
-			const int pointer_depth = preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0;
+			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,
 				size_bits,
@@ -1033,9 +1033,9 @@
 			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? type_node.type_index()
 				: 0;
-			int pointer_depth = (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+			PointerDepth pointer_depth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 				? 0
-				: type_node.pointer_depth();
+				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
 				return_type,
 				size_bits,
@@ -1193,9 +1193,9 @@
 					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
 						? type_node.type_index()
 						: 0,
-					(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+					PointerDepth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 						? 0
-						: static_cast<int>(type_node.pointer_depth()));
+						: static_cast<int>(type_node.pointer_depth())});
 			}
 		}
 		

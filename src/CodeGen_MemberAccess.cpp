@@ -135,7 +135,7 @@
 
 	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
-		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, int pointer_depth = 0) -> ExprResult {
+		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
 			ExprResult result;
 			result.type = type;
 			result.size_in_bits = size_bits;
@@ -734,7 +734,7 @@
 				element_size_bits,
 				result_var,
 				static_cast<TypeIndex>(element_type_index),
-				element_pointer_depth);
+				PointerDepth{element_pointer_depth});
 		}
 
 		// Create instruction with typed payload (Load context - default)
@@ -745,7 +745,7 @@
 			element_size_bits,
 			result_var,
 			static_cast<TypeIndex>(element_type_index),
-			element_pointer_depth);
+			PointerDepth{element_pointer_depth});
 	}
 
 	bool AstToIr::validateAndSetupIdentifierMemberAccess(

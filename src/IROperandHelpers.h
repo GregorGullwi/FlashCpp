@@ -6,6 +6,33 @@
 // Note: IrValue and all struct definitions (BinaryOp, etc.) are now in IRTypes.h
 // This file only contains helper functions for working with those types
 
+// ============================================================================
+// Strong wrapper for pointer indirection depth.
+//
+// Design intent:
+//   - Explicit construction prevents accidentally passing a bare integer literal
+//     or TypeIndex value where pointer_depth is expected (the primary bug class).
+//   - operator int() is provided for backward-compatible reads at existing
+//     comparison and assignment sites; it will be narrowed once migration is done.
+//   - The makeExprResult() 5-arg overload requires PointerDepth so that
+//     swapping the type_index and pointer_depth arguments is a compile error.
+// ============================================================================
+struct PointerDepth {
+	int value = 0;
+	// Default construction is non-explicit so ExprResult{} aggregate init compiles.
+	constexpr PointerDepth() noexcept = default;
+	// Single-arg construction is explicit to prevent int→PointerDepth implicit conversion.
+	constexpr explicit PointerDepth(int v) noexcept : value(v) {}
+	// Implicit conversion to int for backward-compatible reads.
+	constexpr operator int() const noexcept { return value; }
+	constexpr bool operator==(PointerDepth o) const noexcept { return value == o.value; }
+	constexpr bool operator!=(PointerDepth o) const noexcept { return value != o.value; }
+	constexpr bool operator<(PointerDepth o)  const noexcept { return value <  o.value; }
+	constexpr bool operator<=(PointerDepth o) const noexcept { return value <= o.value; }
+	constexpr bool operator>(PointerDepth o)  const noexcept { return value >  o.value; }
+	constexpr bool operator>=(PointerDepth o) const noexcept { return value >= o.value; }
+};
+
 // Helper function to extract IrValue from IrOperand using index-based mapping
 // IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>
 // IrValue   = std::variant<unsigned long long, double, TempVar, StringHandle>
@@ -36,7 +63,7 @@ struct ExprResult {
 	int size_in_bits = 0;
 	IrOperand value{};
 	TypeIndex type_index = 0;
-	int pointer_depth = 0;
+	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 };
 
 inline ExprResult makeExprResultImpl(
@@ -44,7 +71,7 @@ inline ExprResult makeExprResultImpl(
 	int size_in_bits,
 	IrOperand value,
 	TypeIndex type_index,
-	int pointer_depth
+	PointerDepth pointer_depth
 ) {
 	return {
 		.type = type,
@@ -56,14 +83,15 @@ inline ExprResult makeExprResultImpl(
 }
 
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), 0, 0);
+	return makeExprResultImpl(type, size_in_bits, std::move(value), 0, PointerDepth{});
 }
 
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, 0);
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, PointerDepth{});
 }
 
-inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, int pointer_depth) {
+// Requires PointerDepth to prevent accidental type_index/pointer_depth argument swap.
+inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
 }
 

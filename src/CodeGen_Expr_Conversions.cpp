@@ -510,7 +510,7 @@
 								call_op.return_size_in_bits,
 								IrOperand{ret_var},
 								return_type.type_index(),
-								static_cast<int>(return_type.pointer_depth())
+								PointerDepth{static_cast<int>(return_type.pointer_depth())}
 							);
 						}
 					}
@@ -549,7 +549,7 @@
 						size_bits,
 						IrOperand{result_temp},
 						type_node->type_index(),
-						type_node->pointer_depth()
+						PointerDepth{static_cast<int>(type_node->pointer_depth())}
 					);
 					return true;
 				}
@@ -559,14 +559,13 @@
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
 				constexpr TypeIndex kStaticLocalTypeIndex = 0;
-				constexpr int kStaticLocalPointerDepth = 0;
 				out = makeExprResult(
 					static_local_it->second.type,
 					static_cast<int>(static_local_it->second.size_in_bits),
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,
-					kStaticLocalPointerDepth
-				); // pointer depth/type_index metadata are assumed 0 for static locals here
+					PointerDepth{}
+				); // pointer depth is always 0 for static locals here
 				return true;
 			}
 
@@ -583,7 +582,7 @@
 				static_cast<int>(type_node->size_in_bits()),
 				IrOperand{identifier_handle},
 				type_node->type_index(),
-				type_node->pointer_depth()
+				PointerDepth{static_cast<int>(type_node->pointer_depth())}
 			);
 			return true;
 		};
@@ -614,7 +613,7 @@
 					64,
 					result_var,
 					0,
-					addr_components->pointer_depth + 1);
+					PointerDepth{addr_components->pointer_depth + 1});
 				return result;
 			}
 			
@@ -1344,7 +1343,7 @@
 				64,
 				IrOperand{result_var},
 				operandIrOperands.type_index,
-				static_cast<int>(operand_ptr_depth + 1)
+				PointerDepth{static_cast<int>(operand_ptr_depth + 1)}
 			);
 		}
 		else if (unaryOperatorNode.op() == "*") {
@@ -1439,7 +1438,7 @@
 					64,
 					IrOperand{lvalue_temp},
 					operandIrOperands.type_index,
-					static_cast<int>(result_ptr_depth)
+					PointerDepth{static_cast<int>(result_ptr_depth)}
 				);
 			}
 			
@@ -1530,7 +1529,7 @@
 				element_size,
 				IrOperand{result_var},
 				operandIrOperands.type_index,
-				static_cast<int>(result_ptr_depth)
+				PointerDepth{static_cast<int>(result_ptr_depth)}
 			);
 		}
 		else {
@@ -1685,7 +1684,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			64,
 			value_var,
 			operandIrResult.type_index,
-			operand_pointer_depth
+			PointerDepth{operand_pointer_depth}
 		);
 	};
 
@@ -1810,7 +1809,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				64,
 				IrOperand{result_var},
 				0,
-				operand_pointer_depth
+				PointerDepth{operand_pointer_depth}
 			);
 		} else {
 			// Postfix: save old value, modify, return old value
@@ -1837,7 +1836,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				64,
 				IrOperand{old_value},
 				0,
-				operand_pointer_depth
+				PointerDepth{operand_pointer_depth}
 			);
 		}
 	} else {

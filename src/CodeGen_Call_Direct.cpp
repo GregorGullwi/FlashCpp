@@ -85,7 +85,7 @@
 										64,
 										IrOperand{result_var},
 										0,
-										1
+										PointerDepth{1}
 									);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
