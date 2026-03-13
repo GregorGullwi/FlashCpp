@@ -150,7 +150,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		if (init_expr.is<ExpressionNode>()) {
 			ExprResult init_result = visitExpressionNode(init_expr.as<ExpressionNode>());
 			store_type = init_result.type;
-			store_size = init_result.size_in_bits;
+			store_size = init_result.size_in_bits.value;
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
@@ -166,7 +166,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
 					store_type = nested_result->type;
-					store_size = nested_result->size_in_bits;
+					store_size = nested_result->size_in_bits.value;
 					store_value = nested_result->value;
 					store_value_set = true;
 				} else {
@@ -223,7 +223,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		}
 	} else {
 		value.size_in_bits = SizeInBits{type_node.size_in_bits()};
-		if (value.size_in_bits == 0) {
+		if (!value.size_in_bits.is_set()) {
 			value.size_in_bits = SizeInBits{get_type_size_bits(type_node.type())};
 		}
 	}
@@ -347,7 +347,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Create result variable to hold the final value
 		TempVar result_var = var_counter.next();
 		Type result_type = true_result.type;
-		int result_size = true_result.size_in_bits;
+		int result_size = true_result.size_in_bits.value;
 
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
@@ -415,7 +415,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
-				int lhs_size = lhsExprResult.size_in_bits;
+				int lhs_size = lhsExprResult.size_in_bits.value;
 				bool use_unified_handler = lhs_size > 0;
 				if (use_unified_handler && lhs_size > 1024) {
 					FLASH_LOG(Codegen, Info, "Unified handler skipped: invalid size (", lhs_size, ")");
@@ -596,7 +596,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits > 0) {
+				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits.is_set()) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
@@ -658,7 +658,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
 
 				// Safety check
-				int lhs_size = lhsExprResult.size_in_bits;
+				int lhs_size = lhsExprResult.size_in_bits.value;
 				bool use_unified_handler = lhs_size > 0;
 				if (use_unified_handler && lhs_size > 1024) {
 					FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: invalid size (", lhs_size, ")");
@@ -713,8 +713,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Get the types and sizes of the operands
 		Type lhsType = lhsExprResult.type;
 		Type rhsType = rhsExprResult.type;
-		int lhsSize = lhsExprResult.size_in_bits;
-		int rhsSize = rhsExprResult.size_in_bits;
+		int lhsSize = lhsExprResult.size_in_bits.value;
+		int rhsSize = rhsExprResult.size_in_bits.value;
 
 		auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 			if (!parser_) {
@@ -1250,7 +1250,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 
-				bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64());
+				bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
 				if (needs_hidden_return) {
 					call_op.return_slot = result_var;
 				}
@@ -1477,7 +1477,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Generate IR for the member access expression
 					ExprResult member_ir = generateMemberAccessIr(member_access);
-					if (member_ir.type == Type::Void && member_ir.size_in_bits == 0) {
+					if (member_ir.type == Type::Void && !member_ir.size_in_bits.is_set()) {
 						return ExprResult{};
 					}
 
@@ -2401,7 +2401,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract argument details
 		Type arg_type = arg_result.type;
-		int arg_size = arg_result.size_in_bits;
+		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
 		// Step 1: Arithmetic shift right by 63 to get sign mask (all 1s if negative, all 0s if positive)
@@ -2446,7 +2446,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract argument details
 		Type arg_type = arg_result.type;
-		int arg_size = arg_result.size_in_bits;
+		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
 		// For floating point abs, clear the sign bit using bitwise AND
@@ -2481,7 +2481,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (ir_result.size_in_bits == POINTER_SIZE_BITS) {
+		if (ir_result.size_in_bits == SizeInBits{POINTER_SIZE_BITS}) {
 			return true;
 		}
 
@@ -3407,7 +3407,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Extract pointer details
 		[[maybe_unused]] Type ptr_type = ptrExprResult.type;
-		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits;
+		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits.value;
 
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -3518,7 +3518,7 @@ const Token& token) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = lhs_operands.size_in_bits;
+			inferred_size_bits = lhs_operands.size_in_bits.value;
 		}
 		return inferred_size_bits;
 	};
@@ -3556,7 +3556,7 @@ const Token& token) {
 			// Emit the store using helper
 			emitArrayStore(
 				lhs_operands.type,                 // element_type
-				lhs_operands.size_in_bits,         // element_size_bits
+				lhs_operands.size_in_bits.value,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
 				value_tv,                          // value (with LHS type/size, RHS value)
@@ -3578,7 +3578,7 @@ const Token& token) {
 			}
 
 			// Safety check: validate size is reasonable (not 0 or negative)
-			int lhs_size = lhs_operands.size_in_bits;
+			int lhs_size = lhs_operands.size_in_bits.value;
 			if (lhs_size <= 0 || lhs_size > 1024) {
 				FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
 				return false;
@@ -3686,7 +3686,7 @@ std::string_view op) {
 			inferred_size_bits = lhs_meta.value_size_bits;
 		}
 		if (inferred_size_bits == 0) {
-			inferred_size_bits = lhs_operands.size_in_bits;
+			inferred_size_bits = lhs_operands.size_in_bits.value;
 		}
 		return inferred_size_bits;
 	};
@@ -3815,7 +3815,7 @@ std::string_view op) {
 		ArrayAccessOp load_op;
 		load_op.result = current_value_temp;
 		load_op.element_type = lhs_operands.type;
-		load_op.element_size_in_bits = SizeInBits{lhs_operands.size_in_bits};
+		load_op.element_size_in_bits = lhs_operands.size_in_bits.value;
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;
 		load_op.member_offset = lv_info.offset;
@@ -3845,7 +3845,7 @@ std::string_view op) {
 		// Emit the store using helper
 		emitArrayStore(
 			lhs_operands.type,                 // element_type
-			lhs_operands.size_in_bits,         // element_size_bits
+			lhs_operands.size_in_bits.value,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index
 			result_tv,                         // value (result of operation)

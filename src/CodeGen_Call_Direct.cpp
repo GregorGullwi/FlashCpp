@@ -135,7 +135,7 @@
 					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
 					Type arg_type = argumentIrOperands.type;
-					int arg_size = argumentIrOperands.size_in_bits;
+					int arg_size = argumentIrOperands.size_in_bits.value;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
 						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -239,7 +239,7 @@
 							// Normal argument - visit the expression
 							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 							Type arg_type = argumentIrOperands.type;
-							int arg_size = argumentIrOperands.size_in_bits;
+							int arg_size = argumentIrOperands.size_in_bits.value;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
 								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
@@ -802,7 +802,7 @@
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type) {
 				Type arg_type = argumentIrOperands.type;
-				int arg_size = argumentIrOperands.size_in_bits;
+				int arg_size = argumentIrOperands.size_in_bits.value;
 				Type param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
@@ -817,7 +817,7 @@
 				if (should_apply_standard_conversion) {
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
 					arg_type = argumentIrOperands.type;
-					arg_size = argumentIrOperands.size_in_bits;
+					arg_size = argumentIrOperands.size_in_bits.value;
 					arg_type_index = argumentIrOperands.type_index;
 				}
 
@@ -1088,7 +1088,7 @@
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
 						Type literal_type = argumentIrOperands.type;
-						int literal_size = argumentIrOperands.size_in_bits;
+						int literal_size = argumentIrOperands.size_in_bits.value;
 						
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
@@ -1122,7 +1122,7 @@
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
 							Type expr_type = argumentIrOperands.type;
-							int expr_size = argumentIrOperands.size_in_bits;
+							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 							
 							// Check if the TempVar already holds an address

@@ -337,7 +337,7 @@
 
 		// Get the condition type and value
 		Type condition_type = condition_result.type;
-		int condition_size = condition_result.size_in_bits;
+		int condition_size = condition_result.size_in_bits.value;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
 		// Continue is not allowed in switch, but break is

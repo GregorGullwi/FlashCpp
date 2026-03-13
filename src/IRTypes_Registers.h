@@ -42,11 +42,11 @@ enum class X64Register : uint8_t {
 /// to ensure correct operand size encoding.
 struct SizedRegister {
 	X64Register reg;
-	int size_in_bits;    // 8, 16, 32, or 64
+	SizeInBits size_in_bits;    // 8, 16, 32, or 64
 	bool is_signed;      // true = use MOVSX, false = use MOVZX for loads < 64-bit
 	
 	SizedRegister(X64Register r, int size, bool sign = false)
-		: reg(r), size_in_bits(size), is_signed(sign) {}
+		: reg(r), size_in_bits(SizeInBits{size}), is_signed(sign) {}
 	
 	// Convenience constructors for common cases
 	static SizedRegister ptr(X64Register r) { return {r, 64, false}; }
@@ -64,11 +64,11 @@ struct SizedRegister {
 /// Use this to specify the source operand when loading from stack.
 struct SizedStackSlot {
 	int32_t offset;       // Offset from RBP
-	int size_in_bits;     // 8, 16, 32, or 64
+	SizeInBits size_in_bits;     // 8, 16, 32, or 64
 	bool is_signed;       // true = value is signed, false = unsigned
 	
 	SizedStackSlot(int32_t off, int size, bool sign = false)
-		: offset(off), size_in_bits(size), is_signed(sign) {}
+		: offset(off), size_in_bits(SizeInBits{size}), is_signed(sign) {}
 	
 	// Convenience constructors for common cases
 	static SizedStackSlot ptr(int32_t off) { return {off, 64, false}; }
@@ -273,7 +273,7 @@ struct TempVarMetadata {
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
 		meta.value_type = type;
-		meta.value_size_bits = SizeInBits{size_bits};
+		meta.value_size_bits = size_bits;
 		return meta;
 	}
 	
@@ -284,7 +284,7 @@ struct TempVarMetadata {
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
 		meta.value_type = type;
-		meta.value_size_bits = SizeInBits{size_bits};
+		meta.value_size_bits = size_bits;
 		return meta;
 	}
 	
@@ -318,7 +318,7 @@ struct TempVarMetadata {
 		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
 		meta.is_address = true;  // References hold addresses
 		meta.value_type = type;
-		meta.value_size_bits = SizeInBits{size_bits};
+		meta.value_size_bits = size_bits;
 		meta.is_rvalue_reference = is_rvalue_ref;
 		return meta;
 	}

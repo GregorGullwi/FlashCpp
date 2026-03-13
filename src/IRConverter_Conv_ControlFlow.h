@@ -316,7 +316,7 @@
 				bool is_signed = isSignedType(op.index.type);
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
 				);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
@@ -337,7 +337,7 @@
 				bool is_signed = isSignedType(op.index.type);
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
 				);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 					
@@ -388,7 +388,7 @@
 			bool is_signed = isSignedType(op.index.type);
 			emitMovFromFrameSized(
 				SizedRegister{index_reg, 64, false},
-				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
 			);
 			
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
@@ -498,7 +498,7 @@
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
 				);
 				
 				// Multiply index by element size
@@ -529,7 +529,7 @@
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
 				);
 				
 				// Multiply index by element size
@@ -628,7 +628,7 @@
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
 				// Value from temp var: check if already in register, otherwise load from stack
 				TempVar value_var = std::get<TempVar>(op.value.value);
-				int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits);
+				int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
 				
 				if (is_float_store) {
 					// For floats, check if already in XMM register, otherwise load from stack
@@ -636,12 +636,12 @@
 						// Value is already in a register
 						// If it's an XMM register and not XMM0, move it
 						if (value_reg.value() != X64Register::XMM0) {
-							bool is_double = (op.value.size_in_bits == 64);
+							bool is_double = (op.value.size_in_bits == SizeInBits{64});
 							emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 						}
 					} else {
 						// Load float from stack into XMM0
-						bool is_double = (op.value.size_in_bits == 64);
+						bool is_double = (op.value.size_in_bits == SizeInBits{64});
 						emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 					}
 				} else {
@@ -676,11 +676,11 @@
 					if (is_float_store) {
 						if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 							if (value_reg.value() != X64Register::XMM0) {
-								bool is_double = (op.value.size_in_bits == 64);
+								bool is_double = (op.value.size_in_bits == SizeInBits{64});
 								emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 							}
 						} else {
-							bool is_double = (op.value.size_in_bits == 64);
+							bool is_double = (op.value.size_in_bits == SizeInBits{64});
 							emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 						}
 					} else {
@@ -802,7 +802,7 @@
 				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits);
 				
 				// Load index into RCX (value is already in RDX)
-				emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits);
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits.value);
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
 				if (is_pointer_to_array) {

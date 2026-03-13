@@ -123,7 +123,7 @@
 							arg_types.push_back(TypeSpecifierNode(
 								operand_result.type,
 								TypeQualifier::None,
-								static_cast<unsigned char>(operand_result.size_in_bits)
+								static_cast<unsigned char>(operand_result.size_in_bits.value)
 							));
 						}
 					});
@@ -233,7 +233,7 @@
 
 				// Capture return type info before moving call_op (use-after-move is UB)
 				Type lambda_return_type = call_op.return_type;
-				int lambda_return_size = call_op.return_size_in_bits;
+				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
@@ -250,7 +250,7 @@
 			immediate_lambda_object_type = TypeSpecifierNode(
 				Type::Struct,
 				lambda_result.type_index,
-				static_cast<int>(lambda_result.size_in_bits),
+				static_cast<int>(lambda_result.size_in_bits.value),
 				memberFunctionCallNode.called_from()
 			);
 
@@ -1444,7 +1444,7 @@
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
 							Type literal_type = argument_result.type;
-							int literal_size = argument_result.size_in_bits;
+							int literal_size = argument_result.size_in_bits.value;
 							
 							// Create a temporary variable to hold the literal value
 							TempVar temp_var = var_counter.next();
@@ -1481,7 +1481,7 @@
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
 								Type expr_type = argument_result.type;
-								int expr_size = argument_result.size_in_bits;
+								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 								
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));

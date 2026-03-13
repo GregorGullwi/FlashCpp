@@ -584,7 +584,7 @@ public:
 				oss << type_info->second->name();
 			}
 			
-			int deref_size = (op.pointer.pointer_depth > 1) ? 64 : op.pointer.size_in_bits;
+			int deref_size = (op.pointer.pointer_depth > 1) ? 64 : op.pointer.size_in_bits.value;
 			oss << deref_size;
 			
 			// Show pointer depth for debugging

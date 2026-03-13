@@ -275,7 +275,7 @@
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init result
 								Type init_type = init_result.type;
-								int init_size = init_result.size_in_bits;
+								int init_size = init_result.size_in_bits.value;
 
 								// Generate AddressOf for the initializer
 								TempVar addr_temp = var_counter.next();

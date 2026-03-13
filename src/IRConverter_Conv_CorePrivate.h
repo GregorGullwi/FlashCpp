@@ -388,7 +388,7 @@
 		// For comparisons, result is bool (8 bits for code generation)
 		// For arithmetic operations, result type matches operand type
 		Type result_type = bin_op.lhs.type;
-		int result_size = bin_op.lhs.size_in_bits;
+		int result_size = bin_op.lhs.size_in_bits.value;
 		
 		auto opcode = instruction.getOpcode();
 		bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
@@ -402,8 +402,8 @@
 		
 		// Store the operand type and size for register allocation and loading decisions
 		Type operand_type = bin_op.lhs.type;
-		int operand_size = bin_op.lhs.size_in_bits;
-		
+		int operand_size = bin_op.lhs.size_in_bits.value;
+
 		if (is_comparison) {
 			result_type = Type::Bool;
 			result_size = 8;  // We store bool as 8 bits for register operations
@@ -445,7 +445,7 @@
 				ctx.result_value.size_in_bits = SizeInBits{64};
 			}
 			ctx.operand_type = Type::UnsignedLongLong;
-			ctx.operand_size_in_bits = SizeInBits{64};
+			ctx.operand_size_in_bits = 64;
 		}
 		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
 			auto type_name = getTypeName(ctx.result_value.type);
@@ -511,7 +511,7 @@
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.lhs.value)) {
 			auto lhs_var_op = std::get<TempVar>(bin_op.lhs.value);
-			auto lhs_stack_var_addr = getStackOffsetFromTempVar(lhs_var_op, bin_op.lhs.size_in_bits);
+			auto lhs_stack_var_addr = getStackOffsetFromTempVar(lhs_var_op, bin_op.lhs.size_in_bits.value);
 			if (auto lhs_reg = regAlloc.tryGetStackVariableRegister(lhs_stack_var_addr); lhs_reg.has_value()) {
 				ctx.result_physical_reg = lhs_reg.value();
 			}
@@ -724,7 +724,7 @@
 							
 							// Use the RHS's actual size for loading, not the LHS/operand size
 							// This is important when types are mixed (e.g., int + long)
-							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, bin_op.rhs.size_in_bits);
+							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, bin_op.rhs.size_in_bits.value);
 						}
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
@@ -733,7 +733,7 @@
 			else {
 				// Not found in local variables - check if it's a global variable
 				std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
-				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
+				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits.value, ctx.result_physical_reg);
 				
 				if (ctx.rhs_physical_reg == X64Register::Count) {
 					throw InternalError(std::string("Missing variable: ") + std::string(rhs_var_name));
@@ -742,7 +742,7 @@
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.rhs.value)) {
 			auto rhs_var_op = std::get<TempVar>(bin_op.rhs.value);
-			auto rhs_stack_var_addr = getStackOffsetFromTempVar(rhs_var_op, bin_op.rhs.size_in_bits);
+			auto rhs_stack_var_addr = getStackOffsetFromTempVar(rhs_var_op, bin_op.rhs.size_in_bits.value);
 			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_stack_var_addr); rhs_reg.has_value()) {
 				ctx.rhs_physical_reg = rhs_reg.value();
 			}
@@ -815,7 +815,7 @@
 
 						// Use the RHS's actual size for loading, not the LHS/operand size
 						// This is important when types are mixed (e.g., int + long)
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, bin_op.rhs.size_in_bits);
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, bin_op.rhs.size_in_bits.value);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
@@ -972,11 +972,11 @@
 						static_cast<int>(ctx.result_physical_reg), reg_info.stackVariableOffset, stack_offset, reg_info.size_in_bits);
 					// Use the actual register size from reg_info, not hardcoded 64 bits
 					emitMovToFrameSized(
-						SizedRegister{ctx.result_physical_reg, static_cast<uint8_t>(reg_info.size_in_bits), false},
-						SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}
+						SizedRegister{ctx.result_physical_reg, static_cast<uint8_t>(reg_info.size_in_bits.value), false},
+						SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits.value, false}
 					);
 				}
-				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset, ctx.result_value.size_in_bits);
+				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset, ctx.result_value.size_in_bits.value);
 			}
 		}
 
@@ -988,10 +988,10 @@
 			if (reg_info.stackVariableOffset != INT_MIN) {
 				// Allocate a fresh register for LHS and reload it from the stack
 				X64Register new_lhs_reg = allocateRegisterWithSpilling();
-				emitMovFromFrameBySize(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
+				emitMovFromFrameBySize(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits.value);
 				
 				// Update tracking: the new register now holds the LHS variable
-				regAlloc.set_stack_variable_offset(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
+				regAlloc.set_stack_variable_offset(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits.value);
 				regAlloc.registers[static_cast<int>(new_lhs_reg)].isDirty = reg_info.isDirty;
 				
 				// Clear the old register's tracking (it now only holds RHS)
@@ -1055,7 +1055,7 @@
 		}
 		else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
-			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits);
+			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			
 			// Check if this is a reference - if so, we need to store through the pointer
 			auto ref_info = getIndirectStackInfo(res_stack_var_addr);
@@ -1089,7 +1089,7 @@
 							bool is_double = (ctx.result_value.type == Type::Double);
 							emitFloatMovRegToReg(res_reg.value(), actual_source_reg, is_double);
 						} else {
-							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits / 8);
+							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits.value / 8);
 							textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
 						}
 					}
@@ -1102,7 +1102,7 @@
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
 						);
 					}
 					// Can release source register since result is now tracked in the destination register
@@ -1115,7 +1115,7 @@
 					
 					// Tell the register allocator that this register now holds this temp variable
 					assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
-					regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits);
+					regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits.value);
 					
 					// For floating-point types, we MUST write to memory immediately because the register
 					// allocator doesn't properly track XMM registers across all operations.
@@ -1126,7 +1126,7 @@
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
 						);
 					}
 					// Keep the value in the register for subsequent operations
@@ -1387,7 +1387,7 @@
 				constexpr size_t max_float_regs = 8;
 				for (const auto& arg : args) {
 					bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && arg.pointer_depth == 0;
-					bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 &&
+					bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits.value > 64 && arg.size_in_bits.value <= 128 &&
 					                     !arg.is_reference() && arg.pointer_depth == 0;
 					size_t slots = arg_is_two_reg ? 2 : 1;
 					if (arg_is_float) {
@@ -1480,13 +1480,13 @@
 
 				bool is_reference = op.is_reference();
 				bool is_array = op.is_array;
-				int total_size_bits = size_in_bits;
+				int total_size_bits = size_in_bits.value;
 				if (is_reference) {
 					total_size_bits = 64;
 				}
 				if (is_array && op.array_count.has_value()) {
 					uint64_t array_size = op.array_count.value();
-					total_size_bits = size_in_bits * static_cast<int>(array_size);
+					total_size_bits = size_in_bits.value * static_cast<int>(array_size);
 				}
 				
 				func_stack_space.named_vars_size += (total_size_bits / 8);
@@ -1554,7 +1554,7 @@
 								                      opcode == IrOpcode::FloatEqual || opcode == IrOpcode::FloatNotEqual ||
 								                      opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
 								                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
-								int result_size = is_comparison ? 8 : bin_op->lhs.size_in_bits;
+								int result_size = is_comparison ? 8 : bin_op->lhs.size_in_bits.value;
 								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = result_size;
 								handled_by_typed_payload = true;
 							}
@@ -1564,13 +1564,13 @@
 							// Phase 5: Convert temp var name to StringHandle
 							// For logical not, result is always bool (8 bits)
 							// For bitwise not and negate, result size matches operand size
-							temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits;
+							temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits.value;
 							handled_by_typed_payload = true;
 						}
 						// Try CallOp (function calls)
 						else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits;
+							temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits.value;
 							handled_by_typed_payload = true;
 						}
 						// Try ArrayAccessOp (array element load)
@@ -1589,7 +1589,7 @@
 						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
-							int result_size = (deref_op->pointer.pointer_depth > 1) ? 64 : deref_op->pointer.size_in_bits;
+							int result_size = (deref_op->pointer.pointer_depth > 1) ? 64 : deref_op->pointer.size_in_bits.value;
 							temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 							handled_by_typed_payload = true;
 						}
@@ -1599,7 +1599,7 @@
 							if (std::holds_alternative<TempVar>(assign_op->lhs.value)) {
 								auto temp_var = std::get<TempVar>(assign_op->lhs.value);
 								// Phase 5: Convert temp var name to StringHandle
-								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits.value;
 								handled_by_typed_payload = true;
 							}
 						}
@@ -1619,7 +1619,7 @@
 						else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
 							if (std::holds_alternative<TempVar>(global_load_op->result.value)) {
 								auto temp_var = std::get<TempVar>(global_load_op->result.value);
-								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = global_load_op->result.size_in_bits;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = global_load_op->result.size_in_bits.value;
 								handled_by_typed_payload = true;
 							}
 						}
@@ -1673,7 +1673,7 @@
 			}
 
 			// Allocate space for the variable
-			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
+			stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
 
 			// Store both offset and size in unified structure, including is_array flag
 			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});

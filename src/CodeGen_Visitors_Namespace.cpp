@@ -218,7 +218,7 @@
 			// If the current function has auto return type, deduce it from the return expression
 			if (current_function_return_type_ == Type::Auto) {
 				Type expr_type = operands.type;
-				int expr_size = operands.size_in_bits;
+				int expr_size = operands.size_in_bits.value;
 				
 				// Build a TypeSpecifierNode for the deduced type
 				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
@@ -243,7 +243,7 @@
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
 				Type expr_type = operands.type;
-				int expr_size = operands.size_in_bits;
+				int expr_size = operands.size_in_bits.value;
 		
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
@@ -384,7 +384,7 @@
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
 						addr_member_op.member_type = current_function_return_type_;
-						addr_member_op.member_size_in_bits = SizeInBits{current_function_return_size_};
+						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
 						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, current_function_return_size_);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);

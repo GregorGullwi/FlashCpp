@@ -538,7 +538,7 @@
 					op.type = static_member.type;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
-					if (op.size_in_bits == 0 && static_member.type_index > 0 && static_member.type_index < gTypeInfo.size()) {
+					if (!op.size_in_bits.is_set() && static_member.type_index > 0 && static_member.type_index < gTypeInfo.size()) {
 						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index].getStructInfo();
 						if (member_si) {
 							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
@@ -549,7 +549,7 @@
 					// Check if static member has an initializer
 					op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
 					auto zero_initialize = [&]() {
-						size_t byte_count = op.size_in_bits / 8;
+						size_t byte_count = op.size_in_bits.value / 8;
 						for (size_t i = 0; i < byte_count; ++i) {
 							op.init_data.push_back(0);
 						}
@@ -638,7 +638,7 @@
 											}
 											if (args_ok) {
 												// Evaluate each member's value from constructor initializer list
-												size_t total_bytes = op.size_in_bits / 8;
+												size_t total_bytes = op.size_in_bits.value / 8;
 												op.init_data.resize(total_bytes, 0);
 												for (const auto& member : ctor_struct_info->members) {
 													long long member_val = 0;
@@ -674,7 +674,7 @@
 						if (!evaluated_ctor) {
 							FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '", 
 							qualified_name, "' - initializing to zero");
-							size_t byte_count = op.size_in_bits / 8;
+							size_t byte_count = op.size_in_bits.value / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(0);
 							}
@@ -684,7 +684,7 @@
 						FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '", 
 						qualified_name, "' value=", bool_lit.value() ? "true" : "false");
 						unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
-						size_t byte_count = op.size_in_bits / 8;
+						size_t byte_count = op.size_in_bits.value / 8;
 						for (size_t i = 0; i < byte_count; ++i) {
 							op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 						}
@@ -705,7 +705,7 @@
 								std::memcpy(&value, &d, sizeof(double));
 								FLASH_LOG(Codegen, Debug, "  Extracted double value: ", d);
 							}
-							size_t byte_count = op.size_in_bits / 8;
+							size_t byte_count = op.size_in_bits.value / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
@@ -724,7 +724,7 @@
 								double d = std::get<double>(init_operands.value);
 								std::memcpy(&value, &d, sizeof(double));
 							}
-							size_t byte_count = op.size_in_bits / 8;
+							size_t byte_count = op.size_in_bits.value / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
@@ -739,7 +739,7 @@
 								StringHandle target_handle = StringTable::getOrInternStringHandle(id.name());
 								op.reloc_target = target_handle;
 								// Zero-fill the slot; the linker fills the actual address
-								size_t byte_count = op.size_in_bits / 8;
+								size_t byte_count = op.size_in_bits.value / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
 									op.init_data.push_back(0);
 								}
@@ -755,7 +755,7 @@
 									double d = std::get<double>(init_operands.value);
 									std::memcpy(&value, &d, sizeof(double));
 								}
-								size_t byte_count = op.size_in_bits / 8;
+								size_t byte_count = op.size_in_bits.value / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
 									op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 								}
@@ -773,22 +773,22 @@
 									StringHandle target_handle = StringTable::getOrInternStringHandle(target_id.name());
 									op.reloc_target = target_handle;
 									// Zero-fill the pointer slot; the linker fills the actual address
-									size_t byte_count = op.size_in_bits / 8;
+									size_t byte_count = op.size_in_bits.value / 8;
 									for (size_t i = 0; i < byte_count; ++i) {
 										op.init_data.push_back(0);
 									}
 								} else {
 									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
 									qualified_name, "' - zero-initializing");
-									append_bytes(0, op.size_in_bits, op.init_data);
+									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							} else {
 								// Other unary operators - try constexpr evaluation
 								unsigned long long evaluated_value = 0;
 								if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
-									append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 								} else {
-									append_bytes(0, op.size_in_bits, op.init_data);
+									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							}
 						} else {
@@ -796,7 +796,7 @@
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
 								qualified_name, "' = ", evaluated_value);
-								append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
 								// Try triggering lazy instantiation for template static members
 								// The initializer may contain unsubstituted template parameters
@@ -809,7 +809,7 @@
 										if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
 											FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
 											qualified_name, "' = ", evaluated_value);
-											append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+											append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 											resolved_via_lazy = true;
 										}
 									}
@@ -819,7 +819,7 @@
 									qualified_name, "' - skipping evaluation");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
-									append_bytes(0, op.size_in_bits, op.init_data);
+									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							}
 						}
@@ -962,7 +962,7 @@
 							}
 							
 							// Write the value to init_data
-							append_bytes(inferred_value, alias_op.size_in_bits, alias_op.init_data);
+							append_bytes(inferred_value, alias_op.size_in_bits.value, alias_op.init_data);
 							
 							if (!found_base_value) {
 								FLASH_LOG(Codegen, Debug, "Using default zero value (no initializer found)");

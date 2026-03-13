@@ -183,7 +183,7 @@ struct RegisterAllocator
 	void flushAllDirtyRegisters(Func func) {
 		for (auto& reg : registers) {
 			if (reg.isDirty) {
-				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits);
+				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits.value);
 				reg.isDirty = false;
 				// Clear the stack variable mapping after flushing to prevent stale register lookups.
 				// This ensures that subsequent code will reload from memory rather than using

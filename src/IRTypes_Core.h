@@ -23,15 +23,13 @@ class IrInstruction;
 // Design intent:
 //   - Explicit construction prevents accidentally passing a plain int where a
 //     bit-size is expected (e.g. mixing up bytes and bits).
-//   - operator int() is implicit so all existing arithmetic, comparison, and
-//     format uses work unchanged at read sites.
+//   - No implicit conversion to int; use .value at read sites explicitly.
 //   - Defined here alongside PointerDepth so all IR structs share the same type.
 // ============================================================================
 struct SizeInBits {
 	int value = 0;
 	constexpr SizeInBits() noexcept = default;
 	constexpr explicit SizeInBits(int v) noexcept : value(v) {}
-	constexpr operator int() const noexcept { return value; }
 	constexpr auto operator<=>(const SizeInBits&) const noexcept = default;
 	// True when a bit-size has been set (non-zero).
 	constexpr bool is_set() const noexcept { return value != 0; }
@@ -43,6 +41,10 @@ struct std::formatter<SizeInBits, char> : std::formatter<int, char> {
 		return std::formatter<int, char>::format(s.value, ctx);
 	}
 };
+
+inline std::ostream& operator<<(std::ostream& os, const SizeInBits& s) {
+	return os << s.value;
+}
 
 // ============================================================================
 // Strong wrapper for a size expressed in bytes (e.g. 1, 2, 4, 8).

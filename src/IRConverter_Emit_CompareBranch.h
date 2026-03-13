@@ -15,21 +15,21 @@
 		bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
 		
 		// Use the destination size to determine the store instruction
-		if (dest.size_in_bits == 64) {
+		if (dest.size_in_bits == SizeInBits{64}) {
 			if (is_xmm_source) {
 				// For XMM registers, use MOVSD (double) instruction
 				opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
 			} else {
 				opcodes = generatePtrMovToFrame(source.reg, dest.offset);
 			}
-		} else if (dest.size_in_bits == 32) {
+		} else if (dest.size_in_bits == SizeInBits{32}) {
 			if (is_xmm_source) {
 				// For XMM registers, use MOVSS (float) instruction
 				opcodes = generateFloatMovToFrame(source.reg, dest.offset, true);
 			} else {
 				opcodes = generateMovToFrame32(source.reg, dest.offset);
 			}
-		} else if (dest.size_in_bits == 16) {
+		} else if (dest.size_in_bits == SizeInBits{16}) {
 			opcodes = generateMovToFrame16(source.reg, dest.offset);
 		} else { // 8-bit
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
@@ -92,15 +92,15 @@
 		// The dest.size_in_bits indicates what portion of the register is meaningful
 		// but the actual load always goes to the full 64-bit register
 		
-		if (source.size_in_bits == 64) {
+		if (source.size_in_bits == SizeInBits{64}) {
 			opcodes = generatePtrMovFromFrame(dest.reg, source.offset);
-		} else if (source.size_in_bits == 32) {
+		} else if (source.size_in_bits == SizeInBits{32}) {
 			if (source.is_signed) {
 				opcodes = generateMovsxdFromFrame_32to64(dest.reg, source.offset);
 			} else {
 				opcodes = generateMovFromFrame32(dest.reg, source.offset);
 			}
-		} else if (source.size_in_bits == 16) {
+		} else if (source.size_in_bits == SizeInBits{16}) {
 			if (source.is_signed) {
 				opcodes = generateMovsxFromFrame_16to64(dest.reg, source.offset);
 			} else {
@@ -1218,7 +1218,7 @@
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
 			emitMovToFrameSized(
 				SizedRegister{spill_reg, 64, false},  // source: 64-bit register
-				SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits, false}  // dest: sized stack slot
+				SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits.value, false}  // dest: sized stack slot
 			);
 		}
 
@@ -1274,12 +1274,12 @@
 
 		// If the register is dirty, write it back to the stack
 		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
-			int spill_size_bits = reg_info.size_in_bits;
+			int spill_size_bits = reg_info.size_in_bits.value;
 			if (spill_size_bits <= 0) {
 				for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend() && spill_size_bits <= 0; ++scope_it) {
 					for (const auto& [_, variable_info] : scope_it->variables) {
-						if (variable_info.offset == reg_info.stackVariableOffset && variable_info.size_in_bits > 0) {
-							spill_size_bits = variable_info.size_in_bits;
+						if (variable_info.offset == reg_info.stackVariableOffset && variable_info.size_in_bits.is_set()) {
+							spill_size_bits = variable_info.size_in_bits.value;
 							break;
 						}
 					}
@@ -1323,7 +1323,7 @@
 
 	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
 	bool isTwoRegisterStruct(const TypedValue& arg, [[maybe_unused]] bool is_variadic_call = false) const {
-		return isTwoRegisterStructRaw(arg.type, arg.size_in_bits, arg.is_reference(), arg.pointer_depth);
+		return isTwoRegisterStructRaw(arg.type, arg.size_in_bits.value, arg.is_reference(), arg.pointer_depth.value);
 	}
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
@@ -1335,6 +1335,6 @@
 		// FlashCpp passes all other structs > 64 bits by pointer on both Linux and Windows,
 		// matching the callee prologue which always dereferences the incoming pointer for
 		// structs whose size exceeds one general-purpose register.
-		return arg.size_in_bits > 64;
+		return arg.size_in_bits.value > 64;
 	}
 

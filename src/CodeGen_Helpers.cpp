@@ -122,7 +122,7 @@ int64_t member_offset, bool is_pointer_to_array,
 const Token& token) {
 	ArrayStoreOp payload;
 	payload.element_type = element_type;
-	payload.element_size_in_bits = SizeInBits{element_size_bits};
+	payload.element_size_in_bits = element_size_bits;
 	payload.array = array;
 	payload.index = index;
 	payload.value = value;

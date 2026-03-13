@@ -720,7 +720,7 @@
 
 		// Get the source type
 		Type source_type = expr_operands.type;
-		int source_size = expr_operands.size_in_bits;
+		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
 			if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {

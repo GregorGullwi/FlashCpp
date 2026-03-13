@@ -67,7 +67,7 @@
 		}
 
 		// Calculate member size in bytes
-		int member_size_bytes = op.result.size_in_bits / 8;
+		int member_size_bytes = op.result.size_in_bits.value / 8;
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 			op.result.type == Type::UserDefined &&
 			op.result.type_index == 0);
@@ -448,7 +448,7 @@
 					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				} else {
 					// Integer store
-					int member_size_bytes = op.value.size_in_bits / 8;
+					int member_size_bytes = op.value.size_in_bits.value / 8;
 					FLASH_LOG_FORMAT(Codegen, Debug, "MemberStore global: size_in_bits={}, member_size_bytes={}", op.value.size_in_bits, member_size_bytes);
 					assert(member_size_bytes > 0 && "Global bitfield RMW: op.value.size_in_bits must be storage unit size (>= 8 bits), not bitfield width");
 					if (op.bitfield_width.has_value()) {
@@ -485,7 +485,7 @@
 						regAlloc.release(addr_reg);
 					} else {
 						// Non-bitfield integer store: MOV [RIP + disp32], reg
-						int size_in_bits = op.value.size_in_bits;
+						int size_in_bits = op.value.size_in_bits.value;
 						uint8_t src_val = static_cast<uint8_t>(value_reg);
 						uint8_t src_bits = src_val & 0x07;
 						uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
@@ -556,7 +556,7 @@
 		}
 
 		// Calculate member size in bytes
-		int member_size_bytes = op.value.size_in_bits / 8;
+		int member_size_bytes = op.value.size_in_bits.value / 8;
 
 		// Load the value into a register - allocate through register allocator to avoid conflicts
 		X64Register value_reg = allocateRegisterWithSpilling();
@@ -973,7 +973,7 @@
 		
 		// Step 2: Process each array index
 		for (const auto& arr_idx : op.array_indices) {
-			int element_size_bytes = arr_idx.element_size_bits / 8;
+			int element_size_bytes = arr_idx.element_size_bits.value / 8;
 			
 			// Load index into RCX
 			if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
@@ -994,7 +994,7 @@
 				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
 				);
 				
 				// Multiply RCX by element size
@@ -1017,7 +1017,7 @@
 				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
 				);
 				
 				// Multiply RCX by element size
@@ -1056,7 +1056,7 @@
 				value_size = 64;  // Result is still a pointer
 			} else {
 				// Final dereference - use the pointee size (stored in size_in_bits of the pointer's type)
-				value_size = op.pointer.size_in_bits;
+				value_size = op.pointer.size_in_bits.value;
 			}
 			
 			// Load the pointer into a register
@@ -1248,7 +1248,7 @@
 		// are written to their stack locations before we try to load them
 		flushAllDirtyRegisters();
 		
-		int value_size = op.value.size_in_bits;
+		int value_size = op.value.size_in_bits.value;
 		int value_size_bytes = value_size / 8;
 		
 		// Allocate registers through the register allocator to avoid conflicts
@@ -1512,7 +1512,7 @@
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+						SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 					);
 				}
 			} else if (std::holds_alternative<StringHandle>(arg.value)) {
@@ -1527,7 +1527,7 @@
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{arg_offset, arg.size_in_bits, isSignedType(argType)}  // source: sized stack slot
+						SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 					);
 				}
 			} else if (std::holds_alternative<unsigned long long>(arg.value)) {

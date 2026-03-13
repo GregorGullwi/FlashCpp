@@ -145,13 +145,13 @@
 
 	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_result.type == Type::Void && object_result.size_in_bits == 0) {
+		if (object_result.type == Type::Void && !object_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
 		
 		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_result.type == Type::Void && ptr_result.size_in_bits == 0) {
+		if (ptr_result.type == Type::Void && !ptr_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
@@ -199,7 +199,7 @@
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 		
 		Type member_type = ptr_result.type;
-		int member_size = ptr_result.size_in_bits;
+		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 		
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());

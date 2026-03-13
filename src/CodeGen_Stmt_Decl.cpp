@@ -192,7 +192,7 @@
 			}
 
 			// Check if initialized
-			size_t element_size = op.size_in_bits / 8;
+			size_t element_size = op.size_in_bits.value / 8;
 			if (node.initializer()) {
 				const ASTNode& init_node = *node.initializer();
 
@@ -202,7 +202,7 @@
 						collectLambdaForDeferredGeneration(*lambda_ptr);
 						op.type = closure_type->type();
 						op.size_in_bits = SizeInBits{closure_type->size_in_bits()};
-						element_size = op.size_in_bits / 8;
+						element_size = op.size_in_bits.value / 8;
 						op.is_initialized = true;
 						op.init_data.assign(element_size == 0 ? 1 : element_size, 0);
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
@@ -1277,7 +1277,7 @@
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
 						Type init_type = init_operands.type;
-						int init_size = init_operands.size_in_bits;
+						int init_size = init_operands.size_in_bits.value;
 						TypeIndex init_type_index {};  // Will be set below if type_index is available
 						
 						// Extract type_index if available (4th element in init_operands)
@@ -1457,7 +1457,7 @@
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
 					addr_op.element_type = std::get<Type>(operands[7]);
-					addr_op.element_size_in_bits = SizeInBits{std::get<int>(operands[8])};
+					addr_op.element_size_in_bits = std::get<int>(operands[8]);
 					addr_op.array = lv_info.base;
 					
 					// Build TypedValue for index from metadata
@@ -1530,7 +1530,7 @@
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
 					store_op.element_type = type_node.type();
-					store_op.element_size_in_bits = SizeInBits{size_in_bits};
+					store_op.element_size_in_bits = size_in_bits;
 					store_op.array = decl.identifier_token().handle();
 					store_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
 					store_op.value = toTypedValue(init_operands);
@@ -2155,7 +2155,7 @@
 		
 		// Extract initializer type information
 		Type init_type = init_operands.type;
-		int init_size = init_operands.size_in_bits;
+		int init_size = init_operands.size_in_bits.value;
 		TypeIndex init_type_index {};
 		
 		// Get type_index if available (4th element)
@@ -2309,7 +2309,7 @@
 					access_op.array = source_array;
 					access_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
 					access_op.element_type = array_element_type;
-					access_op.element_size_in_bits = SizeInBits{array_element_size};
+					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
 					access_op.member_offset = 0;
 					
@@ -2318,7 +2318,7 @@
 					// Store element to hidden array
 					ArrayStoreOp store_op;
 					store_op.element_type = array_element_type;
-					store_op.element_size_in_bits = SizeInBits{array_element_size};
+					store_op.element_size_in_bits = array_element_size;
 					store_op.array = hidden_var_handle;
 					store_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
 					store_op.value = TypedValue{array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp};
@@ -2384,7 +2384,7 @@
 					addr_op.array = hidden_var_handle;
 					addr_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
 					addr_op.element_type = array_element_type;
-					addr_op.element_size_in_bits = SizeInBits{array_element_size};
+					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), binding_token));
@@ -2408,7 +2408,7 @@
 					load_op.array = hidden_var_handle;
 					load_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
 					load_op.element_type = array_element_type;
-					load_op.element_size_in_bits = SizeInBits{array_element_size};
+					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
 					load_op.member_offset = 0;
 					

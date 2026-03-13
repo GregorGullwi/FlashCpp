@@ -242,7 +242,7 @@
 				ArrayAccessOp payload;
 				payload.result = result_var;
 				payload.element_type = element_type;
-				payload.element_size_in_bits = SizeInBits{base_element_size};
+				payload.element_size_in_bits = base_element_size;
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
@@ -377,7 +377,7 @@
 					ArrayAccessOp payload;
 					payload.result = result_var;
 					payload.element_type = element_type;
-					payload.element_size_in_bits = SizeInBits{element_size_bits};
+					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
@@ -464,7 +464,7 @@
 									ArrayAccessOp payload;
 									payload.result = result_var;
 									payload.element_type = element_type;
-									payload.element_size_in_bits = SizeInBits{element_size_bits};
+									payload.element_size_in_bits = element_size_bits;
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
@@ -507,7 +507,7 @@
 
 		// Get array type information
 		Type element_type = array_result.type;
-		int element_size_bits = array_result.size_in_bits;
+		int element_size_bits = array_result.size_in_bits.value;
 
 		// Check if this is a pointer type (e.g., int* arr)
 		// If so, we need to get the base type size, not the pointer size (64)
@@ -699,7 +699,7 @@
 		ArrayAccessOp payload;
 		payload.result = result_var;
 		payload.element_type = element_type;
-		payload.element_size_in_bits = SizeInBits{element_size_bits};
+		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
 
@@ -712,7 +712,7 @@
 
 		// Set index as TypedValue
 		Type index_type = index_result.type;
-		int index_size = index_result.size_in_bits;
+		int index_size = index_result.size_in_bits.value;
 		payload.index.type = index_type;
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
@@ -955,7 +955,7 @@
 						call_op.result = ptr_result;
 						call_op.return_type = return_type.type();
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-						if (call_op.return_size_in_bits == 0 ) {
+						if (!call_op.return_size_in_bits.is_set()) {
 						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
 						}
 						call_op.function_name = mangled_name;
@@ -1779,7 +1779,7 @@
 
 			// Extract type and size from the expression result
 			Type expr_type = expr_result.type;
-			int size_in_bits = expr_result.size_in_bits;
+			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
 			if (expr_type == Type::Struct) {
@@ -1891,7 +1891,7 @@
 
 			// Extract type and size from the expression result
 			Type expr_type = expr_result.type;
-			int size_in_bits = expr_result.size_in_bits;
+			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
 			if (expr_type == Type::Struct) {

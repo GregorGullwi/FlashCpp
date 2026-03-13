@@ -1097,7 +1097,7 @@
 		// Extract UnaryOp from typed payload
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
-		int size_in_bits = unary_op.value.size_in_bits;
+		int size_in_bits = unary_op.value.size_in_bits.value;
 		UnaryOperandLocation operand_location = resolveTypedValueLocation(unary_op.value);
 		X64Register target_reg = X64Register::RAX;
 		loadUnaryOperandValue(operand_location, size_in_bits, target_reg);
@@ -1153,7 +1153,7 @@
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
 		[[maybe_unused]] Type type = unary_op.value.type;
-		int size_in_bits = unary_op.value.size_in_bits;
+		int size_in_bits = unary_op.value.size_in_bits.value;
 
 		// Load the operand into a register
 		X64Register result_physical_reg;
@@ -1252,7 +1252,7 @@
 	void handleSignExtend(const IrInstruction& instruction) {
 		// Sign extension: movsx dest, src
 		const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
-		int fromSize = conv_op.from.size_in_bits;
+		int fromSize = conv_op.from.size_in_bits.value;
 		int toSize = conv_op.to_size;
 
 		// Get source value into a register
@@ -1304,7 +1304,7 @@
 	void handleZeroExtend(const IrInstruction& instruction) {
 		// Zero extension: movzx dest, src
 		const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
-		int fromSize = conv_op.from.size_in_bits;
+		int fromSize = conv_op.from.size_in_bits.value;
 		int toSize = conv_op.to_size;
 
 		// If source size is 0 (unknown/auto type) or equal to target size, this is a no-op.
@@ -1460,7 +1460,7 @@
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 		
 		// Only use REX.W for 64-bit result
-		bool need_rex_w = (op.to_size_in_bits == 64);
+		bool need_rex_w = (op.to_size_in_bits == SizeInBits{64});
 		uint8_t rex = need_rex_w ? 0x48 : 0x40;
 		
 		// Add REX.R if result register >= 8
@@ -1838,7 +1838,7 @@
 			
 			// Get the value to store
 			X64Register value_reg = allocateRegisterWithSpilling();
-			int value_size_bytes = op.rhs.size_in_bits / 8;
+			int value_size_bytes = op.rhs.size_in_bits.value / 8;
 			
 			if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
 				// Immediate integer value
@@ -1968,7 +1968,7 @@
 			}
 
 			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
-			int struct_size_bytes = (op.lhs.size_in_bits + 7) / 8;
+			int struct_size_bytes = (op.lhs.size_in_bits.value + 7) / 8;
 			
 			// Copy struct using 8-byte chunks, then handle remaining bytes
 			int offset = 0;
@@ -2135,7 +2135,7 @@
 			} else {
 				// Use TypedValue metadata
 				value_type = op.lhs.type;
-				value_size_bits = op.lhs.size_in_bits;
+				value_size_bits = op.lhs.size_in_bits.value;
 			}
 			int value_size_bytes = value_size_bits / 8;
 			
@@ -2242,7 +2242,7 @@
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
 					);
 				}
 			}
@@ -2296,7 +2296,7 @@
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 					emitMovFromFrameSized(
 						SizedRegister{source_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{rhs_offset, op.rhs.size_in_bits, isSignedType(rhs_type)}  // source: sized stack slot
+						SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
 					);
 				}
 			}
@@ -2354,7 +2354,7 @@
 			} else {
 				emitMovToFrameSized(
 					SizedRegister{source_reg, 64, false},  // source: 64-bit register
-					SizedStackSlot{lhs_offset, op.lhs.size_in_bits, isSignedType(lhs_type)}  // dest: sized stack slot
+					SizedStackSlot{lhs_offset, op.lhs.size_in_bits.value, isSignedType(lhs_type)}  // dest: sized stack slot
 				);
 				// Clear any stale register associations for this stack offset
 				regAlloc.clearStackVariableAssociations(lhs_offset);

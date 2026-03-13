@@ -1144,7 +1144,7 @@
 										double d = std::get<double>(init_operands.value);
 										std::memcpy(&value, &d, sizeof(double));
 									}
-									size_t byte_count = op.size_in_bits / 8;
+									size_t byte_count = op.size_in_bits.value / 8;
 									for (size_t i = 0; i < byte_count; ++i) {
 										op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 									}
@@ -1546,7 +1546,7 @@
 									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
 									addr_member_op.member_offset = static_cast<int>(member.offset);
 									addr_member_op.member_type = member.type;
-									addr_member_op.member_size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
 									ConstructorCallOp ctor_op;
@@ -2169,7 +2169,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			element_operands.push_back(operands);
 			if (i == 0) {
 				element_type = operands.type;
-				element_size_bits = operands.size_in_bits;
+				element_size_bits = operands.size_in_bits.value;
 			}
 		}
 	}
@@ -2198,7 +2198,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
 		store_op.element_type = element_type;
-		store_op.element_size_in_bits = SizeInBits{element_size_bits};
+		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
 		store_op.index = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i)};
 		store_op.value = toTypedValue(element_operands[i]);

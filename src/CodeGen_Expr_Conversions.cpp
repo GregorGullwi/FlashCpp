@@ -3,7 +3,7 @@
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
-		int fromSize = operands.size_in_bits != 0 ? operands.size_in_bits : get_type_size_bits(fromType);
+		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
 		
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
@@ -206,12 +206,12 @@
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 				if (binding_info.is_global_or_static &&
 					binding_info.type != Type::Void &&
-					binding_info.size_in_bits > 0) {
+					binding_info.size_in_bits.is_set()) {
 					AddressComponents result;
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
 					result.final_type = binding_info.type;
-					result.final_size_bits = SizeInBits{binding_info.size_in_bits};
+					result.final_size_bits = binding_info.size_in_bits.value;
 					return result;
 				}
 			}
@@ -307,7 +307,7 @@
 			
 			
 			Type element_type = array_operands.type;
-			int element_size_bits = array_operands.size_in_bits;
+			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 			
 			// Calculate actual element size from array declaration
@@ -486,7 +486,7 @@
 								call_op.return_size_in_bits = SizeInBits{64};
 							} else {
 								call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-								if (call_op.return_size_in_bits == 0 ) {
+								if (!call_op.return_size_in_bits.is_set()) {
 									call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
 								}
 							}
@@ -527,7 +527,7 @@
 
 			if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-				if (binding_info.is_global_or_static && binding_info.type != Type::Void && binding_info.size_in_bits > 0) {
+				if (binding_info.is_global_or_static && binding_info.type != Type::Void && binding_info.size_in_bits.is_set()) {
 					int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 						? 64
 						: static_cast<int>(type_node->size_in_bits());
@@ -561,7 +561,7 @@
 				constexpr TypeIndex kStaticLocalTypeIndex {};
 				out = makeExprResult(
 					static_local_it->second.type,
-					SizeInBits{static_cast<int>(static_local_it->second.size_in_bits)},
+					static_local_it->second.size_in_bits,
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,
 					PointerDepth{}
@@ -637,7 +637,7 @@
 						// Check that we have valid operands
 						{
 							Type element_type = array_operands.type;
-							int element_size_bits = array_operands.size_in_bits;
+							int element_size_bits = array_operands.size_in_bits.value;
 							
 							// For arrays, array_operands[1] is the pointer size (64), not element size
 							// We need to calculate the actual element size from the array declaration
@@ -688,7 +688,7 @@
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
 									elem_addr_payload.element_type = element_type;
-									elem_addr_payload.element_size_in_bits = SizeInBits{element_size_bits};
+									elem_addr_payload.element_size_in_bits = element_size_bits;
 									
 									// Set array (either variable name or temp)
 									if (std::holds_alternative<StringHandle>(array_operands.value)) {
@@ -768,7 +768,7 @@
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
 									addr_member_op.member_type = member_result.member->type;
-									addr_member_op.member_size_in_bits = SizeInBits{static_cast<int>(member_result.member->size * 8)};
+									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 									
@@ -886,7 +886,7 @@
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
 						payload.element_type = element_type;
-						payload.element_size_in_bits = SizeInBits{element_size_bits};
+						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.type = Type::UnsignedLongLong;
 						payload.index.size_in_bits = SizeInBits{64};
@@ -906,7 +906,7 @@
 				ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 				
 				Type element_type = array_operands.type;
-				int element_size_bits = array_operands.size_in_bits;
+				int element_size_bits = array_operands.size_in_bits.value;
 				
 				// For arrays, array_operands[1] is the pointer size (64), not element size
 				// We need to calculate the actual element size from the array declaration
@@ -946,7 +946,7 @@
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
 				payload.element_type = element_type;
-				payload.element_size_in_bits = SizeInBits{element_size_bits};
+				payload.element_size_in_bits = element_size_bits;
 				
 				// Set array (either variable name or temp)
 				if (std::holds_alternative<StringHandle>(array_operands.value)) {
@@ -1229,7 +1229,7 @@
 
 		// Get the type of the operand
 		Type operandType = operandIrOperands.type;
-		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits;
+		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits.value;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
 		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
@@ -1614,7 +1614,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 	call_op.return_type = return_type.type();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-	if (call_op.return_size_in_bits == 0 && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
+	if (!call_op.return_size_in_bits.is_set() && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
 		call_op.return_size_in_bits = SizeInBits{static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8)};
 	}
 	call_op.return_type_index = return_type.type_index();
@@ -1622,7 +1622,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
 	// Small structs (≤ ABI threshold) return in registers and need no return_slot.
-	if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits, context_->isLLP64())) {
+	if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64())) {
 		call_op.return_slot = ret_var;
 	}
 
@@ -1652,7 +1652,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 		call_op.args.push_back(dummy_arg);
 	}
 
-	int result_size = call_op.return_size_in_bits;
+	int result_size = call_op.return_size_in_bits.value;
 	TypeIndex result_type_index = call_op.return_type_index;
 	Type result_type = call_op.return_type;
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
@@ -1857,7 +1857,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			// For global/static: manually do load → add/sub 1 → store
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
 			Type elem_type = operandIrResult.type;
-			int elem_size = operandIrResult.size_in_bits;
+			int elem_size = operandIrResult.size_in_bits.value;
 			IrValue loaded_val = toIrValue(operandIrResult.value);
 
 			if (is_prefix) {
