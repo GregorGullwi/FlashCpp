@@ -264,7 +264,7 @@ struct TemplateTypeArg {
 	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateTypeArg arg;
 		arg.base_type = t;
-		arg.type_index = TypeIndex{idx};
+		arg.type_index = idx;
 		return arg;
 	}
 	
