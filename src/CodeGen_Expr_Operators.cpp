@@ -127,16 +127,18 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 	// Create a temporary variable for the struct
 	TempVar temp = var_counter.next();
+	const auto& initializers = init_list.initializers();
 
 	// Emit constructor call (default ctor to allocate the struct)
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
-	fillInDefaultConstructorArguments(ctor_op, *struct_info);
+	if (initializers.empty()) {
+		fillInDefaultConstructorArguments(ctor_op, *struct_info);
+	}
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
 	// Emit member stores for each initializer
-	const auto& initializers = init_list.initializers();
 	const auto& members = struct_info->members;
 	for (size_t i = 0; i < initializers.size() && i < members.size(); ++i) {
 		const ASTNode& init_expr = initializers[i];
@@ -299,12 +301,15 @@ void AstToIr::fillInConstructorDefaultArguments(
 
 		const auto& param_decl = params[i].as<DeclarationNode>();
 		if (param_decl.is_parameter_pack()) {
+			// A trailing constructor parameter pack may legally be omitted.
 			break;
 		}
 		if (!param_decl.has_default_value()) {
-			throw InternalError("Missing default constructor argument for parameter '" +
-				std::string(param_decl.identifier_token().value()) +
-				"' (constructor resolution should have rejected this call)");
+			throw InternalError(std::string(StringBuilder()
+				.append("Missing default argument for constructor parameter '")
+				.append(param_decl.identifier_token().value())
+				.append("' (constructor resolution should have rejected this call)")
+				.commit()));
 		}
 
 		ctor_op.arguments.push_back(materializeDefaultArgument(
