@@ -793,7 +793,7 @@
 			// However, we mark it in indirect_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value);
+			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value, op.result);
 			
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -901,7 +901,7 @@
 		// Record that the stack slot already holds an address so later consumers
 		// (notably by-address constructor-call lowering) load it with MOV instead
 		// of taking the address of the spill slot with LEA.
-		setAddressOnlyInfo(result_offset, op.member_type, op.member_size_in_bits);
+		setAddressOnlyInfo(result_offset, op.member_type, op.member_size_in_bits, op.result);
 		
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);

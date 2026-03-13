@@ -1256,8 +1256,8 @@
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
-	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits) {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, TempVar{0});
+	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var = TempVar{0}) {
+		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, temp_var);
 	}
 
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const {
