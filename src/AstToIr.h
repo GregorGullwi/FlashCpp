@@ -50,8 +50,8 @@ private:
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
 		Type final_type = Type::Void;                       // Type of final result
-		int final_size_bits = 0;                            // Size in bits
-		int pointer_depth = 0;                              // Pointer depth of final result
+		SizeInBits final_size_bits;                         // Size in bits
+		PointerDepth pointer_depth;                         // Pointer depth of final result
 	};
 
 	struct ScopeVariableInfo {

@@ -211,7 +211,7 @@
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
 					result.final_type = binding_info.type;
-					result.final_size_bits = binding_info.size_in_bits.value;
+					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
 			}
@@ -229,14 +229,14 @@
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
 			result.final_type = type_node->type();
-			result.final_size_bits = static_cast<int>(type_node->size_in_bits());
-			if (result.final_type == Type::Struct && result.final_size_bits == 0 &&
+			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
+			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().value < gTypeInfo.size()) {
 				if (const StructTypeInfo* struct_info = gTypeInfo[type_node->type_index().value].getStructInfo()) {
-					result.final_size_bits = static_cast<int>(struct_info->total_size * 8);
+					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
 				}
 			}
-			result.pointer_depth = type_node->pointer_depth();
+			result.pointer_depth = PointerDepth{static_cast<int>(type_node->pointer_depth())};
 			return result;
 		}
 		
@@ -283,9 +283,9 @@
 			
 			// Update type to member type
 			base_components->final_type = result.member->type;
-			base_components->final_size_bits = static_cast<int>(result.member->size * 8);
+			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
-			base_components->pointer_depth = result.member->pointer_depth;
+			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
 			
 			return base_components;
 		}
@@ -380,8 +380,8 @@
 			
 			base_components->array_indices.push_back(arr_idx);
 			base_components->final_type = element_type;
-			base_components->final_size_bits = element_size_bits;
-			base_components->pointer_depth = element_pointer_depth;  // Set pointer depth for the element
+			base_components->final_size_bits = SizeInBits{element_size_bits};
+			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
 			
 			return base_components;
 		}
@@ -603,7 +603,7 @@
 				compute_addr_op.array_indices = std::move(addr_components->array_indices);
 				compute_addr_op.total_member_offset = addr_components->total_member_offset;
 				compute_addr_op.result_type = addr_components->final_type;
-				compute_addr_op.result_size_bits = SizeInBits{addr_components->final_size_bits};
+				compute_addr_op.result_size_bits = addr_components->final_size_bits;
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 				
@@ -613,7 +613,7 @@
 					SizeInBits{64},
 					result_var,
 					TypeIndex{},
-					PointerDepth{addr_components->pointer_depth + 1});
+					PointerDepth{addr_components->pointer_depth.value + 1});
 				return result;
 			}
 			
