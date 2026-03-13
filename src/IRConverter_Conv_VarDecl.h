@@ -1718,8 +1718,8 @@
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				bool is_passed_by_reference = param.is_reference() ||
 				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits.value > 64);
-			if (is_passed_by_reference) {
-				setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
+				if (is_passed_by_reference) {
+					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 				}
 
 				// Add parameter to debug information
