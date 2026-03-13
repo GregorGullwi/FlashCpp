@@ -553,7 +553,7 @@
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 						// Now dereference: load from [register + 0]
-					int value_size_bits = ref_info->value_size_bits.value;
+						int value_size_bits = ref_info->value_size_bits.value;
 						OpCodeWithSize deref_opcodes;
 						if (value_size_bits == 64) {
 							deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
