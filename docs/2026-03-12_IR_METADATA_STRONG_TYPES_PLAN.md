@@ -1,7 +1,7 @@
 # IR Metadata Strong Types Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Slice 5 complete 2026-03-13)  
+**Status**: Completed (2026-03-13)  
 **Related**: `docs\2026-03-10_EXPR_RESULT_MIGRATION.md`
 
 ## Progress
@@ -15,7 +15,6 @@ struct SizeInBits {
     int value = 0;
     constexpr SizeInBits() noexcept = default;
     constexpr explicit SizeInBits(int v) noexcept : value(v) {}
-    constexpr operator int() const noexcept { return value; }
     // full set of relational operators + std::formatter specialization
 };
 ```
@@ -36,7 +35,6 @@ struct TypeIndex {
     size_t value = 0;
     constexpr TypeIndex() noexcept = default;
     constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
-    constexpr operator size_t() const noexcept { return value; }
     TypeIndex& operator++() noexcept;   // for loop variables
     TypeIndex  operator++(int) noexcept;
     // full set of relational operators
@@ -47,12 +45,11 @@ struct TypeIndex {
 Key properties:
 - **Explicit ctor**: `TypeIndex(size_t)` prevents bare integer → TypeIndex
   implicit conversion at write sites.
-- **Implicit `operator size_t()`**: all `gTypeInfo[type_index]` array-index
-  uses and `if (type_index > 0)` comparisons work unchanged — zero churn at
-  the ~428 array-index read sites.
-- **Increment operators**: `for (TypeIndex ti{}; ti < n; ++ti)` loops work.
-- **`std::hash`/`std::formatter`**: unordered_map keys and FLASH_LOG_FORMAT
-  calls with TypeIndex values work without change.
+- **No implicit read conversion**: array-index reads and comparisons now use
+  `.value` or semantic helpers such as `.is_valid()`.
+- **Increment operators**: `for (TypeIndex ti{}; ti.value < n; ++ti)` loops work.
+- **`std::hash`/`std::formatter`**: unordered_map keys and `FLASH_LOG_FORMAT`
+  calls with TypeIndex values work without extra adapters.
 
 Fixes applied across 57 files:
 - ~43 `TypeIndex x = 0;` local variable declarations → `TypeIndex x{};`
@@ -87,7 +84,7 @@ Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
   - `src/CodeGen_NewDeleteCast.cpp` (4 sites)
 
 - Read sites in `IRTypes_Instructions.h` and `IRConverter_Conv_VarDecl.h`
-  (comparisons, loop bounds, pass-to-int) work unchanged via `operator int()`.
+  were migrated to explicit `.value` access or helper predicates.
 
 - Build: clean (`make main CXX=clang++`, no warnings)
 - Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
@@ -136,8 +133,8 @@ Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
   - Explicit single-arg constructor `PointerDepth(int)` prevents bare-integer
     construction at call sites
   - Non-explicit default constructor keeps `ExprResult{}` aggregate init working
-  - `operator int() const` provides backward-compatible reads so existing
-    comparison and read sites require no churn
+  - read sites were later migrated to explicit `.value` access and
+    `PointerDepth::is_pointer()`
   - Full set of comparison operators
 
 - Upgraded `ExprResult::pointer_depth` from `int` to `PointerDepth`
@@ -170,9 +167,9 @@ Tests: 1457 pass / 35 expected-fail correct (baseline unchanged)
 
 The `ExprResult` migration surfaced a broader API-design question:
 
-- `TypeIndex` is still effectively an alias-like scalar in many APIs
-- `pointer_depth` is still an `int`
-- `size_in_bits` is still an `int`
+- `TypeIndex` was effectively an alias-like scalar in many APIs
+- `pointer_depth` was still an `int`
+- `size_in_bits` was still an `int`
 - helper factories such as `makeExprResult(...)` still accept combinations of
   plain scalar arguments that are easy to misorder
 
@@ -348,3 +345,28 @@ The best next step is:
 3. measure churn before deciding whether `SizeInBits` and UDLs are worth adding
 
 That keeps the scope narrow, the safety wins real, and the rollout reviewable.
+
+## Final Status
+
+This refactor is now complete for the originally planned strong-wrapper scope:
+
+- `SizeInBits`, `PointerDepth`, and `TypeIndex` are strong wrapper types with
+  explicit single-argument construction.
+- Their implicit scalar conversion operators have been removed.
+- Comparison operators were simplified to defaulted spaceship operators.
+- Call sites were migrated to explicit `.value` access or semantic helpers such
+  as `.is_set()`, `.is_pointer()`, and `.is_valid()`.
+- `SizeInBytes` was added as an available wrapper type, but no broader rollout
+  was required because the repository did not have a compelling bug-prone byte
+  metadata channel comparable to the bits / pointer-depth / type-index cases.
+
+Validation on 2026-03-13:
+
+- `make main CXX=clang++` ✅
+- `tests/run_all_tests.sh` ✅ (`1457` compile/link/runtime pass, `35` expected-fail correct)
+
+Remaining work:
+
+- No mandatory follow-up remains for this plan.
+- Future code may adopt `SizeInBytes` opportunistically where it improves local
+  clarity, but that is optional cleanup rather than unfinished refactor work.

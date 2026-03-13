@@ -320,8 +320,7 @@ enum class Type : int_fast16_t {
 
 // Strong wrapper for type indices into gTypeInfo[].
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
-// conversion at write sites; operator size_t() preserves backward-compatible
-// reads and array-index uses without any churn.
+// conversion at write sites; read sites use .value explicitly.
 struct TypeIndex {
 	size_t value = 0;
 	// Non-explicit default ctor: keeps TypeIndex{} and aggregate-init working.

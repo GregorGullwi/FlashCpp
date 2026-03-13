@@ -75,8 +75,7 @@ struct std::formatter<SizeInBytes, char> : std::formatter<int, char> {
 // Design intent:
 //   - Explicit construction prevents accidentally passing a bare integer literal
 //     or TypeIndex value where pointer_depth is expected.
-//   - operator int() is provided for backward-compatible reads at existing
-//     comparison and read sites so they require no changes.
+//   - No implicit conversion to int; use .value explicitly at read sites.
 //   - Defined here (IRTypes_Core.h) so both TypedValue (IRTypes_Ops.h) and
 //     ExprResult (IROperandHelpers.h) can use the same type.
 // ============================================================================
@@ -316,4 +315,3 @@ namespace FunctionDeclLayout {
 		return (total_operand_count - FIRST_PARAM_INDEX) % OPERANDS_PER_PARAM == 0;
 	}
 }
-
