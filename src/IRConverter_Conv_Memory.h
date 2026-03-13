@@ -32,7 +32,7 @@
 					return;
 				}
 			} else {
-			object_base_offset = it->second.offset;
+				object_base_offset = it->second.offset;
 
 				// Check if base is a pointer (reference, 'this', or pointer-to-member)
 				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo

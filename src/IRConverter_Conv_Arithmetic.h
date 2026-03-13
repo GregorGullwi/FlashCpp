@@ -575,7 +575,12 @@
 			auto stack_addr = getStackOffsetFromTempVar(temp);
 			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
 				reg = allocateRegisterWithSpilling();
-				loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
+				if (shouldImplicitlyDeref(ref_info.value())) {
+					loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
+				} else {
+					// Address-only value: load the pointer itself without dereferencing
+					emitPtrMovFromFrame(reg, stack_addr);
+				}
 				return reg;
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
@@ -593,7 +598,12 @@
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
+					if (shouldImplicitlyDeref(ref_info.value())) {
+						loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
+					} else {
+						// Address-only value: load the pointer itself without dereferencing
+						emitPtrMovFromFrame(reg, var_id->second.offset);
+					}
 					return reg;
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
@@ -620,7 +630,12 @@
 			auto stack_addr = getStackOffsetFromTempVar(temp);
 			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
 				reg = allocateRegisterWithSpilling();
-				loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
+				if (shouldImplicitlyDeref(ref_info.value())) {
+					loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
+				} else {
+					// Address-only value: load the pointer itself without dereferencing
+					emitPtrMovFromFrame(reg, stack_addr);
+				}
 				return reg;
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
@@ -640,7 +655,12 @@
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
+					if (shouldImplicitlyDeref(ref_info.value())) {
+						loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
+					} else {
+						// Address-only value: load the pointer itself without dereferencing
+						emitPtrMovFromFrame(reg, var_id->second.offset);
+					}
 					return reg;
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {

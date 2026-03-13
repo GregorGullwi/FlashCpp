@@ -1473,8 +1473,8 @@
 		if (!instruction.hasTypedPayload()) {
 			// Operand-based path: extract parameters from operands
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
-			// Clear indirect storage tracking from previous function
-			indirect_stack_info_.clear();
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			clearFunctionTempVarMetadata();
 			
 			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
@@ -1633,7 +1633,8 @@
 		} else {
 			// Typed payload path: build ParameterInfo from already-extracted parameter_types
 			[[maybe_unused]] const auto& typed_func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-			indirect_stack_info_.clear();
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			clearFunctionTempVarMetadata();
 			
 			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument

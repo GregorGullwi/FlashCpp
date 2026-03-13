@@ -1227,13 +1227,26 @@
 
 		// Sync TempVar metadata with stack storage info
 		if (temp_var.var_number != 0) {
+			reference_temp_var_numbers_.push_back(temp_var.var_number);
 			if (holds_address_only) {
-				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, value_size_bits));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, value_size_bits, is_rvalue_ref));
 			} else {
 				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
 				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, category));
 			}
 		}
+	}
+
+	// Clear all indirect storage tracking AND any TempVar reference/address-only metadata
+	// that was set by setIndirectStorageInfo. Must be called at function boundaries so that
+	// stale TempVar metadata from previous functions (which reuse the same var_numbers) does not
+	// cause isTempVarReference/isTempVarAddressOnly to return stale true values.
+	void clearFunctionTempVarMetadata() {
+		indirect_stack_info_.clear();
+		for (size_t var_num : reference_temp_var_numbers_) {
+			GlobalTempVarMetadataStorage::instance().clearEntry(var_num);
+		}
+		reference_temp_var_numbers_.clear();
 	}
 
 	// Helper function to set reference information in both storage systems
@@ -1315,7 +1328,10 @@
 	}
 
 	// Helper function to check if a TempVar or stack offset uses indirect storage.
-	// This includes both true references and address-only pointer temps.
+	// Returns true for true references (via TempVar path) and for any indirect storage
+	// (including address-only values like 'this') via the stack-offset map.
+	// Note: The TempVar path checks only true references (isTempVarReference excludes address-only),
+	// while the fallback stack-offset path covers both references and address-only values.
 	bool hasIndirectStorage(TempVar temp_var, int32_t stack_offset) const {
 		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
 			return true;
