@@ -566,6 +566,20 @@
 		emitFloatComparisonInstruction(ctx, 0x93); // SETAE
 	}
 
+	// Helper: Load a value from indirect storage (reference or address-only) into a register.
+	// If the storage should be implicitly dereferenced, loads the pointed-to value;
+	// otherwise loads the pointer itself (address-only case).
+	X64Register loadFromIndirectStorage(int32_t stack_offset, const IndirectStorageInfo& ref_info) {
+		X64Register reg = allocateRegisterWithSpilling();
+		if (shouldImplicitlyDeref(ref_info)) {
+			loadValueFromReferenceSlot(stack_offset, ref_info, reg);
+		} else {
+			// Address-only value: load the pointer itself without dereferencing
+			emitPtrMovFromFrame(reg, stack_offset);
+		}
+		return reg;
+	}
+
 	// Helper: Load operand value (TempVar or variable name) into a register
 	X64Register loadOperandIntoRegister(const IrInstruction& instruction, size_t operand_index) {
 		X64Register reg = X64Register::Count;
@@ -574,14 +588,7 @@
 			auto temp = instruction.getOperandAs<TempVar>(operand_index);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
 			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
-				reg = allocateRegisterWithSpilling();
-				if (shouldImplicitlyDeref(ref_info.value())) {
-					loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
-				} else {
-					// Address-only value: load the pointer itself without dereferencing
-					emitPtrMovFromFrame(reg, stack_addr);
-				}
-				return reg;
+				return loadFromIndirectStorage(stack_addr, ref_info.value());
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
 				reg = reg_opt.value();
@@ -597,14 +604,7 @@
 			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
-					reg = allocateRegisterWithSpilling();
-					if (shouldImplicitlyDeref(ref_info.value())) {
-						loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
-					} else {
-						// Address-only value: load the pointer itself without dereferencing
-						emitPtrMovFromFrame(reg, var_id->second.offset);
-					}
-					return reg;
+					return loadFromIndirectStorage(var_id->second.offset, ref_info.value());
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
 					reg = reg_opt.value();
@@ -629,14 +629,7 @@
 			auto temp = std::get<TempVar>(typed_value.value);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
 			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
-				reg = allocateRegisterWithSpilling();
-				if (shouldImplicitlyDeref(ref_info.value())) {
-					loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
-				} else {
-					// Address-only value: load the pointer itself without dereferencing
-					emitPtrMovFromFrame(reg, stack_addr);
-				}
-				return reg;
+				return loadFromIndirectStorage(stack_addr, ref_info.value());
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
 				reg = reg_opt.value();
@@ -654,14 +647,7 @@
 			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
 				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
-					reg = allocateRegisterWithSpilling();
-					if (shouldImplicitlyDeref(ref_info.value())) {
-						loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
-					} else {
-						// Address-only value: load the pointer itself without dereferencing
-						emitPtrMovFromFrame(reg, var_id->second.offset);
-					}
-					return reg;
+					return loadFromIndirectStorage(var_id->second.offset, ref_info.value());
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
 					reg = reg_opt.value();
