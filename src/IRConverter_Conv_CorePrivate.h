@@ -1359,7 +1359,7 @@
 				return IndirectStorageInfo{
 					.value_type = getTempVarValueType(temp_var),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
-					.is_rvalue_reference = false,
+					.is_rvalue_reference = isTempVarRValueReference(temp_var),
 					.holds_address_only = true
 				};
 			}
