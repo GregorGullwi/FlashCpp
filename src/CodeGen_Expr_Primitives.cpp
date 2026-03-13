@@ -485,19 +485,8 @@
 					if (fast_sym->is<DeclarationNode>()) {
 						const auto& decl_n = fast_sym->as<DeclarationNode>();
 						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
-						// Check for enum constant
-						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
-							size_t enum_idx = type_n.type_index().value;
-							if (enum_idx < gTypeInfo.size()) {
-								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
-								if (enum_info) {
-									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
-									if (enumerator) {
-										return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-											static_cast<unsigned long long>(enumerator->value));
-									}
-								}
-							}
+						if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
+							return *enumerator_constant;
 						}
 						bool is_array_type = decl_n.is_array() || type_n.is_array();
 						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
@@ -816,10 +805,8 @@
 						if (enum_idx.value < gTypeInfo.size()) {
 							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
-								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
-								if (enumerator) {
-									return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-									static_cast<unsigned long long>(enumerator->value));
+								if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(*enum_info, id_handle)) {
+									return *enumerator_constant;
 								}
 							}
 						}
@@ -843,23 +830,10 @@
 			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
 			// Only non-reference, non-pointer enum-typed identifiers CAN BE enumerators
 			// We must verify the identifier actually exists as an enumerator before treating it as a constant
-			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
-				// Check if this identifier is actually an enumerator (not just a variable of enum type)
-				size_t enum_type_index = type_node.type_index().value;
-				if (enum_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[enum_type_index];
-					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-					if (enum_info) {
-						// Use findEnumerator to check if this identifier is actually an enumerator
-						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
-						if (enumerator) {
-							// This IS an enumerator constant - return its value using the underlying type
-							return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-							static_cast<unsigned long long>(enumerator->value));
-						}
-						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
-					}
-				}
+			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
+				type_node,
+				StringTable::getOrInternStringHandle(identifierNode.name()))) {
+				return *enumerator_constant;
 			}
 
 			// Check if this is a global variable

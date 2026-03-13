@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-1 started 2026-03-13)  
+**Status**: In Progress (Phase 0-3 slices landed through 2026-03-13)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -269,13 +269,14 @@ This phase adds new code only. Nothing changes behavior.
 Add small helpers with a single definition of “enum runtime representation”:
 
 ```cpp
-Type getRuntimeValueType(Type semantic_type, TypeIndex type_index);
-int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits);
-bool preservesNominalIdentityInBackend(Type semantic_type);
+Type getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth);
+int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth);
+std::optional<ExprResult> tryMakeEnumeratorConstantExpr(...);
 ```
 
-For enums, these would map to the underlying integral type/size from
-`EnumTypeInfo`.
+For enums, these helpers map the runtime value representation to the underlying
+integral type/size from `EnumTypeInfo`, while `tryMakeEnumeratorConstantExpr`
+centralizes lowering of enumerator constants to immediate IR values.
 
 Important:
 
@@ -303,6 +304,8 @@ This is the main work phase. Convert codegen helpers that currently branch on
 
 - `generateBuiltinIncDec` — pointer stride comes from `size_in_bits`, not
   from recovering enum pointee size via `gTypeInfo`
+- direct identifier / function-argument enumerator lowering — use a shared helper
+  instead of duplicating `EnumTypeInfo::findEnumerator` + underlying-type logic
 - `toTypedValue(...)` / `toExprResult(...)` — slot-4 ambiguity disappears
   because `IrType::Integer` with `pointer_depth > 0` is unambiguously a pointer
 - `handleLValueAssignment` / `handleLValueCompoundAssignment` — size inference
@@ -311,6 +314,13 @@ This is the main work phase. Convert codegen helpers that currently branch on
 
 Helpers that legitimately need semantic identity (overload resolution, mangling,
 type traits) continue to use `Type` from the AST — they never touch `TypedValue`.
+
+**UPDATE (2026-03-13)**: A first Phase 3 slice is now in place:
+
+- `getRuntimeValueType(...)` / `getRuntimeValueSizeBits(...)` centralize runtime
+  value lowering for identifier paths and `getSizeInBytes()`
+- `tryMakeEnumeratorConstantExpr(...)` centralizes enumerator-immediate lowering
+  for direct identifiers, nested unscoped enum lookup, and function arguments
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
 

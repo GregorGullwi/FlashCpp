@@ -266,6 +266,35 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 	return semantic_size_bits;
 }
 
+std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const {
+	if (type_node.type() != Type::Enum || type_node.is_reference() || type_node.pointer_depth() > 0) {
+		return std::nullopt;
+	}
+
+	if (!type_node.type_index().is_valid() || type_node.type_index().value >= gTypeInfo.size()) {
+		return std::nullopt;
+	}
+
+	const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index().value].getEnumInfo();
+	if (!enum_info) {
+		return std::nullopt;
+	}
+
+	return tryMakeEnumeratorConstantExpr(*enum_info, identifier_handle);
+}
+
+std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const {
+	const Enumerator* enumerator = enum_info.findEnumerator(identifier_handle);
+	if (!enumerator) {
+		return std::nullopt;
+	}
+
+	return makeExprResult(
+		enum_info.underlying_type,
+		SizeInBits{static_cast<int>(enum_info.underlying_size)},
+		static_cast<unsigned long long>(enumerator->value));
+}
+
 
 
 
