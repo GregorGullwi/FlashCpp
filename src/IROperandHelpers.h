@@ -39,6 +39,15 @@ struct ExprResult {
 	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
+
+	// Returns the effective runtime representation type.
+	// During the transition period, computes from semantic type if ir_type
+	// is still the default.
+	IrType effectiveIrType() const {
+		if (ir_type != IrType::Void || type == Type::Void)
+			return ir_type;
+		return toIrType(type);
+	}
 };
 
 inline ExprResult makeExprResultImpl(

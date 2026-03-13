@@ -110,6 +110,32 @@ inline IrType toIrType(Type semantic_type) {
 }
 
 // ============================================================================
+// IrType classification helpers
+//
+// These replace the semantic-layer helpers (is_integer_type, is_floating_point_type,
+// etc.) for backend code.  They operate on IrType and are exhaustive — no
+// `Type::Enum` special cases needed.
+// ============================================================================
+
+/// True for IrType::Integer (covers all integral types including enums and bool).
+inline bool isIrIntegerType(IrType t) { return t == IrType::Integer; }
+
+/// True for IrType::Float, Double, or LongDouble.
+inline bool isIrFloatingPointType(IrType t) {
+	return t == IrType::Float || t == IrType::Double || t == IrType::LongDouble;
+}
+
+/// True for types that need struct-level ABI handling (size/layout via type_index).
+inline bool isIrStructType(IrType t) { return t == IrType::Struct; }
+
+/// True for types that represent pointer-like values in IR
+/// (function pointers, member pointers, nullptr).
+inline bool isIrPointerLikeType(IrType t) {
+	return t == IrType::FunctionPointer || t == IrType::MemberFunctionPointer ||
+	       t == IrType::MemberObjectPointer || t == IrType::Nullptr;
+}
+
+// ============================================================================
 // Formatting support for IrType (for FLASH_LOG_FORMAT and std::format)
 // ============================================================================
 inline std::string_view irTypeName(IrType t) {

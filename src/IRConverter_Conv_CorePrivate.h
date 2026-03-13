@@ -418,28 +418,31 @@
 			.operand_size_in_bits = operand_size
 		};
 
-		// Support integer, boolean, floating-point, enum, and pointer-like operations.
-		// Enum types are integer-like and should use their natural size from the IR.
-		// Types like Struct, FunctionPointer, Void, and Nullptr appear in IR for
-		// pointer offset calculations and should be treated as 64-bit integer ops.
-		if (ctx.operand_type == Type::Enum) {
-			// Enum values: coerce to integer type matching their IR size
-			Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
-			if (!is_comparison) {
-				ctx.result_value.type = int_type;
-				ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
+		// Use IrType for runtime representation dispatch instead of branching on
+		// semantic Type::Enum / Type::UserDefined.  effectiveIrType() computes the
+		// correct IrType from the semantic type when ir_type hasn't been set yet
+		// (transition period: not all TypedValue construction sites populate ir_type).
+		IrType operand_ir_type = bin_op.lhs.effectiveIrType();
+
+		// Enum types already map to IrType::Integer via toIrType(), so no
+		// special-case coercion is needed — the size_in_bits from the IR is
+		// already correct for the underlying integer representation.
+		if (operand_ir_type == IrType::Integer) {
+			// Integer-like types (including enums): coerce semantic type to
+			// a concrete integer type matching the IR size, so downstream
+			// register allocation picks the right width.
+			if (operand_type == Type::Enum) {
+				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
+				if (!is_comparison) {
+					ctx.result_value.type = int_type;
+					ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
+				}
+				ctx.operand_type = int_type;
 			}
-			ctx.operand_type = int_type;
-		}
-		auto is_pointer_like_type = [](Type t) {
-			return t == Type::Struct || t == Type::FunctionPointer ||
-			       t == Type::Nullptr || t == Type::Void || t == Type::UserDefined ||
-			       t == Type::MemberFunctionPointer || t == Type::MemberObjectPointer;
-		};
-		// Check operand type (not result type, which is Bool for comparisons)
-		bool treat_as_integer = is_pointer_like_type(ctx.operand_type);
-		if (treat_as_integer) {
-			// Pointer-like types: force 64-bit integer semantics
+		} else if (operand_ir_type == IrType::Struct || isIrPointerLikeType(operand_ir_type) ||
+		           operand_ir_type == IrType::Void || operand_ir_type == IrType::Nullptr) {
+			// Pointer-like and struct types: force 64-bit integer semantics
+			// for pointer offset calculations
 			if (!is_comparison) {
 				ctx.result_value.type = Type::UnsignedLongLong;
 				ctx.result_value.size_in_bits = SizeInBits{64};

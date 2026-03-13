@@ -413,6 +413,17 @@ struct TypedValue {
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
+
+	// Returns the effective runtime representation type.
+	// During the transition period (Phase 1-3), some construction sites may not
+	// explicitly set ir_type.  This method computes it from the semantic type if
+	// ir_type is still the default.  Once all sites are migrated, this method
+	// can be replaced by a direct ir_type read.
+	IrType effectiveIrType() const {
+		if (ir_type != IrType::Void || type == Type::Void)
+			return ir_type;
+		return toIrType(type);
+	}
 };
 
 // Helper function to print TypedValue
