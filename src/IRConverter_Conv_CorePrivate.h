@@ -1708,7 +1708,7 @@
 		// Use INT_MIN as a sentinel value to indicate "not yet allocated"
 		for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
 			// Initialize with sentinel offset (INT_MIN), actual offset set later
-			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, size_bits});
+			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, SizeInBits{size_bits}});
 		}
 
 		// Calculate total stack space needed
