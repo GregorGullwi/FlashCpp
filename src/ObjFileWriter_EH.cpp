@@ -798,7 +798,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			first_cleanup_funclet_rva = std::min(first_cleanup_funclet_rva, action_symbol->get_value());
 		}
 		if (sorted_try_blocks.empty() && !unwind_map.empty()) {
-			ip_to_state_entries.push_back({function_start, 0});
+			ip_to_state_entries.push_back({function_start, TypeIndex{}});
 			if (first_cleanup_funclet_rva > function_start && first_cleanup_funclet_rva < function_start + function_size) {
 				ip_to_state_entries.push_back({first_cleanup_funclet_rva, -1});
 			}

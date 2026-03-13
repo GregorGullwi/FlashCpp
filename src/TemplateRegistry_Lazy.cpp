@@ -238,7 +238,7 @@ struct LazyClassInstantiationInfo {
 	bool has_base_classes = false;                 // Does the template have base classes?
 	bool has_static_members = false;               // Does the template have static members?
 	bool has_member_functions = false;             // Does the template have member functions?
-	TypeIndex type_index = 0;                      // Type index once minimal instantiation is done
+	TypeIndex type_index {};                      // Type index once minimal instantiation is done
 };
 
 // Registry for tracking partially instantiated template classes
@@ -355,7 +355,7 @@ struct LazyTypeAliasInfo {
 	bool is_evaluated = false;                     // True once evaluation has been performed
 	// Cached evaluation result (to avoid re-computation)
 	Type evaluated_type = Type::Invalid;
-	TypeIndex evaluated_type_index = 0;
+	TypeIndex evaluated_type_index {};
 };
 
 // Registry for tracking unevaluated template type aliases
@@ -1474,7 +1474,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		// Holds fully resolved type info including indirection and qualifiers
 		struct ResolvedTypeInfo {
 			Type base_type = Type::Invalid;
-			TypeIndex type_index = 0;
+			TypeIndex type_index {};
 			uint8_t pointer_depth = 0;
 			ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 			CVQualifier cv_qualifier = CVQualifier::None;

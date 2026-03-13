@@ -563,7 +563,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Handle boolean literals (true/false)
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, Type::Bool);
+				TemplateTypeArg bool_arg(lit.value() ? 1 : TypeIndex{}, Type::Bool);
 				
 				// Check for pack expansion (...)
 				if (peek() == "..."_tok) {
@@ -766,7 +766,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;
 						dependent_arg.base_type = Type::Bool;  // noexcept, sizeof, alignof return bool/size_t
-						dependent_arg.type_index = 0;
+						dependent_arg.type_index = TypeIndex{};
 						dependent_arg.is_value = true;  // This is a non-type (value) template argument
 						dependent_arg.is_dependent = true;
 						
@@ -1046,7 +1046,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
 						TemplateTypeArg dependent_arg;
 						dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
-						dependent_arg.type_index = 0;  // Default, will try to look up
+						dependent_arg.type_index = TypeIndex{};  // Default, will try to look up
 						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
 						dependent_arg.is_dependent = true;
 						

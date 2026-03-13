@@ -1192,7 +1192,7 @@ ParseResult Parser::parse_lambda_expression() {
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
                     Type::Void,         // Base type (will be treated as pointer)
-                    0,                  // No type index
+                    TypeIndex{},        // No type index
                     8,                  // Pointer size on x64
                     8,                  // Alignment
                     AccessSpecifier::Public,
@@ -1292,7 +1292,7 @@ ParseResult Parser::parse_lambda_expression() {
             size_t member_size;
             size_t member_alignment;
             Type member_type;
-            TypeIndex type_index = 0;
+            TypeIndex type_index {};
 
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 				// By-reference capture: store a pointer (8 bytes on x64)

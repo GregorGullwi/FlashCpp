@@ -412,7 +412,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 		
 		// attributes (4 bytes) - flags
 		// Bit 0: virtual base (1 if virtual, 0 if non-virtual)
-		uint32_t attributes = bci.is_virtual ? 1 : 0;
+		uint32_t attributes = bci.is_virtual ? 1 : TypeIndex{};
 		ObjectFileCommon::appendLE(base_bcd_data, attributes);
 		
 		add_data(base_bcd_data, SectionType::RDATA);

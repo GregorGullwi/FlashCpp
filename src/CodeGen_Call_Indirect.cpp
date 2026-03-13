@@ -68,7 +68,7 @@
 				
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(Type::Void, 0, 0, memberFunctionCallNode.called_from());
+				TypeSpecifierNode return_type_node(Type::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
@@ -791,11 +791,11 @@
 					
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back({Type::Bool, 0});
+						arg_types.push_back({Type::Bool, TypeIndex{}});
 					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
 						// DEBUG removed
-						arg_types.push_back({lit.type(), 0});
+						arg_types.push_back({lit.type(), TypeIndex{}});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -848,7 +848,7 @@
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
 								TemplateTypeArg type_arg;
 								type_arg.base_type = arg_type;
-								type_arg.type_index = arg_type_index;
+								type_arg.type_index = TypeIndex{arg_type_index};
 								type_args.push_back(type_arg);
 							}
 							
@@ -1539,7 +1539,7 @@
 		
 		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
-			: 0;
+			: TypeIndex{};
 		return makeExprResult(
 			return_type.type(),
 			return_size_bits,

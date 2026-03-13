@@ -186,7 +186,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, op_token);
+		auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, op_token);
 		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 		auto func_call = FunctionCallNode(op_decl, std::move(args_result.args), op_token);
 		if (!namespaces.empty()) {
@@ -519,7 +519,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
 			
 			// Create a placeholder type spec and decl for the deferred call
-			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, operator_name_token);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 			result = emplace_node<ExpressionNode>(
@@ -542,7 +542,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Operator function not found - create a deferred call that will be resolved at instantiation
 			// This is common in template/requires contexts where the operator is dependent
-			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, operator_name_token);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			result = emplace_node<ExpressionNode>(
 				FunctionCallNode(operator_decl, std::move(args), operator_name_token));
@@ -3662,7 +3662,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// For dependent args, create a placeholder ConstructorCallNode
 									// The actual type will be resolved during template instantiation
 									// Use a placeholder type for now
-									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, identifier_token);
+									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, identifier_token);
 									result = emplace_node<ExpressionNode>(ConstructorCallNode(placeholder_type_node, std::move(args), identifier_token));
 									return ParseResult::success(*result);
 								}
@@ -3947,7 +3947,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Create a dummy declaration for the concept call
 									Token void_token(Token::Type::Keyword, "void"sv, concept_token.line(), concept_token.column(), concept_token.file_index());
 									auto void_type = emplace_node<TypeSpecifierNode>(
-										Type::Void, 0, 0, void_token, CVQualifier::None);
+										Type::Void, TypeIndex{}, 0, void_token, CVQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
 									
 									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(

@@ -2273,7 +2273,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		Type::Struct,
 		init_list_size_bits,
 		IrOperand{init_list_name},
-		static_cast<TypeIndex>(init_list_type_index)
+		TypeIndex{init_list_type_index}
 	);
 }
 
@@ -2481,7 +2481,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				type_spec.type(),
 				actual_size_bits,
 				IrOperand{ret_var},
-				static_cast<TypeIndex>(result_type_index)
+				TypeIndex{result_type_index}
 			);
 		}
 	}
@@ -2642,6 +2642,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		type_spec.type(),
 		actual_size_bits,
 		IrOperand{ret_var},
-		static_cast<TypeIndex>(result_type_index)
+		TypeIndex{result_type_index}
 	);
 }

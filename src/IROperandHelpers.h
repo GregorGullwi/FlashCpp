@@ -36,7 +36,7 @@ struct ExprResult {
 	Type type = Type::Void;
 	int size_in_bits = 0;
 	IrOperand value{};
-	TypeIndex type_index = 0;
+	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 };
 
@@ -57,7 +57,7 @@ inline ExprResult makeExprResultImpl(
 }
 
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), 0, PointerDepth{});
+	return makeExprResultImpl(type, size_in_bits, std::move(value), TypeIndex{}, PointerDepth{});
 }
 
 inline ExprResult makeExprResult(Type type, int size_in_bits, IrOperand value, TypeIndex type_index) {
@@ -78,7 +78,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.type = std::get<Type>(operands[0]);
 	result.size_in_bits = std::get<int>(operands[1]);
 	result.value = toIrValue(operands[2]);
-	result.type_index = 0;
+	result.type_index = TypeIndex{};
 	result.pointer_depth = PointerDepth{};
 	
 	return result;

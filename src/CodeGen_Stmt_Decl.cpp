@@ -168,7 +168,7 @@
 				} else if (std::holds_alternative<long long>(eval_result.value)) {
 					return static_cast<unsigned long long>(std::get<long long>(eval_result.value));
 				} else if (std::holds_alternative<bool>(eval_result.value)) {
-					return std::get<bool>(eval_result.value) ? 1 : 0;
+					return std::get<bool>(eval_result.value) ? 1 : TypeIndex{};
 				}
 				return 0;
 			};
@@ -1278,7 +1278,7 @@
 					{
 						Type init_type = init_operands.type;
 						int init_size = init_operands.size_in_bits;
-						TypeIndex init_type_index = 0;  // Will be set below if type_index is available
+						TypeIndex init_type_index {};  // Will be set below if type_index is available
 						
 						// Extract type_index if available (4th element in init_operands)
 						if (init_operands.type_index != 0) {
@@ -1366,7 +1366,7 @@
 										this_arg.type = init_type;
 										this_arg.size_in_bits = 64;  // Pointer size
 										this_arg.value = this_ptr;
-										this_arg.type_index = init_type_index;
+										this_arg.type_index = TypeIndex{init_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									} else if (std::holds_alternative<TempVar>(source_value)) {
 										// It's already a temporary - it might be an address or value
@@ -1378,7 +1378,7 @@
 										this_arg.type = init_type;
 										this_arg.size_in_bits = 64;  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
-										this_arg.type_index = init_type_index;
+										this_arg.type_index = TypeIndex{init_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									}
 									
@@ -1875,7 +1875,7 @@
 							bool is_converting_ctor = false;
 							{
 								Type init_type = init_operands.type;
-								TypeIndex init_type_index = 0;
+								TypeIndex init_type_index {};
 								if (init_operands.type_index != 0) {
 									init_type_index = init_operands.type_index;
 								}
@@ -2156,7 +2156,7 @@
 		// Extract initializer type information
 		Type init_type = init_operands.type;
 		int init_size = init_operands.size_in_bits;
-		TypeIndex init_type_index = 0;
+		TypeIndex init_type_index {};
 		
 		// Get type_index if available (4th element)
 		if (init_operands.type_index != 0) {
@@ -2548,7 +2548,7 @@
 					
 					Type element_type = Type::Int;  // Default
 					int element_size = 32;
-					TypeIndex element_type_index = 0;
+					TypeIndex element_type_index {};
 					
 					if (type_alias_it != gTypesByName.end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
@@ -2656,7 +2656,7 @@
 						
 						// Look up element size from tuple_element type alias
 						int element_size = get_type_size_bits(element_type);
-						TypeIndex element_type_index = 0;
+						TypeIndex element_type_index {};
 						
 						// Generate call to get<N>(hidden_var)
 						TempVar result_temp = var_counter.next();
@@ -2665,7 +2665,7 @@
 						call_op.result = result_temp;
 						call_op.return_type = element_type;
 						call_op.return_size_in_bits = element_size;
-						call_op.return_type_index = element_type_index;
+						call_op.return_type_index = TypeIndex{element_type_index};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
 						
@@ -2674,7 +2674,7 @@
 						arg.type = init_type;
 						arg.size_in_bits = init_size;
 						arg.value = hidden_var_handle;
-						arg.type_index = init_type_index;
+						arg.type_index = TypeIndex{init_type_index};
 						arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Pass by const reference
 						call_op.args.push_back(arg);
 						
@@ -2690,7 +2690,7 @@
 						init_val3.type = element_type;
 						init_val3.size_in_bits = element_size;
 						init_val3.value = result_temp;
-						init_val3.type_index = element_type_index;
+						init_val3.type_index = TypeIndex{element_type_index};
 						binding_var_decl.initializer = init_val3;
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));

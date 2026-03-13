@@ -124,7 +124,7 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
-inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = 0) {
+inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = TypeIndex{}) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
 	if (source_type_index > 0 && source_type_index < gTypeInfo.size()) {

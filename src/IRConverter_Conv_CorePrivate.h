@@ -1434,7 +1434,7 @@
 						}
 					} else {
 						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
-						size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
+						size_t int_slots_start = call_op->usesReturnSlot() ? 1 : TypeIndex{};
 						outgoing_bytes = computeSysVOutgoingBytes(call_op->args, int_slots_start);
 					}
 					
@@ -1656,7 +1656,7 @@
 		int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
 		// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
 		// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
-		int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
+		int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : TypeIndex{};
 		int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 		
 		for (const VarDecl& local_var : local_vars) {

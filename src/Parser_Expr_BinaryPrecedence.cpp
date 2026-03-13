@@ -323,17 +323,17 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 				// this means checking member operator overloads and free operator functions.
 				if (in_sfinae_context_ && !sfinae_type_map_.empty()) {
 					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
-						if (!operand.is<ExpressionNode>()) return 0;
+						if (!operand.is<ExpressionNode>()) return TypeIndex{};
 						const ExpressionNode& expr = operand.as<ExpressionNode>();
-						if (!std::holds_alternative<IdentifierNode>(expr)) return 0;
+						if (!std::holds_alternative<IdentifierNode>(expr)) return TypeIndex{};
 						const auto& ident = std::get<IdentifierNode>(expr);
 						auto symbol = lookup_symbol(ident.nameHandle());
-						if (!symbol.has_value()) return 0;
+						if (!symbol.has_value()) return TypeIndex{};
 						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-						if (!decl) return 0;
-						if (!decl->type_node().is<TypeSpecifierNode>()) return 0;
+						if (!decl) return TypeIndex{};
+						if (!decl->type_node().is<TypeSpecifierNode>()) return TypeIndex{};
 						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return 0;
+						if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
 						if (type_idx < gTypeInfo.size()) {
@@ -343,7 +343,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 								type_idx = subst_it->second;
 							} else {
 								// Unresolved template parameter — skip validation
-								return 0;
+								return TypeIndex{};
 							}
 						}
 						return type_idx;
@@ -1208,7 +1208,7 @@ bool Parser::parse_static_member_function(
 
 		// Look up the struct type
 		auto type_it = gTypesByName.find(struct_name_handle);
-		size_t struct_type_idx = 0;
+		TypeIndex struct_type_idx{};
 		if (type_it != gTypesByName.end()) {
 			struct_type_idx = type_it->second->type_index_;
 		}
@@ -1349,7 +1349,7 @@ ParseResult Parser::parse_static_member_block(
 
 		// Push struct context so static member references can be resolved
 		// This enables expressions like `!is_signed` to find `is_signed` as a static member
-		size_t struct_type_index = 0;
+		TypeIndex struct_type_index{};
 		auto type_it = gTypesByName.find(struct_name_handle);
 		if (type_it != gTypesByName.end()) {
 			struct_type_index = type_it->second->type_index_;
@@ -1662,7 +1662,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
 				// In template contexts, actual alignment will be resolved at instantiation time
 				discard_saved_token(saved_pos);
-				return static_cast<size_t>(8); // Default to 8-byte alignment
+				return TypeIndex{8}; // Default to 8-byte alignment
 			}
 		}
 	}

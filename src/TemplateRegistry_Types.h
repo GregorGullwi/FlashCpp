@@ -119,14 +119,14 @@ enum class MemberPointerKind : uint8_t {
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
 	Type type = Type::Invalid;
-	TypeIndex type_index = 0;
+	TypeIndex type_index {};
 	int64_t value = 0;
 	
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx = 0) {
+	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateArgumentValue v;
 		v.type = t;
-		v.type_index = idx;
+		v.type_index = TypeIndex{idx};
 		return v;
 	}
 	
@@ -261,10 +261,10 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods (match the former TemplateTypeArg API)
-	static TemplateTypeArg makeType(Type t, TypeIndex idx = 0) {
+	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateTypeArg arg;
 		arg.base_type = t;
-		arg.type_index = idx;
+		arg.type_index = TypeIndex{idx};
 		return arg;
 	}
 	

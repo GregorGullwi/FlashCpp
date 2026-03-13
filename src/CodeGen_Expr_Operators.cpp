@@ -200,7 +200,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	result.type = Type::Struct;
 	result.size_in_bits = actual_size_bits;
 	result.value = IrValue(temp);
-	result.type_index = type_idx;
+	result.type_index = TypeIndex{type_idx};
 	return result;
 }
 
@@ -812,7 +812,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TypeIndex lhs_type_index = lhsExprResult.type_index;
 			TypeIndex rhs_type_index = (rhsType == Type::Enum || rhsType == Type::UserDefined)
 				? rhsExprResult.type_index
-				: 0;
+				: TypeIndex{};
 
 			if (lhs_type_index > 0 && lhs_type_index < gTypeInfo.size()) {
 				// Check for user-defined operator= that takes the RHS type
@@ -1448,7 +1448,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Get the LHS value - can be an identifier, member access, or other expression
 				std::variant<StringHandle, TempVar> lhs_value;
-				TypeIndex spaceship_lhs_type_index = 0;
+				TypeIndex spaceship_lhs_type_index {};
 
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Simple identifier case: p1 <=> p2

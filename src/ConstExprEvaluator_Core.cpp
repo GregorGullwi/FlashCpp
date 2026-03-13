@@ -742,7 +742,7 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-		static_cast<TypeIndex>(type_index),
+		TypeIndex{type_index},
 		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
 	if (!member_result) {
 		return EvalResult::error("Member not found in struct");
@@ -1216,7 +1216,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			// Preserve the older generic array materialization for declarations whose
 			// array element type is not represented as a TypeSpecifierNode (for example,
 			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(Type::Auto, 0, init_list, context);
+			return materialize_array_value(Type::Auto, TypeIndex{}, init_list, context);
 		}
 	}
 
@@ -2786,7 +2786,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							return EvalResult::error("Statement executed (not a return)");
 						}
 
-						auto array_result = materialize_array_value(Type::Auto, 0, init_list, context, &bindings);
+						auto array_result = materialize_array_value(Type::Auto, TypeIndex{}, init_list, context, &bindings);
 						if (!array_result.success()) {
 							return array_result;
 						}

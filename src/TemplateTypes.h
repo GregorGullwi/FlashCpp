@@ -58,7 +58,7 @@ namespace FlashCpp {
  * also store base_type to ensure unique hashes for different primitive types.
  */
 struct TypeIndexArg {
-	TypeIndex type_index = 0;
+	TypeIndex type_index {};
 	Type base_type = Type::Invalid;  // Needed for primitive types where type_index is 0
 	
 	// CV-qualifiers and reference info that affect template identity

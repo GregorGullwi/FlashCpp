@@ -218,7 +218,7 @@ void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_i
             if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 LocalVariableInfo var_info;
                 var_info.name = name;
-                var_info.type_index = type_index;
+                var_info.type_index = TypeIndex{type_index};
                 var_info.flags = flags;
                 var_info.locations = locations;
                 func.local_variables.push_back(var_info);
@@ -235,7 +235,7 @@ void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t ty
             if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 ParameterInfo param_info;
                 param_info.name = name;
-                param_info.type_index = type_index;
+                param_info.type_index = TypeIndex{type_index};
                 param_info.stack_offset = stack_offset;
 
                 func.parameters.push_back(param_info);
@@ -925,7 +925,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugS() {
                             reinterpret_cast<const uint8_t*>(&rsp_offset) + sizeof(rsp_offset));
 
             // Type index (4 bytes) - T_INT4 = 0x74 for int parameters
-            uint32_t type_index = 0x74; // T_INT4 for int parameters
+            uint32_t type_index = TypeIndex{0x74}; // T_INT4 for int parameters
             regrel_data.insert(regrel_data.end(), reinterpret_cast<const uint8_t*>(&type_index),
                             reinterpret_cast<const uint8_t*>(&type_index) + sizeof(type_index));
 
@@ -1178,7 +1178,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             writeLittleEndian32(func_id_data, scope);
 
             // Type index (reference to the LF_PROCEDURE type)
-            uint32_t type_index = procedure_index; // Reference to LF_PROCEDURE
+            uint32_t type_index = TypeIndex{procedure_index}; // Reference to LF_PROCEDURE
             if (g_enable_debug_output) std::cerr << "DEBUG: Writing LF_FUNC_ID type_index=0x" << std::hex << type_index << std::dec
                       << " (should reference procedure 0x" << std::hex << procedure_index << std::dec << ")" << std::endl;
             writeLittleEndian32(func_id_data, type_index);

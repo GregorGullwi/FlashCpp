@@ -239,7 +239,7 @@
 			Type type,
 			int size_bits,
 			IrOperand value,
-			TypeIndex type_index = 0,
+			TypeIndex type_index = TypeIndex{},
 			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
 			return makeExprResult(type, size_bits, std::move(value), type_index, pointer_depth);
@@ -267,7 +267,7 @@
 				result_type,
 				size_bits,
 				std::move(value),
-				carries_type_index ? type_node.type_index() : 0,
+				carries_type_index ? type_node.type_index() : TypeIndex{},
 				pointer_depth
 			);
 		};
@@ -277,7 +277,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
-			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : 0;
+			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -335,7 +335,7 @@
 							);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
+							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : TypeIndex{};
 							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 						}
 
@@ -370,7 +370,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 						}
 						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -403,7 +403,7 @@
 					lvalue_info.member_name = member->getName();
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 					
-					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 					return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 				}
 			}
@@ -555,7 +555,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -590,7 +590,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -767,7 +767,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
 						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 					
@@ -796,7 +796,7 @@
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
 						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
 					}
 				}
@@ -1032,7 +1032,7 @@
 			// - Otherwise return 0
 			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
 				? type_node.type_index()
-				: 0;
+				: TypeIndex{};
 			PointerDepth pointer_depth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
@@ -1192,7 +1192,7 @@
 					StringTable::getOrInternStringHandle(identifierNode.name()),
 					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
 						? type_node.type_index()
-						: 0,
+						: TypeIndex{},
 					PointerDepth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
 						? 0
 						: static_cast<int>(type_node.pointer_depth())});
@@ -1480,12 +1480,12 @@
 							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
-							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
 							return makeExprResult(static_member->type, get_type_size_bits(static_member->type), IrOperand{deref_temp}, type_index);
 						}
 
 						// Return the temp variable that will hold the loaded value
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : 0;
+						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
 						return makeExprResult(static_member->type, qsm_size_bits, IrOperand{result_temp}, type_index);
 					}
 				}
@@ -1541,11 +1541,11 @@
 					}
 
 				// Return the temp variable that will hold the loaded value
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
 					return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 			} else {
 				// Local variable - just return the name
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
 				return makeExprResult(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index);
 			}
 		}
@@ -1580,7 +1580,7 @@
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
+			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
 			return makeExprResult(type_node.type(), size_bits, IrOperand{result_temp}, type_index);
 		}
 

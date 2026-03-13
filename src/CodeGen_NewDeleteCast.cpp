@@ -1080,5 +1080,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return makeExprResult(target_type, result_size, expr_operands.value, 0, PointerDepth{target_pointer_depth});
+		return makeExprResult(target_type, result_size, expr_operands.value, TypeIndex{}, PointerDepth{target_pointer_depth});
 	}

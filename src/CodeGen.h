@@ -92,7 +92,7 @@ struct LambdaInfo {
 	std::string_view conversion_op_name;     // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
 	Type return_type;
 	int return_size;
-	TypeIndex return_type_index = 0;    // Type index for struct/enum return types
+	TypeIndex return_type_index {};    // Type index for struct/enum return types
 	bool returns_reference = false;     // True if lambda returns a reference type (T& or T&&)
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
@@ -102,7 +102,7 @@ struct LambdaInfo {
 	size_t lambda_id;
 	Token lambda_token;
 	std::string_view enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
-	TypeIndex enclosing_struct_type_index = 0;  // Type index of enclosing struct for [this] capture
+	TypeIndex enclosing_struct_type_index {};  // Type index of enclosing struct for [this] capture
 	bool is_mutable = false;            // Whether the lambda is mutable (allows modifying captures)
 	
 	// Generic lambda support (lambdas with auto parameters)

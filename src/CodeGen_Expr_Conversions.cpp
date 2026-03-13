@@ -255,7 +255,7 @@
 			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 			
 			Type object_type = object_operands.type;
-			TypeIndex type_index = 0;
+			TypeIndex type_index {};
 			if (object_operands.type_index != 0) {
 				type_index = object_operands.type_index;
 			}
@@ -558,7 +558,7 @@
 			// Static local variables are stored as globals with mangled names
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
-				constexpr TypeIndex kStaticLocalTypeIndex = 0;
+				constexpr TypeIndex kStaticLocalTypeIndex {};
 				out = makeExprResult(
 					static_local_it->second.type,
 					static_cast<int>(static_local_it->second.size_in_bits),
@@ -612,7 +612,7 @@
 					addr_components->final_type,
 					64,
 					result_var,
-					0,
+					TypeIndex{},
 					PointerDepth{addr_components->pointer_depth + 1});
 				return result;
 			}
@@ -671,7 +671,7 @@
 							}
 							
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
-							TypeIndex type_index = 0;
+							TypeIndex type_index {};
 							if (array_operands.type_index != 0) {
 								type_index = array_operands.type_index;
 							}
@@ -733,7 +733,7 @@
 						Type object_type = object_operands.type;
 						
 						// Get the struct type index
-						TypeIndex type_index = 0;
+						TypeIndex type_index {};
 						if (object_operands.type_index != 0) {
 							type_index = object_operands.type_index;
 						}
@@ -1215,7 +1215,7 @@
 								member_result.member->type,
 								64,
 								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
-								static_cast<TypeIndex>(member_result.member->type_index)
+								TypeIndex{member_result.member->type_index}
 							);
 						}
 					}
@@ -1808,7 +1808,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				operandType,
 				64,
 				IrOperand{result_var},
-				0,
+				TypeIndex{},
 				PointerDepth{operand_pointer_depth}
 			);
 		} else {
@@ -1835,7 +1835,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				operandType,
 				64,
 				IrOperand{old_value},
-				0,
+				TypeIndex{},
 				PointerDepth{operand_pointer_depth}
 			);
 		}

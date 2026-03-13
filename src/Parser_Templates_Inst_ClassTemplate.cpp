@@ -355,7 +355,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (gTypesByName.find(inst_handle) == gTypesByName.end()) {
 				auto& type_info = gTypeInfo.emplace_back();
 				type_info.type_ = Type::UserDefined;
-				type_info.type_index_ = gTypeInfo.size() - 1;
+				type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 				type_info.type_size_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
@@ -540,7 +540,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		TemplateTypeArg resolved_arg;
 		resolved_arg.base_type = resolved_base_type;
-		resolved_arg.type_index = resolved_type_index;
+		resolved_arg.type_index = TypeIndex{resolved_type_index};
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
 		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
@@ -657,7 +657,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (default_type.type() == Type::Void) {
 						TemplateTypeArg void_arg;
 						void_arg.base_type = Type::Void;
-						void_arg.type_index = 0;
+						void_arg.type_index = TypeIndex{};
 						filled_args_for_pattern_match.push_back(void_arg);
 						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
 						continue;
@@ -681,7 +681,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
 								void_arg.base_type = Type::Void;
-								void_arg.type_index = 0;
+								void_arg.type_index = TypeIndex{};
 								filled_args_for_pattern_match.push_back(void_arg);
 								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
 								continue;
@@ -1279,7 +1279,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 								TemplateTypeArg va;
 								va.is_value = true;
-								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : 0;
+								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : TypeIndex{};
 								resolved_args.push_back(va);
 							} else {
 								// Unresolvable expression argument - cannot safely instantiate
@@ -1696,14 +1696,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
 									if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 										unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
-										substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+										substituted_initializer = make_pack_size_literal(TypeIndex{result});
 									}
 								}
 								// Case 2: LHS is numeric, RHS is pack_size_expr
 								else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
 									if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
 										unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
-										substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+										substituted_initializer = make_pack_size_literal(TypeIndex{result});
 									}
 								}
 								// Case 3: LHS is nested binary expression, RHS is numeric
@@ -1728,7 +1728,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (nested_result) {
 											if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 												unsigned long long result = evaluate_binary(bin_expr.op(), *nested_result, *rhs_num);
-												substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+												substituted_initializer = make_pack_size_literal(TypeIndex{result});
 											}
 										}
 									}
@@ -1801,7 +1801,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
-						// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+						// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
 						else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 							const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 							const ASTNode& cond_node = ternary.condition();
@@ -2076,7 +2076,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto& alias_type_info = gTypeInfo.emplace_back(
 				qualified_alias_name,
 				substituted_type,
-				substituted_type_index,
+				TypeIndex{substituted_type_index},
 				substituted_size
 			);
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -2200,7 +2200,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
 						Type concrete_type = deduced_arg.base_type;
-						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size(), get_type_size_bits(concrete_type));
+						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, TypeIndex{gTypeInfo.size()}, get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
 							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 						gTypesByName.emplace(type_info.name(), &type_info);
@@ -4178,7 +4178,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
 					}
 				}
-				// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+				// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
 				else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 					const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 					const ASTNode& cond_node = ternary.condition();
@@ -4567,7 +4567,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_name, qualified_name, template_params, template_args_to_use);
 
 			// Register the nested class in the type system
-			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size(), 0); // Placeholder size
+			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, TypeIndex{gTypeInfo.size()}, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
@@ -4756,7 +4756,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the type alias in gTypesByName
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, substituted_type_index, substituted_size);
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
 		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
 	}
 
@@ -4900,7 +4900,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									);
 									if (subst_type != Type::UserDefined || subst_index != 0) {
 										return_type = subst_type;
-										return_type_index = subst_index;
+										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
 											"' to type=", static_cast<int>(return_type));
 									}
@@ -4917,7 +4917,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return_type_spec, template_params, template_args_to_use
 					);
 					return_type = subst_type;
-					return_type_index = subst_index;
+					return_type_index = TypeIndex{subst_index};
 				}
 
 				// Create substituted return type node
@@ -5313,7 +5313,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									);
 									if (subst_type != Type::UserDefined || subst_index != 0) {
 										return_type = subst_type;
-										return_type_index = subst_index;
+										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
 											"' to type=", static_cast<int>(return_type), " (no-definition path)");
 									}
@@ -5330,7 +5330,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return_type_spec, template_params, template_args_to_use
 					);
 					return_type = subst_type;
-					return_type_index = subst_index;
+					return_type_index = TypeIndex{subst_index};
 				}
 
 				// Create substituted return type node
@@ -6158,14 +6158,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
 								if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
-									substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+									substituted_initializer = make_pack_size_literal(TypeIndex{result});
 								}
 							}
 							// Case 2: LHS is numeric, RHS is pack_size_expr
 							else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
 								if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
 									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
-									substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+									substituted_initializer = make_pack_size_literal(TypeIndex{result});
 								}
 							}
 							// Case 3: LHS is nested binary expression (e.g., static_cast<int>(sizeof...(Ts)) * 2), RHS is numeric
@@ -6190,7 +6190,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									if (nested_result) {
 										if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 											unsigned long long result = evaluate_binary(bin_expr.op(), *nested_result, *rhs_num);
-											substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+											substituted_initializer = make_pack_size_literal(TypeIndex{result});
 										}
 									}
 								}
@@ -6213,7 +6213,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
 						}
 					}
-					// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+					// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
 					else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 						const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 						const ASTNode& cond_node = ternary.condition();

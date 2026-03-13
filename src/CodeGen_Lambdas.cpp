@@ -82,7 +82,7 @@
 
 		info.return_type = Type::Void;
 		info.return_size = 0;
-		info.return_type_index = 0;
+		info.return_type_index = TypeIndex{};
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
@@ -473,7 +473,7 @@
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		TypeIndex closure_type_index = static_cast<TypeIndex>(closure_type->type_index_);
+		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
 		return makeExprResult(
 			Type::Struct,
 			closure_size_bits,
@@ -602,7 +602,7 @@
 						param_types.push_back(*deduced);
 					} else {
 						// No deduced type available, fallback to int
-						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
 						param_types.push_back(int_type);
 					}
 				} else {
@@ -767,7 +767,7 @@
 						// Use the deduced type from call site (already has reference flags)
 						param_types.push_back(*deduced);
 					} else {
-						TypeSpecifierNode int_type(Type::Int, 0, 32, lambda_info.lambda_token);
+						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
 						param_types.push_back(int_type);
 					}
 				} else {
@@ -950,7 +950,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 		return_type = ret_type_node.type();
 		return_size = ret_type_node.size_in_bits();
 	}
-	TypeSpecifierNode return_type_node(return_type, 0, return_size, lambda.lambda_token());
+	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());
 	
 	// Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;

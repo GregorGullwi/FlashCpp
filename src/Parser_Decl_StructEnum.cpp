@@ -1356,7 +1356,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				
 				// Push struct context so static member references can be resolved
 				// This enables expressions like `!is_signed` to find `is_signed` as a static member
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				auto type_it = gTypesByName.find(qualified_struct_name);
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
@@ -1652,7 +1652,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// Look up the struct type
 					auto type_it = gTypesByName.find(struct_name);
-					size_t struct_type_index = 0;
+					TypeIndex struct_type_index{};
 					if (type_it != gTypesByName.end()) {
 						struct_type_index = type_it->second->type_index_;
 					}
@@ -1796,7 +1796,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
@@ -2050,7 +2050,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Look up the struct type to get its type index
 				auto type_it = gTypesByName.find(struct_name);
-				size_t struct_type_index = 0;
+				TypeIndex struct_type_index{};
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
@@ -3105,7 +3105,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Bool,
-				0,  // type_index for bool
+				TypeIndex{},  // type_index for bool
 				8,  // size in bits
 				name_token,
 				CVQualifier::None
@@ -3642,7 +3642,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	StructMember member{
 		funcptr_name_handle,
 		Type::FunctionPointer,
-		0,  // type_index for function pointers
+		TypeIndex{},  // type_index for function pointers
 		0,  // offset will be calculated later
 		pointer_size,
 		pointer_alignment,
@@ -4069,7 +4069,7 @@ ParseResult Parser::parse_friend_declaration()
 			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
 				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
 			} else {
-				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, 0, 0, Token());
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, TypeIndex{}, 0, Token());
 			}
 
 			// Build the declaration and function declaration nodes
@@ -4091,7 +4091,7 @@ ParseResult Parser::parse_friend_declaration()
 				body_start,
 				{},       // initializer_list_start (not used)
 				{},       // struct_name (not needed for free function)
-				0,        // struct_type_index (not needed for free function)
+				TypeIndex{},  // struct_type_index (not needed for free function)
 				nullptr,  // struct_node (not needed for free function)
 				false,    // has_initializer_list
 				false,    // is_constructor

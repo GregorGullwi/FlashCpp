@@ -491,7 +491,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	const StructTypeInfo* bound_struct_info = nullptr;
-	TypeIndex bound_type_index = 0;
+	TypeIndex bound_type_index {};
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 	bool write_back_to_object_binding = false;
 	std::string_view object_name = object_identifier->name();
@@ -2858,7 +2858,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			struct_info = gTypeInfo[type_index].getStructInfo();
 		}
 		if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
-			type_index = declared_type_index;
+			type_index = TypeIndex{declared_type_index};
 			struct_info = gTypeInfo[type_index].getStructInfo();
 		}
 	} else {
@@ -2866,7 +2866,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		if (declared_type_index == TypeIndex{0} || declared_type_index >= gTypeInfo.size()) {
 			return EvalResult::error("Brace-initialized object has invalid type in member function call");
 		}
-		type_index = declared_type_index;
+		type_index = TypeIndex{declared_type_index};
 		struct_info = gTypeInfo[type_index].getStructInfo();
 	}
 	
@@ -3363,7 +3363,7 @@ EvalResult Evaluator::extract_object_members(
 		struct_info = struct_type_info->getStructInfo();
 	}
 	if (!struct_info && declared_type_index != TypeIndex{0} && declared_type_index < gTypeInfo.size()) {
-		type_index = declared_type_index;
+		type_index = TypeIndex{declared_type_index};
 		struct_type_info = &gTypeInfo[type_index];
 		struct_info = struct_type_info->getStructInfo();
 	}

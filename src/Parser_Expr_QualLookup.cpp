@@ -748,8 +748,8 @@ ParseResult Parser::validate_and_add_base_class(
 		if ((parsing_template_depth_ > 0)) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Deferring unresolved base class '{}' in template body", base_class_name);
 			bool is_deferred = true;
-			struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, is_deferred);
-			struct_info->addBaseClass(base_class_name, 0, base_access, is_virtual_base, is_deferred);
+			struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
+			struct_info->addBaseClass(base_class_name, TypeIndex{}, base_access, is_virtual_base, is_deferred);
 			return ParseResult::success();
 		}
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
@@ -1309,7 +1309,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, 0, 64, lambda.lambda_token());
+		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1625,7 +1625,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, 0, 64, lambda.lambda_token());
+		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
@@ -1704,7 +1704,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			size_t struct_type_index = object_type.type_index();
 			if (struct_type_index < gTypeInfo.size()) {
 				// Look up the member
-				auto member_result = FlashCpp::gLazyMemberResolver.resolve(static_cast<TypeIndex>(struct_type_index), StringTable::getOrInternStringHandle(std::string(member_name)));
+				auto member_result = FlashCpp::gLazyMemberResolver.resolve(TypeIndex{struct_type_index}, StringTable::getOrInternStringHandle(std::string(member_name)));
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits

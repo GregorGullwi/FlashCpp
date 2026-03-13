@@ -761,7 +761,7 @@ ParseResult Parser::parse_type_specifier()
 		auto type_it = gTypesByName.find(type_name_handle);
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* type_info = type_it->second;
-			size_t user_type_index = type_info->type_index_;
+			TypeIndex user_type_index = type_info->type_index_;
 			int type_size_bits = static_cast<int>(type_info->type_size_);
 
 			// Determine the correct Type value from the found TypeInfo
@@ -841,7 +841,7 @@ ParseResult Parser::parse_type_specifier()
 				if (type_it == gTypesByName.end()) {
 					auto& placeholder_type = gTypeInfo.emplace_back();
 					placeholder_type.type_ = Type::UserDefined;
-					placeholder_type.type_index_ = gTypeInfo.size() - 1;
+					placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 					placeholder_type.type_size_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
@@ -854,7 +854,7 @@ ParseResult Parser::parse_type_specifier()
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					Type::UserDefined,
 					type_idx,
-					0,
+					TypeIndex{0},
 					last_qualified_token,
 					cv_qualifier));
 			}
@@ -1080,13 +1080,13 @@ ParseResult Parser::parse_type_specifier()
 							}
 							
 							// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
-							TypeIndex type_idx = 0;
+							TypeIndex type_idx {};
 							bool found = false;
 							StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
 							
 							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 								if (gTypeInfo[i].name() == target_handle) {
-									type_idx = i;
+									type_idx = TypeIndex{i};
 									found = true;
 									break;
 								}
@@ -1131,13 +1131,13 @@ ParseResult Parser::parse_type_specifier()
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 											auto& placeholder_type = gTypeInfo.emplace_back();
 											placeholder_type.type_ = Type::UserDefined;
-											placeholder_type.type_index_ = gTypeInfo.size() - 1;
+											placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
 											gTypesByName[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
+												Type::UserDefined, placeholder_type.type_index_, TypeIndex{0}, member_token, cv_qualifier));
 										}
 									}
 								}
@@ -1277,13 +1277,13 @@ ParseResult Parser::parse_type_specifier()
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 								auto& placeholder_type = gTypeInfo.emplace_back();
 								placeholder_type.type_ = Type::UserDefined;
-								placeholder_type.type_index_ = gTypeInfo.size() - 1;
+								placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
 								gTypesByName[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
+									Type::UserDefined, placeholder_type.type_index_, TypeIndex{0}, member_token, cv_qualifier));
 							}
 						}
 					}
@@ -1339,7 +1339,7 @@ ParseResult Parser::parse_type_specifier()
 							// Create a new placeholder type
 							auto& placeholder_type = gTypeInfo.emplace_back();
 							placeholder_type.type_ = Type::UserDefined;
-							placeholder_type.type_index_ = gTypeInfo.size() - 1;
+							placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
@@ -1378,7 +1378,7 @@ ParseResult Parser::parse_type_specifier()
 						// Create a new dependent placeholder with template instantiation metadata
 						auto& type_info = gTypeInfo.emplace_back();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = gTypeInfo.size() - 1;
+						type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 						type_info.type_size_ = 0;
 						type_info.name_ = type_handle;
 						gTypesByName[type_handle] = &type_info;
@@ -1397,7 +1397,7 @@ ParseResult Parser::parse_type_specifier()
 					// Fallback: no template args - just reference the template parameter type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
-						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0])};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							Type::UserDefined,
 							type_idx,
@@ -1765,14 +1765,14 @@ ParseResult Parser::parse_type_specifier()
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							auto& type_info = gTypeInfo.emplace_back();
 							type_info.type_ = Type::UserDefined;
-							type_info.type_index_ = gTypeInfo.size() - 1;
+							type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
 							gTypesByName[type_idx] = &type_info;
 							
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
+								Type::UserDefined, type_info.type_index_, TypeIndex{0}, type_name_token, cv_qualifier));
 						}
 						// If type IS found, continue with normal lookup below
 					}
@@ -1990,7 +1990,7 @@ ParseResult Parser::parse_type_specifier()
 					if (parsing_template_depth_ > 0 && inst_is_incomplete) {
 						// Create a placeholder UserDefined type for template-dependent nested types
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							Type::UserDefined, 0, 0, type_name_token, cv_qualifier));
+							Type::UserDefined, TypeIndex{}, 0, type_name_token, cv_qualifier));
 					}
 					
 					// SFINAE: If we're in a substitution context and can't find the nested type,
@@ -2037,7 +2037,7 @@ ParseResult Parser::parse_type_specifier()
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					auto& type_info = gTypeInfo.emplace_back();
 					type_info.type_ = Type::UserDefined;
-					type_info.type_index_ = gTypeInfo.size() - 1;
+					type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					gTypesByName[type_idx] = &type_info;
@@ -2207,13 +2207,13 @@ ParseResult Parser::parse_type_specifier()
 							type_name);
 						auto& type_info = gTypeInfo.emplace_back();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = gTypeInfo.size() - 1;
+						type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
 						gTypesByName[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
+							Type::UserDefined, type_info.type_index_, TypeIndex{0}, type_name_token, cv_qualifier));
 					}
 				}
 			}
@@ -2280,7 +2280,7 @@ ParseResult Parser::parse_type_specifier()
 
 		// Otherwise, treat as generic user-defined type or typedef
 		// Look up the type_index if it's a registered type
-		TypeIndex user_type_index = 0;
+		TypeIndex user_type_index {};
 		Type resolved_type = Type::UserDefined;
 		if (type_info_ctx) {
 			user_type_index = type_info_ctx->type_index_;

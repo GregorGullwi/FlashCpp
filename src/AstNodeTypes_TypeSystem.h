@@ -1,6 +1,8 @@
 #pragma once
 #include "AstNodeTypes_Core.h"
 #include <cassert>
+#include <format>
+#include <functional>
 
 
 enum class TypeQualifier {
@@ -316,7 +318,43 @@ enum class Type : int_fast16_t {
 	Template,             // Nested template param
 };
 
-using TypeIndex = size_t;
+// Strong wrapper for type indices into gTypeInfo[].
+// Explicit construction prevents accidental int/size_t → TypeIndex implicit
+// conversion at write sites; operator size_t() preserves backward-compatible
+// reads and array-index uses without any churn.
+struct TypeIndex {
+	size_t value = 0;
+	// Non-explicit default ctor: keeps TypeIndex{} and aggregate-init working.
+	constexpr TypeIndex() noexcept = default;
+	// Explicit single-arg ctor: prevents bare integer → TypeIndex conversion.
+	constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
+	// Implicit conversion to size_t: preserves gTypeInfo[idx] array indexing,
+	// comparisons with integers, and all existing read sites.
+	constexpr operator size_t() const noexcept { return value; }
+	// Increment operators for loop variables.
+	TypeIndex& operator++() noexcept { ++value; return *this; }
+	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
+	// Relational operators.
+	constexpr bool operator==(TypeIndex o) const noexcept { return value == o.value; }
+	constexpr bool operator!=(TypeIndex o) const noexcept { return value != o.value; }
+	constexpr bool operator< (TypeIndex o) const noexcept { return value <  o.value; }
+	constexpr bool operator<=(TypeIndex o) const noexcept { return value <= o.value; }
+	constexpr bool operator> (TypeIndex o) const noexcept { return value >  o.value; }
+	constexpr bool operator>=(TypeIndex o) const noexcept { return value >= o.value; }
+};
+
+namespace std {
+template<>
+struct hash<TypeIndex> {
+	size_t operator()(TypeIndex idx) const noexcept { return std::hash<size_t>{}(idx.value); }
+};
+template<>
+struct formatter<TypeIndex, char> : formatter<size_t, char> {
+	auto format(const TypeIndex& idx, format_context& ctx) const {
+		return formatter<size_t, char>::format(idx.value, ctx);
+	}
+};
+}  // namespace std
 
 /// Helper function to get the C++ name string for a Type
 /// Returns the string used in C++ source code (e.g., "int", "unsigned long")

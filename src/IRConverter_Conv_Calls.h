@@ -751,7 +751,7 @@
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(Type::Void, 0, 0);
+		TypeSpecifierNode void_return(Type::Void, TypeIndex{}, 0);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -1100,7 +1100,7 @@
 				const TypedValue& arg = ctor_op.arguments[i];
 				bool is_float_arg = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference();
 				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
-				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
+				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : TypeIndex{};
 
 				bool goes_on_stack = false;
 				if (is_float_arg) {
@@ -1182,7 +1182,7 @@
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
-			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
+			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : TypeIndex{};
 
 			// Check if this is a floating-point parameter
 			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;

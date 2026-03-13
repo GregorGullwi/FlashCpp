@@ -21,7 +21,7 @@ static void registerTypeParamsInScope(
 		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
 		auto& type_info = gTypeInfo.emplace_back(
 			param_names[i],
-			arg.base_type, gTypeInfo.size(), 0);
+			arg.base_type, TypeIndex{gTypeInfo.size()}, 0);
 		if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 		} else {
@@ -62,7 +62,7 @@ static void registerTypeParamsInScope(
 		Type concrete_type = template_args[i].base_type;
 		auto& type_info = gTypeInfo.emplace_back(
 			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
-			concrete_type, gTypeInfo.size(),
+			concrete_type, TypeIndex{gTypeInfo.size()},
 			getTypeSizeFromTemplateArgument(template_args[i]));
 		gTypesByName.emplace(type_info.name(), &type_info);
 		scope.addParameter(&type_info);
@@ -92,7 +92,7 @@ static void registerOuterBindingInScope(
 			? gTypeInfo[arg.type_index].type_size_
 			: get_type_size_bits(concrete_type);
 		auto& type_info = gTypeInfo.emplace_back(
-			outer_binding.param_names[i], concrete_type, gTypeInfo.size(), size);
+			outer_binding.param_names[i], concrete_type, TypeIndex{gTypeInfo.size()}, size);
 		gTypesByName.emplace(type_info.name(), &type_info);
 		scope.addParameter(&type_info);
 		if (sfinae_map)

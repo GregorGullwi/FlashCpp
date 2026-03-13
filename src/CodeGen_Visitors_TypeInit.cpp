@@ -1861,7 +1861,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		inst_info.template_param_names,
 		inst_info.template_args,
 		inst_info.struct_name.isValid() ? inst_info.struct_name : StringHandle(),  // Pass struct name
-		struct_type_info ? struct_type_info->type_index_ : 0  // Pass type index
+		struct_type_info ? struct_type_info->type_index_ : TypeIndex{}  // Pass type index
 	);
 
 	if (body_node_opt.has_value()) {

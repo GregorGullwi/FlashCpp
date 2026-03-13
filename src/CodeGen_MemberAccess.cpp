@@ -135,12 +135,12 @@
 
 	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
-		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = 0, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
+		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
 			ExprResult result;
 			result.type = type;
 			result.size_in_bits = size_bits;
 			result.value = std::move(value);
-			result.type_index = type_index;
+			result.type_index = TypeIndex{type_index};
 			result.pointer_depth = pointer_depth;
 			return result;
 		};
@@ -268,7 +268,7 @@
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 				Type element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
-				size_t element_type_index = (element_type == Type::Struct) ? type_node.type_index() : 0;
+				size_t element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
 
 				// Get element size for struct types
 				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index > 0) {
@@ -387,12 +387,12 @@
 
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
-						return makeArrayResult(element_type, element_size_bits, result_var, static_cast<TypeIndex>(element_type_index));
+						return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index});
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-					return makeArrayResult(element_type, element_size_bits, result_var, static_cast<TypeIndex>(element_type_index));
+					return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index});
 				}
 			}
 		}
@@ -482,14 +482,14 @@
 									if (context == ExpressionContext::LValueAddress) {
 										// Don't emit ArrayAccess instruction (no load)
 										// Just return the metadata with the result temp var
-										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
+										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index});
 									}
 
 									// Create instruction with typed payload (Load context - default)
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 									// Return the result with the element type and its type index
-									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, static_cast<TypeIndex>(elem_type_index));
+									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index});
 								}
 							}
 						}
@@ -733,7 +733,7 @@
 				element_type,
 				element_size_bits,
 				result_var,
-				static_cast<TypeIndex>(element_type_index),
+				TypeIndex{element_type_index},
 				PointerDepth{element_pointer_depth});
 		}
 
@@ -744,7 +744,7 @@
 			element_type,
 			element_size_bits,
 			result_var,
-			static_cast<TypeIndex>(element_type_index),
+			TypeIndex{element_type_index},
 			PointerDepth{element_pointer_depth});
 	}
 
@@ -752,7 +752,7 @@
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
 		// Look up the object in the symbol table (local first, then global)
@@ -819,7 +819,7 @@
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		std::string_view error_context) {
 
 		base_type = operands.type;
@@ -831,11 +831,11 @@
 			FLASH_LOG(Codegen, Error, error_context, " result has unsupported value type");
 			return false;
 		}
-		base_type_index = static_cast<size_t>(operands.type_index);
+		base_type_index = operands.type_index;
 		return true;
 	}
 
-	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, size_t type_index) {
+	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index) {
 		ExprResult result;
 		result.type = type;
 		result.size_in_bits = size_bits;
@@ -844,7 +844,7 @@
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
 		if (type == Type::Struct ||
 			(type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr)) {
-			result.type_index = static_cast<TypeIndex>(type_index);
+			result.type_index = TypeIndex{type_index};
 		}
 		return result;
 	}
@@ -854,7 +854,7 @@
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
-		size_t& base_type_index,
+		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
 		if (object_name == "this") {
@@ -887,7 +887,7 @@
 		// Variables to hold the base object info
 		std::variant<StringHandle, TempVar> base_object;
 		Type base_type = Type::Void;
-		size_t base_type_index = 0;
+		TypeIndex base_type_index{};
 		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
 		bool base_setup_complete = false;
 
@@ -1939,7 +1939,7 @@
 		// Find the member
 		std::string_view member_name = offsetofNode.member_name();
 		auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-			static_cast<TypeIndex>(type_index),
+			TypeIndex{type_index},
 			StringTable::getOrInternStringHandle(std::string(member_name)));
 		if (!member_result) {
 			throw InternalError("Member not found in struct");
@@ -2051,7 +2051,7 @@
 					break;
 			}
 			// Return result as a bool constant
-			return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : 0)});
+			return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : TypeIndex{})});
 		}
 
 		// For traits that require type arguments, extract the type information
@@ -2989,7 +2989,7 @@
 
 		// Return result as a bool constant
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : 0)});
+		return makeExprResult(Type::Bool, 8, IrOperand{static_cast<unsigned long long>(result ? 1 : TypeIndex{})});
 	}
 
 

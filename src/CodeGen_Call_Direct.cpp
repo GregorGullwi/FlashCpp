@@ -84,7 +84,7 @@
 										operand_type,
 										64,
 										IrOperand{result_var},
-										0,
+										TypeIndex{},
 										PointerDepth{1}
 									);
 								}
@@ -204,7 +204,7 @@
 					std::vector<TypeSpecifierNode> arg_types;
 					
 					// Look up the closure type to get the proper type_index
-					TypeIndex closure_type_index = 0;
+					TypeIndex closure_type_index {};
 					auto it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (it != gTypesByName.end()) {
 						closure_type_index = it->second->type_index_;
@@ -252,13 +252,13 @@
 							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
 							
 							// Type for mangling
-							TypeSpecifierNode type_node(arg_type, 0, arg_size, Token());
+							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
 							arg_types.push_back(type_node);
 						}
 					});
 					
 					// Generate mangled name for operator() call
-					TypeSpecifierNode return_type_node(Type::Int, 0, 32, Token());
+					TypeSpecifierNode return_type_node(Type::Int, TypeIndex{}, 32, Token());
 					std::string_view mangled_name = generateMangledNameForCall(
 						"operator()",
 						return_type_node,
@@ -961,7 +961,7 @@
 									this_arg.type = arg_type;
 									this_arg.size_in_bits = 64;  // Pointer size
 									this_arg.value = this_ptr;
-									this_arg.type_index = arg_type_index;
+									this_arg.type_index = TypeIndex{arg_type_index};
 									call_op.args.push_back(std::move(this_arg));
 								} else if (std::holds_alternative<TempVar>(source_value)) {
 									// It's already a temporary
@@ -969,7 +969,7 @@
 									this_arg.type = arg_type;
 									this_arg.size_in_bits = 64;  // Pointer size for 'this'
 									this_arg.value = std::get<TempVar>(source_value);
-									this_arg.type_index = arg_type_index;
+									this_arg.type_index = TypeIndex{arg_type_index};
 									call_op.args.push_back(std::move(this_arg));
 								}
 								
@@ -1205,7 +1205,7 @@
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
 			Type this_type = Type::Struct;
-			TypeIndex this_type_index = 0;
+			TypeIndex this_type_index {};
 			std::string_view parent_struct = matched_func_decl->parent_struct_name();
 			if (!parent_struct.empty()) {
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
@@ -1323,7 +1323,7 @@
 		// Return type_index for struct types so structured bindings can decompose the result
 		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
 			? return_type.type_index()
-			: 0;
+			: TypeIndex{};
 		return makeExprResult(
 			return_type.type(),
 			result_size,

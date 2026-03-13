@@ -286,7 +286,7 @@ private:
 			bool append_cleanup = try_region.has_cleanup && !action_entries.empty();
 			// If appending cleanup, total_entries includes the cleanup record so the last
 			// typed entry's is_last flag is false and it gets next_offset=1 instead of 0.
-			size_t total_entries = action_entries.size() + (append_cleanup ? 1 : 0);
+			size_t total_entries = action_entries.size() + (append_cleanup ? 1 : TypeIndex{});
 			for (size_t i = 0; i < action_entries.size(); ++i) {
 				const auto& type_filter_bytes = action_entries[i];
 				bool is_last = (i == total_entries - 1);

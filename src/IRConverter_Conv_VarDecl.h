@@ -627,12 +627,12 @@
 		if (current_function_name_.isValid()) {
 			uint32_t type_index;
 			switch (var_type) {
-				case Type::Int: type_index = 0x74; break;
-				case Type::Float: type_index = 0x40; break;
-				case Type::Double: type_index = 0x41; break;
-				case Type::Char: type_index = 0x10; break;
-				case Type::Bool: type_index = 0x30; break;
-				default: type_index = 0x74; break;
+				case Type::Int: type_index = TypeIndex{0x74}; break;
+				case Type::Float: type_index = TypeIndex{0x40}; break;
+				case Type::Double: type_index = TypeIndex{0x41}; break;
+				case Type::Char: type_index = TypeIndex{0x10}; break;
+				case Type::Bool: type_index = TypeIndex{0x30}; break;
+				default: type_index = TypeIndex{0x74}; break;
 			}
 
 			std::vector<CodeView::VariableLocation> locations;
@@ -1392,7 +1392,7 @@
 			}
 
 			// Handle parameters
-			const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : 0;
+			const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : TypeIndex{};
 			struct ParameterInfo {
 				Type param_type;
 				int param_size;
@@ -1570,18 +1570,18 @@
 				}
 
 				// Add parameter to debug information
-				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
+				uint32_t param_type_index = TypeIndex{0x74}; // T_INT4 for int parameters
 				if (param_pointer_depth > 0) {
-					param_type_index = 0x603;  // T_64PVOID for pointer types
+					param_type_index = TypeIndex{0x603};  // T_64PVOID for pointer types
 				} else {
 					switch (param_type) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
+						case Type::Int: param_type_index = TypeIndex{0x74}; break;  // T_INT4
+						case Type::Float: param_type_index = TypeIndex{0x40}; break; // T_REAL32
+						case Type::Double: param_type_index = TypeIndex{0x41}; break; // T_REAL64
+						case Type::Char: param_type_index = TypeIndex{0x10}; break;  // T_CHAR
+						case Type::Bool: param_type_index = TypeIndex{0x30}; break;  // T_BOOL08
+						case Type::Struct: param_type_index = TypeIndex{0x603}; break;  // T_64PVOID for struct pointers
+						default: param_type_index = TypeIndex{0x74}; break;
 					}
 				}
 				writer.add_function_parameter(std::string(param_name), param_type_index, offset);
@@ -1724,18 +1724,18 @@
 				}
 
 				// Add parameter to debug information
-				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
+				uint32_t param_type_index = TypeIndex{0x74}; // T_INT4 for int parameters
 				if (param.pointer_depth > 0) {
-					param_type_index = 0x603;  // T_64PVOID for pointer types
+					param_type_index = TypeIndex{0x603};  // T_64PVOID for pointer types
 				} else {
 					switch (param.type) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
+						case Type::Int: param_type_index = TypeIndex{0x74}; break;  // T_INT4
+						case Type::Float: param_type_index = TypeIndex{0x40}; break; // T_REAL32
+						case Type::Double: param_type_index = TypeIndex{0x41}; break; // T_REAL64
+						case Type::Char: param_type_index = TypeIndex{0x10}; break;  // T_CHAR
+						case Type::Bool: param_type_index = TypeIndex{0x30}; break;  // T_BOOL08
+						case Type::Struct: param_type_index = TypeIndex{0x603}; break;  // T_64PVOID for struct pointers
+						default: param_type_index = TypeIndex{0x74}; break;
 					}
 				}
 				// Phase 4: Use helper to get param name

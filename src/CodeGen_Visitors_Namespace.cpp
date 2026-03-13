@@ -264,7 +264,7 @@
 							
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, 0);
+								source_struct_info, return_type, TypeIndex{});
 							
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ", 
@@ -312,7 +312,7 @@
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 									call_op.return_type = return_type;
 									call_op.return_size_in_bits = return_size;
-									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : 0;
+									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
 									
@@ -333,7 +333,7 @@
 										this_arg.type = expr_type;
 										this_arg.size_in_bits = 64;  // Pointer size
 										this_arg.value = this_ptr;
-										this_arg.type_index = expr_type_index;
+										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									} else if (std::holds_alternative<TempVar>(source_value)) {
 										// It's already a temporary
@@ -343,7 +343,7 @@
 										this_arg.type = expr_type;
 										this_arg.size_in_bits = 64;  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
-										this_arg.type_index = expr_type_index;
+										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									}
 									

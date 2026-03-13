@@ -748,7 +748,7 @@ struct TypeInfo
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
 		Type base_type = Type::Invalid;  // For primitive types
-		TypeIndex type_index = 0;        // For user-defined types
+		TypeIndex type_index {};        // For user-defined types
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth = 0;        // Pointer indirection level
 		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument

@@ -197,7 +197,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size(), 0); // Do we need a correct size here?
+				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, TypeIndex{gTypeInfo.size()}, 0); // Do we need a correct size here?
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -3204,7 +3204,7 @@ ParseResult Parser::parse_template_declaration() {
 							SaveHandle body_start = save_token_position();
 							
 							auto type_it = gTypesByName.find(instantiated_name);
-							size_t struct_type_index = 0;
+							TypeIndex struct_type_index{};
 							if (type_it != gTypesByName.end()) {
 								struct_type_index = type_it->second->type_index_;
 							}
@@ -4462,7 +4462,7 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 				struct_ref.add_base_class(base_class_name, type_it->second->type_index_, base_access, is_virtual_base, /*is_deferred=*/false);
 			} else {
 				// Not yet known – likely a template parameter or forward-declared type; defer
-				struct_ref.add_base_class(base_class_name, 0, base_access, is_virtual_base, /*is_deferred=*/true);
+				struct_ref.add_base_class(base_class_name, TypeIndex{}, base_access, is_virtual_base, /*is_deferred=*/true);
 			}
 		}
 	} while (consume(","_tok));

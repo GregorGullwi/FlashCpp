@@ -781,7 +781,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		auto& type_info = gTypeInfo.emplace_back(
 			param_name,
 			concrete_type,
-			gTypeInfo.size(),
+			TypeIndex{gTypeInfo.size()},
 			0 // Placeholder size
 		);
 
@@ -828,7 +828,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			MemberFunctionContext ctx;
 			ctx.struct_name = struct_name;
-			ctx.struct_type_index = struct_type_index;
+			ctx.struct_type_index = TypeIndex{struct_type_index};
 			ctx.struct_node = struct_node_ptr;
 			ctx.local_struct_info = nullptr;  // Not needed for template member function instantiation
 			member_function_context_stack_.push_back(ctx);

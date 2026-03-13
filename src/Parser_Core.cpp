@@ -711,7 +711,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     // 2. Move other nodes to ast_discarded_nodes_ to keep them alive (prevent memory corruption)
     //    but not pollute the AST tree
     //
-    // This can happen when parsing expressions like `(all(1,1,1) ? 1 : 0)`:
+    // This can happen when parsing expressions like `(all(1,1,1) ? 1 : TypeIndex{})`:
     // 1. Parser tries fold expression patterns, saving position
     // 2. Parser parses `all(1,1,1)`, which instantiates the template
     // 3. Parser finds it's not a fold expression, restores position

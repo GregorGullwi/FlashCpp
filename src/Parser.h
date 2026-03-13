@@ -367,7 +367,7 @@ private:
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
                 StringHandle struct_name;  // Points directly into source text from lexer token
-                size_t struct_type_index;
+                TypeIndex struct_type_index;
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
         };
@@ -399,7 +399,7 @@ private:
                 SaveHandle body_start;                   // Handle to saved position at '{'
                 SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
                 StringHandle struct_name;                // For member function context
-                size_t struct_type_index;                // For member function context
+                TypeIndex struct_type_index;                // For member function context
                 StructDeclarationNode* struct_node;      // Pointer to struct being parsed
                 bool has_initializer_list;               // True if constructor has an initializer list to re-parse
                 bool is_constructor;                     // Special handling for constructors
@@ -741,8 +741,8 @@ private:
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
         ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
-        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
-        void register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
+        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
+        void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
@@ -881,7 +881,7 @@ public:  // Public methods for template instantiation
 		const InlineVector<std::string_view, 4>& template_param_names,
 		const std::vector<Type>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
-		TypeIndex struct_type_index = 0     // Optional: for member functions
+		TypeIndex struct_type_index = TypeIndex{}     // Optional: for member functions
 	);
 
 	// Substitute template parameters in an AST node with concrete types/values
@@ -1332,7 +1332,7 @@ public:  // Public methods for template instantiation
                         }
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
-                    TypeIndex struct_type_index = 0;
+                    TypeIndex struct_type_index {};
                     if (!struct_ctx.struct_name.empty()) {
                         auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
                         if (struct_it != gTypesByName.end()) {

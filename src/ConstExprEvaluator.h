@@ -76,7 +76,7 @@ struct EvalResult {
 	const LambdaExpressionNode* callable_lambda = nullptr;
 	std::unordered_map<std::string_view, EvalResult> callable_bindings;
 	std::optional<TypeSpecifierNode> exact_type;
-	TypeIndex object_type_index = 0;
+	TypeIndex object_type_index {};
 	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
 
 	// Check if evaluation was successful
@@ -86,31 +86,31 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, 0, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, 0, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, 0, {}};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
 	}
 
 	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
@@ -139,7 +139,7 @@ struct EvalResult {
 		if (!success()) return 0;
 		
 		if (std::holds_alternative<bool>(value)) {
-			return std::get<bool>(value) ? 1 : 0;
+			return std::get<bool>(value) ? 1 : TypeIndex{};
 		} else if (std::holds_alternative<long long>(value)) {
 			return std::get<long long>(value);
 		} else if (std::holds_alternative<unsigned long long>(value)) {
@@ -614,13 +614,13 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, cons
 	if (op == "&&") {
 		result = 1;  // Start with true
 		for (int64_t v : pack_values) {
-			result = (*result != 0 && v != 0) ? 1 : 0;
+			result = (*result != 0 && v != 0) ? 1 : TypeIndex{};
 			if (*result == 0) break;  // Short-circuit: stop on first false
 		}
 	} else if (op == "||") {
 		result = 0;  // Start with false
 		for (int64_t v : pack_values) {
-			result = (*result != 0 || v != 0) ? 1 : 0;
+			result = (*result != 0 || v != 0) ? 1 : TypeIndex{};
 			if (*result != 0) break;  // Short-circuit: stop on first true
 		}
 	} else if (op == "+") {
