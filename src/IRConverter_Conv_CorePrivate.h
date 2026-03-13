@@ -1216,7 +1216,7 @@
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
-		TempVar temp_var = TempVar()) {
+		TempVar temp_var = TempVar{0}) {
 
 		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
 			.value_type = value_type,
@@ -1238,12 +1238,12 @@
 
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar{0}) {
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
 	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits) {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true);
+		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, TempVar{0});
 	}
 
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const {
