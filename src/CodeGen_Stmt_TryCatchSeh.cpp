@@ -100,7 +100,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				// Emit CatchBegin marker with exception type and qualifiers
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
-				catch_op.type_index = TypeIndex{type_index};
+				catch_op.type_index = type_index;
 				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
@@ -129,7 +129,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					TypedValue init_value;
 					init_value.type = type_node.type();
 					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
-					init_value.type_index = TypeIndex{type_index};
+					init_value.type_index = type_index;
 					init_value.value = exception_temp;
 					if (type_node.is_rvalue_reference()) {
 						init_value.ref_qualifier = ReferenceQualifier::RValueReference;
@@ -270,7 +270,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					materialized_init.type = expr_type;
 					materialized_init.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_init.value = exception_value;
-					materialized_init.type_index = TypeIndex{exception_type_index};
+					materialized_init.type_index = exception_type_index;
 					materialized_throw_decl.initializer = std::move(materialized_init);
 
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(materialized_throw_decl), node.throw_token()));
@@ -284,7 +284,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			throw_op.type_index = TypeIndex{exception_type_index};
+			throw_op.type_index = exception_type_index;
 			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.is_rvalue = is_rvalue;
