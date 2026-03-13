@@ -879,8 +879,7 @@
 		// Use register allocator to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
 		// Check if base is 'this' by name, OR if base is in indirect_stack_info_
-		bool is_this = (StringTable::getStringView(op.base_object) == "this"sv);
-		if (is_this || isPointerBaseStorage(obj_offset)) {
+		if (isPointerBaseStorage(obj_offset)) {
 			emitMovFromFrame(target_reg, obj_offset);
 			if (op.member_offset != 0) {
 				emitAddImmToReg(textSectionData, target_reg, op.member_offset);
