@@ -277,7 +277,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						substituted_template_args.emplace_back(value, lit.type());
 					} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
 						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);
-						substituted_template_args.emplace_back(lit.value() ? 1 : TypeIndex{}, Type::Bool);
+						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
 					} else {
 						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
 						failed_value_extraction = true;

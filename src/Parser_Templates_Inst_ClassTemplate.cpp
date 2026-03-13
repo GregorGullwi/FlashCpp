@@ -1279,7 +1279,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 								TemplateTypeArg va;
 								va.is_value = true;
-								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : TypeIndex{};
+								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : 0;
 								resolved_args.push_back(va);
 							} else {
 								// Unresolvable expression argument - cannot safely instantiate

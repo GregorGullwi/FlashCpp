@@ -855,7 +855,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// Handle boolean literals directly
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
 		const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-		return ConstantValue{lit.value() ? 1 : TypeIndex{}, Type::Bool};
+		return ConstantValue{lit.value() ? 1 : 0, Type::Bool};
 	}
 	
 	// Handle numeric literals directly
@@ -1076,7 +1076,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
-		return ConstantValue{eval_result.value ? 1 : TypeIndex{}, Type::Bool};
+		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
 	// Helper: create a constexpr evaluation context with struct context and parser

@@ -563,7 +563,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Handle boolean literals (true/false)
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-				TemplateTypeArg bool_arg(lit.value() ? 1 : TypeIndex{}, Type::Bool);
+				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, Type::Bool);
 				
 				// Check for pack expansion (...)
 				if (peek() == "..."_tok) {

@@ -168,7 +168,7 @@
 				} else if (std::holds_alternative<long long>(eval_result.value)) {
 					return static_cast<unsigned long long>(std::get<long long>(eval_result.value));
 				} else if (std::holds_alternative<bool>(eval_result.value)) {
-					return std::get<bool>(eval_result.value) ? 1 : TypeIndex{};
+					return std::get<bool>(eval_result.value) ? 1 : 0ULL;
 				}
 				return 0;
 			};

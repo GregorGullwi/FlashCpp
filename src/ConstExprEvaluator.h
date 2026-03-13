@@ -139,7 +139,7 @@ struct EvalResult {
 		if (!success()) return 0;
 		
 		if (std::holds_alternative<bool>(value)) {
-			return std::get<bool>(value) ? 1 : TypeIndex{};
+			return std::get<bool>(value) ? 1 : 0;
 		} else if (std::holds_alternative<long long>(value)) {
 			return std::get<long long>(value);
 		} else if (std::holds_alternative<unsigned long long>(value)) {
@@ -614,13 +614,13 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, cons
 	if (op == "&&") {
 		result = 1;  // Start with true
 		for (int64_t v : pack_values) {
-			result = (*result != 0 && v != 0) ? 1 : TypeIndex{};
+			result = (*result != 0 && v != 0) ? 1 : 0;
 			if (*result == 0) break;  // Short-circuit: stop on first false
 		}
 	} else if (op == "||") {
 		result = 0;  // Start with false
 		for (int64_t v : pack_values) {
-			result = (*result != 0 || v != 0) ? 1 : TypeIndex{};
+			result = (*result != 0 || v != 0) ? 1 : 0;
 			if (*result != 0) break;  // Short-circuit: stop on first true
 		}
 	} else if (op == "+") {
