@@ -507,7 +507,7 @@
 							// Return the result
 							return makeExprResult(
 								return_type.type(),
-								SizeInBits{call_op.return_size_in_bits},
+								call_op.return_size_in_bits,
 								IrOperand{ret_var},
 								return_type.type_index(),
 								PointerDepth{static_cast<int>(return_type.pointer_depth())}
@@ -1324,7 +1324,7 @@
 			
 			// Populate TypedValue with full type information
 			op.operand.type = operandType;
-			op.operand.size_in_bits = SizeInBits{operandIrOperands.size_in_bits};
+			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 			
 			// Get the operand value - it's at index 2 in operandIrOperands
@@ -1537,7 +1537,7 @@
 		}
 
 		// Return the result
-		return makeExprResult(operandType, SizeInBits{operandIrOperands.size_in_bits}, IrOperand{result_var});
+		return makeExprResult(operandType, operandIrOperands.size_in_bits, IrOperand{result_var});
 	}
 
 
@@ -1897,7 +1897,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		}
 	}
 	
-	return makeExprResult(operandType, SizeInBits{operandIrResult.size_in_bits}, IrOperand{result_var});
+	return makeExprResult(operandType, operandIrResult.size_in_bits, IrOperand{result_var});
 }
 
 

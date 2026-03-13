@@ -652,7 +652,7 @@
 			if (call_op.returns_rvalue_reference) {
 				reference_stack_info_[result_offset] = ReferenceInfo{
 					.value_type = call_op.return_type,
-					.value_size_bits = SizeInBits{call_op.return_size_in_bits},
+					.value_size_bits = call_op.return_size_in_bits,
 					.is_rvalue_reference = true,
 					.holds_address_only = true  // The function returned a pointer/address
 				};
