@@ -2251,9 +2251,9 @@
 					// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						// Also dereference rvalue references (from std::move) when returning by value
-						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && 
-							(ref_it->second.is_rvalue_reference || !ref_it->second.holds_address_only) && 
+						auto ref_info = getIndirectStackInfo(var_offset);
+						if (ref_info.has_value() && 
+							(ref_info->is_rvalue_reference || shouldImplicitlyDeref(ref_info.value())) && 
 							!current_function_returns_reference_) {
 							// This is a reference and function returns by value
 							// Check if function uses hidden return parameter (struct return)
@@ -2329,11 +2329,11 @@
 								spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 								emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 								// Dereference to get the value
-								int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+								int value_size_bytes = ref_info->value_size_bits.value / 8;
 								emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 								// Value is now in RAX, ready to return
 							}
-						} else if (ref_it != reference_stack_info_.end() && current_function_returns_reference_) {
+						} else if (ref_info.has_value() && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning reference address from offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
@@ -2541,18 +2541,18 @@
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
-						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && !current_function_returns_reference_) {
+						auto ref_info = getIndirectStackInfo(var_offset);
+						if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && !current_function_returns_reference_) {
 							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
-							int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+							int value_size_bytes = ref_info->value_size_bits.value / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
-						} else if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && current_function_returns_reference_) {
+						} else if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;

@@ -526,10 +526,10 @@
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
-					auto ref_it = reference_stack_info_.find(lhs_stack_var_addr);
+					auto ref_info = getIndirectStackInfo(lhs_stack_var_addr);
 					
 					// If not found with TempVar offset, try looking up by name
-					if (ref_it == reference_stack_info_.end()) {
+					if (!ref_info.has_value()) {
 						std::string_view var_name = lhs_var_op.name();
 						// Remove the '%' prefix if present
 						if (!var_name.empty() && var_name[0] == '%') {
@@ -538,22 +538,22 @@
 						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
-							ref_it = reference_stack_info_.find(named_offset);
-							if (ref_it != reference_stack_info_.end()) {
+							ref_info = getIndirectStackInfo(named_offset);
+							if (ref_info.has_value()) {
 								// Found it! Update lhs_stack_var_addr to use the named variable offset
 								lhs_stack_var_addr = named_offset;
 							}
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
+					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 						// Now dereference: load from [register + 0]
-						int value_size_bits = ref_it->second.value_size_bits.value;
+					int value_size_bits = ref_info->value_size_bits.value;
 						OpCodeWithSize deref_opcodes;
 						if (value_size_bits == 64) {
 							deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
@@ -569,7 +569,7 @@
 							return ctx;
 						}
 						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
-					} else if (ref_it != reference_stack_info_.end() && ref_it->second.holds_address_only) {
+					} else if (ref_info.has_value() && !shouldImplicitlyDeref(ref_info.value())) {
 						// This holds an address value directly (from addressof) - load without dereferencing
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
@@ -757,10 +757,10 @@
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
-					auto ref_it = reference_stack_info_.find(rhs_stack_var_addr);
+					auto ref_info = getIndirectStackInfo(rhs_stack_var_addr);
 					
 					// If not found with TempVar offset, try looking up by name
-					if (ref_it == reference_stack_info_.end()) {
+					if (!ref_info.has_value()) {
 						std::string_view var_name = rhs_var_op.name();
 						// Remove the '%' prefix if present
 						if (!var_name.empty() && var_name[0] == '%') {
@@ -769,15 +769,15 @@
 						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
-							ref_it = reference_stack_info_.find(named_offset);
-							if (ref_it != reference_stack_info_.end()) {
+							ref_info = getIndirectStackInfo(named_offset);
+							if (ref_info.has_value()) {
 								// Found it! Update rhs_stack_var_addr to use the named variable offset
 								rhs_stack_var_addr = named_offset;
 							}
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end() && shouldImplicitlyDeref(ref_it->second)) {
+					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
@@ -791,9 +791,9 @@
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
-						int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
-					} else if (ref_it != reference_stack_info_.end()) {
+					} else if (ref_info.has_value()) {
 						// This holds an address value directly (e.g. addressof) - load it as-is
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
@@ -1257,6 +1257,10 @@
 
 	bool shouldImplicitlyDeref(const ReferenceInfo& info) const {
 		return !info.holds_address_only;
+	}
+
+	bool isPointerBaseStorage(int32_t stack_offset) const {
+		return hasIndirectStackStorage(stack_offset);
 	}
 
 	// Build the mangled symbol name for the complete-object destructor of a class.

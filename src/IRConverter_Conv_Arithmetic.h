@@ -573,9 +573,9 @@
 		if (instruction.isOperandType<TempVar>(operand_index)) {
 			auto temp = instruction.getOperandAs<TempVar>(operand_index);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
-			if (auto ref_it = reference_stack_info_.find(stack_addr); ref_it != reference_stack_info_.end()) {
+			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
 				reg = allocateRegisterWithSpilling();
-				loadValueFromReferenceSlot(stack_addr, ref_it->second, reg);
+				loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
 				return reg;
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
@@ -591,9 +591,9 @@
 			auto var_name = instruction.getOperandAs<StringHandle>(operand_index);
 			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
-				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
+				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second.offset, ref_it->second, reg);
+					loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
 					return reg;
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
@@ -618,9 +618,9 @@
 		if (std::holds_alternative<TempVar>(typed_value.value)) {
 			auto temp = std::get<TempVar>(typed_value.value);
 			auto stack_addr = getStackOffsetFromTempVar(temp);
-			if (auto ref_it = reference_stack_info_.find(stack_addr); ref_it != reference_stack_info_.end()) {
+			if (auto ref_info = getIndirectStackInfo(stack_addr); ref_info.has_value()) {
 				reg = allocateRegisterWithSpilling();
-				loadValueFromReferenceSlot(stack_addr, ref_it->second, reg);
+				loadValueFromReferenceSlot(stack_addr, ref_info.value(), reg);
 				return reg;
 			}
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(stack_addr); reg_opt.has_value()) {
@@ -638,9 +638,9 @@
 			StringHandle var_name = std::get<StringHandle>(typed_value.value);
 			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
-				if (auto ref_it = reference_stack_info_.find(var_id->second.offset); ref_it != reference_stack_info_.end()) {
+				if (auto ref_info = getIndirectStackInfo(var_id->second.offset); ref_info.has_value()) {
 					reg = allocateRegisterWithSpilling();
-					loadValueFromReferenceSlot(var_id->second.offset, ref_it->second, reg);
+					loadValueFromReferenceSlot(var_id->second.offset, ref_info.value(), reg);
 					return reg;
 				}
 				if (auto reg_opt = regAlloc.tryGetStackVariableRegister(var_id->second.offset); reg_opt.has_value()) {
@@ -957,7 +957,7 @@
 		if (instruction.isOperandType<TempVar>(operand_index)) {
 			auto temp = instruction.getOperandAs<TempVar>(operand_index);
 			int32_t src_offset = getStackOffsetFromTempVar(temp);
-			if (auto ref_it = reference_stack_info_.find(src_offset); ref_it != reference_stack_info_.end()) {
+			if (hasIndirectStackStorage(src_offset)) {
 				auto load_ptr = generatePtrMovFromFrame(target_reg, src_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 				               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
@@ -2071,7 +2071,7 @@
 		}
 
 		// Check if LHS is a reference - if so, we're initializing a reference binding
-		auto lhs_ref_it = reference_stack_info_.find(lhs_offset);
+		auto lhs_ref_info = getIndirectStackInfo(lhs_offset);
 		
 		// Debug: check what type LHS is
 		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
@@ -2083,7 +2083,7 @@
 		}
 		
 		// If not found with TempVar offset and LHS is a TempVar, try looking up by name
-		if (lhs_ref_it == reference_stack_info_.end() && std::holds_alternative<TempVar>(op.lhs.value)) {
+		if (!lhs_ref_info.has_value() && std::holds_alternative<TempVar>(op.lhs.value)) {
 			TempVar lhs_var = std::get<TempVar>(op.lhs.value);
 			std::string_view var_name = lhs_var.name();
 			FLASH_LOG(Codegen, Debug, "LHS is TempVar with name: '", var_name, "'");
@@ -2096,8 +2096,8 @@
 			if (named_var_it != variable_scopes.back().variables.end()) {
 				int32_t named_offset = named_var_it->second.offset;
 				FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
-				lhs_ref_it = reference_stack_info_.find(named_offset);
-				if (lhs_ref_it != reference_stack_info_.end()) {
+				lhs_ref_info = getIndirectStackInfo(named_offset);
+				if (lhs_ref_info.has_value()) {
 					// Found it! Update lhs_offset to use the named variable offset
 					lhs_offset = named_offset;
 					FLASH_LOG(Codegen, Debug, "Found reference info at named offset!");
@@ -2107,10 +2107,10 @@
 			}
 		}
 		
-		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()), ", lhs.is_reference=", op.lhs.is_reference());
+		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", lhs_ref_info.has_value(), ", lhs.is_reference=", op.lhs.is_reference());
 		
-		// Check if LHS is a reference - either from reference_stack_info_ or from the TypedValue metadata
-		bool lhs_is_reference = (lhs_ref_it != reference_stack_info_.end()) || op.lhs.is_reference();
+		// Check if LHS is a reference - either from indirect stack storage or from the TypedValue metadata
+		bool lhs_is_reference = lhs_ref_info.has_value() || op.lhs.is_reference();
 		
 		if (lhs_is_reference) {
 			// LHS is a reference variable
@@ -2129,9 +2129,9 @@
 			// Get reference value type and size
 			Type value_type;
 			int value_size_bits;
-			if (lhs_ref_it != reference_stack_info_.end()) {
-				value_type = lhs_ref_it->second.value_type;
-				value_size_bits = lhs_ref_it->second.value_size_bits.value;
+			if (lhs_ref_info.has_value()) {
+				value_type = lhs_ref_info->value_type;
+				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
 				value_type = op.lhs.type;
@@ -2152,9 +2152,9 @@
 				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					int32_t rhs_offset = it->second.offset;
-					// Check if RHS is also a reference
-					auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
-					if (rhs_ref_it != reference_stack_info_.end()) {
+					// Check if RHS is also a reference (but not address-only)
+					auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
+					if (rhs_ref_info.has_value() && shouldImplicitlyDeref(rhs_ref_info.value())) {
 						// RHS is a reference - dereference it to get the value
 						X64Register rhs_addr_reg = allocateRegisterWithSpilling();
 						emitMovFromFrame(rhs_addr_reg, rhs_offset);  // Load pointer from reference
@@ -2178,9 +2178,9 @@
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 				FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is TempVar: '", rhs_var.name(), "'");
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-				// Check if RHS is a reference
-				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
-				if (rhs_ref_it != reference_stack_info_.end()) {
+				// Check if RHS is a reference (but not address-only)
+				auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
+				if (rhs_ref_info.has_value() && shouldImplicitlyDeref(rhs_ref_info.value())) {
 					// RHS is a reference - dereference it
 					X64Register rhs_addr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(rhs_addr_reg, rhs_offset);
@@ -2225,13 +2225,13 @@
 				
 				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
 				// Skip dereferencing if holds_address_only is true (AddressOf results)
-				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
-				if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references && !rhs_ref_it->second.holds_address_only) {
+				auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
+				if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
 					// RHS is a reference - load pointer and dereference
 					X64Register ptr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
 					// Dereference to get the value
-					int value_size_bytes = rhs_ref_it->second.value_size_bits.value / 8;
+					int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 					emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 					source_reg = ptr_reg;
 				} else if (is_floating_point_type(rhs_type)) {
@@ -2251,11 +2251,11 @@
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
 			// Check if RHS is a reference - if so, dereference it
-			auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 			
 			// If not found with TempVar offset, try looking up by name
 			// This handles the case where TempVar offset differs from named variable offset
-			if (rhs_ref_it == reference_stack_info_.end()) {
+			if (!rhs_ref_info.has_value()) {
 				std::string_view var_name = rhs_var.name();
 				// Remove the '%' prefix if present
 				if (!var_name.empty() && var_name[0] == '%') {
@@ -2267,8 +2267,8 @@
 					auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 					if (named_var_it != variable_scopes.back().variables.end()) {
 						int32_t named_offset = named_var_it->second.offset;
-						rhs_ref_it = reference_stack_info_.find(named_offset);
-						if (rhs_ref_it != reference_stack_info_.end()) {
+						rhs_ref_info = getIndirectStackInfo(named_offset);
+						if (rhs_ref_info.has_value()) {
 							// Found it! Update rhs_offset to use the named variable offset
 							rhs_offset = named_offset;
 						}
@@ -2276,12 +2276,12 @@
 				}
 			}
 			
-			if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references && !rhs_ref_it->second.holds_address_only) {
+			if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
 				// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
 				// Dereference to get the value
-				int value_size_bytes = rhs_ref_it->second.value_size_bits.value / 8;
+				int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 				source_reg = ptr_reg;
 			} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
@@ -2321,8 +2321,8 @@
 		
 		// Store source register to LHS stack location
 		// Check if LHS is a reference parameter that needs dereferencing
-		auto ref_it = reference_stack_info_.find(lhs_offset);
-		if (ref_it != reference_stack_info_.end()) {
+		auto ref_info = getIndirectStackInfo(lhs_offset);
+		if (ref_info.has_value()) {
 			// LHS is a reference - need to dereference it before storing
 			// First, load the pointer (reference address) into a temporary register
 			X64Register ptr_reg = allocateRegisterWithSpilling();
@@ -2330,7 +2330,7 @@
 			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 			
 			// Now store the value to the address pointed to by ptr_reg
-			int value_size_bits = ref_it->second.value_size_bits.value;
+			int value_size_bits = ref_info->value_size_bits.value;
 			int size_bytes = value_size_bits / 8;
 			
 			if (is_floating_point_type(rhs_type)) {

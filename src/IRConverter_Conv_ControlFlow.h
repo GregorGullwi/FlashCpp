@@ -228,7 +228,7 @@
 				array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
 				
 				// Check if object is 'this' or a reference parameter (both need pointer dereferencing)
-				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
+				if (object_name == "this"sv || hasIndirectStackStorage(array_base_offset)) {
 					is_object_pointer = true;
 				}
 			} else {
@@ -717,7 +717,7 @@
 			bool is_object_pointer = false;
 			if (is_member_array) {
 				// Check if object is 'this' or a reference parameter
-				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
+				if (object_name == "this"sv || hasIndirectStackStorage(array_base_offset)) {
 					is_object_pointer = true;
 				}
 			}
