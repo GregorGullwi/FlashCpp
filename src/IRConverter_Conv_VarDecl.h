@@ -174,7 +174,7 @@
 		// at the same offset to be treated as pointers. Clear that before handling any
 		// non-reference declaration that reuses the slot.
 		if (!is_reference) {
-			reference_stack_info_.erase(var_it->second.offset);
+			indirect_stack_info_.erase(var_it->second.offset);
 		}
 
 		// REMOVED: Flawed TempVar linking heuristic
@@ -1437,7 +1437,7 @@
 			if (!struct_name.empty() && !func_decl.is_static_member) {
 				// 'this' offset depends on whether there's a hidden return parameter
 				int this_offset = (param_offset_adjustment + coff_eh_param_home_bias + 1) * -8;
-				this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
+				this_offset_saved = this_offset;  // Save for later indirect_stack_info_ registration
 				current_function_this_offset_ = this_offset;
 				variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
@@ -1473,17 +1473,16 @@
 		if (!instruction.hasTypedPayload()) {
 			// Operand-based path: extract parameters from operands
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
-			// Clear reference parameter tracking from previous function
-			reference_stack_info_.clear();
+			// Clear indirect storage tracking from previous function
+			indirect_stack_info_.clear();
 			
-			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
-				reference_stack_info_[this_offset_saved].holds_address_only = true;
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64);
 			}
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -1634,16 +1633,15 @@
 		} else {
 			// Typed payload path: build ParameterInfo from already-extracted parameter_types
 			[[maybe_unused]] const auto& typed_func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-			reference_stack_info_.clear();
+			indirect_stack_info_.clear();
 			
-			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
-				reference_stack_info_[this_offset_saved].holds_address_only = true;
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64);
 			}
 		
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)

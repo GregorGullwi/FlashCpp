@@ -122,10 +122,11 @@ That decision should eventually come from one shared helper rather than repeated
 - All files listed above have been migrated to use semantic helpers
 - `isPointerBaseStorage(...)` helper added
 
-### Track 1: Rename the concept
+### Track 1: COMPLETED (2026-03-13)
 
-- introduce an `IndirectStorageInfo` type name (or alias)
-- rename `reference_stack_info_` only after Track 0 and after the broad EH work settles
+- Renamed `ReferenceInfo` struct to `IndirectStorageInfo`
+- Renamed `reference_stack_info_` map to `indirect_stack_info_`
+- Updated all usages across the codebase
 
 ### Track 2: COMPLETED (2026-03-13)
 

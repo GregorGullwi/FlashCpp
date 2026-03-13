@@ -86,8 +86,8 @@
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
 
-	// Track which stack offsets hold references (parameters or locals)
-	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
+	// Track which stack offsets hold indirect storage (references or address-only pointers)
+	std::unordered_map<int32_t, IndirectStorageInfo> indirect_stack_info_;
 	// Map from variable names to their offsets (for reference lookup by name)
 	std::unordered_map<std::string, int32_t, TransparentStringHash, std::equal_to<>> variable_name_to_offset_;
 	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)

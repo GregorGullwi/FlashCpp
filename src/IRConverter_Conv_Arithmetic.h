@@ -926,7 +926,7 @@
 		}
 	}
 
-	void loadValueFromReferenceSlot(int32_t offset, const ReferenceInfo& ref_info, X64Register target_reg) {
+	void loadValueFromReferenceSlot(int32_t offset, const IndirectStorageInfo& ref_info, X64Register target_reg) {
 		auto load_ptr = generatePtrMovFromFrame(target_reg, offset);
 		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 			               load_ptr.op_codes.begin() + load_ptr.size_in_bytes);

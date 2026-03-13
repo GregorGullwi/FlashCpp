@@ -1201,7 +1201,7 @@
 		std::unordered_map<StringHandle, VariableInfo> variables;  // Phase 5: StringHandle for integer-based lookups
 	};
 
-	struct ReferenceInfo {
+	struct IndirectStorageInfo {
 		Type value_type = Type::Invalid;
 		int value_size_bits = 0;
 		bool is_rvalue_reference = false;
@@ -1218,7 +1218,7 @@
 		bool holds_address_only,
 		TempVar temp_var = TempVar()) {
 
-		reference_stack_info_[stack_offset] = ReferenceInfo{
+		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
 			.value_type = value_type,
 			.value_size_bits = value_size_bits,
 			.is_rvalue_reference = is_rvalue_ref,
@@ -1245,9 +1245,9 @@
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true);
 	}
 
-	std::optional<ReferenceInfo> getIndirectStackInfo(int32_t stack_offset) const {
-		auto it = reference_stack_info_.find(stack_offset);
-		if (it != reference_stack_info_.end()) {
+	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const {
+		auto it = indirect_stack_info_.find(stack_offset);
+		if (it != indirect_stack_info_.end()) {
 			return it->second;
 		}
 
@@ -1258,7 +1258,7 @@
 		return getIndirectStackInfo(stack_offset).has_value();
 	}
 
-	bool shouldImplicitlyDeref(const ReferenceInfo& info) const {
+	bool shouldImplicitlyDeref(const IndirectStorageInfo& info) const {
 		return !info.holds_address_only;
 	}
 
@@ -1310,11 +1310,11 @@
 	// Helper function to get indirect-storage info for a TempVar or stack offset.
 	// Returns TempVar metadata first when the temp is a true reference or address-only, 
 	// otherwise falls back to the stack-offset side table for named variables.
-	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
+	std::optional<IndirectStorageInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
 		// Check TempVar metadata first
 		if (temp_var.var_number != 0) {
 			if (isTempVarReference(temp_var)) {
-				return ReferenceInfo{
+				return IndirectStorageInfo{
 					.value_type = getTempVarValueType(temp_var),
 					.value_size_bits = getTempVarValueSizeBits(temp_var),
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -1322,7 +1322,7 @@
 				};
 			}
 			if (isTempVarAddressOnly(temp_var)) {
-				return ReferenceInfo{
+				return IndirectStorageInfo{
 					.value_type = getTempVarValueType(temp_var),
 					.value_size_bits = getTempVarValueSizeBits(temp_var),
 					.is_rvalue_reference = false,
