@@ -1725,6 +1725,7 @@
 									ConstructorCallOp default_ctor_op;
 									default_ctor_op.struct_name = type_info.name();
 									default_ctor_op.object = decl.identifier_token().handle();
+									fillInDefaultConstructorArguments(default_ctor_op, *type_info.struct_info_);
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 
 									// Then emit member stores for each argument

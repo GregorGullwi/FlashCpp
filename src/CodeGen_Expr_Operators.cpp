@@ -275,6 +275,44 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 	}
 }
 
+void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info) {
+	const StructMemberFunction* default_ctor = struct_info.findDefaultConstructor();
+	if (!default_ctor || !default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+		return;
+	}
+
+	const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+	const auto& params = ctor_node.parameter_nodes();
+	for (const auto& param : params) {
+		if (!param.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_decl = param.as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			break;
+		}
+
+		const ASTNode& default_expr = param_decl.default_value();
+		const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+		if (default_expr.is<ExpressionNode>()) {
+			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+			TypedValue tv = toTypedValue(default_operands);
+			applyTypeNodeMetadata(tv, param_type_spec);
+			ctor_op.arguments.push_back(std::move(tv));
+		} else if (default_expr.is<InitializerListNode>()) {
+			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
+			if (result.has_value()) {
+				applyTypeNodeMetadata(*result, param_type_spec);
+				ctor_op.arguments.push_back(*result);
+			} else {
+				throw InternalError("Failed to generate struct default argument for constructor parameter '" + std::string(param_decl.identifier_token().value()) + "'");
+			}
+		} else {
+			throw InternalError("Unhandled default constructor argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
+		}
+	}
+}
+
 void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
 	for (size_t i = arg_idx; i < cached_params.size(); ++i) {
 		const auto& param = cached_params[i];
@@ -3937,6 +3975,7 @@ std::string_view op) {
 	load_op.offset = lv_info.offset;
 	load_op.ref_qualifier = ((member_is_rvalue_reference) ? CVReferenceQualifier::RValueReference : ((member_is_reference) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None));
 	load_op.struct_type_info = nullptr;
+	load_op.is_pointer_to_member = lv_info.is_pointer_to_member;
 	load_op.bitfield_width = lv_info.bitfield_width;
 	load_op.bitfield_bit_offset = lv_info.bitfield_bit_offset;
 

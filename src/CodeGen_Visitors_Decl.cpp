@@ -1427,6 +1427,7 @@
 							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 							if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 								// Call default constructor with no arguments
+								fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 							}
 						}
@@ -1841,6 +1842,9 @@
 									// Use base_class_offset to specify the member's offset within the parent struct
 									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 									ctor_op.base_class_offset = static_cast<int>(member.offset);
+									if (member_type_info.struct_info_) {
+										fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
+									}
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
@@ -1986,6 +1990,9 @@
 								// Use base_class_offset to specify the member's offset within the parent struct
 								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 								ctor_op.base_class_offset = static_cast<int>(member.offset);
+								if (member_type_info.struct_info_) {
+									fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
+								}
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 								continue;  // Skip the MemberStore since constructor handles initialization
 							} else {
@@ -2420,6 +2427,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		
 		if (is_aggregate && num_args <= struct_info->members.size()) {
 			// Emit default constructor call first (zero-initializes the object)
+			fillInDefaultConstructorArguments(ctor_op, *struct_info);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
 			
 			// Then emit member stores for each argument

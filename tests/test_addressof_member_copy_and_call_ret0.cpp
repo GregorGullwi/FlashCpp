@@ -8,23 +8,24 @@ struct Leaf {
 
 struct Inner {
 	Leaf leaf;
-
-	Inner(int value) : leaf(value) {}
 };
 
 struct Outer {
 	Inner inner;
 	int tail;
-
-	Outer(int value, int tail_value) : inner(value), tail(tail_value) {}
 };
 
 int readLeaf(const Leaf* leaf) {
 	return leaf->value;
 }
 
+int bumpLeaf(Leaf* leaf) {
+	leaf->value += 4;
+	return leaf->value;
+}
+
 int main() {
-	Outer obj(10, 99);
+	Outer obj{{Leaf(10)}, 99};
 
 	Leaf copied(obj.inner.leaf);
 	if (copied.value != 13) {
@@ -35,5 +36,13 @@ int main() {
 		return 2;
 	}
 
-	return obj.tail == 99 ? 0 : 3;
+	if (bumpLeaf(&obj.inner.leaf) != 14) {
+		return 3;
+	}
+
+	if (obj.inner.leaf.value != 14) {
+		return 4;
+	}
+
+	return obj.tail == 99 ? 0 : 5;
 }

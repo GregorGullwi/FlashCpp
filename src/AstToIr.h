@@ -79,6 +79,7 @@ private:
 	// parameter without a default value is encountered (indicates an overload
 	// resolution bug).
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 
