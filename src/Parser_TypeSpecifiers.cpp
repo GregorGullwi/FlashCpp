@@ -854,7 +854,7 @@ ParseResult Parser::parse_type_specifier()
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					Type::UserDefined,
 					type_idx,
-					TypeIndex{0},
+					0,
 					last_qualified_token,
 					cv_qualifier));
 			}
@@ -1137,7 +1137,7 @@ ParseResult Parser::parse_type_specifier()
 											placeholder_type.is_incomplete_instantiation_ = true;
 											gTypesByName[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												Type::UserDefined, placeholder_type.type_index_, TypeIndex{0}, member_token, cv_qualifier));
+												Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
 										}
 									}
 								}
@@ -1283,7 +1283,7 @@ ParseResult Parser::parse_type_specifier()
 								placeholder_type.is_incomplete_instantiation_ = true;
 								gTypesByName[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									Type::UserDefined, placeholder_type.type_index_, TypeIndex{0}, member_token, cv_qualifier));
+									Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
 							}
 						}
 					}
@@ -1772,7 +1772,7 @@ ParseResult Parser::parse_type_specifier()
 							gTypesByName[type_idx] = &type_info;
 							
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								Type::UserDefined, type_info.type_index_, TypeIndex{0}, type_name_token, cv_qualifier));
+								Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 						}
 						// If type IS found, continue with normal lookup below
 					}
@@ -2213,7 +2213,7 @@ ParseResult Parser::parse_type_specifier()
 						type_info.is_incomplete_instantiation_ = true;
 						gTypesByName[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							Type::UserDefined, type_info.type_index_, TypeIndex{0}, type_name_token, cv_qualifier));
+							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 					}
 				}
 			}

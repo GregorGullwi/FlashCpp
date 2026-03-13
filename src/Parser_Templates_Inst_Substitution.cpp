@@ -186,7 +186,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				
 				// Search substitution map for any entry where the key type_index has the same name
 				for (const auto& [key_type_index, arg] : type_substitution_map) {
-					if (key_type_index < gTypeInfo.size()) {
+					if (key_type_index.value < gTypeInfo.size()) {
 						std::string_view param_name = StringTable::getStringView(gTypeInfo[key_type_index.value].name());
 						if (param_name == type_name) {
 							FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
@@ -600,7 +600,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			if (!found_param) {
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
-				for (TypeIndex ti {}; ti < gTypeInfo.size(); ++ti) {
+				for (TypeIndex ti {}; ti.value < gTypeInfo.size(); ++ti) {
 					if (gTypeInfo[ti.value].type_ == Type::UserDefined || gTypeInfo[ti.value].type_ == Type::Template) {
 						if (StringTable::getStringView(gTypeInfo[ti.value].name()) == param_name) {
 							param_type_index = TypeIndex{ti};

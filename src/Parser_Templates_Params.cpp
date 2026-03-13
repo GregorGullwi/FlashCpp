@@ -929,7 +929,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							if (type_info->struct_info_ != nullptr) {
 								is_concrete_type = true;
 								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
-							} else if (type_info->type_index_ < gTypeInfo.size()) {
+							} else if (type_info->type_index_.value < gTypeInfo.size()) {
 								// Check if this is a type alias (type_index points to underlying type)
 								// and the underlying type is concrete (not a template parameter)
 								const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];

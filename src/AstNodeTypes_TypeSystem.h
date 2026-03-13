@@ -349,6 +349,10 @@ struct formatter<TypeIndex, char> : formatter<size_t, char> {
 	}
 };
 }  // namespace std
+inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
+return os << idx.value;
+}
+
 
 /// Helper function to get the C++ name string for a Type
 /// Returns the string used in C++ source code (e.g., "int", "unsigned long")

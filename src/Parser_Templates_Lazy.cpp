@@ -956,7 +956,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get size for the member
 		size_t member_size = 0;
-		if (substituted_type_index < gTypeInfo.size()) {
+		if (substituted_type_index.value < gTypeInfo.size()) {
 			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
 			if (member_type_info.getStructInfo()) {
 				member_size = member_type_info.getStructInfo()->total_size;
@@ -969,7 +969,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get alignment for the member
 		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (substituted_type_index < gTypeInfo.size()) {
+		if (substituted_type_index.value < gTypeInfo.size()) {
 			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
 			if (member_type_info.getStructInfo()) {
 				member_alignment = member_type_info.getStructInfo()->alignment;

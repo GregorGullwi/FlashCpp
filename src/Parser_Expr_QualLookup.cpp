@@ -1384,7 +1384,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 
 				TypeSpecifierNode return_type = type_node.as<TypeSpecifierNode>();
-				if (lhs_type_opt.has_value() && lhs_type_opt->type_index() > 0) {
+				if (lhs_type_opt.has_value() && lhs_type_opt->type_index().is_valid()) {
 					return_type = resolveBinaryOperatorTypeForSelfReference(return_type, lhs_type_opt->type_index());
 				}
 				return return_type;
@@ -1580,7 +1580,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
 				size_t struct_type_index = object_type_opt->type_index();
 				if (struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
+					const TypeInfo& type_info = gTypeInfo[struct_type_index];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Look up the member function
@@ -1683,7 +1683,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
 				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
 					const auto& member_ctx = member_function_context_stack_.back();
-					if (member_ctx.struct_type_index < gTypeInfo.size()) {
+					if (member_ctx.struct_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index.value];
 						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
 					}

@@ -9,7 +9,7 @@
 			block_info.try_end_offset = try_block.try_end_offset;
 			for (const auto& handler : try_block.catch_handlers) {
 				ObjectFileWriter::CatchHandlerInfo handler_info;
-				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
+				handler_info.type_index = static_cast<uint32_t>(handler.type_index.value);
 				handler_info.handler_offset = handler.handler_offset;
 				handler_info.handler_end_offset = handler.handler_end_offset;
 				handler_info.funclet_entry_offset = handler.funclet_entry_offset;

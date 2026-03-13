@@ -901,7 +901,7 @@ ASTNode Parser::substituteTemplateParameters(
 				template_args);
 			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
 				int substituted_size_bits = get_type_size_bits(substituted_type);
-				if (substituted_type_index > 0 && substituted_type_index < gTypeInfo.size() && gTypeInfo[substituted_type_index.value].type_size_ > 0) {
+				if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size() && gTypeInfo[substituted_type_index.value].type_size_ > 0) {
 					substituted_size_bits = gTypeInfo[substituted_type_index.value].type_size_;
 				}
 				TypeSpecifierNode substituted_spec(

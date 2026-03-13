@@ -791,7 +791,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	}
 
 	// If this is a member function, set up member function context
-	bool setup_member_context = struct_name.isValid() && struct_type_index != 0;
+	bool setup_member_context = struct_name.isValid() && struct_type_index.is_valid();
 	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
 	if (setup_member_context) {
 		// Find the struct in the type system
