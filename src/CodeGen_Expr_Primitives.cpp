@@ -981,16 +981,13 @@
 					pointee_size = 32;
 				}
 				
-				// For enum references, treat dereferenced value as underlying type
-				// This allows enum variables to work in arithmetic/bitwise operations
-				if (pointee_type == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
-					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-					if (enum_info) {
-						pointee_type = enum_info->underlying_type;
-						pointee_size = static_cast<int>(enum_info->underlying_size);
-					}
-				}
+				Type semantic_pointee_type = pointee_type;
+
+				// For enum references, lower the dereferenced value to its runtime
+				// representation so arithmetic/bitwise operations consume the
+				// underlying integer type.
+				pointee_type = getRuntimeValueType(semantic_pointee_type, type_node.type_index(), PointerDepth{});
+				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 				
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1013,17 +1010,21 @@
 			// Use helper function to calculate size_bits with proper fallback handling
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 			
-			// For non-pointer enum variables (not enumerators), return the underlying integer type
-			// This allows enum variables to work in arithmetic/bitwise operations
-			Type return_type = type_node.type();
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
-				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-				if (enum_info) {
-					return_type = enum_info->underlying_type;
-					size_bits = static_cast<int>(enum_info->underlying_size);
-				}
-			}
+			// Lower non-pointer variables to their runtime representation. For enums
+			// this produces the underlying integer type/size while preserving
+			// semantic type metadata separately via type_index below.
+			assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+				"Pointer depth exceeds maximum int value for PointerDepth construction");
+			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
+			Type return_type = getRuntimeValueType(
+				type_node.type(),
+				type_node.type_index(),
+				identifier_pointer_depth);
+			size_bits = getRuntimeValueSizeBits(
+				type_node.type(),
+				type_node.type_index(),
+				size_bits,
+				identifier_pointer_depth);
 			
 			// For the 4th element: 
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)

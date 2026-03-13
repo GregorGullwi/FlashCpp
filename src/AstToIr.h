@@ -519,6 +519,8 @@ private:
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 	size_t getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const;
+	Type getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const;
+	int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 
 	// ========== Lambda Capture Helper Functions ==========
 

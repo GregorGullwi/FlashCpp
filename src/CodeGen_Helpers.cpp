@@ -196,6 +196,18 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 
 
 
+namespace {
+Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
+	Type canonical_type = semantic_type;
+	if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		// Prefer the canonical type stored in gTypeInfo when available. This keeps
+		// typedef / alias lowering consistent with the resolved type table entry.
+		canonical_type = gTypeInfo[type_index.value].type_;
+	}
+	return resolve_type_alias(canonical_type, type_index);
+}
+}
+
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
@@ -207,29 +219,51 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 		assert(struct_info && "Struct type info not found");
 		return struct_info->total_size;
 	}
-	// For Enum types with a valid type_index, look up the size from EnumTypeInfo.
-	// Note: TypeInfo::type_size_ is NOT set for fully-defined enums (only for
-	// forward-declared enums and typedef aliases), so we must read underlying_size
-	// from the EnumTypeInfo directly.  underlying_size is in bits.
-	if (type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+	// Non-struct path: size the runtime value representation for a non-pointer.
+	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
+}
+
+Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
+	if (pointer_depth.is_pointer()) {
+		return semantic_type;
+	}
+
+	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+
+	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* enum_info = gTypeInfo[type_index.value].getEnumInfo()) {
+			return enum_info->underlying_type;
+		}
+	}
+
+	return lowered_type;
+}
+
+int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {
+	if (pointer_depth.is_pointer()) {
+		return semantic_size_bits;
+	}
+
+	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+
+	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
-			return enum_info->underlying_size / 8;
+			return static_cast<int>(enum_info->underlying_size);
 		}
-		// Fallback for forward-declared enums that only have type_size_ set
+		// Forward-declared enums / aliases may only have type_size_.
 		if (type_info.type_size_ > 0) {
-			return type_info.type_size_ / 8;
+			return type_info.type_size_;
 		}
 	}
-	// For UserDefined (typedef) types with a valid type_index, type_size_ is
-	// set from size_in_bits() at the typedef site, so it is in bits.
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+
+	if (semantic_type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
 		if (gTypeInfo[type_index.value].type_size_ > 0) {
-			return gTypeInfo[type_index.value].type_size_ / 8;
+			return gTypeInfo[type_index.value].type_size_;
 		}
 	}
-	// For primitive types, convert bits to bytes
-	return size_in_bits / 8;
+
+	return semantic_size_bits;
 }
 
 
