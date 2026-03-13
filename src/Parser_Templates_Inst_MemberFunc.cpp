@@ -295,8 +295,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type, type_index };
 		}
-		if (type == Type::UserDefined && type_index < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_index];
+		if (type == Type::UserDefined && type_index.value < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_index.value];
 			std::string_view tn = StringTable::getStringView(ti.name());
 
 			// Check inner template params first

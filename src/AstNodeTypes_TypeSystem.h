@@ -328,9 +328,6 @@ struct TypeIndex {
 	constexpr TypeIndex() noexcept = default;
 	// Explicit single-arg ctor: prevents bare integer → TypeIndex conversion.
 	constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
-	// Implicit conversion to size_t: preserves gTypeInfo[idx] array indexing,
-	// comparisons with integers, and all existing read sites.
-	constexpr operator size_t() const noexcept { return value; }
 	// Increment operators for loop variables.
 	TypeIndex& operator++() noexcept { ++value; return *this; }
 	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }

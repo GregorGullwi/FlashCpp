@@ -1114,7 +1114,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Store enum info early so ConstExprEvaluator can look up values during parsing
-		auto& enum_type_info_ref = gTypeInfo[enum_type_index];
+		auto& enum_type_info_ref = gTypeInfo[enum_type_index.value];
 		enum_type_info_ref.setEnumInfo(std::move(enum_info));
 		auto* live_enum_info = enum_type_info_ref.getEnumInfo();
 

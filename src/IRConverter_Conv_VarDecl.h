@@ -459,7 +459,7 @@
 						}
 				}
 
-						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index != 0) {
+						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index.is_valid()) {
 							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 							return;
 						}
@@ -612,7 +612,7 @@
 					} else {
 						// For integer types, use GPR and integer moves
 						allocated_reg_val = allocateRegisterWithSpilling();
-						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits);
+						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits.value);
 						emitMovToFrameSized(
 							SizedRegister{allocated_reg_val, 64, false},
 							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
@@ -789,7 +789,7 @@
 		
 		// Construct return type
 		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
-		for (int i = 0; i < func_decl.return_pointer_depth; ++i) {
+		for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 			return_type.add_pointer_level();
 		}
 		
@@ -1189,8 +1189,8 @@
 						
 						// Populate base class names for RTTI
 						for (const auto& base : struct_info->base_classes) {
-							if (base.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type = gTypeInfo[base.type_index];
+							if (base.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
@@ -1669,7 +1669,7 @@
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0 && !param.is_reference();
+				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && !param.pointer_depth.is_pointer() && !param.is_reference();
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -1725,7 +1725,7 @@
 
 				// Add parameter to debug information
 				uint32_t param_type_index = 0x74; // T_INT4 for int parameters
-				if (param.pointer_depth > 0) {
+				if (param.pointer_depth.is_pointer()) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
 					switch (param.type) {
@@ -1780,7 +1780,7 @@
 						// it does not need to be registered in regAlloc.
 					}
 
-					parameters.push_back({param.type, param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth, param.is_reference(), second_reg});
+					parameters.push_back({param.type, param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
 				}
 			}
 		}
@@ -1803,7 +1803,7 @@
 		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
-				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && param.pointer_depth == 0 && !param.is_reference;
+				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && !param.pointer_depth && !param.is_reference;
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
@@ -2329,7 +2329,7 @@
 								spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 								emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 								// Dereference to get the value
-								int value_size_bytes = ref_it->second.value_size_bits / 8;
+								int value_size_bytes = ref_it->second.value_size_bits.value / 8;
 								emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 								// Value is now in RAX, ready to return
 							}
@@ -2549,7 +2549,7 @@
 							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
-							int value_size_bytes = ref_it->second.value_size_bits / 8;
+							int value_size_bytes = ref_it->second.value_size_bits.value / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
 						} else if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && current_function_returns_reference_) {

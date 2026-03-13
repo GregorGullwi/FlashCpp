@@ -55,7 +55,7 @@
 						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}", 
 							is_struct_type(type_node.type()), type_node.type_index());
 
-						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
+						if (is_struct_type(type_node.type()) && type_node.type_index().value < gTypeInfo.size()) {
 							TypeIndex type_index = type_node.type_index();
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_index,
@@ -271,8 +271,8 @@
 				TypeIndex element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
 
 				// Get element size for struct types
-				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index > 0) {
-					const TypeInfo& type_info = gTypeInfo[element_type_index];
+				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index != 0) {
+					const TypeInfo& type_info = gTypeInfo[element_type_index.value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -476,7 +476,7 @@
 
 									// Propagate type_index for struct element types so downstream member access
 									// (e.g. c.items[0].value) can look up the struct's member layout
-									unsigned long long elem_type_index = static_cast<unsigned long long>(member->type_index);
+									unsigned long long elem_type_index = static_cast<unsigned long long>(member->type_index.value);
 
 									// When context is LValueAddress, skip the load and return address/metadata only
 									if (context == ExpressionContext::LValueAddress) {
@@ -524,7 +524,7 @@
 
 				// Capture type_index for struct types (important for member access on array elements)
 				if (type_node.type() == Type::Struct) {
-					element_type_index = type_node.type_index();
+					element_type_index = type_node.type_index().value;
 				}
 
 				// For array types, ALWAYS get the element size from type_node, not from array_operands
@@ -541,8 +541,8 @@
 						// Get the element size from type_node
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						// If still 0, compute from type info for struct types
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
-							const TypeInfo& type_info = gTypeInfo[element_type_index];
+						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
+							const TypeInfo& type_info = gTypeInfo[element_type_index.value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -572,8 +572,8 @@
 					} else {
 						// Single-level pointer/reference indexing yields the base object.
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
-							const TypeInfo& type_info = gTypeInfo[element_type_index];
+						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
+							const TypeInfo& type_info = gTypeInfo[element_type_index.value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -624,7 +624,7 @@
 					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
+						if (is_struct_type(type_node.type()) && type_node.type_index().value < gTypeInfo.size()) {
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_node.type_index(),
 								StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
@@ -795,7 +795,7 @@
 		// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 		// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
 		bool is_valid_for_member_access = is_struct_type(object_type.type()) || 
-		(object_type.pointer_depth() > 0 && object_type.type_index() > 0);
+		(object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
 		if (!is_valid_for_member_access) {
 			FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 			return false;
@@ -843,7 +843,7 @@
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
 		if (type == Type::Struct ||
-			(type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr)) {
+			(type == Type::UserDefined && type_index.is_valid() && type_index < gTypeInfo.size() && gTypeInfo[type_index].getStructInfo() != nullptr)) {
 			result.type_index = TypeIndex{type_index};
 		}
 		return result;
@@ -929,7 +929,7 @@
 						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 						// Get struct name for mangling
-						std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+						std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index().value].name());
 
 						// Get the return type from the function declaration (should be a pointer)
 						const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
@@ -1125,7 +1125,7 @@
 
 		// Try to find by direct index lookup
 		if (base_type_index < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[base_type_index];
+			const TypeInfo& ti = gTypeInfo[base_type_index.value];
 			if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
@@ -1143,24 +1143,24 @@
 		}
 
 		if (!type_info || !type_info->getStructInfo()) {
-			std::cerr << "Error: Struct type info not found for type_index=" << base_type_index << "\n";
+			std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.value << "\n";
 			if (std::holds_alternative<StringHandle>(base_object)) {
 				std::cerr << "  Object name: " << std::get<StringHandle>(base_object) << "\n";
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
 				if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
-					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_ << ")\n";
+					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.value << ")\n";
 				}
 			}
 			std::cerr << "  Available types in gTypesByName:\n";
 			for (const auto& [name, ti] : gTypesByName) {
 				if (ti->type_ == Type::Struct || ti->type_ == Type::UserDefined) {
-					std::cerr << "    - " << name << " (type_index=" << ti->type_index_ << ")\n";
+					std::cerr << "    - " << name << " (type_index=" << ti->type_index_.value << ")\n";
 				}
 			}
 			std::cerr << "error: struct type info not found\n";
-			throw InternalError("struct type info not found for type_index=" + std::to_string(base_type_index));
+			throw InternalError("struct type info not found for type_index=" + std::to_string(base_type_index.value));
 		}
 
 		const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -1184,8 +1184,8 @@
 
 			int sm_size_bits = static_cast<int>(static_member->size * 8);
 			// If size is 0 for struct types, look up from type info
-			if (sm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-				const StructTypeInfo* sm_si = gTypeInfo[static_member->type_index].getStructInfo();
+			if (sm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index < gTypeInfo.size()) {
+				const StructTypeInfo* sm_si = gTypeInfo[static_member->type_index.value].getStructInfo();
 				if (sm_si) {
 					sm_size_bits = static_cast<int>(sm_si->total_size * 8);
 				}
@@ -1337,7 +1337,7 @@
 
 		// For struct types, get size from gTypeInfo instead of size_in_bits()
 		if (element_size == 0 && type_spec.type() == Type::Struct) {
-			size_t type_index = type_spec.type_index();
+			size_t type_index = type_spec.type_index().value;
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -1408,8 +1408,8 @@
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
 							size_t ref_size = get_type_size_bits(static_member->type) / 8;
-							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-								const StructTypeInfo* si = gTypeInfo[static_member->type_index].getStructInfo();
+							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index.is_valid() && static_member->type_index < gTypeInfo.size()) {
+								const StructTypeInfo* si = gTypeInfo[static_member->type_index.value].getStructInfo();
 								if (si) ref_size = si->total_size;
 							}
 							FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
@@ -1456,8 +1456,8 @@
 
 				// Check if this is a qualified name (e.g., Foo::val) parsed as a type placeholder.
 				// The type name in gTypeInfo will contain "::" for qualified names.
-				if (type_spec.type_index() < gTypeInfo.size()) {
-					std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+				if (type_spec.type_index().value < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index().value].name());
 				auto sep_pos = type_name.rfind("::");
 					if (sep_pos != std::string_view::npos) {
 						std::string_view struct_name = type_name.substr(0, sep_pos);
@@ -1511,7 +1511,7 @@
 			}
 			// Handle struct types
 			else if (type == Type::Struct) {
-				size_t type_index = type_spec.type_index();
+				size_t type_index = type_spec.type_index().value;
 				if (type_index >= gTypeInfo.size()) {
 					throw InternalError("Invalid type index for struct");
 					return ExprResult{};
@@ -1566,7 +1566,7 @@
 					// For regular variables, get the type size from the declaration
 					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 					if (var_type.type() == Type::Struct) {
-						size_t type_index = var_type.type_index();
+						size_t type_index = var_type.type_index().value;
 						if (type_index < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_index];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -1613,7 +1613,7 @@
 							const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
 							FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
 							if (obj_type.type() == Type::Struct) {
-								size_t type_index = obj_type.type_index();
+								size_t type_index = obj_type.type_index().value;
 								if (type_index < gTypeInfo.size()) {
 									const TypeInfo& type_info = gTypeInfo[type_index];
 									std::string_view base_type_name = StringTable::getStringView(type_info.name());
@@ -1700,7 +1700,7 @@
 
 							// Handle struct element types
 							if (element_size == 0 && var_type.type() == Type::Struct) {
-								size_t type_index = var_type.type_index();
+								size_t type_index = var_type.type_index().value;
 								if (type_index < gTypeInfo.size()) {
 									const TypeInfo& type_info = gTypeInfo[type_index];
 									const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -1820,7 +1820,7 @@
 
 			// Handle struct types
 			if (type == Type::Struct) {
-				size_t type_index = type_spec.type_index();
+				size_t type_index = type_spec.type_index().value;
 				if (type_index >= gTypeInfo.size()) {
 					throw InternalError("Invalid type index for struct");
 					return ExprResult{};
@@ -1863,7 +1863,7 @@
 						// Get the type alignment from the declaration
 						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 						if (var_type.type() == Type::Struct) {
-							size_t type_index = var_type.type_index();
+							size_t type_index = var_type.type_index().value;
 							if (type_index < gTypeInfo.size()) {
 								const TypeInfo& type_info = gTypeInfo[type_index];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -1930,7 +1930,7 @@
 		}
 
 		// Get the struct type info
-		size_t type_index = type_spec.type_index();
+		size_t type_index = type_spec.type_index().value;
 		if (type_index >= gTypeInfo.size()) {
 			throw InternalError("Invalid type index for struct");
 			return ExprResult{};
@@ -1980,7 +1980,7 @@
 		for (const auto& member : struct_info->members) {
 			if (member.type == Type::Struct || member.type == Type::UserDefined) {
 				if (member.type_index >= gTypeInfo.size()) return false;
-				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTriviallyCopyableStruct(member_info)) return false;
 			}
 		}
@@ -1988,7 +1988,7 @@
 		for (const auto& base : struct_info->base_classes) {
 			if (base.is_deferred) continue;  // Deferred (template param) base – assume ok
 			if (base.type_index >= gTypeInfo.size()) return false;
-			const StructTypeInfo* base_info = gTypeInfo[base.type_index].getStructInfo();
+			const StructTypeInfo* base_info = gTypeInfo[base.type_index.value].getStructInfo();
 			if (!isTriviallyCopyableStruct(base_info)) return false;
 		}
 		return true;
@@ -2005,7 +2005,7 @@
 		for (const auto& member : struct_info->members) {
 			if (member.type == Type::Struct || member.type == Type::UserDefined) {
 				if (member.type_index >= gTypeInfo.size()) return false;
-				const StructTypeInfo* member_info = gTypeInfo[member.type_index].getStructInfo();
+				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTrivialStruct(member_info)) return false;
 			}
 		}
@@ -2013,7 +2013,7 @@
 		for (const auto& base : struct_info->base_classes) {
 			if (base.is_deferred) continue;
 			if (base.type_index >= gTypeInfo.size()) return false;
-			const StructTypeInfo* base_info = gTypeInfo[base.type_index].getStructInfo();
+			const StructTypeInfo* base_info = gTypeInfo[base.type_index.value].getStructInfo();
 			if (!isTrivialStruct(base_info)) return false;
 		}
 		return true;
@@ -2068,7 +2068,7 @@
 		size_t pointer_depth = type_spec.pointer_depth();
 
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
-		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
+		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index().value < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index().value] : nullptr;
 		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
 
 		// Handle binary traits that require a second type argument
@@ -2084,11 +2084,11 @@
 						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index() < gTypeInfo.size() &&
-						derived_spec.type_index() < gTypeInfo.size()) {
+						type_spec.type_index().value < gTypeInfo.size() &&
+						derived_spec.type_index().value < gTypeInfo.size()) {
 
-							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
-							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
+							const TypeInfo& base_info = gTypeInfo[type_spec.type_index().value];
+							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index().value];
 							const StructTypeInfo* base_struct = base_info.getStructInfo();
 							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
 
@@ -2172,10 +2172,10 @@
 						else if (from_type == Type::Struct && to_type == Type::Struct &&
 						!from_is_ref && !to_is_ref && 
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
-						from_spec.type_index() < gTypeInfo.size() &&
-						to_spec.type_index() < gTypeInfo.size()) {
+						from_spec.type_index().value < gTypeInfo.size() &&
+						to_spec.type_index().value < gTypeInfo.size()) {
 							// Check if from_type is derived from to_type
-							const TypeInfo& from_info = gTypeInfo[from_spec.type_index()];
+							const TypeInfo& from_info = gTypeInfo[from_spec.type_index().value];
 							const StructTypeInfo* from_struct = from_info.getStructInfo();
 							if (from_struct) {
 								for (const auto& base_class : from_struct->base_classes) {
@@ -2231,10 +2231,10 @@
 						else if (from_type == Type::Struct && to_type == Type::Struct &&
 						!from_is_ref && !to_is_ref && 
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
-						from_spec.type_index() < gTypeInfo.size() &&
-						to_spec.type_index() < gTypeInfo.size()) {
+						from_spec.type_index().value < gTypeInfo.size() &&
+						to_spec.type_index().value < gTypeInfo.size()) {
 							// Check if from_type is derived from to_type
-							const TypeInfo& from_info = gTypeInfo[from_spec.type_index()];
+							const TypeInfo& from_info = gTypeInfo[from_spec.type_index().value];
 							const StructTypeInfo* from_struct = from_info.getStructInfo();
 							if (from_struct) {
 								for (const auto& base_class : from_struct->base_classes) {
@@ -2252,9 +2252,9 @@
 
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					result = struct_info && struct_info->has_vtable;
 				}
@@ -2264,9 +2264,9 @@
 				// A final class cannot be derived from
 				// Note: This requires tracking 'final' keyword on classes
 				// For now, check if any member function is marked final
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Check if any virtual function is marked final
@@ -2282,9 +2282,9 @@
 
 			case TypeTraitKind::IsAbstract:
 				// An abstract class has at least one pure virtual function
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					result = struct_info && struct_info->is_abstract;
 				}
@@ -2292,9 +2292,9 @@
 
 			case TypeTraitKind::IsEmpty:
 				// An empty class has no non-static data members (excluding empty base classes)
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Check if there are no non-static data members
@@ -2312,9 +2312,9 @@
 				//   - No private or protected non-static data members
 				//   - No virtual functions
 				//   - No virtual, private, or protected base classes
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Check aggregate conditions:
@@ -2358,9 +2358,9 @@
 				// - All non-static data members have same access control
 				// - No base classes with non-static data members
 				// - No base classes of the same type as first non-static data member
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Basic check: no virtual functions
@@ -2406,9 +2406,9 @@
 					result = true;
 				}
 				else if ((type == Type::Struct || type == Type::UserDefined) &&
-				type_spec.type_index() < gTypeInfo.size() &&
+				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					result = isTriviallyCopyableStruct(type_info.getStructInfo());
 				}
 				break;
@@ -2420,9 +2420,9 @@
 					result = true;
 				}
 				else if ((type == Type::Struct || type == Type::UserDefined) &&
-				type_spec.type_index() < gTypeInfo.size() &&
+				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					result = isTrivialStruct(type_info.getStructInfo());
 				}
 				break;
@@ -2433,9 +2433,9 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// POD: no virtual functions, no user-defined ctors, all members same access
@@ -2471,9 +2471,9 @@
 				if (isScalarType(type, is_reference, pointer_depth) || is_reference) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Simplified check: assume literal if trivially copyable
@@ -2541,9 +2541,9 @@
 					}
 				}
 				// Class types: check for appropriate constructor
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						const auto& arg_types = traitNode.additional_type_nodes();
@@ -2566,9 +2566,9 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined ctors
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -2584,9 +2584,9 @@
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
 				// user-defined ctors are noexcept only if marked noexcept
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
@@ -2663,8 +2663,8 @@
 							result = isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth());
 						}
 						// Class types: check for assignment operator
-						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+						else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
 								// If has copy/move assignment or no user-defined, assume assignable
@@ -2690,9 +2690,9 @@
 							result = true;
 						}
 						// Class types: no virtual, no user-defined assignment
-						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+						else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 						!is_reference && pointer_depth == 0) {
-							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
 								result = !struct_info->has_vtable && 
@@ -2720,9 +2720,9 @@
 						// user-defined ops are noexcept only if marked noexcept
 						// Note: For assignability, the first type is typically T& (lvalue reference),
 						// so we check the underlying struct type regardless of reference qualifier
-						else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+						else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 						pointer_depth == 0) {
-							const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
 								bool has_user_assign = struct_info->hasCopyAssignmentOperator() ||
@@ -2774,9 +2774,9 @@
 					result = true;
 				}
 				// Class types: check for accessible destructor
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Assume destructible unless we can prove otherwise
@@ -2793,9 +2793,9 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Trivially destructible if no vtable and no user-defined destructor
@@ -2814,9 +2814,9 @@
 					result = true;
 				}
 				// Class types: assume noexcept destructor (most are in practice)
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Most destructors are noexcept by default since C++11
@@ -2832,9 +2832,9 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Trivially destructible if no vtable and no user-defined destructor
@@ -2849,9 +2849,9 @@
 			case TypeTraitKind::HasVirtualDestructor:
 				// __has_virtual_destructor(T) - Check if T has a virtual destructor
 				// Only class types can have virtual destructors
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->is_union) {
 						// Check if the destructor is explicitly marked as virtual
@@ -2867,7 +2867,7 @@
 							// Check if any base class has a virtual destructor
 							for (const auto& base : struct_info->base_classes) {
 								if (base.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+									const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info && base_struct_info->has_vtable) {
 										// If base has vtable, it might have virtual destructor
@@ -2922,11 +2922,11 @@
 						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index() < gTypeInfo.size() &&
-						derived_spec.type_index() < gTypeInfo.size()) {
+						type_spec.type_index().value < gTypeInfo.size() &&
+						derived_spec.type_index().value < gTypeInfo.size()) {
 
-							const TypeInfo& base_info = gTypeInfo[type_spec.type_index()];
-							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index()];
+							const TypeInfo& base_info = gTypeInfo[type_spec.type_index().value];
+							const TypeInfo& derived_info = gTypeInfo[derived_spec.type_index().value];
 							const StructTypeInfo* base_struct = base_info.getStructInfo();
 							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
 
@@ -2960,8 +2960,8 @@
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
 				if (type == Type::Enum && !is_reference && pointer_depth == 0 &&
-				type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+				type_spec.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Return the enum's declared underlying type
@@ -3216,7 +3216,7 @@ const StructTypeInfo* base_struct) const {
 			continue;
 		}
 
-		const TypeInfo& base_type = gTypeInfo[base.type_index];
+		const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 		const StructTypeInfo* base_info = base_type.getStructInfo();
 
 		if (!base_info) {
@@ -3249,8 +3249,8 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 		const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
 		const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
 
-		if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[this_type.type_index()];
+		if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[this_type.type_index().value];
 			return type_info.getStructInfo();
 		}
 	}
@@ -3385,7 +3385,7 @@ const StructMember*& out_member) const {
 		if (nested_member->type_index >= gTypeInfo.size()) {
 			return false;
 		}
-		const TypeInfo& nested_type_info = gTypeInfo[nested_member->type_index];
+		const TypeInfo& nested_type_info = gTypeInfo[nested_member->type_index.value];
 		if (!nested_type_info.isStruct()) {
 			return false;
 		}
@@ -3408,11 +3408,11 @@ const StructMember*& out_member) const {
 	}
 	
 	// Look up the struct info
-	size_t struct_type_index = base_type.type_index();
+	size_t struct_type_index = base_type.type_index().value;
 	if (struct_type_index >= gTypeInfo.size()) {
 		return false;
 	}
-	const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+	const TypeInfo& struct_type_info = gTypeInfo[struct_type_index.value];
 	const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 	if (!struct_info) {
 		return false;
@@ -3447,7 +3447,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	// Build the operator name we are looking for (e.g., "operator int")
 	std::string_view target_type_name;
 	if (target_type == Type::Struct && target_type_index < gTypeInfo.size()) {
-		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index.value].name());
 	} else {
 		// For primitive types, use the helper function to get the type name
 		target_type_name = getTypeName(target_type);
@@ -3487,11 +3487,11 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 					// This handles cases like `operator value_type()` where `using value_type = T;`
 					// Use recursive resolution to handle chains of type aliases
-					if (resolved_type == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+					if (resolved_type == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
 						TypeIndex current_type_index = type_spec.type_index();
 						int max_depth = 10;  // Prevent infinite loops from circular aliases
 						while (resolved_type == Type::UserDefined && current_type_index < gTypeInfo.size() && max_depth-- > 0) {
-							const TypeInfo& alias_type_info = gTypeInfo[current_type_index];
+							const TypeInfo& alias_type_info = gTypeInfo[current_type_index.value];
 							if (alias_type_info.type_ != Type::Void && alias_type_info.type_ != Type::UserDefined) {
 								resolved_type = alias_type_info.type_;
 								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
@@ -3535,7 +3535,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.type_index < gTypeInfo.size()) {
-			const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+			const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 			if (base_type_info.isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(

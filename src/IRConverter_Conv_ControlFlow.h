@@ -799,7 +799,7 @@
 			} else if (std::holds_alternative<TempVar>(op.index.value)) {
 				// Variable index - compute address at runtime
 				TempVar index_var = std::get<TempVar>(op.index.value);
-				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits);
+				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits.value);
 				
 				// Load index into RCX (value is already in RDX)
 				emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits.value);
@@ -855,7 +855,7 @@
 					return;
 				}
 				int64_t index_var_offset = it->second.offset;
-				int index_size_in_bits = it->second.size_in_bits;
+				int index_size_in_bits = it->second.size_in_bits.value;
 				
 				// Load index into RCX (value is already in RDX)
 				emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);

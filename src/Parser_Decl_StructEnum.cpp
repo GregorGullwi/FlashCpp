@@ -362,8 +362,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							info.is_dependent = targ.is_dependent;
 							
 							StringHandle dep_name = targ.dependent_name;
-							if (!dep_name.isValid() && targ.type_index < gTypeInfo.size()) {
-								dep_name = gTypeInfo[targ.type_index].name_;
+							if (!dep_name.isValid() && targ.type_index.value < gTypeInfo.size()) {
+								dep_name = gTypeInfo[targ.type_index.value].name_;
 							}
 							if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
 								dep_name = current_template_param_names_[arg_idx];
@@ -494,8 +494,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
 				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
-					if (arg.type_index < gTypeInfo.size()) {
-						StringHandle type_name_handle = gTypeInfo[arg.type_index].name();
+					if (arg.type_index.value < gTypeInfo.size()) {
+						StringHandle type_name_handle = gTypeInfo[arg.type_index.value].name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
 						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
 						if (contains_template_param(type_name_handle)) {
@@ -514,8 +514,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
 						// Check if the type name contains template parameters
-						if (type_spec.type_index() < gTypeInfo.size()) {
-							StringHandle type_name_handle = gTypeInfo[type_spec.type_index()].name();
+						if (type_spec.type_index().value < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_spec.type_index().value].name();
 							// Check if this type is a template (has nested template args)
 							// If it's a template class and we're inside a template body, 
 							// and it was registered with the same name as the primary template,
@@ -578,8 +578,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Type aliases have a type_index that points to the actual struct/class
 				const TypeInfo* resolved_type = alias_type_info;
 				size_t max_alias_depth = 10;  // Prevent infinite loops
-				while (resolved_type->type_index_ < gTypeInfo.size() && max_alias_depth-- > 0) {
-					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_];
+				while (resolved_type->type_index_.value < gTypeInfo.size() && max_alias_depth-- > 0) {
+					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_.value];
 					// Stop if we're pointing to ourselves (not a valid alias)
 					if (&underlying == resolved_type) break;
 					
@@ -2720,11 +2720,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	    !parsing_template_class_) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
-			if (base_class.type_index >= gTypeInfo.size()) {
+			if (base_class.type_index.value >= gTypeInfo.size()) {
 				continue;
 			}
 			
-			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index];
+			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index.value];
 			const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 			
 			if (!base_struct_info) {
@@ -3960,8 +3960,8 @@ ParseResult Parser::parse_friend_declaration()
 		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
 		// Use the type_index to look up the full qualified name from gTypeInfo,
 		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
-		StringHandle friend_name = (type_spec.type_index() < gTypeInfo.size())
-			? gTypeInfo[type_spec.type_index()].name()
+		StringHandle friend_name = (type_spec.type_index().value < gTypeInfo.size())
+			? gTypeInfo[type_spec.type_index().value].name()
 			: type_spec.token().handle();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
 		return saved_position.success(friend_node);

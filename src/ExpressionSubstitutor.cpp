@@ -181,8 +181,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				
 				// First, check if type_index points to a template parameter in gTypeInfo
 				std::string_view type_name = "";
-				if (type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+				if (type_spec.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					type_name = StringTable::getStringView(type_info.name());
 					FLASH_LOG(Templates, Debug, "    Type name from gTypeInfo: ", type_name);
 				}
@@ -204,8 +204,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					// The type_spec.type_index() should tell us which parameter it is
 					// But we need the name to do the substitution
 					// Let's check if we can find it in gTypeInfo
-					if (type_spec.type_index() < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					if (type_spec.type_index().value < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 						std::string_view param_name = StringTable::getStringView(type_info.name());
 						FLASH_LOG(Templates, Debug, "    Template parameter name: ", param_name);
 						
@@ -438,8 +438,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		FLASH_LOG(Templates, Debug, "  TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 		
 		// If this is a struct type, it might be a template instantiation
-		if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+		if (type_spec.type() == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 			std::string_view type_name = StringTable::getStringView(type_info.name());
 			FLASH_LOG(Templates, Debug, "  Type name: ", type_name);
 			
@@ -750,8 +750,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			
 			// The concrete type should be a struct type - get its instantiated name
 			if ((concrete_type.base_type == Type::UserDefined || concrete_type.base_type == Type::Struct) &&
-			    concrete_type.type_index > 0 && concrete_type.type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[concrete_type.type_index];
+			    concrete_type.type_index.is_valid() && concrete_type.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[concrete_type.type_index.value];
 				StringHandle type_name_handle = type_info.name();
 				
 				// If this is a template instantiation, ensure it's been instantiated
@@ -777,7 +777,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			}
 			
 			// Template parameter was found but the concrete type is not a struct/class
-			// (e.g., type_index == 0 due to incomplete resolution, or base_type is Template).
+			// (e.g., !type_index.is_valid() due to incomplete resolution, or base_type is Template).
 			// Return as-is rather than falling through to $/_-based separator logic which
 			// would incorrectly parse the namespace name as a mangled template instantiation.
 			FLASH_LOG(Templates, Debug, "  Template parameter '", ns_name, 
@@ -830,8 +830,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// Check if this arg is a dependent template parameter that needs substitution
 			// (handles cases where dependent_name isn't set but the type itself is a template param)
 			if (!arg.is_value && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) 
-			    && arg.type_index < gTypeInfo.size()) {
-				std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+			    && arg.type_index.value < gTypeInfo.size()) {
+				std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index.value].name());
 				auto subst_it = param_map_.find(arg_type_name);
 				if (subst_it != param_map_.end()) {
 					ta = subst_it->second;
@@ -966,8 +966,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
 	if ((type.type() == Type::Template || type.type() == Type::Auto || type.type() == Type::UserDefined) 
-	    && type.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type.type_index()];
+	    && type.type_index().value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type.type_index().value];
 		std::string_view type_name = StringTable::getStringView(type_info.name());
 		
 		FLASH_LOG(Templates, Debug, "  Type is template parameter: ", type_name);
@@ -988,8 +988,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					case Type::Struct:
 					case Type::UserDefined:
 						// For struct types, we need to look up the size from TypeInfo
-						if (subst.type_index < gTypeInfo.size()) {
-							const TypeInfo& ti = gTypeInfo[subst.type_index];
+						if (subst.type_index.value < gTypeInfo.size()) {
+							const TypeInfo& ti = gTypeInfo[subst.type_index.value];
 							if (ti.isStruct()) {
 								const StructTypeInfo* si = ti.getStructInfo();
 								if (si) {
@@ -1022,8 +1022,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	}
 	
 	// Check if this is a struct/class type that might have template arguments
-	if (type.type() == Type::Struct && type.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type.type_index()];
+	if (type.type() == Type::Struct && type.type_index().value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type.type_index().value];
 		std::string_view type_name = StringTable::getStringView(type_info.name());
 		FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());
 
@@ -1050,8 +1050,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					}
 				}
 
-				if (!substituted && !ta.is_value && arg.type_index < gTypeInfo.size()) {
-					std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+				if (!substituted && !ta.is_value && arg.type_index.value < gTypeInfo.size()) {
+					std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index.value].name());
 					auto type_subst_it = param_map_.find(arg_type_name);
 					if (type_subst_it != param_map_.end()) {
 						ta = type_subst_it->second;
@@ -1126,8 +1126,8 @@ bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string
 	// Also check TypeSpecifierNode for pack types
 	if (arg_node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
-		if (type_spec.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+		if (type_spec.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 			pack_name = StringTable::getStringView(type_info.name());
 			
 			// Check if this type is in our pack map
@@ -1168,8 +1168,8 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 				const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 				std::string_view type_name = "";
 				
-				if (type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+				if (type_spec.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					type_name = StringTable::getStringView(type_info.name());
 				}
 				

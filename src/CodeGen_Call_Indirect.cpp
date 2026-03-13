@@ -242,7 +242,7 @@
 				return makeExprResult(lambda_return_type, SizeInBits{static_cast<int>(lambda_return_size)}, IrOperand{ret_var});
 			}
 
-			if (!std::holds_alternative<StringHandle>(lambda_result.value) || lambda_result.type_index == 0) {
+			if (!std::holds_alternative<StringHandle>(lambda_result.value) || !lambda_result.type_index.is_valid()) {
 				throw InternalError("Immediate capturing lambda did not produce a named closure object");
 			}
 
@@ -390,8 +390,8 @@
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && (resolved_member->type == Type::Struct || resolved_member->type == Type::UserDefined)) {
 					// Get the struct info for the member's type
-					if (resolved_member->type_index < gTypeInfo.size()) {
-						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index];
+					if (resolved_member->type_index.value < gTypeInfo.size()) {
+						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index.value];
 						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 						if (member_struct_info) {
 							// Look for the called function name in this struct's members
@@ -590,7 +590,7 @@
 		bool is_virtual_call = false;
 		int vtable_index = -1;
 
-		size_t struct_type_index = object_type.type_index();
+		size_t struct_type_index = object_type.type_index().value;
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 
@@ -634,8 +634,8 @@
 				if (!called_member_func && !struct_info->base_classes.empty()) {
 					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
-							if (base_spec.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+							if (base_spec.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {

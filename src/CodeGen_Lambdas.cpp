@@ -34,7 +34,7 @@
 		} else if (current_lambda_context_.enclosing_struct_type_index > 0 &&
 			current_lambda_context_.enclosing_struct_type_index < gTypeInfo.size()) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
-			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index].name());
+			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index.value].name());
 		}
 
 		info.lambda_body = lambda.body();

@@ -904,8 +904,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 				// This is important for placeholder types like "Op<...>::type"
 				std::string_view full_type_name = type_name;
 				TypeIndex type_idx = type_spec.type_index();
-				if (type_idx > 0 && type_idx < gTypeInfo.size()) {
-					full_type_name = StringTable::getStringView(gTypeInfo[type_idx].name_);
+				if (type_idx.is_valid() && type_idx.value < gTypeInfo.size()) {
+					full_type_name = StringTable::getStringView(gTypeInfo[type_idx.value].name_);
 				}
 				
 				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
@@ -914,8 +914,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
 						const auto& arg = template_args[i];
-						if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-							return static_cast<long long>((gTypeInfo[arg.type_index].type_size_ + 7) / 8);
+						if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
+							return static_cast<long long>((gTypeInfo[arg.type_index.value].type_size_ + 7) / 8);
 						}
 						long long size = static_cast<long long>(get_type_size_bits(arg.base_type) / 8);
 						if (size > 0) {
@@ -977,8 +977,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 										if (member_part == "type") {
 											// For a simple type alias like HasType<T>::type = T,
 											// return the size of the template argument
-											if (pack_arg.type_index > 0 && pack_arg.type_index < gTypeInfo.size()) {
-												long long size = static_cast<long long>((gTypeInfo[pack_arg.type_index].type_size_ + 7) / 8);
+											if (pack_arg.type_index.is_valid() && pack_arg.type_index.value < gTypeInfo.size()) {
+												long long size = static_cast<long long>((gTypeInfo[pack_arg.type_index.value].type_size_ + 7) / 8);
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
 												return size;
 											}
@@ -1003,9 +1003,9 @@ inline std::optional<long long> evaluateConstraintExpression(
 					if (template_param_names[i] == type_name) {
 						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
-						if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+						if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
 							// type_size_ is in bits, convert to bytes
-							return static_cast<long long>((gTypeInfo[arg.type_index].type_size_ + 7) / 8);
+							return static_cast<long long>((gTypeInfo[arg.type_index.value].type_size_ + 7) / 8);
 						}
 						// Fallback for primitive types without type_index (e.g., int, char, etc.)
 						// This handles cases where type_index is 0 but base_type is valid

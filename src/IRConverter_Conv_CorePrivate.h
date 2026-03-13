@@ -28,9 +28,9 @@
 					if (handler.exception_type != Type::Void && handler.exception_type != Type::UserDefined && handler.exception_type != Type::Struct) {
 						// Built-in type - get name from Type enum
 						handler_info.type_name = getTypeName(handler.exception_type);
-					} else if (handler.type_index < gTypeInfo.size()) {
+					} else if (handler.type_index.value < gTypeInfo.size()) {
 						// User-defined type - get name from gTypeInfo
-						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index.value].name());
 					}
 				}
 				
@@ -479,7 +479,7 @@
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bytes = ref_info->value_size_bits / 8;
+							int value_size_bytes = ref_info->value_size_bits.value / 8;
 							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
 						} else if (ref_info.has_value()) {
 							// This holds an address value directly (e.g. addressof) - load it as-is
@@ -553,7 +553,7 @@
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 						// Now dereference: load from [register + 0]
-						int value_size_bits = ref_it->second.value_size_bits;
+						int value_size_bits = ref_it->second.value_size_bits.value;
 						OpCodeWithSize deref_opcodes;
 						if (value_size_bits == 64) {
 							deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
@@ -699,7 +699,7 @@
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
-							int value_size_bytes = ref_info->value_size_bits / 8;
+							int value_size_bytes = ref_info->value_size_bits.value / 8;
 							emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 						} else if (ref_info.has_value()) {
 							// This holds an address value directly (e.g. addressof) - load it as-is
@@ -791,7 +791,7 @@
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
-						int value_size_bytes = ref_it->second.value_size_bits / 8;
+						int value_size_bytes = ref_it->second.value_size_bits.value / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 					} else if (ref_it != reference_stack_info_.end()) {
 						// This holds an address value directly (e.g. addressof) - load it as-is
@@ -1030,7 +1030,7 @@
 				auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
-				int value_size_bits = ref_info->value_size_bits;
+				int value_size_bits = ref_info->value_size_bits.value;
 				int value_size_bytes = value_size_bits / 8;
 				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 				regAlloc.release(ptr_reg);
@@ -1065,7 +1065,7 @@
 				// Load the pointer into the register
 				emitMovFromFrame(ptr_reg, res_stack_var_addr);
 				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
-				int value_size_bits = ref_info->value_size_bits;
+				int value_size_bits = ref_info->value_size_bits.value;
 				int value_size_bytes = value_size_bits / 8;
 				emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 				regAlloc.release(ptr_reg);
@@ -1386,9 +1386,9 @@
 				constexpr size_t max_int_regs = 6;
 				constexpr size_t max_float_regs = 8;
 				for (const auto& arg : args) {
-					bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && arg.pointer_depth == 0;
+					bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && !arg.pointer_depth.is_pointer();
 					bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits.value > 64 && arg.size_in_bits.value <= 128 &&
-					                     !arg.is_reference() && arg.pointer_depth == 0;
+					                     !arg.is_reference() && !arg.pointer_depth.is_pointer();
 					size_t slots = arg_is_two_reg ? 2 : 1;
 					if (arg_is_float) {
 						if (float_slots_used < max_float_regs) float_slots_used++;
@@ -1521,8 +1521,8 @@
 										handled_by_typed_payload = true;
 									} else {
 										int catch_size_bits = 0;
-										if (catch_op->type_index != 0 && catch_op->type_index < gTypeInfo.size()) {
-											catch_size_bits = gTypeInfo[catch_op->type_index].type_size_;
+										if (catch_op->type_index.is_valid() && catch_op->type_index.value < gTypeInfo.size()) {
+											catch_size_bits = gTypeInfo[catch_op->type_index.value].type_size_;
 										} else {
 											catch_size_bits = get_type_size_bits(catch_op->exception_type);
 										}
@@ -1589,7 +1589,7 @@
 						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
-							int result_size = (deref_op->pointer.pointer_depth > 1) ? 64 : deref_op->pointer.size_in_bits.value;
+							int result_size = (deref_op->pointer.pointer_depth.value > 1) ? 64 : deref_op->pointer.size_in_bits.value;
 							temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 							handled_by_typed_payload = true;
 						}

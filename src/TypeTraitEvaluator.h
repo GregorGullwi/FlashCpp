@@ -380,8 +380,8 @@ inline TypeTraitResult evaluateTypeTrait(
 				// If no explicit destructor but has vtable, check base classes
 				if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 					for (const auto& base : struct_info->base_classes) {
-						if (base.type_index < gTypeInfo.size()) {
-							const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+						if (base.type_index.value < gTypeInfo.size()) {
+							const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 							if (base_struct_info && base_struct_info->has_vtable) {
 								result = true;

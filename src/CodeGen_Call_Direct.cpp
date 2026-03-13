@@ -6,7 +6,7 @@
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
 			irOperands.emplace_back(result.type);
-			irOperands.emplace_back(result.size_in_bits);
+			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
 
@@ -338,10 +338,10 @@
 				if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
-				if (type_info->type_index_ == 0 || type_info->type_index_ >= gTypeInfo.size()) {
+				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= gTypeInfo.size()) {
 					break;
 				}
-				const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+				const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
 				if (&underlying == type_info) {
 					break;
 				}
@@ -463,8 +463,8 @@
 					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
 						for (const auto& base_spec : current_struct->base_classes) {
 							// Look up base class in gTypeInfo
-							if (base_spec.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+							if (base_spec.type_index.value < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {
@@ -658,8 +658,8 @@
 						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
 						if (curr_struct) {
 							for (const auto& base_spec : curr_struct->base_classes) {
-								if (base_spec.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_spec.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 									if (base_type_info.isTemplateInstantiation() && 
 									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
 									base_type_info.isStruct()) {
@@ -826,8 +826,8 @@
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 					
-					if (param_type_index > 0 && param_type_index < gTypeInfo.size()) {
-						const TypeInfo& target_type_info = gTypeInfo[param_type_index];
+					if (param_type_index.is_valid() && param_type_index.value < gTypeInfo.size()) {
+						const TypeInfo& target_type_info = gTypeInfo[param_type_index.value];
 						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
 						
 						// Look for a converting constructor that takes the argument type
@@ -851,7 +851,7 @@
 												param_matches = true;
 												// For class types, require exact type match, not just Type::Struct kind.
 												if ((arg_type == Type::Struct || arg_type == Type::UserDefined) &&
-													(arg_type_index == 0 || ctor_param_type.type_index() == 0 ||
+													(!arg_type_index.is_valid() || !ctor_param_type.type_index().is_valid() ||
 													ctor_param_type.type_index() != arg_type_index)) {
 													param_matches = false;
 												}
@@ -896,8 +896,8 @@
 				
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					if (arg_type_index > 0 && arg_type_index < gTypeInfo.size()) {
-						const TypeInfo& source_type_info = gTypeInfo[arg_type_index];
+					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
+						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
 						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 						
 						// Look for a conversion operator to the parameter type
@@ -1010,7 +1010,7 @@
 				// Check if this is an enumerator constant (not a variable of enum type)
 				// Enumerator constants should be passed as immediate values, not variable references
 				if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
-					size_t enum_type_index = type_node.type_index();
+					size_t enum_type_index = type_node.type_index().value;
 					if (enum_type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[enum_type_index];
 						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -1275,7 +1275,7 @@
 				// applyTypeNodeMetadata is still used for default arguments where the
 				// parameter type IS the correct type.
 				arg.pointer_depth = PointerDepth{static_cast<int>(param_type_spec->pointer_depth())};
-				if (param_type_spec->type_index() != 0) {
+				if (param_type_spec->type_index().is_valid()) {
 					arg.type_index = param_type_spec->type_index();
 				}
 				arg.cv_qualifier = param_type_spec->cv_qualifier();

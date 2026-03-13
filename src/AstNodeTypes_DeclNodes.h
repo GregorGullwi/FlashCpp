@@ -1118,8 +1118,8 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	Type t = type_spec.type();
 	if (t == Type::Struct || t == Type::UserDefined || t == Type::Enum) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx > 0 && idx < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[idx];
+		if (idx.is_valid() && idx.value < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[idx.value];
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
 			}

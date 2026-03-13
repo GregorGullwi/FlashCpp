@@ -231,8 +231,8 @@
 			result.final_type = type_node->type();
 			result.final_size_bits = static_cast<int>(type_node->size_in_bits());
 			if (result.final_type == Type::Struct && result.final_size_bits == 0 &&
-				type_node->type_index() > 0 && type_node->type_index() < gTypeInfo.size()) {
-				if (const StructTypeInfo* struct_info = gTypeInfo[type_node->type_index()].getStructInfo()) {
+				type_node->type_index().is_valid() && type_node->type_index().value < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[type_node->type_index().value].getStructInfo()) {
 					result.final_size_bits = static_cast<int>(struct_info->total_size * 8);
 				}
 			}
@@ -256,12 +256,12 @@
 			
 			Type object_type = object_operands.type;
 			TypeIndex type_index {};
-			if (object_operands.type_index != 0) {
+			if (object_operands.type_index.is_valid()) {
 				type_index = object_operands.type_index;
 			}
 			
 			// Look up member information
-			if (type_index == 0 || type_index >= gTypeInfo.size() || object_type != Type::Struct) {
+			if (!type_index.is_valid() || type_index.value >= gTypeInfo.size() || object_type != Type::Struct) {
 				return std::nullopt;
 			}
 			
@@ -321,8 +321,8 @@
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
 					} else if (type_node.type() == Type::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
-						if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+						if (type_index_from_decl.is_valid() && type_index_from_decl.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index_from_decl.value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -347,8 +347,8 @@
 					element_size_bits = get_type_size_bits(element_type);
 				}
 				// Try to get pointer depth from array_operands[3] if available
-				if (array_operands.pointer_depth != 0) {
-					element_pointer_depth = array_operands.pointer_depth;
+				if (array_operands.pointer_depth.is_pointer()) {
+					element_pointer_depth = array_operands.pointer_depth.value;
 				}
 			}
 			
@@ -454,7 +454,7 @@
 							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 							
 							// Get struct name for mangling
-							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index().value].name());
 							
 							// Get the return type from the function declaration
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
@@ -653,8 +653,8 @@
 									} else if (type_node.type() == Type::Struct) {
 										// Array of structs
 										TypeIndex type_index_from_decl = type_node.type_index();
-										if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
-											const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+										if (type_index_from_decl.is_valid() && type_index_from_decl.value < gTypeInfo.size()) {
+											const TypeInfo& type_info = gTypeInfo[type_index_from_decl.value];
 											const StructTypeInfo* struct_info = type_info.getStructInfo();
 											if (struct_info) {
 												element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -672,12 +672,12 @@
 							
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
 							TypeIndex type_index {};
-							if (array_operands.type_index != 0) {
+							if (array_operands.type_index.is_valid()) {
 								type_index = array_operands.type_index;
 							}
 							
 							// Look up member information
-							if (type_index > 0 && type_index < gTypeInfo.size() && element_type == Type::Struct) {
+							if (type_index.is_valid() && type_index.value < gTypeInfo.size() && element_type == Type::Struct) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -734,12 +734,12 @@
 						
 						// Get the struct type index
 						TypeIndex type_index {};
-						if (object_operands.type_index != 0) {
+						if (object_operands.type_index.is_valid()) {
 							type_index = object_operands.type_index;
 						}
 						
 						// Look up member information
-						if (type_index > 0 && type_index < gTypeInfo.size() && object_type == Type::Struct) {
+						if (type_index.is_valid() && type_index.value < gTypeInfo.size() && object_type == Type::Struct) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -922,8 +922,8 @@
 						} else if (type_node.type() == Type::Struct) {
 							// Array of structs
 							TypeIndex type_index = type_node.type_index();
-							if (type_index > 0 && type_index < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_index];
+							if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_index.value];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
 									element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -1102,7 +1102,7 @@
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
 								if (is_struct_type(object_type.type())) {
 									TypeIndex type_index = object_type.type_index();
-									if (type_index < gTypeInfo.size()) {
+									if (type_index.value < gTypeInfo.size()) {
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
 										if (member_result) {
 											return generateMemberIncDec(object_name, member_result.member, false,
@@ -1146,8 +1146,8 @@
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
-					if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info && isLambdaClosureStruct(*struct_info)) {
 							lambda_struct_info = struct_info;
@@ -1233,18 +1233,18 @@
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
 		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
-			size_t struct_type_index = operandIrOperands.type_index;
+			size_t struct_type_index = operandIrOperands.type_index.value;
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(op_expr)) {
 					auto sym = lookupSymbol(std::get<IdentifierNode>(op_expr).nameHandle());
 					if (sym.has_value() && sym->is<DeclarationNode>()) {
-						struct_type_index = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().type_index();
+						struct_type_index = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().type_index().value;
 					}
 				}
 			}
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+				const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && isLambdaClosureStruct(*struct_info)) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
@@ -1316,7 +1316,7 @@
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
 			// Get the current pointer depth from operandIrOperands
-			unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth);
+			unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
 			
 			// Create typed payload with TypedValue
 			AddressOfOp op;
@@ -1361,8 +1361,8 @@
 				int pointer_depth = 0;
 				
 				// Get pointer depth
-				if (operandIrOperands.pointer_depth > 0) {
-					pointer_depth = operandIrOperands.pointer_depth;
+				if (operandIrOperands.pointer_depth.is_pointer()) {
+					pointer_depth = operandIrOperands.pointer_depth.value;
 				} else if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 					const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(operandExpr)) {
@@ -1446,7 +1446,7 @@
 			int pointer_depth = 0;
 			
 			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
-			pointer_depth = operandIrOperands.pointer_depth;
+			pointer_depth = operandIrOperands.pointer_depth.value;
 			// If pointer_depth is still 0, look up the pointer operand in the symbol table.
 			if (pointer_depth == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
@@ -1555,7 +1555,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 		return std::nullopt;
 
 	TypeIndex operand_type_index = operandIrResult.type_index;
-	if (operand_type_index == 0)
+	if (!operand_type_index.is_valid())
 		return std::nullopt;
 
 	// For ++/--, we need to distinguish prefix (0 params) from postfix (1 param: dummy int).
@@ -1564,8 +1564,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	size_t expected_param_count = is_prefix ? 0 : 1;
 	const StructMemberFunction* matched_func = nullptr;
 	const StructMemberFunction* fallback_func = nullptr;
-	if (operand_type_index < gTypeInfo.size()) {
-		const StructTypeInfo* struct_info = gTypeInfo[operand_type_index].getStructInfo();
+	if (operand_type_index.value < gTypeInfo.size()) {
+		const StructTypeInfo* struct_info = gTypeInfo[operand_type_index.value].getStructInfo();
 		if (struct_info) {
 			for (const auto& mf : struct_info->member_functions) {
 				if (mf.operator_kind == op_kind) {
@@ -1587,7 +1587,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	const StructMemberFunction& member_func = *matched_func;
 	const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-	std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index].name());
+	std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index.value].name());
 	TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	resolveSelfReferentialType(return_type, operand_type_index);
 
@@ -1614,8 +1614,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 	call_op.return_type = return_type.type();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-	if (!call_op.return_size_in_bits.is_set() && return_type.type_index() > 0 && return_type.type_index() < gTypeInfo.size() && gTypeInfo[return_type.type_index()].struct_info_) {
-		call_op.return_size_in_bits = SizeInBits{static_cast<int>(gTypeInfo[return_type.type_index()].struct_info_->total_size * 8)};
+	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().value < gTypeInfo.size() && gTypeInfo[return_type.type_index().value].struct_info_) {
+		call_op.return_size_in_bits = SizeInBits{static_cast<int>(gTypeInfo[return_type.type_index().value].struct_info_->total_size * 8)};
 	}
 	call_op.return_type_index = return_type.type_index();
 	call_op.is_member_function = true;
@@ -1674,7 +1674,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	TempVar result_var
 ) {
 	auto getOperandPointerDepth = [&]() -> int {
-		return operandIrResult.pointer_depth;
+		return operandIrResult.pointer_depth.value;
 	};
 
 	int operand_pointer_depth = getOperandPointerDepth();
@@ -1689,7 +1689,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index != 0) {
+		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {

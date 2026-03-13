@@ -224,7 +224,7 @@
 				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
 				
 				// If we have type_index information (for structs), include it
-				if (operands.type_index != 0) {
+				if (operands.type_index.is_valid()) {
 					deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
 					deduced_type.set_type_index(operands.type_index);
 				}
@@ -258,8 +258,8 @@
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 						
-						if (expr_type_index > 0 && expr_type_index < gTypeInfo.size()) {
-							const TypeInfo& source_type_info = gTypeInfo[expr_type_index];
+						if (expr_type_index.is_valid() && expr_type_index.value < gTypeInfo.size()) {
+							const TypeInfo& source_type_info = gTypeInfo[expr_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 							
 							// Look for a conversion operator to the return type

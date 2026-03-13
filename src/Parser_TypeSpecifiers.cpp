@@ -270,7 +270,7 @@ ParseResult Parser::parse_type_specifier()
 		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
 
 		// If the argument is a template parameter or dependent type, create a dependent type placeholder
-		if (arg_type.type() == Type::UserDefined && arg_type.type_index() == 0) {
+		if (arg_type.type() == Type::UserDefined && !arg_type.type_index().is_valid()) {
 			// Dependent type - return a placeholder that will be resolved during template instantiation
 			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -293,8 +293,8 @@ ParseResult Parser::parse_type_specifier()
 		// For concrete enum types, resolve to the underlying type
 		if (arg_type.type() == Type::Enum) {
 			// Look up the enum type to get its underlying type
-			if (arg_type.type_index() < gTypeInfo.size()) {
-				const TypeInfo& enum_type_info = gTypeInfo[arg_type.type_index()];
+			if (arg_type.type_index().value < gTypeInfo.size()) {
+				const TypeInfo& enum_type_info = gTypeInfo[arg_type.type_index().value];
 				if (enum_type_info.enum_info_) {
 					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
 					Type underlying = enum_info->underlying_type;
@@ -307,8 +307,8 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// If we have a type index, try to look up if it's an enum
-		if (arg_type.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[arg_type.type_index()];
+		if (arg_type.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[arg_type.type_index().value];
 			if (type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
 				Type underlying = enum_info->underlying_type;
@@ -654,7 +654,7 @@ ParseResult Parser::parse_type_specifier()
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
 			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
-				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_];
+				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
 					struct_info = actual_struct.getStructInfo();
@@ -1085,7 +1085,7 @@ ParseResult Parser::parse_type_specifier()
 							StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
 							
 							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
-								if (gTypeInfo[i].name() == target_handle) {
+								if (gTypeInfo[i.value].name() == target_handle) {
 									type_idx = TypeIndex{i};
 									found = true;
 									break;
@@ -1093,7 +1093,7 @@ ParseResult Parser::parse_type_specifier()
 							}
 							
 							if (found) {
-								const TypeInfo& new_ti = gTypeInfo[type_idx];
+								const TypeInfo& new_ti = gTypeInfo[type_idx.value];
 								
 								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
 								
@@ -1182,8 +1182,8 @@ ParseResult Parser::parse_type_specifier()
 						// The target type will have Type::UserDefined and a type_index pointing to
 						// the TypeInfo we created for the template parameter
 						bool is_template_param = false;
-						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
-							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
+						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < gTypeInfo.size()) {
+							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index().value];
 							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
 							}
@@ -1206,8 +1206,8 @@ ParseResult Parser::parse_type_specifier()
 							int size_bits = 0;
 							if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
 								// Look up the struct size from type_index
-								if (arg.type_index < gTypeInfo.size()) {
-									const TypeInfo& ti = gTypeInfo[arg.type_index];
+								if (arg.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& ti = gTypeInfo[arg.type_index.value];
 									size_bits = static_cast<unsigned char>(ti.type_size_);
 								}
 							} else {
@@ -1249,8 +1249,8 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Get the type name from instantiated_type to look up member
 							std::string_view base_type_name;
-							if (instantiated_type.type_index() < gTypeInfo.size()) {
-								base_type_name = StringTable::getStringView(gTypeInfo[instantiated_type.type_index()].name());
+							if (instantiated_type.type_index().value < gTypeInfo.size()) {
+								base_type_name = StringTable::getStringView(gTypeInfo[instantiated_type.type_index().value].name());
 							}
 							
 							// Build qualified type name
@@ -1397,7 +1397,7 @@ ParseResult Parser::parse_type_specifier()
 					// Fallback: no template args - just reference the template parameter type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
-						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0])};
+						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0.value])};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							Type::UserDefined,
 							type_idx,
@@ -1593,7 +1593,7 @@ ParseResult Parser::parse_type_specifier()
 							const auto& template_arg_infos = type_info->templateArgs();
 							for (const auto& arg_info : template_arg_infos) {
 								// Check if argument is a UserDefined type (dependent placeholder)
-								if (arg_info.base_type == Type::UserDefined && arg_info.type_index < gTypeInfo.size()) {
+								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.value < gTypeInfo.size()) {
 									has_dependent_args = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;
@@ -1921,8 +1921,8 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
-								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
-									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
+								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < gTypeInfo.size()) {
+									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index().value];
 									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;
 									}
@@ -1946,8 +1946,8 @@ ParseResult Parser::parse_type_specifier()
 									int size_bits = 0;
 									if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
 										// Look up the struct size from type_index
-										if (arg.type_index < gTypeInfo.size()) {
-											const TypeInfo& ti = gTypeInfo[arg.type_index];
+										if (arg.type_index.value < gTypeInfo.size()) {
+											const TypeInfo& ti = gTypeInfo[arg.type_index.value];
 											size_bits = static_cast<unsigned char>(ti.type_size_);
 										}
 									} else {
@@ -2231,7 +2231,7 @@ ParseResult Parser::parse_type_specifier()
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
 			if (!struct_info && struct_type_info->type_index_ < gTypeInfo.size()) {
-				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_];
+				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
 					struct_info = actual_struct.getStructInfo();
@@ -2314,7 +2314,7 @@ ParseResult Parser::parse_type_specifier()
 			} else if (user_type_index < gTypeInfo.size()) {
 				// Not a typedef - might be a struct type without size set in TypeInfo
 				// Look up actual size from struct info if available
-				const TypeInfo& actual_type_info = gTypeInfo[user_type_index];
+				const TypeInfo& actual_type_info = gTypeInfo[user_type_index.value];
 				if (actual_type_info.isStruct()) {
 					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
 					if (struct_info) {

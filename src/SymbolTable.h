@@ -561,12 +561,12 @@ public:
 
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (ti > 0 && ti < gTypeInfo.size()) {
-				if (const StructTypeInfo* si = gTypeInfo[ti].getStructInfo()) {
+			if (ti.is_valid() && ti.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo()) {
 					search_ns(si->namespace_handle);
 					for (const auto& base : si->base_classes) {
-						if (base.type_index > 0 && base.type_index < gTypeInfo.size()) {
-							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index].getStructInfo()) {
+						if (base.type_index.is_valid() && base.type_index.value < gTypeInfo.size()) {
+							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo()) {
 								search_ns(bsi->namespace_handle);
 							}
 						}

@@ -538,8 +538,8 @@
 					op.type = static_member.type;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
-					if (!op.size_in_bits.is_set() && static_member.type_index > 0 && static_member.type_index < gTypeInfo.size()) {
-						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index].getStructInfo();
+					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.value < gTypeInfo.size()) {
+						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index.value].getStructInfo();
 						if (member_si) {
 							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
 						}
@@ -574,8 +574,8 @@
 							if (ctor_type_node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ctor_type_spec = ctor_type_node.as<TypeSpecifierNode>();
 								TypeIndex ctor_type_index = ctor_type_spec.type_index();
-								if (ctor_type_index < gTypeInfo.size()) {
-									const StructTypeInfo* ctor_struct_info = gTypeInfo[ctor_type_index].getStructInfo();
+								if (ctor_type_index.value < gTypeInfo.size()) {
+									const StructTypeInfo* ctor_struct_info = gTypeInfo[ctor_type_index.value].getStructInfo();
 									if (ctor_struct_info) {
 										const ConstructorDeclarationNode* matching_ctor = nullptr;
 										if (parser_) {
@@ -833,17 +833,17 @@
 			// and generate alias definitions if needed (Phase 3: Generate ALL inherited static members)
 			if (!struct_info->base_classes.empty()) {
 				for (const auto& base : struct_info->base_classes) {
-					if (base.type_index >= gTypeInfo.size()) {
+					if (base.type_index.value >= gTypeInfo.size()) {
 						continue;
 					}
 					
-					const TypeInfo& base_type = gTypeInfo[base.type_index];
+					const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 					const StructTypeInfo* base_info = base_type.getStructInfo();
 					
 					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
 					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
-					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_ < gTypeInfo.size()) {
-						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_];
+					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_.value < gTypeInfo.size()) {
+						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_.value];
 						base_info = resolved_type.getStructInfo();
 						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_), 
 						"' to struct '", StringTable::getStringView(resolved_type.name_), "'");
@@ -893,8 +893,8 @@
 							
 							// Add base classes to queue
 							for (const auto& base_spec : current->base_classes) {
-								if (base_spec.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_spec.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
 									if (const StructTypeInfo* base_struct = base_type_info.getStructInfo()) {
 										to_visit.push(base_struct);
 									}
@@ -1201,16 +1201,16 @@
 // Important: only resolves when the unfinalized type's name matches the base name of the
 // enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.type() == Type::Struct && type.type_index() > 0 && type.type_index() < gTypeInfo.size()) {
-		auto& ti = gTypeInfo[type.type_index()];
+	if (type.type() == Type::Struct && type.type_index().is_valid() && type.type_index().value < gTypeInfo.size()) {
+		auto& ti = gTypeInfo[type.type_index().value];
 		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
-			if (enclosing_type_index < gTypeInfo.size()) {
+			if (enclosing_type_index.value < gTypeInfo.size()) {
 				// Verify this is actually a self-reference by checking that the unfinalized
 				// type's name matches the base name of the enclosing struct.
 				// For template instantiations: W (unfinalized) matches W$hash (enclosing)
 				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
 				auto unfinalized_name = StringTable::getStringView(ti.name());
-				auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index].name());
+				auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index.value].name());
 				
 				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
 				// Template hash: "Name$hash" -> "Name"
@@ -1363,13 +1363,13 @@ void AstToIr::emitRecursiveZeroFill(
 {
 	for (const StructMember& sub_member : struct_info.members) {
 		bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
-			&& sub_member.type_index < gTypeInfo.size()
-			&& gTypeInfo[sub_member.type_index].struct_info_
+			&& sub_member.type_index.value < gTypeInfo.size()
+			&& gTypeInfo[sub_member.type_index.value].struct_info_
 			&& (sub_member.size * 8) > 64;
 
 		if (is_nested_struct) {
 			emitRecursiveZeroFill(
-				*gTypeInfo[sub_member.type_index].struct_info_,
+				*gTypeInfo[sub_member.type_index.value].struct_info_,
 				base_object,
 				base_offset + static_cast<int>(sub_member.offset),
 				token);
@@ -1411,8 +1411,8 @@ const Token& token)
 	}
 
 	int element_size_bits = 0;
-	if (member.type_index < gTypeInfo.size()) {
-		const TypeInfo& elem_type_info = gTypeInfo[member.type_index];
+	if (member.type_index.value < gTypeInfo.size()) {
+		const TypeInfo& elem_type_info = gTypeInfo[member.type_index.value];
 		if (elem_type_info.struct_info_) {
 			// Struct types store type_size_ in bytes
 			element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
@@ -1490,8 +1490,8 @@ const Token& token)
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
 	const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
-		&& member.type_index < gTypeInfo.size()
-		&& gTypeInfo[member.type_index].struct_info_
+		&& member.type_index.value < gTypeInfo.size()
+		&& gTypeInfo[member.type_index.value].struct_info_
 		&& element_size_bits > 64;
 
 	for (size_t i = emit_count; i < element_count; ++i) {
@@ -1501,7 +1501,7 @@ const Token& token)
 				+ static_cast<int>(member.offset)
 				+ static_cast<int>(i) * (element_size_bits / 8);
 
-			emitRecursiveZeroFill(*gTypeInfo[member.type_index].struct_info_,
+			emitRecursiveZeroFill(*gTypeInfo[member.type_index.value].struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
 			TypedValue zero_value{member.type, SizeInBits{element_size_bits}, 0ULL};
@@ -1573,8 +1573,8 @@ const Token& token)
 				continue;
 			}
 
-			if (member.type_index < gTypeInfo.size()) {
-				const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+			if (member.type_index.value < gTypeInfo.size()) {
+				const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
 
 				if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
 					// RECURSIVE CALL for nested struct

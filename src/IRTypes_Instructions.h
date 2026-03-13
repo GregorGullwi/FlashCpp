@@ -223,7 +223,7 @@ public:
 			if (ret_type_info != gNativeTypes.end()) {
 				oss << ret_type_info->second->name();
 			}
-			for (int i = 0; i < op.return_pointer_depth; ++i) {
+			for (int i = 0; i < op.return_pointer_depth.value; ++i) {
 				oss << "*";
 			}
 			oss << op.return_size_in_bits;
@@ -260,7 +260,7 @@ public:
 				}
 				// Print pointer levels, but exclude the extra level added for lvalue references
 				// (that level is represented by the & suffix instead)
-				int effective_pointer_depth = param.pointer_depth;
+				int effective_pointer_depth = param.pointer_depth.value;
 				if (param.is_reference() && !param.is_rvalue_reference() && effective_pointer_depth > 0) {
 					effective_pointer_depth -= 1;  // Lvalue ref was represented as +1 pointer depth
 				}
@@ -510,8 +510,8 @@ public:
 			oss << op.operand.size_in_bits;
 			
 			// Show pointer depth if any
-			if (op.operand.pointer_depth > 0) {
-				oss << " (ptr_depth=" << op.operand.pointer_depth << ")";
+			if (op.operand.pointer_depth.is_pointer()) {
+				oss << " (ptr_depth=" << op.operand.pointer_depth.value << ")";
 			}
 			oss << " ";
 		
@@ -584,12 +584,12 @@ public:
 				oss << type_info->second->name();
 			}
 			
-			int deref_size = (op.pointer.pointer_depth > 1) ? 64 : op.pointer.size_in_bits.value;
+			int deref_size = (op.pointer.pointer_depth.value > 1) ? 64 : op.pointer.size_in_bits.value;
 			oss << deref_size;
 			
 			// Show pointer depth for debugging
-			if (op.pointer.pointer_depth > 0) {
-				oss << " (ptr_depth=" << op.pointer.pointer_depth << ")";
+			if (op.pointer.pointer_depth.is_pointer()) {
+				oss << " (ptr_depth=" << op.pointer.pointer_depth.value << ")";
 			}
 			oss << " ";
 		
@@ -615,8 +615,8 @@ public:
 			oss << op.pointer.size_in_bits;
 			
 			// Show pointer depth if any
-			if (op.pointer.pointer_depth > 0) {
-				oss << " (ptr_depth=" << op.pointer.pointer_depth << ")";
+			if (op.pointer.pointer_depth.is_pointer()) {
+				oss << " (ptr_depth=" << op.pointer.pointer_depth.value << ")";
 			}
 			oss << " ";
 		
@@ -734,8 +734,8 @@ public:
 					oss << type_it->second;
 				} else if (arg.type == Type::Struct || arg.type == Type::Enum) {
 					// Try to get the type name from gTypeInfo using type_index
-					if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-						oss << gTypeInfo[arg.type_index].name();
+					if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
+						oss << gTypeInfo[arg.type_index.value].name();
 					} else {
 						oss << (arg.type == Type::Struct ? "struct" : "enum");
 					}
@@ -840,7 +840,7 @@ public:
 			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc [" 
 				<< static_cast<int>(op.type) << "][" 
-				<< op.size_in_bytes << "][" << op.pointer_depth << "]";
+				<< op.size_in_bytes << "][" << op.pointer_depth.value << "]";
 		}
 		break;
 		
@@ -850,7 +850,7 @@ public:
 			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc_array [" 
 				<< static_cast<int>(op.type) << "][" 
-				<< op.size_in_bytes << "][" << op.pointer_depth << "] ";
+				<< op.size_in_bytes << "][" << op.pointer_depth.value << "] ";
 		
 			if (std::holds_alternative<TempVar>(op.count))
 				oss << '%' << std::get<TempVar>(op.count).var_number;
@@ -1208,10 +1208,10 @@ public:
 		{
 			const auto& op = getTypedPayload<CatchBeginOp>();
 			oss << "catch_begin ";
-			if (op.type_index == 0) {
+			if (!op.type_index.is_valid()) {
 				oss << "...";  // catch-all
 			} else {
-				oss << "type_" << op.type_index;
+				oss << "type_" << op.type_index.value;
 			}
 			oss << " %" << op.exception_temp.var_number;
 			if (op.is_const) oss << " const";
@@ -1247,7 +1247,7 @@ public:
 				// StringHandle represents a string constant - print as quoted string
 				oss << "\"" << StringTable::getStringView(std::get<StringHandle>(op.exception_value)) << "\"";
 			}
-			oss << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
+			oss << " : type_" << op.type_index.value << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";
 		}
 		break;

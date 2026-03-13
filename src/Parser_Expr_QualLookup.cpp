@@ -526,7 +526,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		// Type aliases have a type_index that points to the underlying type
 		// Check if type_index_ is valid and points to a different TypeInfo entry
 		if (struct_type_info->type_index_ < gTypeInfo.size()) {
-			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
+			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_.value];
 			// Check if this is actually an alias (points to a different TypeInfo)
 			// by comparing the pointer addresses
 			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
@@ -605,7 +605,7 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 		// Type aliases have a type_index that points to the underlying type
 		// Check if type_index_ is valid and points to a different TypeInfo entry
 		if (struct_type_info->type_index_ < gTypeInfo.size()) {
-			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
+			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_.value];
 			// Check if this is actually an alias (points to a different TypeInfo)
 			// by comparing the pointer addresses
 			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
@@ -764,7 +764,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// follow the chain to find the actual struct type
 	size_t max_alias_depth = 10;  // Prevent infinite loops
 	while (base_type_info->type_ != Type::Struct && base_type_info->type_index_ < gTypeInfo.size() && max_alias_depth-- > 0) {
-		const TypeInfo& underlying = gTypeInfo[base_type_info->type_index_];
+		const TypeInfo& underlying = gTypeInfo[base_type_info->type_index_.value];
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
 		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}, underlying type={}", 
@@ -831,7 +831,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		
 		// If we have a valid type_index, prefer the name from gTypeInfo
 		if (result_type_index < gTypeInfo.size() && result_type_index > 0) {
-			const TypeInfo& type_info = gTypeInfo[result_type_index];
+			const TypeInfo& type_info = gTypeInfo[result_type_index.value];
 			type_name = StringTable::getStringView(type_info.name());
 			
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index, 
@@ -1014,11 +1014,11 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// that resolves to a template parameter (e.g., "using value_type = T;")
 			// This requires a valid type_index to look up the alias info
 			if (!found_match && result_type_index > 0 && result_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[result_type_index];
+				const TypeInfo& type_info = gTypeInfo[result_type_index.value];
 				if (type_info.type_ == Type::UserDefined && type_info.type_index_ != result_type_index) {
 					// This is a type alias - recursively check what it resolves to
 					if (type_info.type_index_ < gTypeInfo.size()) {
-						const TypeInfo& alias_target_info = gTypeInfo[type_info.type_index_];
+						const TypeInfo& alias_target_info = gTypeInfo[type_info.type_index_.value];
 						std::string_view alias_target_name = StringTable::getStringView(alias_target_info.name());
 						
 						// Check if the alias target is a template parameter
@@ -1047,7 +1047,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// Here we substitute: find a Template param whose name matches baseTemplateName(),
 			// then instantiate the corresponding concrete template with the preserved args.
 			if (!found_match && result_type_index < gTypeInfo.size() && result_type_index > 0) {
-				const TypeInfo& placeholder_info = gTypeInfo[result_type_index];
+				const TypeInfo& placeholder_info = gTypeInfo[result_type_index.value];
 				if (placeholder_info.isTemplateInstantiation()) {
 					std::string_view base_tpl_name = StringTable::getStringView(placeholder_info.baseTemplateName());
 					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -1055,8 +1055,8 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 						if (tparam.kind() == TemplateParameterKind::Template && tparam.name() == base_tpl_name) {
 							const TemplateTypeArg& concrete_arg = template_args[i];
-							if (concrete_arg.type_index < gTypeInfo.size()) {
-								std::string_view concrete_tpl_name = StringTable::getStringView(gTypeInfo[concrete_arg.type_index].name());
+							if (concrete_arg.type_index.value < gTypeInfo.size()) {
+								std::string_view concrete_tpl_name = StringTable::getStringView(gTypeInfo[concrete_arg.type_index.value].name());
 								// Convert the preserved args from the placeholder to TemplateTypeArg,
 								// substituting any dependent template params with their concrete types.
 								// E.g., for Container<T> with Container=Box, T=int, the placeholder
@@ -1085,8 +1085,8 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 									// Fallback: match by type_index name against param names
 									if (!substituted && !arg_info.is_value &&
 									    (arg_info.base_type == Type::UserDefined || arg_info.base_type == Type::Struct) &&
-									    arg_info.type_index < gTypeInfo.size()) {
-										std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg_info.type_index].name());
+									    arg_info.type_index.value < gTypeInfo.size()) {
+										std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg_info.type_index.value].name());
 										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
 											if (!template_params[j].is<TemplateParameterNode>()) continue;
 											if (template_params[j].as<TemplateParameterNode>().name() == arg_type_name) {
@@ -1497,8 +1497,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 					if (!lambda_ptr) {
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+						if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && isLambdaClosureStruct(*struct_info)) {
 								if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, decl.identifier_token())) {
@@ -1540,8 +1540,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
-		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index() < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[operand_type.type_index()];
+		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[operand_type.type_index().value];
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (struct_info && isLambdaClosureStruct(*struct_info)) {
 				if (auto fp_type = build_function_pointer_type_from_struct(*struct_info, operand_type.token())) {
@@ -1580,7 +1580,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
 				size_t struct_type_index = object_type_opt->type_index();
 				if (struct_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[struct_type_index];
+					const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						// Look up the member function
@@ -1684,7 +1684,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (member_ctx.struct_type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
+						const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index.value];
 						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
 					}
 				}
@@ -2127,15 +2127,15 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::LongDouble: result += "long double"; break;
 		case Type::Auto: result += "auto"; break;
 		case Type::Struct:
-			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
+			if (type.type_index().value < gTypeInfo.size()) {
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index().value].name()));
 			} else {
 				result += "struct";
 			}
 			break;
 		case Type::Enum:
-			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
+			if (type.type_index().value < gTypeInfo.size()) {
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index().value].name()));
 			} else {
 				result += "enum";
 			}

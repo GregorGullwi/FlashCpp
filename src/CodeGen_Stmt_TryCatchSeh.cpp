@@ -139,7 +139,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					decl_op.initializer = init_value;
 					decl_op.use_copy_constructor = !type_node.is_reference() &&
 					                               type_node.type() == Type::Struct &&
-					                               type_index != 0;
+					                               type_index.is_valid();
 					
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
@@ -264,7 +264,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					materialized_throw_decl.type = expr_type;
 					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
-					materialized_throw_decl.use_copy_constructor = (exception_type_index != 0);
+					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
 
 					TypedValue materialized_init;
 					materialized_init.type = expr_type;

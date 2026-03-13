@@ -72,8 +72,8 @@
 					// For struct types, call constructor for each element
 					if (type == Type::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_index.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
@@ -178,8 +178,8 @@
 				StringHandle array_struct_name_handle{};
 				if (type == Type::Struct) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_index.value < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index.value];
 						if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 							array_struct_info = type_info.struct_info_.get();
 							array_struct_name_handle = type_info.name();
@@ -197,8 +197,8 @@
 					// For struct types, call constructor for each element
 					if (type == Type::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_index.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
@@ -355,8 +355,8 @@
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index.value];
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
@@ -399,8 +399,8 @@
 			// If this is a struct type with a constructor, generate constructor call
 			if (type == Type::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index.value];
 					if (type_info.struct_info_) {
 						// Check if this is an abstract class
 						if (type_info.struct_info_->is_abstract) {
@@ -451,11 +451,11 @@
 		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
-		(ptr_operands.type_index != 0)) {
+		(ptr_operands.type_index.is_valid())) {
 			unsigned long long type_idx_val = ptr_operands.type_index;
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
 			if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_idx_val];
+				const TypeInfo& type_info = gTypeInfo[type_idx_val.value];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					DestructorCallOp dtor_op;
@@ -478,10 +478,10 @@
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
 			if (ptr_type == Type::Struct &&
-			(ptr_operands.type_index != 0)) {
+			(ptr_operands.type_index.is_valid())) {
 				unsigned long long type_idx_val = ptr_operands.type_index;
 				if (type_idx_val > 0 && type_idx_val < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_idx_val];
+					const TypeInfo& type_info = gTypeInfo[type_idx_val.value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && struct_info->hasDestructor()) {
 						has_dtor_loop = true;
@@ -723,12 +723,12 @@
 		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
-			if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
+			if (!source_type_index.is_valid() || source_type_index.value >= gTypeInfo.size()) {
 				return false;
 			}
 			Type semantic_type = resolve_type_alias(source_type, source_type_index);
 			if (semantic_type != Type::Struct && semantic_type != Type::Enum && semantic_type != Type::UserDefined) {
-				semantic_type = resolve_type_alias(gTypeInfo[source_type_index].type_, source_type_index);
+				semantic_type = resolve_type_alias(gTypeInfo[source_type_index.value].type_, source_type_index);
 			}
 			return semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 		};
@@ -899,8 +899,8 @@
 			StringHandle type_name;
 			if (type_node.type() == Type::Struct) {
 				TypeIndex type_idx = type_node.type_index();
-				if (type_idx < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_idx];
+				if (type_idx.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_idx.value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						type_name = struct_info->getName();
@@ -965,8 +965,8 @@
 		std::string target_type_name;
 		if (target_type_node.type() == Type::Struct) {
 			TypeIndex type_idx = target_type_node.type_index();
-			if (type_idx < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_idx];
+			if (type_idx.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_idx.value];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					target_type_name = StringTable::getStringView(struct_info->getName());

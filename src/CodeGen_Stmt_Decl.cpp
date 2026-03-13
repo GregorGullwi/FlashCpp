@@ -245,9 +245,9 @@
 								const ASTNode& elem_init = ilist.initializers()[i];
 								if (elem_init.is<InitializerListNode>() &&
 									(member.type == Type::Struct || member.type == Type::UserDefined) &&
-									member.type_index < gTypeInfo.size()) {
+									member.type_index.value < gTypeInfo.size()) {
 									// Nested struct: recurse
-									const StructTypeInfo* nested = gTypeInfo[member.type_index].getStructInfo();
+									const StructTypeInfo* nested = gTypeInfo[member.type_index.value].getStructInfo();
 									if (nested) {
 										self(self, nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
 									}
@@ -278,8 +278,8 @@
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
 					if (type_node.type() == Type::Struct && !decl.is_array() && !type_node.is_array()
-						&& type_node.type_index() != 0 && type_node.type_index() < gTypeInfo.size()) {
-						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index()].getStructInfo();
+						&& type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
+						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index().value].getStructInfo();
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
@@ -297,9 +297,9 @@
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if (type_node.type() == Type::Struct && type_node.type_index() != 0 &&
-							type_node.type_index() < gTypeInfo.size()) {
-							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index()].getStructInfo();
+						if (type_node.type() == Type::Struct && type_node.type_index().is_valid() &&
+							type_node.type_index().value < gTypeInfo.size()) {
+							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index().value].getStructInfo();
 							if (elem_struct) {
 								op.init_data.resize(op.element_count * elem_struct->total_size, 0);
 								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
@@ -326,10 +326,10 @@
 							}
 						}
 					}
-				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index() != 0) {
+				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index().is_valid()) {
 					// Struct-typed global variable initialized via constructor call (e.g., Ordering(-1))
 					const auto& ctor_call = std::get<ConstructorCallNode>(init_node.as<ExpressionNode>());
-					const TypeInfo& ti = gTypeInfo[type_node.type_index()];
+					const TypeInfo& ti = gTypeInfo[type_node.type_index().value];
 					const StructTypeInfo* si = ti.getStructInfo();
 					bool ctor_evaluated = false;
 					if (si && !ctor_call.arguments().empty()) {
@@ -521,9 +521,9 @@
 			} else {
 				// No explicit initializer provided
 				// Check if this is a struct with default member initializers
-				if (type_node.type_index() != 0) {
+				if (type_node.type_index().is_valid()) {
 					// This is a user-defined type (struct/class)
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->members.empty()) {
 						// Check if any members have default initializers
@@ -679,7 +679,7 @@
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
 			operands.reserve(operands.size() + 3);
 			operands.emplace_back(result.type);
-			operands.emplace_back(result.size_in_bits);
+			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
 		};
 		operands.emplace_back(type_node.type());
@@ -790,8 +790,8 @@
 					// Check if this struct has a constructor
 					if (type_node.type() == Type::Struct) {
 						TypeIndex type_index = type_node.type_index();
-						if (type_index < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index];
+						if (type_index.value < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								const StructTypeInfo& struct_info = *type_info.struct_info_;
 
@@ -1115,8 +1115,8 @@
 											
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
-											if (nested_member_type_index < gTypeInfo.size()) {
-												const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index];
+											if (nested_member_type_index.value < gTypeInfo.size()) {
+												const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
 												
 												// If this is a struct type, use the recursive helper
 												if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
@@ -1246,8 +1246,8 @@
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
 					}
@@ -1281,7 +1281,7 @@
 						TypeIndex init_type_index {};  // Will be set below if type_index is available
 						
 						// Extract type_index if available (4th element in init_operands)
-						if (init_operands.type_index != 0) {
+						if (init_operands.type_index.is_valid()) {
 							init_type_index = init_operands.type_index;
 						}
 						
@@ -1289,8 +1289,8 @@
 						bool need_conversion = (init_type != type_node.type()) || 
 						(init_type == Type::Struct && init_type_index != type_node.type_index());
 						
-						if (need_conversion && init_type == Type::Struct && init_type_index < gTypeInfo.size()) {
-							const TypeInfo& source_type_info = gTypeInfo[init_type_index];
+						if (need_conversion && init_type == Type::Struct && init_type_index.value < gTypeInfo.size()) {
+							const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 							
 							// Look for a conversion operator to the target type
@@ -1504,8 +1504,8 @@
 				
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.type() == Type::Struct && type_node.type_index() < gTypeInfo.size()) {
-					struct_info_ptr = gTypeInfo[type_node.type_index()].struct_info_.get();
+				if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
+					struct_info_ptr = gTypeInfo[type_node.type_index().value].struct_info_.get();
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
 
@@ -1548,8 +1548,8 @@
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
 		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
-			if (type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_index];
+			if (type_index.value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_index.value];
 				
 				// Skip incomplete template instantiations
 				if (type_info.is_incomplete_instantiation_) {
@@ -1846,7 +1846,7 @@
 											tv.cv_qualifier = param_type->cv_qualifier();
 										}
 										// Also update type_index if it's a struct type
-										if (param_type->type() == Type::Struct && param_type->type_index() != 0) {
+										if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
 											tv.type_index = param_type->type_index();
 										}
 									}
@@ -1876,7 +1876,7 @@
 							{
 								Type init_type = init_operands.type;
 								TypeIndex init_type_index {};
-								if (init_operands.type_index != 0) {
+								if (init_operands.type_index.is_valid()) {
 									init_type_index = init_operands.type_index;
 								}
 								
@@ -1907,7 +1907,7 @@
 														param_matches = true;
 														// For class types, require exact type match, not just Type::Struct kind.
 														if ((init_type == Type::Struct || init_type == Type::UserDefined) &&
-															(init_type_index == 0 || param_type.type_index() == 0 ||
+															(!init_type_index.is_valid() || !param_type.type_index().is_valid() ||
 															param_type.type_index() != init_type_index)) {
 															param_matches = false;
 														}
@@ -2031,8 +2031,8 @@
 							// Check if any base class has constructors that need to be called
 							bool has_base_with_constructors = false;
 							for (const auto& base : type_info.struct_info_->base_classes) {
-								if (base.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+								if (base.type_index.value < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 										has_base_with_constructors = true;
@@ -2159,7 +2159,7 @@
 		TypeIndex init_type_index {};
 		
 		// Get type_index if available (4th element)
-		if (init_operands.type_index != 0) {
+		if (init_operands.type_index.is_valid()) {
 			init_type_index = init_operands.type_index;
 		}
 		
@@ -2438,12 +2438,12 @@
 		// Step 5: Check for tuple-like decomposition (C++17 protocol)
 		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
 		// Otherwise, fall back to aggregate (struct) decomposition
-		if (init_type_index >= gTypeInfo.size()) {
-			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index);
+		if (init_type_index.value >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.value);
 			return;
 		}
 		
-		const TypeInfo& type_info = gTypeInfo[init_type_index];
+		const TypeInfo& type_info = gTypeInfo[init_type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		
 		if (!struct_info) {

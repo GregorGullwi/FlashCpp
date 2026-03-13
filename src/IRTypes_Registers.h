@@ -47,6 +47,8 @@ struct SizedRegister {
 	
 	SizedRegister(X64Register r, int size, bool sign = false)
 		: reg(r), size_in_bits(SizeInBits{size}), is_signed(sign) {}
+	SizedRegister(X64Register r, SizeInBits size, bool sign = false)
+		: reg(r), size_in_bits(size), is_signed(sign) {}
 	
 	// Convenience constructors for common cases
 	static SizedRegister ptr(X64Register r) { return {r, 64, false}; }
@@ -69,6 +71,8 @@ struct SizedStackSlot {
 	
 	SizedStackSlot(int32_t off, int size, bool sign = false)
 		: offset(off), size_in_bits(SizeInBits{size}), is_signed(sign) {}
+	SizedStackSlot(int32_t off, SizeInBits size, bool sign = false)
+		: offset(off), size_in_bits(size), is_signed(sign) {}
 	
 	// Convenience constructors for common cases
 	static SizedStackSlot ptr(int32_t off) { return {off, 64, false}; }

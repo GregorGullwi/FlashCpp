@@ -747,8 +747,8 @@ ParseResult Parser::parse_template_declaration() {
 		std::vector<ASTNode> target_template_arg_nodes;
 
 		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
-		    type_spec.type_index() < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
+		    type_spec.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_spec.type_index().value];
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
 			// Check for incomplete instantiation indicating unresolved template parameters
@@ -841,8 +841,8 @@ ParseResult Parser::parse_template_declaration() {
 							const ASTNode& node = target_template_arg_nodes[i];
 							if (node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
-								if (ts.type_index() < gTypeInfo.size()) {
-									std::string_view node_type_name = StringTable::getStringView(gTypeInfo[ts.type_index()].name());
+								if (ts.type_index().value < gTypeInfo.size()) {
+									std::string_view node_type_name = StringTable::getStringView(gTypeInfo[ts.type_index().value].name());
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()), 
 									          ", type_name='", node_type_name, "'");
 								}

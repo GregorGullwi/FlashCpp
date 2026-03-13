@@ -88,8 +88,6 @@ struct PointerDepth {
 	// Single-arg construction is explicit to prevent int→PointerDepth
 	// implicit conversion at construction sites.
 	constexpr explicit PointerDepth(int v) noexcept : value(v) {}
-	// Implicit conversion to int for backward-compatible reads.
-	constexpr operator int() const noexcept { return value; }
 	constexpr auto operator<=>(const PointerDepth&) const noexcept = default;
 	// True when pointer_depth > 0 (i.e., this is a pointer or reference type).
 	constexpr bool is_pointer() const noexcept { return value > 0; }

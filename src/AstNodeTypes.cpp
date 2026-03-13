@@ -737,9 +737,9 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     // Template instantiation fallback: check if param refers to our base template pattern
     if (*own_type_index_ >= gTypeInfo.size() || param_type_index >= gTypeInfo.size())
         return false;
-    const TypeInfo& own_info = gTypeInfo[*own_type_index_];
+    const TypeInfo& own_info = gTypeInfo[*own_type_index_.value];
     if (!own_info.isTemplateInstantiation()) return false;
-    const TypeInfo& param_info = gTypeInfo[param_type_index];
+    const TypeInfo& param_info = gTypeInfo[param_type_index.value];
     // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
     if (own_info.baseTemplateName() == param_info.name()) return true;
     // Note: We intentionally do NOT match different instantiations of the same template
@@ -920,8 +920,8 @@ bool StructTypeInfo::finalizeWithBases() {
     bool base_has_vtable = false;
     for (const auto& base : base_classes) {
         if (base.is_virtual) continue;  // Skip virtual bases for now
-        if (base.type_index < gTypeInfo.size()) {
-            const TypeInfo& base_type = gTypeInfo[base.type_index];
+        if (base.type_index.value < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base.type_index.value];
             const StructTypeInfo* base_info = base_type.getStructInfo();
             if (base_info && base_info->has_vtable) {
                 base_has_vtable = true;
@@ -943,11 +943,11 @@ bool StructTypeInfo::finalizeWithBases() {
             continue;  // Virtual bases are laid out at the end
         }
 
-        if (base.type_index >= gTypeInfo.size()) {
+        if (base.type_index.value >= gTypeInfo.size()) {
             continue;  // Invalid base class index
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (!base_info) {
@@ -1012,8 +1012,8 @@ bool StructTypeInfo::finalizeWithBases() {
             }
 
             // Recursively collect from non-virtual bases
-            if (!base.is_virtual && base.type_index < gTypeInfo.size()) {
-                const TypeInfo& base_type = gTypeInfo[base.type_index];
+            if (!base.is_virtual && base.type_index.value < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index.value];
                 const StructTypeInfo* base_info = base_type.getStructInfo();
                 collectVirtualBases(base_info);
             }
@@ -1024,11 +1024,11 @@ bool StructTypeInfo::finalizeWithBases() {
 
     // Layout virtual bases
     for (auto* vbase : all_virtual_bases) {
-        if (vbase->type_index >= gTypeInfo.size()) {
+        if (vbase->type_index.value >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[vbase->type_index];
+        const TypeInfo& base_type = gTypeInfo[vbase->type_index.value];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (!base_info) {
@@ -1069,11 +1069,11 @@ bool StructTypeInfo::buildVTable() {
     // Step 1: Copy base class vtable entries (if any)
     bool any_base_potentially_incomplete = has_deferred_base_classes;
     for (const auto& base : base_classes) {
-        if (base.type_index >= gTypeInfo.size()) {
+        if (base.type_index.value >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info && base_info->has_vtable) {
@@ -1234,11 +1234,11 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 
     // Then, check base class members
     for (const auto& base : base_classes) {
-        if (base.type_index >= gTypeInfo.size()) {
+        if (base.type_index.value >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info) {
@@ -1270,11 +1270,11 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
     // Then, check base class static members
     for (const auto& base : base_classes) {
-		if (base.type_index >= gTypeInfo.size()) {
+		if (base.type_index.value >= gTypeInfo.size()) {
 			continue;
 		}
 
-		const TypeInfo* base_type = &gTypeInfo[base.type_index];
+		const TypeInfo* base_type = &gTypeInfo[base.type_index.value];
 		const StructTypeInfo* base_info = base_type->getStructInfo();
 
 		// Follow typedef/alias chains to find the underlying struct info if needed
@@ -1285,7 +1285,7 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 				if (base_type->type_index_ == 0 || base_type->type_index_ >= gTypeInfo.size()) {
 					break;
 				}
-				const TypeInfo* next = &gTypeInfo[base_type->type_index_];
+				const TypeInfo* next = &gTypeInfo[base_type->type_index_.value];
 				if (next == base_type) {
 					break;
 				}
@@ -1356,12 +1356,12 @@ void StructTypeInfo::buildRTTI() {
         size_t base_array_start = base_array_storage.size();
 
         for (const auto& base : base_classes) {
-            if (base.type_index >= gTypeInfo.size()) {
+            if (base.type_index.value >= gTypeInfo.size()) {
                 base_array_storage.push_back(nullptr);
                 continue;
             }
 
-            const TypeInfo& base_type = gTypeInfo[base.type_index];
+            const TypeInfo& base_type = gTypeInfo[base.type_index.value];
             const StructTypeInfo* base_info = base_type.getStructInfo();
 
             if (base_info && base_info->rtti_info) {
@@ -1392,11 +1392,11 @@ void StructTypeInfo::buildRTTI() {
     for (size_t i = 0; i < base_classes.size(); ++i) {
         const auto& base = base_classes[i];
         
-        if (base.type_index >= gTypeInfo.size()) {
+        if (base.type_index.value >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info && base_info->rtti_info && base_info->rtti_info->type_descriptor) {
@@ -1500,8 +1500,8 @@ void StructTypeInfo::buildRTTI() {
         si_ti.name = itanium_name;
         
         // Get base class type info
-        if (base_classes[0].type_index < gTypeInfo.size()) {
-            const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index];
+        if (base_classes[0].type_index.value < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base_classes[0.value].type_index];
             const StructTypeInfo* base_info = base_type.getStructInfo();
             if (base_info && base_info->rtti_info && base_info->rtti_info->itanium_type_info) {
                 si_ti.base_type = base_info->rtti_info->itanium_type_info;
@@ -1550,8 +1550,8 @@ void StructTypeInfo::buildRTTI() {
             
             // Get base class type info
             void* base_type_info = nullptr;
-            if (base.type_index < gTypeInfo.size()) {
-                const TypeInfo& base_type = gTypeInfo[base.type_index];
+            if (base.type_index.value < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index.value];
                 const StructTypeInfo* base_info = base_type.getStructInfo();
                 if (base_info && base_info->rtti_info) {
                     base_type_info = base_info->rtti_info->itanium_type_info;

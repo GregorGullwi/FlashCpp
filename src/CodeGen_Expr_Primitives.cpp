@@ -122,7 +122,7 @@
 		}
 		
 		if (is_struct_type(object_type.type())) {
-			size_t struct_type_index = object_type.type_index();
+			size_t struct_type_index = object_type.type_index().value;
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[struct_type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -252,14 +252,14 @@
 			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
 			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index()].getEnumInfo()) {
+			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
+				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index().value].getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
 			}
 			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
-			if (type_node.type_index() > 0 && type_node.type_index() < gTypeInfo.size()) {
-				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index()].type_, type_node.type_index());
+			if (type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
+				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index().value].type_, type_node.type_index());
 			}
 			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
@@ -378,7 +378,7 @@
 		}
 
 		// If we're inside a [*this] lambda, prefer resolving to members of the copied object
-		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index > 0) {
+		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 			auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str);
 			if (result) {
 				const StructMember* member = result.member;
@@ -487,7 +487,7 @@
 						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
 						// Check for enum constant
 						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
-							size_t enum_idx = type_n.type_index();
+							size_t enum_idx = type_n.type_index().value;
 							if (enum_idx < gTypeInfo.size()) {
 								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
 								if (enum_info) {
@@ -527,7 +527,7 @@
 		// If binding is NonStaticMember, handle member access directly
 		if (identifierNode.binding() == IdentifierBinding::NonStaticMember) {
 			if (current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer &&
-				current_lambda_context_.enclosing_struct_type_index > 0) {
+				current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 				if (auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str)) {
 					const StructMember* member = result.member;
 					if (auto this_ptr = emitLoadThisPointer(Token())) {
@@ -781,8 +781,8 @@
 						
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (member_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index].getStructInfo();
+						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
+							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index.value].getStructInfo();
 							if (member_si) {
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
 							}
@@ -813,8 +813,8 @@
 				if (struct_info) {
 					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
-						if (enum_idx < gTypeInfo.size()) {
-							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+						if (enum_idx.value < gTypeInfo.size()) {
+							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
 								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
 								if (enumerator) {
@@ -845,7 +845,7 @@
 			// We must verify the identifier actually exists as an enumerator before treating it as a constant
 			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
 				// Check if this identifier is actually an enumerator (not just a variable of enum type)
-				size_t enum_type_index = type_node.type_index();
+				size_t enum_type_index = type_node.type_index().value;
 				if (enum_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -983,8 +983,8 @@
 				
 				// For enum references, treat dereferenced value as underlying type
 				// This allows enum variables to work in arithmetic/bitwise operations
-				if (pointee_type == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+				if (pointee_type == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						pointee_type = enum_info->underlying_type;
@@ -1016,8 +1016,8 @@
 			// For non-pointer enum variables (not enumerators), return the underlying integer type
 			// This allows enum variables to work in arithmetic/bitwise operations
 			Type return_type = type_node.type();
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index() < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
 				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 				if (enum_info) {
 					return_type = enum_info->underlying_type;
@@ -1332,8 +1332,8 @@
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
-				if (!struct_info && struct_type_it->second->type_index_ < gTypeInfo.size()) {
-					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_];
+				if (!struct_info && struct_type_it->second->type_index_.value < gTypeInfo.size()) {
+					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_.value];
 					if (resolved_type && resolved_type->isStruct()) {
 						struct_info = resolved_type->getStructInfo();
 					}
@@ -1369,8 +1369,8 @@
 							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
 							if (accessed_struct) {
 								for (const auto& base : accessed_struct->base_classes) {
-									if (base.type_index < gTypeInfo.size()) {
-										const TypeInfo& base_type = gTypeInfo[base.type_index];
+									if (base.type_index.value < gTypeInfo.size()) {
+										const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 										const StructTypeInfo* base_struct = base_type.getStructInfo();
 										if (base_struct && base_struct->getName() == owner_struct->getName()) {
 											is_inheritance = true;
@@ -1401,11 +1401,11 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type && 
-								resolved_type->type_index_ < gTypeInfo.size() && 
-								resolved_type->type_index_ != 0 &&
+								resolved_type->type_index_.value < gTypeInfo.size() && 
+								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
-									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_.value];
 									
 									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 										// Use the target struct's name
@@ -1413,7 +1413,7 @@
 										FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
 										
 										// If target is also an alias, continue following
-										if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
+										if (target_type->type_index_.is_valid() && target_type->type_index_ != resolved_type->type_index_) {
 											resolved_type = target_type;
 										} else {
 											break;
@@ -1455,8 +1455,8 @@
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (qsm_size_bits == 0 && static_member->type_index > 0 && static_member->type_index < gTypeInfo.size()) {
-							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index].getStructInfo();
+						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
+							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index.value].getStructInfo();
 							if (qsm_si) {
 								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
 							}

@@ -932,7 +932,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							} else if (type_info->type_index_ < gTypeInfo.size()) {
 								// Check if this is a type alias (type_index points to underlying type)
 								// and the underlying type is concrete (not a template parameter)
-								const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+								const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
 								// A type is concrete if:
 								// 1. It has struct_info_ (it's a defined struct/class), OR
 								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
@@ -1457,7 +1457,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			std::string_view full_type_name;
 			TypeIndex idx = type_node.type_index();
 			if (idx < gTypeInfo.size()) {
-				full_type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				full_type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
 			}
 			
@@ -1498,7 +1498,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || (idx < gTypeInfo.size() && gTypeInfo[idx].is_incomplete_instantiation_)) {
+				if (is_template_param || (idx < gTypeInfo.size() && gTypeInfo[idx.value].is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -1535,7 +1535,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 			
 			// Also check for type_index=0 as a fallback indicator of dependent types
-			if (!arg.is_dependent && type_node.type_index() == 0) {
+			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
 			}
@@ -1549,7 +1549,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {

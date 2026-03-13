@@ -201,8 +201,8 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
 	if (type == Type::Struct) {
-		assert(type_index < gTypeInfo.size() && "Invalid type_index for struct");
-		const TypeInfo& type_info = gTypeInfo[type_index];
+		assert(type_index.value < gTypeInfo.size() && "Invalid type_index for struct");
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		assert(struct_info && "Struct type info not found");
 		return struct_info->total_size;
@@ -211,8 +211,8 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	// Note: TypeInfo::type_size_ is NOT set for fully-defined enums (only for
 	// forward-declared enums and typedef aliases), so we must read underlying_size
 	// from the EnumTypeInfo directly.  underlying_size is in bits.
-	if (type == Type::Enum && type_index > 0 && type_index < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index];
+	if (type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
 			return enum_info->underlying_size / 8;
 		}
@@ -223,9 +223,9 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	}
 	// For UserDefined (typedef) types with a valid type_index, type_size_ is
 	// set from size_in_bits() at the typedef site, so it is in bits.
-	if (type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size()) {
-		if (gTypeInfo[type_index].type_size_ > 0) {
-			return gTypeInfo[type_index].type_size_ / 8;
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		if (gTypeInfo[type_index.value].type_size_ > 0) {
+			return gTypeInfo[type_index.value].type_size_ / 8;
 		}
 	}
 	// For primitive types, convert bits to bytes

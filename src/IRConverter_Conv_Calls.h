@@ -674,11 +674,11 @@
 	}
 
 	bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false) {
-		if (type_index == 0 || type_index >= gTypeInfo.size()) {
+		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
 			return false;
 		}
 
-		const TypeInfo& type_info = gTypeInfo[type_index];
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
 			return false;
@@ -1033,7 +1033,7 @@
 				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
 				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 				bool is_same_struct_type = false;
-				if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
+				if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
 					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 				}
 				
@@ -1067,7 +1067,7 @@
 						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
-				} else if (paramType == Type::Struct && arg_type_index != 0) {
+				} else if (paramType == Type::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
 					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
 					// Add pointer levels (rebuild after creating with type_index)
@@ -1188,7 +1188,7 @@
 
 			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
 			bool is_same_struct_type = false;
-			if (struct_type_it != gTypesByName.end() && arg_type_index != 0) {
+			if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
 				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 			}
 			bool is_reference_param = arg_is_reference || (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
