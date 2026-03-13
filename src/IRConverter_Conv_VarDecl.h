@@ -174,7 +174,7 @@
 		// at the same offset to be treated as pointers. Clear that before handling any
 		// non-reference declaration that reuses the slot.
 		if (!is_reference) {
-			reference_stack_info_.erase(var_it->second.offset);
+			indirect_stack_info_.erase(var_it->second.offset);
 		}
 
 		// REMOVED: Flawed TempVar linking heuristic
@@ -198,7 +198,7 @@
 				}
 			}
 			
-			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference);
+			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference, TempVar{0});
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -1437,7 +1437,7 @@
 			if (!struct_name.empty() && !func_decl.is_static_member) {
 				// 'this' offset depends on whether there's a hidden return parameter
 				int this_offset = (param_offset_adjustment + coff_eh_param_home_bias + 1) * -8;
-				this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
+				this_offset_saved = this_offset;  // Save for later indirect_stack_info_ registration
 				current_function_this_offset_ = this_offset;
 				variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
@@ -1473,17 +1473,16 @@
 		if (!instruction.hasTypedPayload()) {
 			// Operand-based path: extract parameters from operands
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
-			// Clear reference parameter tracking from previous function
-			reference_stack_info_.clear();
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			clearFunctionTempVarMetadata();
 			
-			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
-				reference_stack_info_[this_offset_saved].holds_address_only = true;
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
 			}
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -1566,7 +1565,7 @@
 				                              (!is_two_reg_struct && param_type == Type::Struct && param_size > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param_type, param_size,
-						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
+						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 				}
 
 				// Add parameter to debug information
@@ -1634,16 +1633,16 @@
 		} else {
 			// Typed payload path: build ParameterInfo from already-extracted parameter_types
 			[[maybe_unused]] const auto& typed_func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-			reference_stack_info_.clear();
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			clearFunctionTempVarMetadata();
 			
-			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
-				reference_stack_info_[this_offset_saved].holds_address_only = true;
+				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
 			}
 		
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
@@ -1720,7 +1719,7 @@
 				bool is_passed_by_reference = param.is_reference() ||
 				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits.value > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference());
+					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 				}
 
 				// Add parameter to debug information
@@ -2251,9 +2250,9 @@
 					// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						// Also dereference rvalue references (from std::move) when returning by value
-						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && 
-							(ref_it->second.is_rvalue_reference || !ref_it->second.holds_address_only) && 
+						auto ref_info = getIndirectStackInfo(var_offset);
+						if (ref_info.has_value() && 
+							(ref_info->is_rvalue_reference || shouldImplicitlyDeref(ref_info.value())) && 
 							!current_function_returns_reference_) {
 							// This is a reference and function returns by value
 							// Check if function uses hidden return parameter (struct return)
@@ -2329,11 +2328,11 @@
 								spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 								emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 								// Dereference to get the value
-								int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+								int value_size_bytes = ref_info->value_size_bits.value / 8;
 								emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 								// Value is now in RAX, ready to return
 							}
-						} else if (ref_it != reference_stack_info_.end() && current_function_returns_reference_) {
+						} else if (ref_info.has_value() && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning reference address from offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
@@ -2541,18 +2540,18 @@
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
-						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && !current_function_returns_reference_) {
+						auto ref_info = getIndirectStackInfo(var_offset);
+						if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && !current_function_returns_reference_) {
 							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
 							// Dereference to get the value
-							int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+							int value_size_bytes = ref_info->value_size_bits.value / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
-						} else if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && current_function_returns_reference_) {
+						} else if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;

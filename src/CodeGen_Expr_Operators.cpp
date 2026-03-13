@@ -3514,8 +3514,8 @@ const Token& token) {
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}
-		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
-			inferred_size_bits = lhs_meta.value_size_bits;
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits.value > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits.value;
 		}
 		if (inferred_size_bits == 0) {
 			inferred_size_bits = lhs_operands.size_in_bits.value;
@@ -3682,8 +3682,8 @@ std::string_view op) {
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}
-		if (inferred_size_bits == 0 && lhs_meta.value_size_bits > 0) {
-			inferred_size_bits = lhs_meta.value_size_bits;
+		if (inferred_size_bits == 0 && lhs_meta.value_size_bits.value > 0) {
+			inferred_size_bits = lhs_meta.value_size_bits.value;
 		}
 		if (inferred_size_bits == 0) {
 			inferred_size_bits = lhs_operands.size_in_bits.value;

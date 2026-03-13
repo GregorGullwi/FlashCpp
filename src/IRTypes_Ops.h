@@ -195,6 +195,11 @@ public:
 	void clear() {
 		metadata_.clear();
 	}
+
+	// Clear metadata for a single TempVar (reset to default PRValue state)
+	void clearEntry(size_t var_number) {
+		metadata_.erase(var_number);
+	}
 	
 	// Get statistics
 	size_t size() const {
@@ -262,16 +267,22 @@ inline std::optional<LValueInfo> getTempVarLValueInfo(const TempVar& temp) {
 	return GlobalTempVarMetadataStorage::instance().getLValueInfo(temp);
 }
 
-// Check if a TempVar is a reference (has is_address flag set)
+// Check if a TempVar is a true reference (has is_address flag set and is NOT address-only)
 inline bool isTempVarReference(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.is_address && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
+	return meta.is_address && !meta.holds_address_only && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
 }
 
 // Get the value type of a reference TempVar (returns Invalid if not a reference)
 inline Type getTempVarValueType(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
 	return meta.value_type;
+}
+
+// Check if a TempVar holds an address-only value (from AddressOf/AddressOfMember)
+inline bool isTempVarAddressOnly(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.holds_address_only;
 }
 
 // ============================================================================
@@ -300,7 +311,7 @@ inline void markTempVarAsReturnValue(const TempVar& temp) {
 // Get the value size in bits of a reference TempVar (returns 0 if not a reference)
 inline int getTempVarValueSizeBits(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.value_size_bits;
+	return meta.value_size_bits.value;
 }
 
 // Check if a TempVar is an rvalue reference

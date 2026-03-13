@@ -1286,9 +1286,9 @@
 				}
 			}
 			if (spill_size_bits <= 0) {
-				auto ref_it = reference_stack_info_.find(reg_info.stackVariableOffset);
-				if (ref_it != reference_stack_info_.end() && ref_it->second.value_size_bits.is_set()) {
-					spill_size_bits = ref_it->second.value_size_bits.value;
+				auto ref_info = getIndirectStackInfo(reg_info.stackVariableOffset);
+				if (ref_info.has_value() && ref_info->value_size_bits.is_set()) {
+					spill_size_bits = ref_info->value_size_bits.value;
 				}
 			}
 			if (spill_size_bits <= 0) {

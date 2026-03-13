@@ -526,10 +526,10 @@
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
-					auto ref_it = reference_stack_info_.find(lhs_stack_var_addr);
+					auto ref_info = getIndirectStackInfo(lhs_stack_var_addr);
 					
 					// If not found with TempVar offset, try looking up by name
-					if (ref_it == reference_stack_info_.end()) {
+					if (!ref_info.has_value()) {
 						std::string_view var_name = lhs_var_op.name();
 						// Remove the '%' prefix if present
 						if (!var_name.empty() && var_name[0] == '%') {
@@ -538,22 +538,22 @@
 						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
-							ref_it = reference_stack_info_.find(named_offset);
-							if (ref_it != reference_stack_info_.end()) {
+							ref_info = getIndirectStackInfo(named_offset);
+							if (ref_info.has_value()) {
 								// Found it! Update lhs_stack_var_addr to use the named variable offset
 								lhs_stack_var_addr = named_offset;
 							}
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
+					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 						// Now dereference: load from [register + 0]
-						int value_size_bits = ref_it->second.value_size_bits.value;
+						int value_size_bits = ref_info->value_size_bits.value;
 						OpCodeWithSize deref_opcodes;
 						if (value_size_bits == 64) {
 							deref_opcodes = generateMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0);
@@ -569,7 +569,7 @@
 							return ctx;
 						}
 						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
-					} else if (ref_it != reference_stack_info_.end() && ref_it->second.holds_address_only) {
+					} else if (ref_info.has_value() && !shouldImplicitlyDeref(ref_info.value())) {
 						// This holds an address value directly (from addressof) - load without dereferencing
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
@@ -757,10 +757,10 @@
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
 					// Check if this is a reference - if so, we need to dereference it
-					auto ref_it = reference_stack_info_.find(rhs_stack_var_addr);
+					auto ref_info = getIndirectStackInfo(rhs_stack_var_addr);
 					
 					// If not found with TempVar offset, try looking up by name
-					if (ref_it == reference_stack_info_.end()) {
+					if (!ref_info.has_value()) {
 						std::string_view var_name = rhs_var_op.name();
 						// Remove the '%' prefix if present
 						if (!var_name.empty() && var_name[0] == '%') {
@@ -769,15 +769,15 @@
 						auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 						if (named_var_it != variable_scopes.back().variables.end()) {
 							int32_t named_offset = named_var_it->second.offset;
-							ref_it = reference_stack_info_.find(named_offset);
-							if (ref_it != reference_stack_info_.end()) {
+							ref_info = getIndirectStackInfo(named_offset);
+							if (ref_info.has_value()) {
 								// Found it! Update rhs_stack_var_addr to use the named variable offset
 								rhs_stack_var_addr = named_offset;
 							}
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end() && shouldImplicitlyDeref(ref_it->second)) {
+					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
@@ -791,9 +791,9 @@
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
-						int value_size_bytes = ref_it->second.value_size_bits.value / 8;
+						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
-					} else if (ref_it != reference_stack_info_.end()) {
+					} else if (ref_info.has_value()) {
 						// This holds an address value directly (e.g. addressof) - load it as-is
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
@@ -1201,7 +1201,7 @@
 		std::unordered_map<StringHandle, VariableInfo> variables;  // Phase 5: StringHandle for integer-based lookups
 	};
 
-	struct ReferenceInfo {
+	struct IndirectStorageInfo {
 		Type value_type = Type::Invalid;
 		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
@@ -1216,35 +1216,53 @@
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
-		TempVar temp_var = TempVar()) {
+		TempVar temp_var = TempVar{0}) {
 
-		reference_stack_info_[stack_offset] = ReferenceInfo{
+		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
 			.value_type = value_type,
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
 		};
 
-		// TempVar metadata currently models true references but not plain address-only values.
-		// Keep that asymmetry explicit here instead of open-coding it at each call site.
-		if (!holds_address_only && temp_var.var_number != 0) {
-			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
+		// Sync TempVar metadata with stack storage info
+		if (temp_var.var_number != 0) {
+			reference_temp_var_numbers_.push_back(temp_var.var_number);
+			if (holds_address_only) {
+				ValueCategory cat = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, SizeInBits{value_size_bits}, cat));
+			} else {
+				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, SizeInBits{value_size_bits}, category));
+			}
 		}
+	}
+
+	// Clear all indirect storage tracking AND any TempVar reference/address-only metadata
+	// that was set by setIndirectStorageInfo. Must be called at function boundaries so that
+	// stale TempVar metadata from previous functions (which reuse the same var_numbers) does not
+	// cause isTempVarReference/isTempVarAddressOnly to return stale true values.
+	void clearFunctionTempVarMetadata() {
+		indirect_stack_info_.clear();
+		for (size_t var_num : reference_temp_var_numbers_) {
+			GlobalTempVarMetadataStorage::instance().clearEntry(var_num);
+		}
+		reference_temp_var_numbers_.clear();
 	}
 
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var) {
 		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
-	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits) {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true);
+	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var) {
+		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, temp_var);
 	}
 
-	std::optional<ReferenceInfo> getIndirectStackInfo(int32_t stack_offset) const {
-		auto it = reference_stack_info_.find(stack_offset);
-		if (it != reference_stack_info_.end()) {
+	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const {
+		auto it = indirect_stack_info_.find(stack_offset);
+		if (it != indirect_stack_info_.end()) {
 			return it->second;
 		}
 
@@ -1255,8 +1273,28 @@
 		return getIndirectStackInfo(stack_offset).has_value();
 	}
 
-	bool shouldImplicitlyDeref(const ReferenceInfo& info) const {
+	bool shouldImplicitlyDeref(const IndirectStorageInfo& info) const {
 		return !info.holds_address_only;
+	}
+
+	// Check if the base is already a pointer (holds an address).
+	// Returns true if:
+	//   - stack_offset is registered in indirect_stack_info_ (true reference or address-only like 'this')
+	//   - OR TempVar (if provided) is a true reference or address-only
+	// This is used for member access / compute-address decisions:
+	// - if true, emit MOV (load existing address) rather than LEA (compute address of stack slot)
+	bool isPointerBaseStorage(int32_t stack_offset, TempVar temp_var = TempVar{0}) const {
+		// Check stack-offset map first (covers named variables including 'this')
+		if (hasIndirectStackStorage(stack_offset)) {
+			return true;
+		}
+		// Check TempVar metadata if provided
+		if (temp_var.var_number != 0) {
+			if (isTempVarReference(temp_var) || isTempVarAddressOnly(temp_var)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// Build the mangled symbol name for the complete-object destructor of a class.
@@ -1291,7 +1329,10 @@
 	}
 
 	// Helper function to check if a TempVar or stack offset uses indirect storage.
-	// This includes both true references and address-only pointer temps.
+	// Returns true for true references (via TempVar path) and for any indirect storage
+	// (including address-only values like 'this') via the stack-offset map.
+	// Note: The TempVar path checks only true references (isTempVarReference excludes address-only),
+	// while the fallback stack-offset path covers both references and address-only values.
 	bool hasIndirectStorage(TempVar temp_var, int32_t stack_offset) const {
 		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
 			return true;
@@ -1301,17 +1342,27 @@
 	}
 
 	// Helper function to get indirect-storage info for a TempVar or stack offset.
-	// Returns TempVar metadata first when the temp is a true reference, otherwise falls back
-	// to the stack-offset side table for named variables and address-only pointer temps.
-	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
+	// Returns TempVar metadata first when the temp is a true reference or address-only, 
+	// otherwise falls back to the stack-offset side table for named variables.
+	std::optional<IndirectStorageInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
 		// Check TempVar metadata first
-		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
-			return ReferenceInfo{
-				.value_type = getTempVarValueType(temp_var),
-				.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
-				.is_rvalue_reference = isTempVarRValueReference(temp_var),
-				.holds_address_only = false
-			};
+		if (temp_var.var_number != 0) {
+			if (isTempVarReference(temp_var)) {
+				return IndirectStorageInfo{
+					.value_type = getTempVarValueType(temp_var),
+					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
+					.is_rvalue_reference = isTempVarRValueReference(temp_var),
+					.holds_address_only = false
+				};
+			}
+			if (isTempVarAddressOnly(temp_var)) {
+				return IndirectStorageInfo{
+					.value_type = getTempVarValueType(temp_var),
+					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
+					.is_rvalue_reference = isTempVarRValueReference(temp_var),
+					.holds_address_only = true
+				};
+			}
 		}
 
 		return getIndirectStackInfo(stack_offset);

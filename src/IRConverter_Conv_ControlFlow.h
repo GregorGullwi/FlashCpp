@@ -227,8 +227,9 @@
 				StringHandle object_name_handle = StringTable::getOrInternStringHandle(object_name);
 				array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
 				
-				// Check if object is 'this' or a reference parameter (both need pointer dereferencing)
-				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
+				// Check if object is a pointer (reference parameter or 'this' - both need pointer dereferencing)
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				if (isPointerBaseStorage(array_base_offset)) {
 					is_object_pointer = true;
 				}
 			} else {
@@ -713,11 +714,11 @@
 				}
 			}
 			
-			// Check if the object (not the array) is a pointer (like 'this' or a reference)
+			// Check if the object (not the array) is a pointer (reference parameter or 'this')
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			bool is_object_pointer = false;
 			if (is_member_array) {
-				// Check if object is 'this' or a reference parameter
-				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
+				if (isPointerBaseStorage(array_base_offset)) {
 					is_object_pointer = true;
 				}
 			}
