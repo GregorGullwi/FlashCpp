@@ -440,7 +440,7 @@
 				ctx.operand_type = int_type;
 			}
 		} else if (operand_ir_type == IrType::Struct || isIrPointerLikeType(operand_ir_type) ||
-		           operand_ir_type == IrType::Void || operand_ir_type == IrType::Nullptr) {
+		           operand_ir_type == IrType::Void) {
 			// Pointer-like and struct types: force 64-bit integer semantics
 			// for pointer offset calculations
 			if (!is_comparison) {

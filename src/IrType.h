@@ -93,11 +93,11 @@ inline IrType toIrType(Type semantic_type) {
 			return IrType::Void;
 
 		// These must not reach IR — they must be resolved before codegen.
-		// During the transition period (Phase 0-1), we tolerate these and
-		// map them to a safe default.  A future phase will add assertions
-		// once all semantic-only types are resolved before IR construction.
+		// During the transition period, we still tolerate some semantic-only
+		// forms to preserve existing runtime behavior until their lowering is
+		// migrated earlier in the pipeline.
 		case Type::Auto:
-			return IrType::Void;
+			return IrType::Integer;
 		case Type::Template:
 			return IrType::Void;
 		case Type::Function:

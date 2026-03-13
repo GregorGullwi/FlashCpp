@@ -260,7 +260,8 @@ The mapping is:
 | `MemberObjectPointer` | `MemberObjectPointer` |
 | `Nullptr` | `Nullptr` |
 | `Void` | `Void` |
-| `Auto`, `Template`, `Function`, `Invalid` | assert — these must not reach IR |
+| `Auto` | `Integer` during transition (preserves generic-lambda runtime arithmetic until `auto` is lowered earlier) |
+| `Template`, `Function`, `Invalid` | assert — these must not reach IR |
 
 This phase adds new code only. Nothing changes behavior.
 
@@ -321,6 +322,12 @@ type traits) continue to use `Type` from the AST — they never touch `TypedValu
   value lowering for identifier paths and `getSizeInBytes()`
 - `tryMakeEnumeratorConstantExpr(...)` centralizes enumerator-immediate lowering
   for direct identifiers, nested unscoped enum lookup, and function arguments
+- `toIrType(Type::Auto)` now maps to `IrType::Integer` during the transition so
+  generic-lambda arithmetic keeps integer signedness/width behavior until `auto`
+  stops reaching backend arithmetic dispatch
+- generic-lambda identifier lowering now falls back from unresolved local
+  `Type::Auto` + `size_bits == 0` to `int`/32-bit, matching the existing
+  transitional mangling/reference fallback and avoiding broken signed compares
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
 

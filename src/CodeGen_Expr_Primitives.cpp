@@ -211,6 +211,21 @@
 		);
 	}
 
+	// Temporary migration helper: generic lambda local parameters can still reach
+	// identifier lowering as unresolved Type::Auto with size 0.  When that
+	// happens, this mutates both `type` and `size_bits` to the transitional
+	// int/32-bit fallback and returns true; otherwise it leaves them unchanged and
+	// returns false.  This can be removed once deduced lambda parameter types are
+	// threaded into lambda body codegen.
+	static bool applyTransitionalAutoRuntimeFallback(Type& type, int& size_bits) {
+		if (type == Type::Auto && size_bits == 0) {
+			type = Type::Int;
+			size_bits = 32;
+			return true;
+		}
+		return false;
+	}
+
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
@@ -222,11 +237,16 @@
 		} else {
 			// For regular variables, return the variable size
 			size_bits = static_cast<int>(type_node.size_in_bits());
-			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+			// Fallback: if size_bits is 0, calculate from type. Generic lambda auto
+			// parameters still use a transitional int fallback here; other types keep
+			// the warning because size 0 indicates parser metadata drift.
 			if (size_bits == 0) {
-				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
-				"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
-				size_bits = get_type_size_bits(type_node.type());
+				Type fallback_type = type_node.type();
+				if (!applyTransitionalAutoRuntimeFallback(fallback_type, size_bits)) {
+					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
+					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+					size_bits = get_type_size_bits(type_node.type());
+				}
 			}
 		}
 		
@@ -1153,22 +1173,31 @@
 					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
 				
-				// Regular local variable (not a reference) - return variable name
-				// Use helper function to calculate size_bits with proper fallback handling
+				// Regular local variable (not a reference) - return variable name.
+				// Generic lambda auto parameters still reach this path during the
+				// transition; keep the existing int fallback used by mangling and
+				// reference lowering so arithmetic/comparison codegen sees a concrete
+				// signed integer representation instead of Type::Auto with size 0.
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+				Type result_type = type_node.type();
+				TypeIndex result_type_index = type_node.type_index();
+				if (applyTransitionalAutoRuntimeFallback(result_type, size_bits)) {
+					result_type_index = TypeIndex{};
+				}
+
 				
 				// For the 4th element: 
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
 				return makeIdentifierResult(
-					type_node.type(),
+					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
-						? type_node.type_index()
+					(result_type == Type::Struct || result_type == Type::Enum || result_type == Type::UserDefined)
+						? result_type_index
 						: TypeIndex{},
-					PointerDepth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+					PointerDepth{(result_type == Type::Struct || result_type == Type::UserDefined)
 						? 0
 						: static_cast<int>(type_node.pointer_depth())});
 			}
