@@ -80,6 +80,10 @@ private:
 	// resolution bug).
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	TypedValue materializeDefaultArgument(
+		const ASTNode& default_expr,
+		const TypeSpecifierNode& param_type_spec,
+		std::string_view error_context);
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 

@@ -252,27 +252,38 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 				std::string(param_decl.identifier_token().value()) +
 				"' (overload resolution should have rejected this call)");
 		}
-		const ASTNode& default_expr = param_decl.default_value();
-		const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-		if (default_expr.is<ExpressionNode>()) {
-			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(default_operands);
-			applyTypeNodeMetadata(tv, param_type_spec);
-			call_op.args.push_back(tv);
-		} else if (default_expr.is<InitializerListNode>()) {
-			// Struct default argument via braced init list (e.g., Point p = {1, 2})
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type);
-			if (result.has_value()) {
-				applyTypeNodeMetadata(*result, param_type);
-				call_op.args.push_back(*result);
-			} else {
-				throw InternalError("Failed to generate struct default argument for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-			}
-		} else {
-			throw InternalError("Unhandled default argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-		}
+		call_op.args.push_back(materializeDefaultArgument(
+			param_decl.default_value(),
+			param_decl.type_node().as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("parameter '")
+				.append(param_decl.identifier_token().value())
+				.append("'")
+				.commit()));
 	}
+}
+
+TypedValue AstToIr::materializeDefaultArgument(
+	const ASTNode& default_expr,
+	const TypeSpecifierNode& param_type_spec,
+	std::string_view error_context) {
+	if (default_expr.is<ExpressionNode>()) {
+		auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+		TypedValue tv = toTypedValue(default_operands);
+		applyTypeNodeMetadata(tv, param_type_spec);
+		return tv;
+	}
+
+	if (default_expr.is<InitializerListNode>()) {
+		auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
+		if (result.has_value()) {
+			applyTypeNodeMetadata(*result, param_type_spec);
+			return *result;
+		}
+		throw InternalError("Failed to generate struct default argument for " + std::string(error_context));
+	}
+
+	throw InternalError("Unhandled default argument AST node type for " + std::string(error_context));
 }
 
 void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info) {
@@ -291,25 +302,14 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 		if (!param_decl.has_default_value()) {
 			break;
 		}
-
-		const ASTNode& default_expr = param_decl.default_value();
-		const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-		if (default_expr.is<ExpressionNode>()) {
-			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(default_operands);
-			applyTypeNodeMetadata(tv, param_type_spec);
-			ctor_op.arguments.push_back(std::move(tv));
-		} else if (default_expr.is<InitializerListNode>()) {
-			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
-			if (result.has_value()) {
-				applyTypeNodeMetadata(*result, param_type_spec);
-				ctor_op.arguments.push_back(*result);
-			} else {
-				throw InternalError("Failed to generate struct default argument for constructor parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-			}
-		} else {
-			throw InternalError("Unhandled default constructor argument AST node type for parameter '" + std::string(param_decl.identifier_token().value()) + "'");
-		}
+		ctor_op.arguments.push_back(materializeDefaultArgument(
+			param_decl.default_value(),
+			param_decl.type_node().as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("constructor parameter '")
+				.append(param_decl.identifier_token().value())
+				.append("'")
+				.commit()));
 	}
 }
 
@@ -329,24 +329,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (!param.type_node.is<TypeSpecifierNode>()) {
 			throw InternalError("Cached parameter type missing for default argument evaluation");
 		}
-		const auto& param_type_spec = param.type_node.as<TypeSpecifierNode>();
-
-		if (default_expr.is<ExpressionNode>()) {
-			auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(default_operands);
-			applyTypeNodeMetadata(tv, param_type_spec);
-			call_op.args.push_back(std::move(tv));
-		} else if (default_expr.is<InitializerListNode>()) {
-			auto result = generateDefaultStructArg(default_expr.as<InitializerListNode>(), param_type_spec);
-			if (result.has_value()) {
-				applyTypeNodeMetadata(*result, param_type_spec);
-				call_op.args.push_back(std::move(*result));
-			} else {
-				throw InternalError("Failed to generate struct default argument for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
-			}
-		} else {
-			throw InternalError("Unhandled default argument AST node type for cached parameter '" + std::string(StringTable::getStringView(param.name)) + "'");
-		}
+		call_op.args.push_back(materializeDefaultArgument(
+			default_expr,
+			param.type_node.as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("cached parameter '")
+				.append(StringTable::getStringView(param.name))
+				.append("'")
+				.commit()));
 	}
 }
 
