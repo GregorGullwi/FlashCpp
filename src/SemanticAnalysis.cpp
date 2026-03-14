@@ -68,8 +68,12 @@ static StandardConversionKind determineConversionKind(Type from, Type to) {
 	const bool to_flt   = is_floating_point_type(to);
 
 	if (from_int && to_int) {
-		// Promotion: smaller → larger, or bool/char → int
-		if (from == Type::Bool || get_type_size_bits(from) < get_type_size_bits(to))
+		// C++20 [conv.prom]: IntegralPromotion only applies to types with rank < int being promoted
+		// to int or unsigned int.  int→long, int→long long, etc. are IntegralConversion.
+		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
+		const int from_rank = get_integer_rank(from);
+		const int to_rank   = get_integer_rank(to);
+		if (from_rank < INT_RANK && to_rank >= INT_RANK)
 			return StandardConversionKind::IntegralPromotion;
 		return StandardConversionKind::IntegralConversion;
 	}
@@ -173,13 +177,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 			const auto& decl = param_node.as<DeclarationNode>();
 			const ASTNode ptype = decl.type_node();
 			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				CanonicalTypeDesc d;
-				const auto& ts = ptype.as<TypeSpecifierNode>();
-				d.base_type = ts.type();
-				d.type_index = ts.type_index();
-				d.base_cv = ts.cv_qualifier();
-				d.ref_qualifier = ts.reference_qualifier();
-				const CanonicalTypeId tid = type_context_.intern(d);
+				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
 				const StringHandle pname = decl.identifier_token().handle();
 				if (pname.isValid())
 					addLocalType(pname, tid);
@@ -253,15 +251,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const auto& decl = var.declaration();
 		const ASTNode vtype = decl.type_node();
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-			CanonicalTypeDesc desc;
-			const auto& ts = vtype.as<TypeSpecifierNode>();
-			desc.base_type = ts.type();
-			desc.type_index = ts.type_index();
-			desc.base_cv = ts.cv_qualifier();
-			desc.ref_qualifier = ts.reference_qualifier();
 			const StringHandle vname = decl.identifier_token().handle();
 			if (vname.isValid())
-				addLocalType(vname, type_context_.intern(desc));
+				addLocalType(vname, canonicalizeType(vtype.as<TypeSpecifierNode>()));
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
@@ -582,10 +574,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return lookupLocalType(e.nameHandle());
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				// Pass-through for simple unary +/-
+				// Unary + and - apply integral promotion: types with rank < int become int.
 				const std::string_view op = e.op();
-				if (op == "+" || op == "-")
-					return inferExpressionType(e.get_operand());
+				if (op == "+" || op == "-") {
+					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
+					if (!operand_id) return {};
+					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
+					const bool is_small_int =
+						(is_integer_type(operand_desc.base_type) || operand_desc.base_type == Type::Bool)
+						&& get_integer_rank(operand_desc.base_type) < 3;  // rank of int
+					if (is_small_int) {
+						CanonicalTypeDesc promoted;
+						promoted.base_type = Type::Int;
+						return type_context_.intern(promoted);
+					}
+					return operand_id;
+				}
 				return {};
 			}
 			return {};
@@ -620,12 +624,13 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc   = type_context_.get(*ctx.current_function_return_type_id);
 
-	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums)
+	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums, no auto)
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return;
 	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return;
 	if (from_desc.base_type == Type::Enum  || to_desc.base_type == Type::Enum)   return;
 	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return;
+	if (from_desc.base_type == Type::Auto   || to_desc.base_type == Type::Auto)   return;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return;
 
 	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
