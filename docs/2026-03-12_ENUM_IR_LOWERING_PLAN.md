@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-3 largely complete through 2026-03-14, Phase 4 prep complete)  
+**Status**: In Progress (Phase 0-4 largely complete through 2026-03-14, Phase 5 ExprResult already done)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -392,9 +392,10 @@ in `indirect_stack_info_`, the x86 emitter must choose between:
 
 The backend cannot know which is correct from `IrType` alone — `IrType::Integer`
 with `size_in_bits = 64` is equally ambiguous whether it holds an address or a
-64-bit integer. The old code used a hand-curated type whitelist; the current code
-uses `!isIrFloatingPointType()`. Both are heuristic guesses over a missing IR
-abstraction.
+64-bit integer. The old code used a hand-curated type whitelist; this was replaced by
+`!isIrFloatingPointType()` which was too broad (treating Void, Bool, Nullptr as pointers),
+and then corrected to a positive IrType whitelist: `isIrIntegerType || isIrStructType ||
+isIrPointerLikeType`. All three are heuristic guesses over a missing IR abstraction.
 
 This is a symptom of semantic work happening at the wrong compiler level. The
 correct fix is a **post-parse semantic pass** that runs between parsing and IR
@@ -409,10 +410,12 @@ emission and resolves these decisions explicitly:
    resolution / mangling, then strips it for IR emission (replacing the current
    ad-hoc `carriesSemanticTypeIndex` / `getRuntimeValueType` helpers)
 
-This would also eliminate the Phase 4 blockers (`setReferenceInfo`,
+This would also eliminate the former Phase 4 blockers (`setReferenceInfo`,
 `IndirectStorageInfo`, `TypeSpecifierNode` constructors in IRConverter) — all of
 which exist because the backend is making semantic decisions that should have
-been resolved earlier.
+been resolved earlier. (**UPDATE 2026-03-14**: These blockers have been resolved
+by adding parallel `ir_type` fields and centralising the TypeSpecifierNode
+construction into a single lambda.)
 
 After the `IrType` migration is complete, the separation should be made explicit
 between:
@@ -514,17 +517,35 @@ provides a clean way to query semantic identity without touching the runtime typ
   have been migrated to `effectiveIrType()` or `isIrStructType(toIrType(...))`.
 - Zero TypedValue.type equality-comparison reads remain in codegen/IRConverter code.
 
-**Remaining before full removal:**
-- `IRConverter_Conv_Memory.h` lines 145, 293, 796 — `setReferenceInfo(offset, op.result.type, ...)`
-  passes the semantic type to `IndirectStorageInfo`. `setReferenceInfo` / `setAddressOnlyInfo`
-  signatures take `Type` and store it in `IndirectStorageInfo::value_type` for later semantic use.
-  These need `IndirectStorageInfo` to be updated to use `IrType` or to accept both fields.
-- `IRConverter_Conv_Calls.h` lines 924, 989 — `TypeSpecifierNode(arg.type, ...)` constructs a
-  temporary type spec for ABI classification. TypeSpecifierNode constructor takes `Type`.
-- `IRConverter_Conv_Arithmetic.h` line 1161 — `[[maybe_unused]] Type type = unary_op.value.type;`
-  debug/unused variable.
-- `IRConverter_Conv_VarDecl.h` lines 213, 244 — debug logging of `init.type`.
+**Phase 4 blocker resolution (2026-03-14):**
+All previously listed blockers have been resolved:
 
+- ~~`IndirectStorageInfo` / `setReferenceInfo` migration~~ — **DONE**: `IndirectStorageInfo`
+  and `TempVarMetadata` now have parallel `IrType ir_type` fields, auto-populated via
+  `toIrType()` in `setIndirectStorageInfo`, `getReferenceInfo`, and all `TempVarMetadata`
+  factory methods (`makeReference`, `makeAddressOnly`, `makeLValue`, `makeXValue`).
+- ~~`TypeSpecifierNode(arg.type, ...)` in `IRConverter_Conv_Calls.h`~~ — **DONE**: Extracted
+  `buildTypeSpecFromTypedValue` lambda that uses `effectiveIrType()` for struct detection.
+  The `.type` dependency is centralised into a single location for later replacement
+  (TODO: Phase 5 IrType-based `TypeSpecifierNode` construction).
+- ~~`IRConverter_Conv_Arithmetic.h` line 1161 unused debug variable~~ — **DONE**: Removed.
+- ~~`IRConverter_Conv_VarDecl.h` lines 213, 244 debug logging of `init.type`~~ — **DONE**:
+  Migrated to `init.effectiveIrType()`.
+- ~~`is_likely_pointer` heuristic regression~~ — **DONE**: Replaced overly broad
+  `!isIrFloatingPointType(...)` with positive whitelist:
+  `isIrIntegerType || isIrStructType || isIrPointerLikeType`.
+- ~~Unmigrated `TypedValue` aggregate inits~~ — **DONE**: `CodeGen_Expr_Conversions.cpp`
+  `storeBackUpdatedValue` migrated to `makeTypedValue()`. New
+  `makeTypedValue(Type, SizeInBits, IrValue, ReferenceQualifier)` overload added. All 6
+  designated-init sites in `CodeGen_Call_Indirect.cpp` migrated.
+- ~~`carriesSemanticTypeIndex` widening for primitive typedefs~~ — **DONE**: Added
+  `type_index.is_valid()` guard at `CodeGen_Expr_Primitives.cpp:1034` so primitive
+  typedefs (`typedef int MyInt` → `Type::UserDefined`) don't propagate stale type_index.
+- ~~`is_signed` not propagated through `makeTypedValue`~~ — **DONE**: Set
+  `ctx.result_value.is_signed = isSignedType(result_type)` after `makeTypedValue`
+  construction in `setupAndLoadArithmeticOperation`.
+
+**Remaining before full removal:**
 Once all consumers read `ir_type`, remove the old `type` field. Any remaining
 code that tries to match on `Type::Enum` inside a codegen helper will fail to
 compile — the bug class becomes structurally impossible.
@@ -672,11 +693,12 @@ These components use enum information but may not need direct changes:
 
 The phased approach allows incremental migration:
 
-- **Phase 0-1** (`IrType` definition + `TypedValue` dual field): Low risk, additive only
-- **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum
-- **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined)
-- **Phase 4** (remove old `Type` field): Low risk once Phase 3 is complete — compile errors guide remaining sites
-- **Phase 5-6** (ExprResult + audit): Low risk - slot-4 encoding already resolved by ExprResult migration
+- **Phase 0-1** (`IrType` definition + `TypedValue` dual field): Low risk, additive only — ✅ **COMPLETE**
+- **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum — ✅ **COMPLETE**
+- **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined) — ✅ **COMPLETE**
+- **Phase 4** (remove old `Type` field blockers): Low risk — ✅ **COMPLETE** (all blockers resolved; `type` field removal is mechanical)
+- **Phase 5** (ExprResult simplification): ✅ **COMPLETE** (slot-4 encoding already resolved by ExprResult migration)
+- **Phase 6** (audit and cleanup): Remaining work — verify `Type::Enum`/`Type::UserDefined` only in semantic layers
 
 **Revised Estimate**: Work is approximately **3-4x larger** than originally estimated 
 due to extensive codegen usage of Type::Enum and Type::UserDefined.
@@ -766,6 +788,7 @@ assumed ~8 files would need changes; actual scope is 25+ files.
 | `test_enum_compound_assign_ret0.cpp` | Enum compound assignment (`+=`, `|=`, `-=`) |
 | `test_enum_lvalue_assign_ret0.cpp` | Enum lvalue assignment (array element, pointer deref, stride) |
 | `test_struct_typedef_alias_ret0.cpp` | Struct typedef alias (UserDefined → IrType::Struct path) |
+| `test_void_ptr_ref_init.cpp` | `void*` reference init — `is_likely_pointer` heuristic (Phase 4) |
 
 ### Known Gaps
 
