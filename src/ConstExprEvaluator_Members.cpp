@@ -3428,10 +3428,7 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		object_identifier = identifier;
 		var_name = identifier->name();
 	} else {
-		if (object_expr.is<ExpressionNode>()) {
-			return EvalResult::error("Non-identifier expressions in array member access not supported");
-		}
-		return EvalResult::error("Invalid object expression in array member access");
+		return EvalResult::error("Unsupported object expression in array member access");
 	}
 
 	auto evaluate_array_member_element_from_initializer =
