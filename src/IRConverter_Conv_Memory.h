@@ -67,8 +67,12 @@
 
 		// Calculate member size in bytes
 		int member_size_bytes = op.result.size_in_bits.value / 8;
+		// Only silently skip for Type::UserDefined with unresolved metadata (a known
+		// transitional state for typedefs).  A genuine Type::Struct with 0 size and
+		// invalid type_index is a compiler bug that should not be masked here.
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 			isIrStructType(op.result.effectiveIrType()) &&
+			op.result.type != Type::Struct &&
 			!op.result.type_index.is_valid());
 
 		// Flush all dirty registers to ensure values are saved before allocating
