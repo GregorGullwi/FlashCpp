@@ -1363,7 +1363,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
-		bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
+		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
 			&& sub_member.type_index.value < gTypeInfo.size()
 			&& gTypeInfo[sub_member.type_index.value].struct_info_
 			&& (sub_member.size * 8) > 64;
@@ -1479,7 +1479,7 @@ const Token& token)
 			member.type,
 			element_size_bits,
 			base_object,
-			TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
+			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1490,7 +1490,7 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
-	const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
+	const bool is_struct_element = isIrStructType(toIrType(member.type))
 		&& member.type_index.value < gTypeInfo.size()
 		&& gTypeInfo[member.type_index.value].struct_info_
 		&& element_size_bits > 64;
@@ -1505,12 +1505,12 @@ const Token& token)
 			emitRecursiveZeroFill(*gTypeInfo[member.type_index.value].struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			TypedValue zero_value{member.type, SizeInBits{element_size_bits}, 0ULL};
+			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
 				member.type,
 				element_size_bits,
 				base_object,
-				TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
+				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,

@@ -1094,10 +1094,10 @@ public:
 	}
 
 private:
-	Type type_;
-	int size_;  // Size in bits - changed from unsigned char to int to support large structs
-	TypeQualifier qualifier_;
-	CVQualifier cv_qualifier_;  // CV-qualifier for the base type
+	Type type_ = Type::Invalid;  // Default to Invalid (zero) so default-constructed nodes are detectable
+	int size_ = 0;  // Size in bits - changed from unsigned char to int to support large structs
+	TypeQualifier qualifier_ = TypeQualifier::None;
+	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
 	Token token_;
 	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level

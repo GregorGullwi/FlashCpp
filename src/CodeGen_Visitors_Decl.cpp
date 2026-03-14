@@ -465,6 +465,7 @@
 
 								TypedValue lhs_arg;
 								lhs_arg.type = Type::Struct;
+								lhs_arg.ir_type = IrType::Struct;
 								lhs_arg.size_in_bits = SizeInBits{64};
 								lhs_arg.value = lhs_val;
 								lhs_arg.pointer_depth = PointerDepth{1};
@@ -472,6 +473,7 @@
 
 								TypedValue rhs_arg;
 								rhs_arg.type = Type::Struct;
+								rhs_arg.ir_type = IrType::Struct;
 								rhs_arg.size_in_bits = SizeInBits{64};
 								rhs_arg.value = rhs_val;
 								rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
@@ -482,8 +484,8 @@
 								// Check if result != 0 (members not equal)
 								TempVar ne_result = var_counter.next();
 								BinaryOp ne_op{
-									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
-									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
+									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
 									.result = IrValue{ne_result}
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -492,7 +494,7 @@
 								CondBranchOp ne_branch;
 								ne_branch.label_true = diff_label;
 								ne_branch.label_false = next_label;
-								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
+								ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
 								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 								// Label: diff - return the inner <=> result
@@ -536,8 +538,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -546,7 +548,7 @@
 						CondBranchOp ne_branch;
 						ne_branch.label_true = diff_label;
 						ne_branch.label_false = next_label;
-						ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
+						ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 						// Label: diff - members are not equal
@@ -555,8 +557,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -565,7 +567,7 @@
 						CondBranchOp lt_branch;
 						lt_branch.label_true = lt_label;
 						lt_branch.label_false = gt_label;
-						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{lt_result}};
+						lt_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{lt_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
 						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
@@ -664,6 +666,7 @@
 				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
 				TypedValue this_arg;
 				this_arg.type = Type::Struct;
+				this_arg.ir_type = IrType::Struct;
 				this_arg.size_in_bits = SizeInBits{64};
 				this_arg.value = this_handle;
 				this_arg.pointer_depth = PointerDepth{1};
@@ -682,6 +685,7 @@
 				}
 				TypedValue other_arg;
 				other_arg.type = Type::Struct;
+				other_arg.ir_type = IrType::Struct;
 				other_arg.size_in_bits = SizeInBits{64};
 				other_arg.value = other_handle;
 				other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
@@ -692,8 +696,8 @@
 				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
 				BinaryOp cmp_op{
-					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
-					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
+					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
 					.result = IrValue{cmp_result}
 				};
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
@@ -830,6 +834,7 @@
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
 						deref_op.pointer.type = Type::Struct;
+						deref_op.pointer.ir_type = IrType::Struct;
 						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
 
@@ -1455,6 +1460,7 @@
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
 					// The actual symbol will be loaded using the vtable_symbol field
 					vptr_store.value.type = Type::Void;
+					vptr_store.value.ir_type = IrType::Void;
 					vptr_store.value.size_in_bits = SizeInBits{64};
 					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
 					
@@ -1521,6 +1527,7 @@
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
 							other_arg.type = Type::Struct;  // Parameter type (struct reference)
+							other_arg.ir_type = IrType::Struct;
 							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8)};
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
@@ -1558,6 +1565,7 @@
 
 									TypedValue other_arg;
 									other_arg.type = Type::Struct;
+									other_arg.ir_type = IrType::Struct;
 									other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									other_arg.value = member_source_addr;
 									other_arg.type_index = member.type_index;
@@ -2207,7 +2215,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_op.element_type = element_type;
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
-		store_op.index = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i)};
+		store_op.index = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
 		store_op.value = toTypedValue(element_operands[i]);
 		store_op.member_offset = 0;  // Not a member array - direct local array
 		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
@@ -2268,7 +2276,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.object = init_list_name;  // Use StringHandle
 		store_size.member_name = size_member.getName();
 		store_size.offset = static_cast<int>(size_member.offset);
-		store_size.value = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size)};
+		store_size.value = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
 		store_size.struct_type_info = nullptr;
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
@@ -2528,6 +2536,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						AddressOfOp addr_op;
 						addr_op.result = addr_var;
 						addr_op.operand.type = arg_type.type();
+						addr_op.operand.ir_type = toIrType(arg_type.type());
 						addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -2535,6 +2544,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						
 						// Create TypedValue with the address
 						tv.type = arg_type.type();
+						tv.ir_type = toIrType(arg_type.type());
 						tv.size_in_bits = SizeInBits{64};  // Pointer size
 						tv.value = addr_var;
 						tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter

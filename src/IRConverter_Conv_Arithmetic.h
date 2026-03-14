@@ -448,11 +448,11 @@
 
 		// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.result_value.type == Type::Float) {
+		if (ctx.result_value.effectiveIrType() == IrType::Float) {
 			// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.result_value.type == Type::Double) {
+		} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
 			// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -471,11 +471,11 @@
 
 		// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.result_value.type == Type::Float) {
+		if (ctx.result_value.effectiveIrType() == IrType::Float) {
 			// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.result_value.type == Type::Double) {
+		} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
 			// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -494,11 +494,11 @@
 
 		// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.result_value.type == Type::Float) {
+		if (ctx.result_value.effectiveIrType() == IrType::Float) {
 			// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.result_value.type == Type::Double) {
+		} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
 			// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -518,11 +518,11 @@
 
 		// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.result_value.type == Type::Float) {
+		if (ctx.result_value.effectiveIrType() == IrType::Float) {
 			// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.result_value.type == Type::Double) {
+		} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
 			// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -1436,7 +1436,7 @@
 				source_xmm = existing_reg.value();
 			} else {
 				source_xmm = allocateXMMRegisterWithSpilling();
-				bool is_float = (op.from.type == Type::Float);
+				bool is_float = (op.from.effectiveIrType() == IrType::Float);
 				emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 			}
 		} else {
@@ -1451,7 +1451,7 @@
 				source_xmm = existing_reg.value();
 			} else {
 				source_xmm = allocateXMMRegisterWithSpilling();
-				bool is_float = (op.from.type == Type::Float);
+				bool is_float = (op.from.effectiveIrType() == IrType::Float);
 				emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
 			}
 		}
@@ -1462,7 +1462,7 @@
 		// cvttss2si (float to int) or cvttsd2si (double to int)
 		// For 32-bit: F3 0F 2C /r (cvttss2si r32, xmm) or F2 0F 2C /r (cvttsd2si r32, xmm)
 		// For 64-bit: F3 REX.W 0F 2C /r (cvttss2si r64, xmm) or F2 REX.W 0F 2C /r (cvttsd2si r64, xmm)
-		bool is_float = (op.from.type == Type::Float);
+		bool is_float = (op.from.effectiveIrType() == IrType::Float);
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 		
 		// Only use REX.W for 64-bit result
@@ -1538,14 +1538,14 @@
 			auto temp_var = std::get<TempVar>(op.from.value);
 			auto stack_offset = getStackOffsetFromTempVar(temp_var);
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (op.from.type == Type::Float);
+			bool is_float = (op.from.effectiveIrType() == IrType::Float);
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		} else if (std::holds_alternative<StringHandle>(op.from.value)) {
 			StringHandle var_name = std::get<StringHandle>(op.from.value);
 			auto var_it = variable_scopes.back().variables.find(var_name);
 			assert(var_it != variable_scopes.back().variables.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
-			bool is_float = (op.from.type == Type::Float);
+			bool is_float = (op.from.effectiveIrType() == IrType::Float);
 			emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
 		}
 
@@ -1554,7 +1554,7 @@
 
 		// cvtss2sd (float to double) or cvtsd2ss (double to float)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (op.from.type == Type::Float && op.to_type == Type::Double) {
+		if (op.from.effectiveIrType() == IrType::Float && op.to_type == Type::Double) {
 			// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5A, result_xmm, source_xmm);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -1580,9 +1580,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "add assignment");
 		
 		// Check if this is floating-point addition
-		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+		if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
-			if (ctx.result_value.type == Type::Float) {
+			if (ctx.result_value.effectiveIrType() == IrType::Float) {
 				// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
 				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -1611,9 +1611,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "subtract assignment");
 		
 		// Check if this is floating-point subtraction
-		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+		if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
-			if (ctx.result_value.type == Type::Float) {
+			if (ctx.result_value.effectiveIrType() == IrType::Float) {
 				// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
 				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -1642,9 +1642,9 @@
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiply assignment");
 		
 		// Check if this is floating-point multiplication
-		if (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double) {
+		if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
-			if (ctx.result_value.type == Type::Float) {
+			if (ctx.result_value.effectiveIrType() == IrType::Float) {
 				// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
 				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -1675,9 +1675,9 @@
 		const BinaryOp& bin_op = instruction.getTypedPayload<BinaryOp>();
 
 		// Check if this is floating-point division
-		if (bin_op.lhs.type == Type::Float || bin_op.lhs.type == Type::Double) {
+		if (isIrFloatingPointType(bin_op.lhs.effectiveIrType())) {
 			auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
-			if (ctx.result_value.type == Type::Float) {
+			if (ctx.result_value.effectiveIrType() == IrType::Float) {
 				// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
 				auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);

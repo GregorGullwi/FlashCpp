@@ -1313,22 +1313,22 @@
 	/// This applies to both variadic and non-variadic calls.
 	/// NOTE: For variadic *callees*, the register-save-area prologue handles these
 	/// implicitly, so callee-side code guards this with !is_variadic separately.
-	static bool isTwoRegisterStructRaw(Type type, int size_in_bits, bool is_reference, int pointer_depth) {
+	static bool isTwoRegisterStructRaw(IrType ir_type, int size_in_bits, bool is_reference, int pointer_depth) {
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			return type == Type::Struct && size_in_bits > 64 && size_in_bits <= 128 && !is_reference && pointer_depth == 0;
+			return isIrStructType(ir_type) && size_in_bits > 64 && size_in_bits <= 128 && !is_reference && pointer_depth == 0;
 		}
-		(void)type; (void)size_in_bits; (void)is_reference; (void)pointer_depth;
+		(void)ir_type; (void)size_in_bits; (void)is_reference; (void)pointer_depth;
 		return false;
 	}
 
 	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
 	bool isTwoRegisterStruct(const TypedValue& arg, [[maybe_unused]] bool is_variadic_call = false) const {
-		return isTwoRegisterStructRaw(arg.type, arg.size_in_bits.value, arg.is_reference(), arg.pointer_depth.value);
+		return isTwoRegisterStructRaw(arg.effectiveIrType(), arg.size_in_bits.value, arg.is_reference(), arg.pointer_depth.value);
 	}
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
 	bool shouldPassStructByAddress(const TypedValue& arg, bool is_two_register_struct = false) const {
-		if (arg.type != Type::Struct || arg.is_reference()) return false;
+		if (!isIrStructType(arg.effectiveIrType()) || arg.is_reference()) return false;
 		// SysV AMD64 two-register structs (9-16 bytes) must pass their bytes in
 		// registers, NOT a pointer.
 		if (is_two_register_struct) return false;

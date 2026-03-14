@@ -138,6 +138,7 @@
 		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
 			ExprResult result;
 			result.type = type;
+			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
 			result.type_index = TypeIndex{type_index};
@@ -184,13 +185,13 @@
 				if (strides[0] == 1) {
 					BinaryOp add_op;
 					add_op.lhs = toTypedValue(idx0_operands);
-					add_op.rhs = TypedValue{Type::Int, SizeInBits{32}, 0ULL};
+					add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
 					add_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 				} else {
 					BinaryOp mul_op;
 					mul_op.lhs = toTypedValue(idx0_operands);
-					mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0])};
+					mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 					mul_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 				}
@@ -202,7 +203,7 @@
 					if (strides[k] == 1) {
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 						add_op.rhs = toTypedValue(idx_operands);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -211,14 +212,14 @@
 						TempVar temp_prod = var_counter.next();
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx_operands);
-						mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k])};
+						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 						mul_op.result = IrValue{temp_prod};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
-						add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, temp_prod};
+						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+						add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 						flat_index = new_flat;
@@ -247,6 +248,7 @@
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
 				payload.index.type = Type::UnsignedLongLong;
+				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
 				payload.index.value = flat_index;
 
@@ -315,14 +317,14 @@
 						// Use Add with 0 to effectively copy
 						BinaryOp add_op;
 						add_op.lhs = toTypedValue(idx0_operands);
-						add_op.rhs = TypedValue{Type::Int, SizeInBits{32}, 0ULL};
+						add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
 						add_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 					} else {
 						// flat_index = indices[0] * strides[0]
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx0_operands);
-						mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0])};
+						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 						mul_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 					}
@@ -335,7 +337,7 @@
 							// flat_index += indices[k]
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 							add_op.rhs = toTypedValue(idx_operands);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -345,15 +347,15 @@
 							TempVar temp_prod = var_counter.next();
 							BinaryOp mul_op;
 							mul_op.lhs = toTypedValue(idx_operands);
-							mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k])};
+							mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 							mul_op.result = IrValue{temp_prod};
 							ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 							// flat_index += temp
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
-							add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, temp_prod};
+							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+							add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 							flat_index = new_flat;
@@ -382,6 +384,7 @@
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 					payload.index.type = Type::UnsignedLongLong;
+					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
 
@@ -471,6 +474,7 @@
 
 									// Set index as TypedValue
 									payload.index.type = index_result.type;
+									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
 
@@ -714,6 +718,7 @@
 		Type index_type = index_result.type;
 		int index_size = index_result.size_in_bits.value;
 		payload.index.type = index_type;
+		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
 		if (std::holds_alternative<unsigned long long>(index_result.value)) {
@@ -838,6 +843,7 @@
 	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index) {
 		ExprResult result;
 		result.type = type;
+		result.ir_type = toIrType(type);
 		result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 		result.value = result_var;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
@@ -961,11 +967,7 @@
 						call_op.is_member_function = true;
 
 						// Add 'this' pointer as first argument
-						call_op.args.push_back(TypedValue{
-							.type = type_node->type(),
-							.size_in_bits = SizeInBits{64},  // Pointer size
-							.value = IrValue(identifier_handle)
-						});
+						call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
 
 						// Add the function call instruction
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
@@ -1004,7 +1006,7 @@
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
-				if (base_type != Type::Struct && base_type != Type::UserDefined) {
+				if (!isIrStructType(toIrType(base_type))) {
 					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
@@ -1046,6 +1048,7 @@
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.ir_type = IrType::Struct;
 							load_copy_this.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_size_bits)};
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
@@ -1074,6 +1077,7 @@
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
 							load_this.result.type = Type::Void;
+							load_this.result.ir_type = IrType::Void;
 							load_this.result.size_in_bits = SizeInBits{64};
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");
@@ -1124,7 +1128,7 @@
 		// Try to find by direct index lookup
 		if (base_type_index.value < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[base_type_index.value];
-			if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+			if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		}
@@ -1133,7 +1137,7 @@
 		// This handles cases where type_index might not be set correctly
 		if (!type_info) {
 			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == base_type_index && (ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 					type_info = &ti;
 					break;
 				}
@@ -1147,13 +1151,13 @@
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
-				if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+				if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.value << ")\n";
 				}
 			}
 			std::cerr << "  Available types in gTypesByName:\n";
 			for (const auto& [name, ti] : gTypesByName) {
-				if (ti->type_ == Type::Struct || ti->type_ == Type::UserDefined) {
+				if (isIrStructType(toIrType(ti->type_))) {
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_.value << ")\n";
 				}
 			}
@@ -1976,7 +1980,7 @@
 		if (struct_info->hasUserDefinedDestructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+			if (isIrStructType(toIrType(member.type))) {
 				if (member.type_index.value >= gTypeInfo.size()) return false;
 				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTriviallyCopyableStruct(member_info)) return false;
@@ -2001,7 +2005,7 @@
 		if (struct_info->hasUserDefinedConstructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+			if (isIrStructType(toIrType(member.type))) {
 				if (member.type_index.value >= gTypeInfo.size()) return false;
 				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTrivialStruct(member_info)) return false;
@@ -2403,7 +2407,7 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				else if (isIrStructType(toIrType(type)) &&
 				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
@@ -2417,7 +2421,7 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				else if (isIrStructType(toIrType(type)) &&
 				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
@@ -3247,7 +3251,7 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 		const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
 		const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
 
-		if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index().value < gTypeInfo.size()) {
+		if (isIrStructType(toIrType(this_type.type())) && this_type.type_index().value < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[this_type.type_index().value];
 			return type_info.getStructInfo();
 		}
@@ -3376,7 +3380,7 @@ const StructMember*& out_member) const {
 		if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
 			return false;
 		}
-		if (!nested_member || (nested_member->type != Type::Struct && nested_member->type != Type::UserDefined)) {
+		if (!nested_member || !isIrStructType(toIrType(nested_member->type))) {
 			return false;
 		}
 		// Get the type info for the nested member's struct type
@@ -3401,7 +3405,7 @@ const StructMember*& out_member) const {
 	}
 	
 	// The base type should now be a struct type
-	if (base_type.type() != Type::Struct && base_type.type() != Type::UserDefined) {
+	if (!isIrStructType(toIrType(base_type.type()))) {
 		return false;
 	}
 	

@@ -204,6 +204,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
 							store_this.value.type = Type::Void;
+							store_this.value.ir_type = IrType::Void;
 							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
 							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -240,6 +241,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 									MemberLoadOp load_op;
 									load_op.result.value = loaded_value;
 									load_op.result.type = enclosing_member.type;
+									load_op.result.ir_type = toIrType(enclosing_member.type);
 									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
@@ -293,6 +295,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
 								addr_op.operand.type = init_type;
+								addr_op.operand.ir_type = toIrType(init_type);
 								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 								addr_op.operand.pointer_depth = PointerDepth{};
 
@@ -398,6 +401,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
 									addr_op.operand.type = orig_type.type();
+									addr_op.operand.ir_type = toIrType(orig_type.type());
 									addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 									addr_op.operand.pointer_depth = PointerDepth{};
 									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
@@ -408,6 +412,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
 								addr_op.operand.type = orig_type.type();
+								addr_op.operand.ir_type = toIrType(orig_type.type());
 								addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 								addr_op.operand.pointer_depth = PointerDepth{};
 								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
@@ -1005,6 +1010,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
 	op.result.type = Type::FunctionPointer;
+	op.result.ir_type = IrType::FunctionPointer;
 	op.result.size_in_bits = SizeInBits{64};
 	op.result.value = func_addr_var;
 	op.function_name = StringTable::getOrInternStringHandle(invoke_name);
@@ -1080,6 +1086,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	MemberLoadOp load_op;
 	load_op.result.value = copy_this_temp;
 	load_op.result.type = Type::Struct;
+	load_op.result.ir_type = IrType::Struct;
 	load_op.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_member->size * 8)};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__copy_this");
@@ -1208,6 +1215,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	MemberLoadOp load_op;
 	load_op.result.value = this_ptr;
 	load_op.result.type = Type::Void;
+	load_op.result.ir_type = IrType::Void;
 	load_op.result.size_in_bits = SizeInBits{64};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 	load_op.member_name = StringTable::getOrInternStringHandle("__this");

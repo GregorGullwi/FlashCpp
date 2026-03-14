@@ -30,13 +30,13 @@
 				return generateMemberAccessIr(expr, context);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.type == Type::Void ? generateSizeofIr(expr) : const_result;
+				return const_result.effectiveIrType() == IrType::Void ? generateSizeofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
 				FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
 				return ExprResult{};
 			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.type == Type::Void ? generateAlignofIr(expr) : const_result;
+				return const_result.effectiveIrType() == IrType::Void ? generateAlignofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				return generateNoexceptExprIr(expr);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
@@ -145,13 +145,13 @@
 
 	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_result.type == Type::Void && !object_result.size_in_bits.is_set()) {
+		if (object_result.effectiveIrType() == IrType::Void && !object_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
 		
 		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_result.type == Type::Void && !ptr_result.size_in_bits.is_set()) {
+		if (ptr_result.effectiveIrType() == IrType::Void && !ptr_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
@@ -162,8 +162,8 @@
 				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name};
+				assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
+				assign_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
 				object_addr = std::get<TempVar>(object_result.value);
@@ -180,7 +180,8 @@
 					.type = object_result.type,
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
-					.pointer_depth = PointerDepth{}
+					.pointer_depth = PointerDepth{},
+					.ir_type = toIrType(object_result.type)
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
@@ -193,7 +194,7 @@
 		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
+		add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
 		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
@@ -281,7 +282,7 @@
 			if (type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
 				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index().value].type_, type_node.type_index());
 			}
-			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
+			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,
@@ -297,7 +298,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
-			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : TypeIndex{};
+			return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -447,6 +448,7 @@
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
 			op.result.type = info.type;
+			op.result.ir_type = toIrType(info.type);
 			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
@@ -488,6 +490,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
+						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
@@ -513,6 +516,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
+						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
@@ -800,6 +804,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
+						op.result.ir_type = toIrType(static_member->type);
 						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
@@ -865,6 +870,7 @@
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
@@ -945,8 +951,8 @@
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					AssignmentOp assign_op;
 					assign_op.result = lvalue_temp;
-					assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, lvalue_temp};  // 64-bit pointer dest
-					assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
+					assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp);  // 64-bit pointer dest
+					assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1025,10 +1031,12 @@
 			// - For enum types, return type_index to preserve type information
 			// - For non-struct/enum pointer types, return pointer_depth
 			// - Otherwise return 0
-			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
+			TypeIndex type_index = carriesSemanticTypeIndex(type_node.type())
 				? type_node.type_index()
 				: TypeIndex{};
-			PointerDepth pointer_depth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+			// Enums are scalar (carry pointer_depth like integers), while structs
+			// use type_index for layout and zero pointer_depth here.
+			PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
@@ -1056,6 +1064,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
@@ -1126,8 +1135,8 @@
 						// Use AssignmentOp to copy the pointer value to a temp
 						AssignmentOp assign_op;
 						assign_op.result = addr_temp;
-						assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, addr_temp};  // 64-bit pointer dest
-						assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
+						assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, addr_temp);  // 64-bit pointer dest
+						assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
 						assign_op.is_pointer_store = false;
 						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1197,10 +1206,10 @@
 					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					(result_type == Type::Struct || result_type == Type::Enum || result_type == Type::UserDefined)
+					carriesSemanticTypeIndex(result_type)
 						? result_type_index
 						: TypeIndex{},
-					PointerDepth{(result_type == Type::Struct || result_type == Type::UserDefined)
+					PointerDepth{isIrStructType(toIrType(result_type))
 						? 0
 						: static_cast<int>(type_node.pointer_depth())});
 			}
@@ -1219,6 +1228,7 @@
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
+			op.result.ir_type = IrType::FunctionPointer;
 			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;
 			op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
@@ -1471,6 +1481,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
+						op.result.ir_type = toIrType(static_member->type);
 						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
@@ -1532,6 +1543,7 @@
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				// Use fully qualified name (ns::value) to match the global variable symbol
@@ -1570,6 +1582,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.type = type_node.type();
+			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
 			// Use fully qualified name (ns::value) to match the global variable symbol

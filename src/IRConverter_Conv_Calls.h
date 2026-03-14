@@ -239,7 +239,7 @@
 							// Handle floating-point literal
 							double float_value = std::get<double>(arg.value);
 							uint64_t bits;
-							if (arg.type == Type::Float) {
+							if (arg.effectiveIrType() == IrType::Float) {
 								float float_val = static_cast<float>(float_value);
 								uint32_t float_bits;
 								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -259,17 +259,17 @@
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
 							const auto& temp_var = std::get<TempVar>(arg.value);
 							int var_offset = getStackOffsetFromTempVar(temp_var);
-							bool is_float = (arg.type == Type::Float);
+							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
 							int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall stack float arg");
-							bool is_float = (arg.type == Type::Float);
+							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 						}
 
 						// Store XMM register to stack using float store instruction
-						bool is_float = (arg.type == Type::Float);
+						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
 
 						regAlloc.release(temp_xmm);
@@ -412,7 +412,7 @@
 					
 					// For float (32-bit), we need to convert the double to float first
 					uint64_t bits;
-					if (arg.type == Type::Float) {
+					if (arg.effectiveIrType() == IrType::Float) {
 						float float_val = static_cast<float>(float_value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -475,7 +475,7 @@
 					int var_offset = getStackOffsetFromTempVar(temp_var);
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
-						bool is_float = (arg.type == Type::Float);
+						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						
 						// For varargs: floats must be promoted to double (C standard)
@@ -503,7 +503,7 @@
 					int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall register arg");
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
-						bool is_float = (arg.type == Type::Float);
+						bool is_float = (arg.effectiveIrType() == IrType::Float);
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						
 						// For varargs: floats must be promoted to double (C standard)
@@ -897,7 +897,7 @@
 				// prefer the corresponding same-type copy/move constructor over other single-parameter constructors.
 				if (num_params == 1 && !ctor_op.arguments.empty()) {
 					const TypedValue& arg = ctor_op.arguments[0];
-					bool arg_is_same_struct = (arg.type == Type::Struct &&
+					bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
 						arg.type_index == struct_type_it->second->type_index_);
 					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == SizeInBits{64});
 
@@ -919,7 +919,7 @@
 					std::vector<TypeSpecifierNode> arg_types;
 					arg_types.reserve(num_params);
 					for (const auto& arg : ctor_op.arguments) {
-						TypeSpecifierNode arg_type = (arg.type == Type::Struct || arg.type == Type::UserDefined)
+						TypeSpecifierNode arg_type = isIrStructType(toIrType(arg.type))
 							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
 							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
 						if (arg.pointer_depth.is_pointer()) {
@@ -949,9 +949,9 @@
 									if (param_type.is<TypeSpecifierNode>()) {
 										const auto& pts = param_type.as<TypeSpecifierNode>();
 										if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-											(pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+											isIrStructType(toIrType(pts.type()))) {
 											const TypedValue& arg = ctor_op.arguments[0];
-											if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
+											if (!isIrStructType(arg.effectiveIrType()) || arg.type_index != struct_type_it->second->type_index_) {
 												continue;
 											}
 										}
@@ -1093,7 +1093,7 @@
 
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
-				bool is_float_arg = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference();
+				bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference();
 				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
 				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
@@ -1119,7 +1119,7 @@
 						if (std::holds_alternative<double>(arg.value)) {
 							double float_value = std::get<double>(arg.value);
 							uint64_t bits;
-							if (arg.type == Type::Float) {
+							if (arg.effectiveIrType() == IrType::Float) {
 								float float_val = static_cast<float>(float_value);
 								uint32_t float_bits;
 								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -1133,12 +1133,12 @@
 							regAlloc.release(temp_gpr);
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
 							int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
-							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
+							emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							int var_offset = getVariableOffsetOrThrow(std::get<StringHandle>(arg.value), "handleConstructorCall stack float arg");
-							emitFloatMovFromFrame(temp_xmm, var_offset, arg.type == Type::Float);
+							emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
 						}
-						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.type == Type::Float);
+						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
 						regAlloc.release(temp_xmm);
 						stack_arg_count++;
 					} else if (arg.is_reference() || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
@@ -1572,7 +1572,7 @@
 						if (std::holds_alternative<double>(arg.value)) {
 							double float_value = std::get<double>(arg.value);
 							uint64_t bits;
-							if (arg.type == Type::Float) {
+							if (arg.effectiveIrType() == IrType::Float) {
 								float float_val = static_cast<float>(float_value);
 								uint32_t float_bits;
 								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -1587,12 +1587,12 @@
 						} else if (std::holds_alternative<TempVar>(arg.value)) {
 							const auto& temp_var = std::get<TempVar>(arg.value);
 							int var_offset = getStackOffsetFromTempVar(temp_var);
-							bool is_float = (arg.type == Type::Float);
+							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						} else if (std::holds_alternative<StringHandle>(arg.value)) {
 							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
 							int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister float");
-							bool is_float = (arg.type == Type::Float);
+							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
 						}
 					} else {
@@ -1620,7 +1620,7 @@
 		textSectionData.push_back(0xD0); // ModR/M: RAX
 
 		// Step 7: Store return value from RAX to result variable using the correct size
-		if (op.result.type != Type::Void) {
+		if (op.result.effectiveIrType() != IrType::Void) {
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
 				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.type)}  // dest

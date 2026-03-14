@@ -414,6 +414,7 @@
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
 		op.result.type = Type::FunctionPointer;
+		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
@@ -495,11 +496,7 @@
 							call_op.is_member_function = true;  // This is a member function call
 							
 							// Add 'this' pointer as first argument
-							call_op.args.push_back(TypedValue{
-								.type = type_node->type(),
-								.size_in_bits = SizeInBits{64},  // Pointer size
-								.value = IrValue(identifier_handle)
-							});
+							call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
 							
 							// Capture return metadata before the move invalidates call_op.
 							SizeInBits ret_size_in_bits = call_op.return_size_in_bits;
@@ -537,6 +534,7 @@
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp load_op;
 					load_op.result.type = type_node->type();
+					load_op.result.ir_type = toIrType(type_node->type());
 					load_op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					load_op.result.value = result_temp;
 					load_op.global_name = binding_info.store_name;
@@ -844,7 +842,7 @@
 									// flat_index = indices[k]
 									AssignmentOp assign_op;
 									assign_op.result = flat_index;
-									assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+									assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 									assign_op.rhs = toTypedValue(idx_operands);
 									ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 									first_term = false;
@@ -852,7 +850,7 @@
 									// flat_index += indices[k]
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 									add_op.rhs = toTypedValue(idx_operands);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -863,7 +861,7 @@
 								TempVar temp_prod = var_counter.next();
 								BinaryOp mul_op;
 								mul_op.lhs = toTypedValue(idx_operands);
-								mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k])};
+								mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 								mul_op.result = IrValue{temp_prod};
 								ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 								
@@ -874,8 +872,8 @@
 									// flat_index += temp
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
-									add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, temp_prod};
+									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+									add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 									flat_index = new_flat;
@@ -891,6 +889,7 @@
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.type = Type::UnsignedLongLong;
+						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
 						payload.is_pointer_to_array = false;  // Multidimensional arrays are actual arrays, not pointers
@@ -1418,8 +1417,8 @@
 				}
 				AssignmentOp copy_op;
 				copy_op.result = lvalue_temp;
-				copy_op.lhs = TypedValue{operandType, SizeInBits{64}, lvalue_temp};
-				copy_op.rhs = TypedValue{operandType, SizeInBits{64}, rhs_value};
+				copy_op.lhs = makeTypedValue(operandType, SizeInBits{64}, lvalue_temp);
+				copy_op.rhs = makeTypedValue(operandType, SizeInBits{64}, rhs_value);
 				copy_op.is_pointer_store = false;
 				copy_op.dereference_rhs_references = false;
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), Token()));
@@ -1638,6 +1637,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	TypedValue this_arg;
 	this_arg.type = operandType;
+	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
 	call_op.args.push_back(this_arg);
@@ -1649,6 +1649,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
 		dummy_arg.type = Type::Int;
+		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
 		call_op.args.push_back(dummy_arg);
@@ -1691,7 +1692,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {

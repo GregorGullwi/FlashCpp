@@ -244,7 +244,7 @@
 								size_t abs_offset = base_offset + member.offset;
 								const ASTNode& elem_init = ilist.initializers()[i];
 								if (elem_init.is<InitializerListNode>() &&
-									(member.type == Type::Struct || member.type == Type::UserDefined) &&
+									isIrStructType(toIrType(member.type)) &&
 									member.type_index.value < gTypeInfo.size()) {
 									// Nested struct: recurse
 									const StructTypeInfo* nested = gTypeInfo[member.type_index.value].getStructInfo();
@@ -645,22 +645,20 @@
 					
 					// Set the compile-time evaluated initializer
 					if (std::holds_alternative<long long>(eval_result.value)) {
-						decl_op.initializer = TypedValue{type_node.type(), decl_op.size_in_bits, 
-							static_cast<unsigned long long>(std::get<long long>(eval_result.value))};
+						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(std::get<long long>(eval_result.value)));
 					} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-						decl_op.initializer = TypedValue{type_node.type(), decl_op.size_in_bits, 
-							std::get<unsigned long long>(eval_result.value)};
+						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, std::get<unsigned long long>(eval_result.value));
 					} else if (std::holds_alternative<double>(eval_result.value)) {
 						double d = std::get<double>(eval_result.value);
 						if (type_node.type() == Type::Float) {
 							float f = static_cast<float>(d);
 							uint32_t bits;
 							std::memcpy(&bits, &f, sizeof(float));
-							decl_op.initializer = TypedValue{Type::Float, SizeInBits{32}, static_cast<unsigned long long>(bits)};
+							decl_op.initializer = makeTypedValue(Type::Float, SizeInBits{32}, static_cast<unsigned long long>(bits));
 						} else {
 							unsigned long long bits;
 							std::memcpy(&bits, &d, sizeof(double));
-							decl_op.initializer = TypedValue{Type::Double, SizeInBits{64}, bits};
+							decl_op.initializer = makeTypedValue(Type::Double, SizeInBits{64}, bits);
 						}
 					}
 					
@@ -1017,6 +1015,7 @@
 														AddressOfOp addr_op;
 														addr_op.result = addr_var;
 														addr_op.operand.type = arg_type.type();
+														addr_op.operand.ir_type = toIrType(arg_type.type());
 														addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 														addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1024,6 +1023,7 @@
 														
 														// Create TypedValue with the address
 														tv.type = arg_type.type();
+														tv.ir_type = toIrType(arg_type.type());
 														tv.size_in_bits = SizeInBits{64};  // Pointer size
 														tv.value = addr_var;
 														tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -1341,6 +1341,7 @@
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
 										addr_op.operand.type = init_type;
+										addr_op.operand.ir_type = toIrType(init_type);
 										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
@@ -1349,6 +1350,7 @@
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = init_type;
+										this_arg.ir_type = toIrType(init_type);
 										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 										this_arg.value = this_ptr;
 										this_arg.type_index = TypeIndex{init_type_index};
@@ -1361,6 +1363,7 @@
 										// This is because visitExpressionNode returns addresses for struct identifiers.
 										TypedValue this_arg;
 										this_arg.type = init_type;
+										this_arg.ir_type = toIrType(init_type);
 										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
 										this_arg.type_index = TypeIndex{init_type_index};
@@ -1449,6 +1452,7 @@
 					IrValue index_value = lv_info.array_index.value();
 					addr_op.index.value = index_value;
 					addr_op.index.type = Type::Int;  // Index type (typically int)
+					addr_op.index.ir_type = IrType::Integer;
 					addr_op.index.size_in_bits = SizeInBits{32};  // Standard index size
 					
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
@@ -1459,6 +1463,7 @@
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
 					tv.type = std::get<Type>(operands[7]);
+					tv.ir_type = toIrType(std::get<Type>(operands[7]));
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
 					decl_op.initializer = std::move(tv);
@@ -1517,7 +1522,7 @@
 					store_op.element_type = type_node.type();
 					store_op.element_size_in_bits = size_in_bits;
 					store_op.array = decl.identifier_token().handle();
-					store_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
+					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;  // Local arrays are actual arrays, not pointers
@@ -1795,6 +1800,7 @@
 												AddressOfOp addr_op;
 												addr_op.result = addr_var;
 												addr_op.operand.type = arg_type.type();
+												addr_op.operand.ir_type = toIrType(arg_type.type());
 												addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1802,6 +1808,7 @@
 												
 												// Create TypedValue with the address
 												tv.type = arg_type.type();
+												tv.ir_type = toIrType(arg_type.type());
 												tv.size_in_bits = SizeInBits{64};  // Pointer size
 												tv.value = addr_var;
 												tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -1896,7 +1903,7 @@
 													if (param_type.type() == init_type) {
 														param_matches = true;
 														// For class types, require exact type match, not just Type::Struct kind.
-														if ((init_type == Type::Struct || init_type == Type::UserDefined) &&
+														if (isIrStructType(toIrType(init_type)) &&
 															(!init_type_index.is_valid() || !param_type.type_index().is_valid() ||
 															param_type.type_index() != init_type_index)) {
 															param_matches = false;
@@ -1971,6 +1978,7 @@
 											AddressOfOp addr_op;
 											addr_op.result = addr_var;
 											addr_op.operand.type = init_type.type();
+											addr_op.operand.ir_type = toIrType(init_type.type());
 											addr_op.operand.size_in_bits = SizeInBits{init_type.size_in_bits()};
 											addr_op.operand.pointer_depth = PointerDepth{};
 											addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1978,6 +1986,7 @@
 											
 											// Create TypedValue with the address
 											init_arg.type = init_type.type();
+											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
 											init_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -2260,12 +2269,13 @@
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
 					addr_op.operand.type = init_type;
+					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
 					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_op, Token()));
 					
-					hidden_decl_op.initializer = TypedValue{init_type, SizeInBits{64}, addr_temp};
+					hidden_decl_op.initializer = makeTypedValue(init_type, SizeInBits{64}, addr_temp);
 				} else {
 					// For other expressions, just use the value and hope for the best
 					hidden_decl_op.initializer = toTypedValue(init_operands);
@@ -2297,7 +2307,7 @@
 					ArrayAccessOp access_op;
 					access_op.result = element_temp;
 					access_op.array = source_array;
-					access_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
+					access_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					access_op.element_type = array_element_type;
 					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
@@ -2310,8 +2320,8 @@
 					store_op.element_type = array_element_type;
 					store_op.element_size_in_bits = array_element_size;
 					store_op.array = hidden_var_handle;
-					store_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
-					store_op.value = TypedValue{array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp};
+					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					store_op.value = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;
 					
@@ -2372,7 +2382,7 @@
 					ArrayElementAddressOp addr_op;
 					addr_op.result = element_addr;
 					addr_op.array = hidden_var_handle;
-					addr_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
+					addr_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					addr_op.element_type = array_element_type;
 					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
@@ -2387,7 +2397,7 @@
 					binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 						? CVReferenceQualifier::RValueReference
 						: CVReferenceQualifier::LValueReference;
-					binding_var_decl.initializer = TypedValue{array_element_type, SizeInBits{64}, element_addr};
+					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{64}, element_addr);
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 				} else {
@@ -2396,7 +2406,7 @@
 					ArrayAccessOp load_op;
 					load_op.result = element_val;
 					load_op.array = hidden_var_handle;
-					load_op.index = TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)};
+					load_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					load_op.element_type = array_element_type;
 					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
@@ -2409,7 +2419,7 @@
 					binding_var_decl.var_name = binding_id;
 					binding_var_decl.type = array_element_type;
 					binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
-					binding_var_decl.initializer = TypedValue{array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_val};
+					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_val);
 					
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 				}
@@ -2662,6 +2672,7 @@
 						// Pass the hidden variable as argument
 						TypedValue arg;
 						arg.type = init_type;
+						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
 						arg.type_index = TypeIndex{init_type_index};
@@ -2818,6 +2829,7 @@
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
 				load_op.result.type = member.type;
+				load_op.result.ir_type = toIrType(member.type);
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;
 				load_op.result.type_index = member.type_index;
