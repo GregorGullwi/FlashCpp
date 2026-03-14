@@ -262,6 +262,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	}
 	else if (node.is<IfStatementNode>()) {
 		const auto& stmt = node.as<IfStatementNode>();
+		// C++17 [stmt.if]/2: variables declared in the init-statement go out of
+		// scope at the end of the if statement.  Push/pop a scope to mirror this.
+		pushScope();
 		if (stmt.has_init()) {
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
@@ -270,9 +273,13 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		if (stmt.has_else()) {
 			normalizeStatement(stmt.get_else_statement().value(), ctx);
 		}
+		popScope();
 	}
 	else if (node.is<ForStatementNode>()) {
 		const auto& stmt = node.as<ForStatementNode>();
+		// C++20 [stmt.for]/1: the init-statement's scope extends to the end of
+		// the for statement.  Push/pop a scope to prevent type leakage.
+		pushScope();
 		if (stmt.has_init()) {
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
@@ -283,6 +290,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeExpression(stmt.get_update_expression().value(), ctx);
 		}
 		normalizeStatement(stmt.get_body_statement(), ctx);
+		popScope();
 	}
 	else if (node.is<WhileStatementNode>()) {
 		const auto& stmt = node.as<WhileStatementNode>();
