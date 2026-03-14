@@ -24,6 +24,24 @@ inline const IdentifierNode* tryGetIdentifier(const ASTNode& node) {
 	return nullptr;
 }
 
+// Parser-produced expression results now prefer QualifiedIdentifierNode wrapped
+// in ExpressionNode, but older/synthetic ASTs may still store
+// QualifiedIdentifierNode directly. Keep this helper tolerant of both forms for
+// downstream consumers.
+inline const QualifiedIdentifierNode* tryGetQualifiedIdentifier(const ASTNode& node) {
+	if (node.is<ExpressionNode>()) {
+		const ExpressionNode& expr_node = node.as<ExpressionNode>();
+		if (std::holds_alternative<QualifiedIdentifierNode>(expr_node)) {
+			return &std::get<QualifiedIdentifierNode>(expr_node);
+		}
+		return nullptr;
+	}
+	if (node.is<QualifiedIdentifierNode>()) {
+		return &node.as<QualifiedIdentifierNode>();
+	}
+	return nullptr;
+}
+
 inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
 	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
 		return identifier->name();

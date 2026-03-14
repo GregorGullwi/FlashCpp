@@ -1033,7 +1033,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 		}
 		
 		// Handle nested type access like typename Op<Args...>::type
-		if (type_or_expr.is<QualifiedIdentifierNode>()) {
+		if (tryGetQualifiedIdentifier(type_or_expr)) {
 			// This is a dependent type - try to resolve it
 			// For now, if we can't resolve, return nullopt
 			return std::nullopt;
@@ -1041,7 +1041,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 	}
 	
 	// Handle qualified identifier (nested type access)
-	if (expr.is<QualifiedIdentifierNode>()) {
+	if (tryGetQualifiedIdentifier(expr)) {
 		// This is a dependent type - try to resolve the qualified name
 		// For now, can't evaluate complex qualified identifiers
 		return std::nullopt;
@@ -1573,5 +1573,4 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();
 }
-
 
