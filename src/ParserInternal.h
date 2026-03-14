@@ -8,12 +8,7 @@
 
 inline constexpr size_t MAX_PACK_ELEMENTS = 1000;
 
-inline const std::unordered_set<std::string_view> type_keywords = {
-	"int", "float", "double", "char", "bool", "void",
-	"short", "long", "signed", "unsigned", "const", "volatile", "alignas",
-	"auto", "wchar_t", "char8_t", "char16_t", "char32_t", "decltype",
-	"__int8", "__int16", "__int32", "__int64"
-};
+extern const std::unordered_set<std::string_view> type_keywords;
 
 struct CallingConventionMapping {
 	std::string_view keyword;
