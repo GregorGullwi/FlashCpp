@@ -228,9 +228,7 @@
 						// Excludes Void, Bool, Nullptr, etc. which happen to be non-float but aren't pointers.
 						IrType init_ir = init.effectiveIrType();
 						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} &&
-						                          (isIrIntegerType(init_ir) || isIrStructType(init_ir) ||
-						                           init_ir == IrType::FunctionPointer || init_ir == IrType::MemberFunctionPointer ||
-						                           init_ir == IrType::MemberObjectPointer));
+						                          (isIrIntegerType(init_ir) || isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value

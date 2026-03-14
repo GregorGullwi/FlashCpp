@@ -886,6 +886,8 @@
 
 		// Phase 4 helper: builds a TypeSpecifierNode from TypedValue metadata.
 		// Centralises the .type dependency so it can later be replaced with IrType-based logic.
+		// TODO(Phase 5): Replace arg.type with IrType-based TypeSpecifierNode construction
+		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
 				? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
