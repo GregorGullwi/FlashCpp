@@ -20,3 +20,9 @@ inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
 	}
 	return {};
 }
+
+// Extract a QualifiedIdentifierNode from a normalized expression result node.
+// Parser expression paths return QualifiedIdentifierNode wrapped in ExpressionNode.
+inline const QualifiedIdentifierNode& asQualifiedIdentifier(const ASTNode& node) {
+	return std::get<QualifiedIdentifierNode>(node.as<ExpressionNode>());
+}

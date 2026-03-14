@@ -2317,8 +2317,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (peek() == "::"_tok) {
 						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-							const auto& qual_expr = qualified_result.node()->as<ExpressionNode>();
-							const auto& qualified_node2 = std::get<QualifiedIdentifierNode>(qual_expr);
+							const auto& qualified_node2 = asQualifiedIdentifier(*qualified_result.node());
 							auto member_call_result = try_parse_member_template_function_call(
 								StringTable::getStringView(inst_struct.name()),
 								qualified_node2.name(),
@@ -4386,8 +4385,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Parse qualified identifier after template
 					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-						const auto& qual_expr = qualified_result.node()->as<ExpressionNode>();
-						const auto& qualified_node = std::get<QualifiedIdentifierNode>(qual_expr);
+						const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 						
 						// Try to parse member template function call: Template<T>::member<U>()
 						auto func_call_result = try_parse_member_template_function_call(
