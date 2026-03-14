@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 // Phase 1: Unified parameter list parsing
 // This method handles all the common parameter parsing logic:
 // - Basic parameters: (int x, float y)

@@ -4,11 +4,33 @@ Date: 2026-03-14
 ## Overview
 Enable FlashCpp to build both as a unity build (current) and as individual translation units, without changing the flat folder structure.
 
+## Implementation Status
+
+This refactor is **substantially completed**, but the final dedicated modular-build target is still pending.
+
+The following parts of this plan have been completed:
+- `src/FlashCppUnity.h` was renamed to `src/CompilerIncludes.h`
+- `src/CodeGen.h` was renamed to `src/IrGenerator.h`
+- The `src/CodeGen_*.cpp` implementation files were renamed to `src/IrGenerator_*.cpp`
+- `src/IrType.cpp` and `src/TypeTraitEvaluator.cpp` were added, with non-trivial header bodies moved out of headers
+- The continuation-style `IRConverter_Conv_*.h` headers plus the class-internal `IRConverter_Emit_CompareBranch.h` and `IRConverter_Emit_EHSeh.h` shards were consolidated into `IRConverter_ConvertMain.h`, and the non-trivial `IrToObjConverter` method definitions were moved into `IRConverter_ConvertMain.cpp`
+- `StringBuilder` was extracted from `src/ChunkedString.h` into `src/StringBuilder.h`
+- Parser and IrGenerator aggregator `.cpp` files were removed; `CompilerIncludes.h` now includes leaf `.cpp` files directly for the unity build
+- No `src/*.cpp` file includes another `.cpp` file anymore; standalone compilation dependencies were made explicit with shared headers such as `ParserInternal.h`
+- `src/TemplateRegistry_Lazy.cpp` was converted into `src/TemplateRegistry_Lazy.h` to stop header-fragment code from pretending to be a standalone translation unit
+- Both `FlashCpp.vcxproj` and `FlashCppMSVC.vcxproj` were synced with the current `src\` tree and their `.filters` files were updated accordingly
+- All 61 non-`main.cpp` source files in `src\` now compile successfully as separate translation units with `clang-cl /c`
+
+The following parts of the original intent remain unfinished:
+- A true selectable non-unity / per-translation-unit build target in `FlashCpp.vcxproj` and the `Makefile` (the files compile standalone today, but the project still builds in unity mode by default)
+- `Globals.h` and any further modular-build-only declaration cleanup
+- Filename-family casing is still mixed (`IRConverter*` / `IRTypes*` alongside `IrGenerator*` / `IrType*` / `IrOperandHelpers.h`); this now has an explicit audit result but is not yet normalized
+
 ## 1. Filename Review
 
 ### Reasonably Named (after header merge)
 - `Parser.h/cpp`, `Lexer.h/cpp`
-- `IrGenerator.h` (renamed from CodeGen.h), `IRConverter.h` (merge split headers into it)
+- `IrGenerator.h` (renamed from `CodeGen.h`), `IRConverter.h`
 - `AstNodeTypes.h`, `IRTypes.h`
 - `CompileContext.h`, `CommandLineParser.h`
 
@@ -62,7 +84,7 @@ The headers are already well-split as continuations of each other, but the user 
 | `Parser_Expr_PrimaryExpr.cpp` | 5693 | Split by expression type |
 | `Parser_Templates_Class.cpp` | 5432 | Split class templates from function templates |
 | `Parser_Decl_StructEnum.cpp` | 4279 | Split struct, enum, union into separate files |
-| `CodeGen_Expr_Operators.cpp` | 4071 | Split binary vs unary operators |
+| `IrGenerator_Expr_Operators.cpp` | 4071 | Split binary vs unary operators |
 
 ### Notes
 - Splitting is optional - the dual build will work without it
@@ -79,13 +101,10 @@ Since headers are merged (not split like .cpp files), minimal new headers needed
 - Ensure existing headers have complete declarations for modular compilation
 
 ### C. Update FlashCpp.vcxproj
-Add all .cpp files as ClCompile items:
-```xml
-<ClCompile Include="src\Parser.cpp" />
-<ClCompile Include="src\Parser_Core.cpp" />
-<ClCompile Include="src\Parser_Declarations.cpp" />
-<!-- ... all ~80 .cpp files -->
-```
+This is now partially done:
+- `FlashCpp.vcxproj` and `FlashCppMSVC.vcxproj` both list the full current `src\` inventory (`.cpp`, `.h`, `.hpp`)
+- Under the current unity-build setup, `main.cpp` remains the only directly compiled source and the other `src\*.cpp` files are tracked as `ClInclude` items because they are pulled in through `CompilerIncludes.h`
+- A future dedicated modular configuration should flip the non-`main.cpp` sources from `ClInclude` to `ClCompile` for that build mode
 
 ### D. Update Makefile
 Unity build remains DEFAULT. Add modular build target:
@@ -128,16 +147,20 @@ Pass `-DUNITY_BUILD` in unity mode, omit for modular.
 ## 7. Execution Order
 
 1. **MERGE split headers into single headers** (before any other changes)
-   - Merge `IRConverter_Conv_*.h`, `IRConverter_Emit_*.h`, etc. into `IRConverter.h`
-   - Merge `CodeGen_*.h` into `IrGenerator.h`
+   - Intermediate cleanup completed: `IRConverter_Conv_*.h` and the class-internal emit shards were flattened into a self-contained `IRConverter_ConvertMain.h` that is included by `IRConverter.h`
+   - Remaining work: move non-trivial `IrToObjConverter` member definitions out of headers into `.cpp` files without breaking template usage
    - Merge `Parser_*.h` into `Parser.h`
-2. Rename `CodeGen.h` → `IrGenerator.h` (update all #include references)
+2. Rename `CodeGen.h` → `IrGenerator.h` (update all `#include` references)
 3. Rename `FlashCppUnity.h` → `CompilerIncludes.h`
 4. Create `IrType.cpp` and `TypeTraitEvaluator.cpp` with inline implementations
 5. Create minimal `.h` files for key split `.cpp` files as needed
-6. Update FlashCpp.vcxproj with all .cpp files
+6. Update `FlashCpp.vcxproj` and `FlashCppMSVC.vcxproj` so they track the full source tree
+   - Completed for inventory / IDE completeness
+   - Remaining work: add a separate modular configuration that compiles the non-`main.cpp` sources directly
 7. Update Makefile with modular target
 8. Test both build modes
+   - Unity build and Windows test suite completed successfully
+   - Standalone `/c` compilation audit completed successfully for all `src\*.cpp` files except `main.cpp`
 9. Run benchmarking script
 
 ## 8. CodeGen → IrGenerator Rename Details
@@ -147,7 +170,7 @@ Files to update:
 - Update `#include "CodeGen.h"` in 17 files:
   - All `CodeGen_*.cpp` files (15 files)
   - `AstToIr.h`
-  - `FlashCppUnity.h`
+  - `CompilerIncludes.h`
 - Optionally rename `CodeGen_*.cpp` → `IrGenerator_*.cpp` for consistency
 
 ## 9. Benchmarking Strategy

@@ -34,7 +34,7 @@ but they are not ranked in a unified candidate set per [over.match.oper]. ADL ca
 also not yet searched for operator overloads.
 
 **Location:** `src/OverloadResolution.h` — `findBinaryOperatorOverloadWithFreeFunction()`,
-`OperatorOverloadResult::is_free_function`; `src/CodeGen_Expr_Operators.cpp` — free-function
+`OperatorOverloadResult::is_free_function`; `src/IrGenerator_Expr_Operators.cpp` — free-function
 codegen path with reference parameter handling.
 
 ---

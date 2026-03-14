@@ -1,3 +1,4 @@
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "OverloadResolution.h"
 #include <limits>

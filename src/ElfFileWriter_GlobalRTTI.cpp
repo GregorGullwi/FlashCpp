@@ -1,3 +1,6 @@
+#include "ObjFileWriter.h"
+#include "ElfFileWriter.h"
+
 // ElfFileWriter_GlobalRTTI.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
 

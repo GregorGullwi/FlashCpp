@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <cassert>
 #include <cstring>
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 
 /**
  * @file StringTable.h

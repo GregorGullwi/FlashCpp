@@ -2,7 +2,7 @@
 
 [← Index](../NON_STANDARD_BEHAVIOR.md)
 
-Covers `src/Parser_Expr_ControlFlowStmt.cpp`, `src/CodeGen_Lambdas.cpp`.
+Covers `src/Parser_Expr_ControlFlowStmt.cpp`, `src/IrGenerator_Lambdas.cpp`.
 For constexpr-specific lambda limitations see [05_constexpr.md](05_constexpr.md).
 
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong

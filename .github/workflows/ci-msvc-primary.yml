@@ -34,4 +34,3 @@ jobs:
             Write-Host "Reference files test failed!" -ForegroundColor Red
             exit 1
           }
-

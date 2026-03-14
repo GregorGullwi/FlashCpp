@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version='1.0' encoding='utf-8'?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
@@ -17,7 +17,11 @@
       <Configuration>Test</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
-  </ItemGroup>
+    <ProjectConfiguration Include="Modular|x64">
+      <Configuration>Modular</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  <ProjectConfiguration Include="Sharded|x64"><Configuration>Sharded</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{3AB9F4D0-719E-42DD-80A0-5297FE82E5AE}</ProjectGuid>
@@ -49,11 +53,15 @@
     <PlatformToolset>ClangCL</PlatformToolset>
     <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-  </ImportGroup>
-  <ImportGroup Label="Shared">
-  </ImportGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Modular|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>ClangCL</PlatformToolset><ClangToolsetVersion>19</ClangToolsetVersion></PropertyGroup><Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -66,7 +74,10 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros">
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Modular|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup><PropertyGroup Label="UserMacros">
     <LLVMInstallDir>C:\Program Files\LLVM</LLVMInstallDir>
     <BenchmarkOutputFile>$(OutDir)benchmark.exe</BenchmarkOutputFile>
   </PropertyGroup>
@@ -89,7 +100,11 @@
     <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>benchmark</TargetName>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Modular|x64'">
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath><LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath><UseMultiToolTask>true</UseMultiToolTask><MultiProcMaxCount>4</MultiProcMaxCount></PropertyGroup><PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
     <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
     <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>test</TargetName>
@@ -169,56 +184,287 @@
       <OutputFile>$(OutDir)test.exe</OutputFile>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <!-- Unity build: only main.cpp is compiled; all other sources are included via FlashCppUnity.h -->
-    <ClCompile Include="src\main.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test'">true</ExcludedFromBuild>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Modular|x64'">
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <Optimization>Disabled</Optimization>
+      <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <!-- Benchmark file - only include in Benchmark -->
-    <!-- Test file - only include in Test -->
+    <Link>
+      <StackReserveSize>8388608</StackReserveSize>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><ClCompile><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><DebugInformationFormat>ProgramDatabase</DebugInformationFormat><AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions><UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions><Optimization>Disabled</Optimization><WarningLevel>Level3</WarningLevel></ClCompile><Link><AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies><AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><StackReserveSize>8388608</StackReserveSize></Link></ItemDefinitionGroup><ItemGroup>
+    <ClCompile Include="src\AstNodeTypes.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\CodeViewDebug.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvaluator_Core.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvaluator_Members.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ElfFileWriter_EH.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ElfFileWriter_FuncSig.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ElfFileWriter_GlobalRTTI.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ExpressionSubstitutor.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\FileReader_Core.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\FileReader_Macros.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\FlashCppMain.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular' And '$(Configuration)'!='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Globals.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IRConverter_ConvertMain.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Call_Direct.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Call_Indirect.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Expr_Conversions.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Expr_Operators.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Expr_Primitives.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Helpers.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Lambdas.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_MemberAccess.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_NewDeleteCast.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Stmt_Control.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Stmt_Decl.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Stmt_TryCatchSeh.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Visitors_Decl.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Visitors_Namespace.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrGenerator_Visitors_TypeInit.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\IrType.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ObjFileWriter_Debug.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ObjFileWriter_EH.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ObjFileWriter_RTTI.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ObjFileWriter_Symbols.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Core.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Decl_DeclaratorCore.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Decl_FunctionOrVar.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Decl_StructEnum.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Decl_TopLevel.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Decl_TypedefUsing.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_BinaryPrecedence.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_ControlFlowStmt.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_PostfixCalls.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_PrimaryExpr.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_PrimaryUnary.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Expr_QualLookup.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_FunctionBodies.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_FunctionHeaders.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Statements.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Class.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Concepts.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Function.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Inst_ClassTemplate.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Inst_Deduction.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Inst_MemberFunc.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Inst_Substitution.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Lazy.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_MemberOutOfLine.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Params.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Substitution.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_Templates_Variable.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\Parser_TypeSpecifiers.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\TypeTraitEvaluator.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\main.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'=='Benchmark' Or '$(Configuration)'=='Test' Or '$(Configuration)'=='Modular' Or '$(Configuration)'=='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Test'">true</ExcludedFromBuild>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <!-- Unity build include file and sources (not compiled directly) -->
-    <ClInclude Include="src\FlashCppUnity.h" />
-    <ClInclude Include="src\Globals.cpp" />
-    <ClInclude Include="src\AstNodeTypes.cpp" />
-    <ClInclude Include="src\CodeViewDebug.cpp" />
-    <ClInclude Include="src\ExpressionSubstitutor.cpp" />
-    <ClInclude Include="src\Parser_Core.cpp" />
-    <ClInclude Include="src\Parser_Declarations.cpp" />
-    <ClInclude Include="src\Parser_Types.cpp" />
-    <ClInclude Include="src\Parser_Statements.cpp" />
-    <ClInclude Include="src\Parser_Expressions.cpp" />
-    <ClInclude Include="src\Parser_Templates.cpp" />
-    <!-- CodeGen split files -->
-    <ClInclude Include="src\CodeGen_Visitors.cpp" />
-    <ClInclude Include="src\CodeGen_Statements.cpp" />
-    <ClInclude Include="src\CodeGen_Expressions.cpp" />
-    <ClInclude Include="src\CodeGen_Functions.cpp" />
-    <ClInclude Include="src\CodeGen_Lambdas.cpp" />
-    <ClInclude Include="src\CodeGen_Helpers.cpp" />
-    <ClInclude Include="src\CodeGen_Visitors_TypeInit.cpp" />
-    <ClInclude Include="src\CodeGen_Visitors_Decl.cpp" />
-    <ClInclude Include="src\CodeGen_Expr_Conversions.cpp" />
-    <ClInclude Include="src\CodeGen_Expr_Operators.cpp" />
-    <ClInclude Include="src\CodeGen_MemberAccess.cpp" />
-    <ClInclude Include="src\CodeGen_Call_Indirect.cpp" />
-    <ClInclude Include="src\CodeGen_Stmt_TryCatchSeh.cpp" />
-    <!-- ConstExprEvaluator split files -->
-    <ClInclude Include="src\ConstExprEvaluator_Core.cpp" />
-    <ClInclude Include="src\ConstExprEvaluator_Members.cpp" />
-    <!-- FileReader split files -->
-    <ClInclude Include="src\FileReader_Core.cpp" />
-    <ClInclude Include="src\FileReader_Macros.cpp" />
-    <!-- TemplateRegistry split files -->
-    <ClInclude Include="src\TemplateRegistry_Lazy.cpp" />
+    <ClInclude Include="src\AstNodeTypes.h" />
+    <ClInclude Include="src\AstNodeTypes_Core.h" />
+    <ClInclude Include="src\AstNodeTypes_DeclNodes.h" />
+    <ClInclude Include="src\AstNodeTypes_Expr.h" />
+    <ClInclude Include="src\AstNodeTypes_Stmt.h" />
+    <ClInclude Include="src\AstNodeTypes_Template.h" />
+    <ClInclude Include="src\AstNodeTypes_TypeSystem.h" />
+    <ClInclude Include="src\AstToIr.h" />
     <ClInclude Include="src\ChunkedAnyVector.h" />
     <ClInclude Include="src\ChunkedString.h" />
-    <ClInclude Include="src\CodeGen.h" />
     <ClInclude Include="src\CodeViewDebug.h" />
+    <ClInclude Include="src\CommandLineParser.h" />
+    <ClInclude Include="src\CompileContext.h" />
+    <ClInclude Include="src\CompileError.h" />
+    <ClInclude Include="src\CompilerIncludes.h" />
+    <ClInclude Include="src\ConstExprEvaluator.h" />
+    <ClInclude Include="src\CrashHandler.h" />
+    <ClInclude Include="src\DwarfCFI.h" />
+    <ClInclude Include="src\ElfFileWriter.h" />
+    <ClInclude Include="src\ExpressionSubstitutor.h" />
+    <ClInclude Include="src\FileReader.h" />
+    <ClInclude Include="src\FileTree.h" />
+    <ClInclude Include="src\IRConverter.h" />
+    <ClInclude Include="src\IRConverter_ABI.h" />
+    <ClInclude Include="src\IRConverter_ConvertMain.h" />
+    <ClInclude Include="src\IRConverter_Emit_ArithmeticBitwise.h" />
+    <ClInclude Include="src\IRConverter_Emit_CallReturn.h" />
+    <ClInclude Include="src\IRConverter_Emit_FloatSIMD.h" />
+    <ClInclude Include="src\IRConverter_Emit_MovLoadStore.h" />
+    <ClInclude Include="src\IRConverter_Encoding.h" />
+    <ClInclude Include="src\IRTypes.h" />
+    <ClInclude Include="src\IRTypes_Core.h" />
+    <ClInclude Include="src\IRTypes_Instructions.h" />
+    <ClInclude Include="src\IRTypes_Ops.h" />
+    <ClInclude Include="src\IRTypes_Registers.h" />
+    <ClInclude Include="src\InlineVector.h" />
+    <ClInclude Include="src\InstantiationQueue.h" />
+    <ClInclude Include="src\IrGenerator.h" />
+    <ClInclude Include="src\IrOperandHelpers.h" />
+    <ClInclude Include="src\IrType.h" />
+    <ClInclude Include="src\LSDAGenerator.h" />
+    <ClInclude Include="src\LambdaHelpers.h" />
+    <ClInclude Include="src\LazyMemberResolver.h" />
+    <ClInclude Include="src\Lexer.h" />
+    <ClInclude Include="src\Log.h" />
+    <ClInclude Include="src\NameMangling.h" />
+    <ClInclude Include="src\NamespaceRegistry.h" />
+    <ClInclude Include="src\ObjFileWriter.h" />
+    <ClInclude Include="src\ObjectFileCommon.h" />
+    <ClInclude Include="src\OverloadResolution.h" />
+    <ClInclude Include="src\Parser.h" />
+    <ClInclude Include="src\ParserInternal.h" />
+    <ClInclude Include="src\ParserScopeGuards.h" />
+    <ClInclude Include="src\ParserTemplateClassShared.h" />
+    <ClInclude Include="src\ParserTypes.h" />
+    <ClInclude Include="src\PlatformInternals.h" />
+    <ClInclude Include="src\ProfilingTimer.h" />
+    <ClInclude Include="src\StackString.h" />
+    <ClInclude Include="src\StringBuilder.h" />
+    <ClInclude Include="src\StringTable.h" />
+    <ClInclude Include="src\SymbolTable.h" />
+    <ClInclude Include="src\TemplateInstantiationHelper.h" />
+    <ClInclude Include="src\TemplateProfilingStats.h" />
+    <ClInclude Include="src\TemplateRegistry.h" />
+    <ClInclude Include="src\TemplateRegistry_Lazy.h" />
+    <ClInclude Include="src\TemplateRegistry_Pattern.h" />
+    <ClInclude Include="src\TemplateRegistry_Registry.h" />
+    <ClInclude Include="src\TemplateRegistry_Types.h" />
+    <ClInclude Include="src\TemplateTypes.h" />
+    <ClInclude Include="src\Token.h" />
+    <ClInclude Include="src\TokenKind.h" />
+    <ClInclude Include="src\TokenTable.h" />
+    <ClInclude Include="src\TypeTraitEvaluator.h" />
     <ClInclude Include="src\coffi\coffi.hpp" />
     <ClInclude Include="src\coffi\coffi_directory.hpp" />
     <ClInclude Include="src\coffi\coffi_headers.hpp" />
@@ -228,50 +474,30 @@
     <ClInclude Include="src\coffi\coffi_symbols.hpp" />
     <ClInclude Include="src\coffi\coffi_types.hpp" />
     <ClInclude Include="src\coffi\coffi_utils.hpp" />
-    <ClInclude Include="src\CommandLineParser.h" />
-    <ClInclude Include="src\ConstExprEvaluator.h" />
-    <ClInclude Include="src\CrashHandler.h" />
-    <ClInclude Include="src\DwarfCFI.h" />
-    <ClInclude Include="src\ElfFileWriter.h" />
-    <ClInclude Include="src\ExpressionSubstitutor.h" />
-    <ClInclude Include="src\FileReader.h" />
-    <ClInclude Include="src\FileTree.h" />
-    <ClInclude Include="src\CompileContext.h" />
-    <ClInclude Include="src\InlineVector.h" />
-    <ClInclude Include="src\IRConverter.h" />
-    <ClInclude Include="src\IROperandHelpers.h" />
-    <ClInclude Include="src\IRTypes.h" />
-    <ClInclude Include="src\InstantiationQueue.h" />
-    <ClInclude Include="src\LazyMemberResolver.h" />
-    <ClInclude Include="src\Lexer.h" />
-    <ClInclude Include="src\AstNodeTypes.h" />
-    <ClInclude Include="src\Log.h" />
-    <ClInclude Include="src\LSDAGenerator.h" />
-    <ClInclude Include="src\NameMangling.h" />
-    <ClInclude Include="src\NamespaceRegistry.h" />
-    <ClInclude Include="src\ObjectFileCommon.h" />
-    <ClInclude Include="src\ObjFileWriter.h" />
-    <ClInclude Include="src\OverloadResolution.h" />
-    <ClInclude Include="src\Parser.h" />
-    <ClInclude Include="src\ParserScopeGuards.h" />
-    <ClInclude Include="src\ParserTypes.h" />
-    <ClInclude Include="src\PlatformInternals.h" />
-    <ClInclude Include="src\ProfilingTimer.h" />
-    <ClInclude Include="src\StackString.h" />
-    <ClInclude Include="src\StringTable.h" />
-    <ClInclude Include="src\SymbolTable.h" />
-    <ClInclude Include="src\TemplateInstantiationHelper.h" />
-    <ClInclude Include="src\TemplateProfilingStats.h" />
-    <ClInclude Include="src\TemplateRegistry.h" />
-    <ClInclude Include="src\Token.h" />
+    <ClInclude Include="src\coffi\coffi_version.hpp" />
+    <ClInclude Include="src\elfio\elf_types.hpp" />
+    <ClInclude Include="src\elfio\elfio.hpp" />
+    <ClInclude Include="src\elfio\elfio_array.hpp" />
+    <ClInclude Include="src\elfio\elfio_dump.hpp" />
+    <ClInclude Include="src\elfio\elfio_dynamic.hpp" />
+    <ClInclude Include="src\elfio\elfio_header.hpp" />
+    <ClInclude Include="src\elfio\elfio_modinfo.hpp" />
+    <ClInclude Include="src\elfio\elfio_note.hpp" />
+    <ClInclude Include="src\elfio\elfio_relocation.hpp" />
+    <ClInclude Include="src\elfio\elfio_section.hpp" />
+    <ClInclude Include="src\elfio\elfio_segment.hpp" />
+    <ClInclude Include="src\elfio\elfio_strings.hpp" />
+    <ClInclude Include="src\elfio\elfio_symbols.hpp" />
+    <ClInclude Include="src\elfio\elfio_utils.hpp" />
+    <ClInclude Include="src\elfio\elfio_version.hpp" />
+    <ClInclude Include="src\elfio\elfio_versym.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="LICENSE" />
     <None Include="tests\.runsettings" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <ImportGroup Label="ExtensionTargets" />
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>
@@ -301,4 +527,4 @@
       <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
-</Project>
+<ItemGroup><ClCompile Include="src\UnitySupport.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityParser.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityParserTemplates.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityBackend.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup></Project>

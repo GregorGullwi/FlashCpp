@@ -48,21 +48,31 @@ TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
 DEBUG_DIR := $(BINDIR)/Debug
 RELEASE_DIR := $(BINDIR)/Release
 TEST_DIR := $(BINDIR)/Test
+MODULAR_DIR := $(BINDIR)/Modular
+SHARDED_DIR := $(BINDIR)/Sharded
 
 # All source files in the src directory (for dependency tracking with unity builds)
 # Using wildcard ensures any header or source change triggers a rebuild
-UNITY_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.cpp)
+HEADER_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*/*.h) $(wildcard $(SRCDIR)/*/*.hpp)
+UNITY_SOURCES := $(HEADER_SOURCES) $(wildcard $(SRCDIR)/*.cpp)
 
 # Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
 TEST_SOURCES :=
 
-# Main sources (unity build - only main.cpp is compiled)
+# Main sources (unity build - only main.cpp wrapper is compiled)
 MAIN_SOURCES := $(SRCDIR)/main.cpp
+UNITY_WRAPPER_SOURCES := $(SRCDIR)/UnitySupport.cpp $(SRCDIR)/UnityParser.cpp $(SRCDIR)/UnityParserTemplates.cpp $(SRCDIR)/UnityBackend.cpp
+MODULAR_SOURCES := $(filter-out $(SRCDIR)/main.cpp $(UNITY_WRAPPER_SOURCES),$(wildcard $(SRCDIR)/*.cpp))
+MODULAR_OBJS := $(patsubst $(SRCDIR)/%.cpp,$(MODULAR_DIR)/%.o,$(MODULAR_SOURCES))
+SHARDED_SOURCES := $(SRCDIR)/FlashCppMain.cpp $(SRCDIR)/UnitySupport.cpp $(SRCDIR)/UnityParser.cpp $(SRCDIR)/UnityParserTemplates.cpp $(SRCDIR)/UnityBackend.cpp
+SHARDED_OBJS := $(patsubst $(SRCDIR)/%.cpp,$(SHARDED_DIR)/%.o,$(SHARDED_SOURCES))
 
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
 RELEASE_TARGET := $(RELEASE_DIR)/FlashCpp$(EXE_EXT)
 TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
+MODULAR_TARGET := $(MODULAR_DIR)/FlashCpp$(EXE_EXT)
+SHARDED_TARGET := $(SHARDED_DIR)/FlashCpp$(EXE_EXT)
 
 # Default target
 .DEFAULT_GOAL := main
@@ -116,17 +126,42 @@ $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
+	@echo "Built: $@"
+
+$(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(HEADER_SOURCES) | $(MODULAR_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -c $< -o $@
+
+$(MODULAR_DIR):
+	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
+
+$(MODULAR_TARGET): $(MODULAR_OBJS) | $(MODULAR_DIR)
+	@echo "Building modular executable for $(PLATFORM) with $(CXX)..."
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MODULAR_OBJS)
+	@echo "Built: $@"
+
+$(SHARDED_DIR)/%.o: $(SRCDIR)/%.cpp $(UNITY_SOURCES)
+	@$(MKDIR) $(SHARDED_DIR) 2>nul || $(MKDIR) $(SHARDED_DIR) || true
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -c $< -o $@
+
+$(SHARDED_TARGET): $(SHARDED_OBJS)
+	@echo "Building sharded unity executable for $(PLATFORM) with $(CXX)..."
+	@$(MKDIR) $(SHARDED_DIR) 2>nul || $(MKDIR) $(SHARDED_DIR) || true
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(SHARDED_OBJS)
 	@echo "Built: $@"
 
 # Phony targets
-.PHONY: all clean test main release help test-all asan
+.PHONY: all clean test main release modular sharded help test-all asan
 
 # Build all targets
 all: main release test
 
 # Main target (Debug configuration)
 main: $(MAIN_TARGET)
+
+modular: $(MODULAR_TARGET)
+
+sharded: $(SHARDED_TARGET)
 
 # Release target
 release: $(RELEASE_TARGET)
@@ -158,6 +193,8 @@ help:
 	@echo ""
 	@echo "Output structure (matching MSVC):"
 	@echo "  x64/Debug/FlashCpp$(EXE_EXT)      - Debug build"
+	@echo "  x64/Modular/FlashCpp$(EXE_EXT)    - Modular build"
+	@echo "  x64/Sharded/FlashCpp$(EXE_EXT)    - 4-shard unity build"
 	@echo "  x64/Release/FlashCpp$(EXE_EXT)    - Release build"
 	@echo "  x64/Test/test$(EXE_EXT)           - Test build"
 	@echo ""
@@ -165,6 +202,8 @@ help:
 	@echo "  make              - Build main executable in Debug mode (default)"
 	@echo "  make main         - Build main executable in Debug mode"
 	@echo "  make asan         - Build main executable in Debug mode with AddressSanitizer"
+	@echo "  make modular      - Build modular executable (use make -j for parallel per-file compilation)"
+	@echo "  make sharded      - Build the 4-shard unity executable (use make -j for parallel shard compilation)"
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
 	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"

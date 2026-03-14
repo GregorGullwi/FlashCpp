@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 #include "LambdaHelpers.h"
 
 // Helper: Parse template brace initialization: Template<Args>{}

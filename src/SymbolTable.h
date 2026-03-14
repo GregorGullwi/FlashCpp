@@ -13,7 +13,7 @@
 #include "Token.h"
 #include "StackString.h"
 #include "Log.h"
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "NamespaceRegistry.h"
 #include "TemplateRegistry.h"
 

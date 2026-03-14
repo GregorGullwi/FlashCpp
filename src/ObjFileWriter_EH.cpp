@@ -1,3 +1,6 @@
+#include "ObjFileWriter.h"
+#include "Log.h"
+
 // ObjFileWriter_EH.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 

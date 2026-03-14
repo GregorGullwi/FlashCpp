@@ -1,4 +1,6 @@
-#include "FlashCppUnity.h"
+// Required to include implementation (.cpp) files in unity build mode for the test TU.
+#define UNITY_BUILD
+#include "CompilerIncludes.h"
 
 #include "CompileContext.h"
 #include "FileTree.h"
@@ -6,7 +8,7 @@
 #include "Token.h"
 #include "Lexer.h"
 #include "Parser.h"
-#include "CodeGen.h"
+#include "IrGenerator.h"
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
@@ -558,7 +560,7 @@ TEST_SUITE("Parser") {
 		gTemplateRegistry.clear();
 		gConceptRegistry.clear();
 		auto parse_result = parser.parse();
-		
+
 		if (parse_result.is_error()) {
 			std::printf("Parse error: %s\n", parse_result.error_message().c_str());
 		}
@@ -586,7 +588,7 @@ TEST_SUITE("Parser") {
 		gTemplateRegistry.clear();
 		gConceptRegistry.clear();
 		auto parse_result = parser.parse();
-		
+
 		if (parse_result.is_error()) {
 			std::printf("Parse error: %s\n", parse_result.error_message().c_str());
 		}
@@ -2534,27 +2536,27 @@ TEST_CASE("Exceptions:Noexcept") {
 
 TEST_CASE("Log:LogCategoryBitOperations") {
 	using namespace FlashCpp;
-	
+
 	// Test OR operation
 	LogCategory combined = LogCategory::Parser | LogCategory::Lexer;
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Templates)) == 0);
-	
+
 	// Test AND operation
 	LogCategory andResult = combined & LogCategory::Parser;
 	CHECK(static_cast<uint32_t>(andResult) == static_cast<uint32_t>(LogCategory::Parser));
-	
+
 	// Test None
 	CHECK(static_cast<uint32_t>(LogCategory::None) == 0);
-	
+
 	// Test All
 	CHECK(static_cast<uint32_t>(LogCategory::All) == 0xFFFFFFFF);
 }
 
 TEST_CASE("Log:LogLevelValues") {
 	using namespace FlashCpp;
-	
+
 	// Verify log levels are in correct order (lower value = higher priority)
 	CHECK(static_cast<uint8_t>(LogLevel::Error) < static_cast<uint8_t>(LogLevel::Warning));
 	CHECK(static_cast<uint8_t>(LogLevel::Warning) < static_cast<uint8_t>(LogLevel::Info));
@@ -2564,44 +2566,44 @@ TEST_CASE("Log:LogLevelValues") {
 
 TEST_CASE("Log:LogConfigRuntimeSettings") {
 	using namespace FlashCpp;
-	
+
 	// Save original values
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
-	
+
 	// Test setLevel
 	LogConfig::setLevel(LogLevel::Trace);
 	CHECK(LogConfig::runtimeLevel == LogLevel::Trace);
-	
+
 	LogConfig::setLevel(LogLevel::Error);
 	CHECK(LogConfig::runtimeLevel == LogLevel::Error);
-	
+
 	// Test setCategories
 	LogConfig::setCategories(LogCategory::Parser);
 	CHECK(static_cast<uint32_t>(LogConfig::runtimeCategories) == static_cast<uint32_t>(LogCategory::Parser));
-	
+
 	// Test enableCategory
 	LogConfig::setCategories(LogCategory::None);
 	LogConfig::enableCategory(LogCategory::Lexer);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
-	
+
 	LogConfig::enableCategory(LogCategory::Parser);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
-	
+
 	// Test disableCategory
 	LogConfig::disableCategory(LogCategory::Lexer);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) == 0);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
-	
+
 	// Test stream setters
 	LogConfig::setOutputToStdout();
 	CHECK(LogConfig::output_stream == &std::cout);
-	
+
 	LogConfig::setOutputToStderr();
 	CHECK(LogConfig::output_stream == &std::cerr);
-	
+
 	// Restore original values
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
@@ -2610,7 +2612,7 @@ TEST_CASE("Log:LogConfigRuntimeSettings") {
 
 TEST_CASE("Log:LoggerLevelName") {
 	using namespace FlashCpp;
-	
+
 	CHECK(Logger<LogLevel::Error, LogCategory::Parser>::levelName() == "ERROR");
 	CHECK(Logger<LogLevel::Warning, LogCategory::Parser>::levelName() == "WARN ");
 	CHECK(Logger<LogLevel::Info, LogCategory::Parser>::levelName() == "INFO ");
@@ -2620,7 +2622,7 @@ TEST_CASE("Log:LoggerLevelName") {
 
 TEST_CASE("Log:LoggerCategoryName") {
 	using namespace FlashCpp;
-	
+
 	CHECK(Logger<LogLevel::Error, LogCategory::General>::categoryName() == "General");
 	CHECK(Logger<LogLevel::Error, LogCategory::Parser>::categoryName() == "Parser");
 	CHECK(Logger<LogLevel::Error, LogCategory::Lexer>::categoryName() == "Lexer");
@@ -2634,42 +2636,42 @@ TEST_CASE("Log:LoggerCategoryName") {
 
 TEST_CASE("Log:LogOutputCapture") {
 	using namespace FlashCpp;
-	
+
 	// Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 	bool originalColors = LogConfig::use_colors;
-	
+
 	// Disable colors for testing (avoid ANSI escape codes in output)
 	LogConfig::setUseColors(false);
-	
+
 	// Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
-	
+
 	// Log a message (use Info level since Error goes to stderr)
 	FLASH_LOG(Parser, Info, "Test message ", 42);
-	
+
 	std::string output = captureStream.str();
 	CHECK(output.find("[INFO ]") != std::string::npos);
 	CHECK(output.find("[Parser]") != std::string::npos);
 	CHECK(output.find("Test message 42") != std::string::npos);
-	
+
 	// Clear and test different category
 	captureStream.str("");
 	FLASH_LOG(Lexer, Warning, "Lexer warning");
-	
+
 	output = captureStream.str();
 	CHECK(output.find("[WARN ]") != std::string::npos);
 	CHECK(output.find("[Lexer]") != std::string::npos);
-	
+
 	// Test category filtering - disable Parser
 	captureStream.str("");
 	LogConfig::setCategories(LogCategory::Lexer);  // Only enable Lexer
-	
+
 	FLASH_LOG(Parser, Info, "Should not appear");
 	output = captureStream.str();
 	// Note: compile-time check may prevent this from being filtered at runtime
@@ -2678,19 +2680,19 @@ TEST_CASE("Log:LogOutputCapture") {
 	if (Logger<LogLevel::Info, LogCategory::Parser>::enabled) {
 		CHECK(output.empty());  // Runtime filtering should block it
 	}
-	
+
 	// Test level filtering
 	captureStream.str("");
 	LogConfig::setCategories(LogCategory::All);
 	LogConfig::setLevel(LogLevel::Warning);  // Only Warning and Error
-	
+
 	FLASH_LOG(Parser, Debug, "Debug should not appear");
 	output = captureStream.str();
 	// Only check if Debug level is enabled at compile time
 	if (Logger<LogLevel::Debug, LogCategory::Parser>::enabled) {
 		CHECK(output.empty());  // Runtime filtering should block it
 	}
-	
+
 	// Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
@@ -2700,30 +2702,30 @@ TEST_CASE("Log:LogOutputCapture") {
 
 TEST_CASE("Log:LogMacroVariadicArgs") {
 	using namespace FlashCpp;
-	
+
 	// Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 	bool originalColors = LogConfig::use_colors;
-	
+
 	// Disable colors for testing
 	LogConfig::setUseColors(false);
-	
+
 	// Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
-	
+
 	// Test with multiple arguments
 	FLASH_LOG(Parser, Info, "Value: ", 123, ", String: ", "test", ", Float: ", 3.14);
-	
+
 	std::string output = captureStream.str();
 	CHECK(output.find("Value: 123") != std::string::npos);
 	CHECK(output.find("String: test") != std::string::npos);
 	CHECK(output.find("Float: 3.14") != std::string::npos);
-	
+
 	// Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
@@ -3409,12 +3411,12 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	REQUIRE(!parse_result.is_error());
 
 	auto findTypeIndexByName = [](std::string_view wanted) -> TypeIndex {
-		for (TypeIndex i = 0; i < gTypeInfo.size(); ++i) {
-			if (StringTable::getStringView(gTypeInfo[i].name()) == wanted) {
+		for (TypeIndex i{0}; i.value < gTypeInfo.size(); ++i) {
+			if (StringTable::getStringView(gTypeInfo[i.value].name()) == wanted) {
 				return i;
 			}
 		}
-		return 0;
+		return TypeIndex{};
 	};
 
 	TypeIndex assign_receiver_idx = findTypeIndexByName("AssignReceiver");
@@ -3422,16 +3424,16 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	TypeIndex wrap_int_idx = findTypeIndexByName("UDWrap<int>");
 	TypeIndex wrap_double_idx = findTypeIndexByName("UDWrap<double>");
 
-	REQUIRE(assign_receiver_idx != 0);
-	REQUIRE(free_receiver_idx != 0);
-	REQUIRE(wrap_int_idx != 0);
-	REQUIRE(wrap_double_idx != 0);
+	REQUIRE(assign_receiver_idx.is_valid());
+	REQUIRE(free_receiver_idx.is_valid());
+	REQUIRE(wrap_int_idx.is_valid());
+	REQUIRE(wrap_double_idx.is_valid());
 
 	auto assign_result = findBinaryOperatorOverload(assign_receiver_idx, wrap_double_idx, OverloadableOperator::Assign, Type::UserDefined);
 	REQUIRE(assign_result.has_match);
 	CHECK(!assign_result.is_ambiguous);
 	REQUIRE(assign_result.member_overload != nullptr);
-	const auto& assign_param = assign_result.member_overload->decl_node().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+	const auto& assign_param = assign_result.member_overload->function_decl.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(assign_param.type_index() == wrap_double_idx);
 
 	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, Type::UserDefined);

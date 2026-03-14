@@ -1,3 +1,4 @@
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 
 namespace ConstExpr {

@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_for_loop() {
     if (!consume("for"_tok)) {
         return ParseResult::error("Expected 'for' keyword", current_token_);

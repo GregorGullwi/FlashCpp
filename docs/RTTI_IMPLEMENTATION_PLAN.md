@@ -58,7 +58,7 @@ Each class with virtual functions gets a type_info object that:
    - Symbol prefix: `_ZTI` (Type Information)
    - Example: `_ZTI3Dog` for class `Dog`
 
-3. **Vtable Structure** (`src/CodeGen.h`)
+3. **Vtable Structure** (`src/IrGenerator.h`)
    - Vtables include offset-to-top and RTTI pointer slots
    - Currently RTTI pointers are null/placeholder
 
@@ -113,7 +113,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/ElfFileWriter.h` - Add type string generation
-- `src/CodeGen.h` - Call during vtable finalization
+- `src/IrGenerator.h` - Call during vtable finalization
 
 **Testing:**
 - Compile a simple class with virtual functions
@@ -148,7 +148,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/ElfFileWriter.h` - Add type info generation
-- `src/CodeGen.h` - Populate type info for each class
+- `src/IrGenerator.h` - Populate type info for each class
 
 **Testing:**
 - Compile class with virtual functions but no inheritance
@@ -177,7 +177,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/ElfFileWriter.h` - Handle SI case
-- `src/CodeGen.h` - Detect inheritance pattern
+- `src/IrGenerator.h` - Detect inheritance pattern
 
 **Testing:**
 - Compile derived class with single base
@@ -216,7 +216,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/ElfFileWriter.h` - Full VMI implementation
-- `src/CodeGen.h` - Analyze inheritance graph
+- `src/IrGenerator.h` - Analyze inheritance graph
 
 **Testing:**
 - Diamond inheritance pattern
@@ -244,7 +244,7 @@ Each class with virtual functions gets a type_info object that:
 4. Update vtable symbol name: `_ZTV{mangled_name}`
 
 **Files to modify:**
-- `src/CodeGen.h` - Vtable generation
+- `src/IrGenerator.h` - Vtable generation
 - `src/ElfFileWriter.h` - Add RTTI relocation
 
 **Testing:**
@@ -305,7 +305,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/ElfFileWriter.h` - Fundamental type info generation
-- `src/CodeGen.h` - Generate on-demand for used types
+- `src/IrGenerator.h` - Generate on-demand for used types
 
 **Testing:**
 - `typeid(int)` expressions
@@ -330,7 +330,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/Parser.cpp` - Parse typeid expressions
-- `src/CodeGen.h` - Generate typeid IR
+- `src/IrGenerator.h` - Generate typeid IR
 
 **Testing:**
 - `typeid(SomeClass).name()`
@@ -363,7 +363,7 @@ Each class with virtual functions gets a type_info object that:
 
 **Files to modify:**
 - `src/Parser.cpp` - Parse dynamic_cast
-- `src/CodeGen.h` - Generate runtime call
+- `src/IrGenerator.h` - Generate runtime call
 
 **Testing:**
 - Downcast in single inheritance
@@ -393,7 +393,7 @@ Each class with virtual functions gets a type_info object that:
    - Handle catch(...) and polymorphic exceptions
 
 **Files to modify:**
-- `src/CodeGen.h` - Update throw statement codegen
+- `src/IrGenerator.h` - Update throw statement codegen
 - `src/ElfFileWriter.h` - Ensure exception type info available
 
 **Testing:**

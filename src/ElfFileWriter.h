@@ -3,7 +3,7 @@
 #include "AstNodeTypes.h"
 #include "ObjectFileCommon.h"
 #include "NameMangling.h"
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "CodeViewDebug.h"
 #include "DwarfCFI.h"
 #include "LSDAGenerator.h"

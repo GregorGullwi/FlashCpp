@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 // Helper: register type-kind template parameters as TypeInfo / gTypesByName entries so
 // that body re-parsing can resolve their names.  Non-type (value) parameters are
 // intentionally skipped: makeValue() leaves base_type as the value-type (e.g. Type::Int
@@ -9,11 +16,11 @@
 //   set from user-written explicit args or class-template instantiation args (e.g., T
 //   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
 //   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
-static void registerTypeParamsInScope(
+void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier = false
+	bool preserve_ref_qualifier
 ) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
@@ -49,11 +56,11 @@ static void registerTypeParamsInScope(
 // string_view overloads above, it does not need a pre-built param_names vector,
 // so the caller avoids index-alignment issues.
 // ─────────────────────────────────────────────────────────────────────────────
-static void registerTypeParamsInScope(
+void registerTypeParamsInScope(
 	const std::vector<ASTNode>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map
 ) {
 	for (size_t i = 0; i < template_param_nodes.size() && i < template_args.size(); ++i) {
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
@@ -80,10 +87,10 @@ static void registerTypeParamsInScope(
 // Called from both the body-reparse and SFINAE paths of
 // try_instantiate_member_function_template_explicit / _core.
 // ─────────────────────────────────────────────────────────────────────────────
-static void registerOuterBindingInScope(
+void registerOuterBindingInScope(
 	const OuterTemplateBinding& outer_binding,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map
 ) {
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];

@@ -10,7 +10,7 @@
 // nothing, and the code throws InternalError("struct type info not found").
 //
 // Currently the crash is prevented by a pair of redundant toExprResult() wrappers in
-// generateMemberAccessIr (lines 1003 and 1116 of CodeGen_MemberAccess.cpp) that
+// generateMemberAccessIr (lines 1003 and 1116 of IrGenerator_MemberAccess.cpp) that
 // encode/decode the ExprResult through ExprOperands, recovering the correct type_index
 // from encoded_metadata.  This test will fail if those wrappers are removed without
 // first fixing makeExprResult to populate type_index correctly, and will also catch

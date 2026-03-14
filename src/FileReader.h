@@ -180,7 +180,7 @@ static std::unordered_map<Operator, int> precedence_table = {
 	{Operator::BitwiseNot, 11},    // ~
 };
 
-static Operator string_to_operator(std::string_view op) {
+inline Operator string_to_operator(std::string_view op) {
 	if (op == "&&") return Operator::And;
 	if (op == "||") return Operator::Or;
 	if (op == ">") return Operator::Greater;
@@ -248,7 +248,7 @@ static const std::unordered_map<std::string_view, long> has_cpp_attribute_versio
 
 // Check if a line has an incomplete macro invocation (unmatched parentheses)
 // Returns true if there's an unmatched opening paren that could be from a macro
-static bool hasIncompleteMacroInvocation(std::string_view line) {
+inline bool hasIncompleteMacroInvocation(std::string_view line) {
 	int paren_depth = 0;
 	bool in_string = false;
 	bool in_char = false;
@@ -283,7 +283,7 @@ static bool hasIncompleteMacroInvocation(std::string_view line) {
 	return paren_depth > 0;  // Unmatched opening parens
 }
 
-static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
+inline size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
 	bool in_string = false;
@@ -343,7 +343,7 @@ static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 	}
 }
 
-static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
+inline std::vector<std::string_view> splitArgs(std::string_view argsStr) {
     std::vector<std::string_view> args;
 
     auto is_whitespace = [](char c) { return c == ' ' || c == '\t'; };
@@ -447,7 +447,7 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 }
 
 
-static void replaceAll(std::string& str, const std::string_view from, const std::string_view to) {
+inline void replaceAll(std::string& str, const std::string_view from, const std::string_view to) {
 	// Helper to check if a character is a separator (not part of an identifier)
 	auto is_separator = [](char c) {
 		return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
@@ -470,7 +470,7 @@ static void replaceAll(std::string& str, const std::string_view from, const std:
 	}
 }
 
-static std::tm localtime_safely(const std::time_t* time) {
+inline std::tm localtime_safely(const std::time_t* time) {
 	std::tm tm_now;
 #ifdef _WIN32
 	localtime_s(&tm_now, time);

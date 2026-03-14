@@ -244,7 +244,7 @@ Requires:
 **Estimated Effort:** 6-9 days  
 **Priority:** MEDIUM (advanced C++ features, less commonly used)  
 **Files to Modify:**
-- `src/CodeGen.h` - Vtable and thunk generation
+- `src/IrGenerator.h` - Vtable and thunk generation
 - `src/IRConverter.h` - Virtual base access
 - `src/SymbolTable.h` - Track virtual base offsets
 - New file: `src/VirtualInheritance.h` - VTT generation

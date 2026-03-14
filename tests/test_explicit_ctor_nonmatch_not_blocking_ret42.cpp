@@ -18,7 +18,7 @@ struct Target2 {
 };
 
 // Third test: template-instantiated argument type (Type::UserDefined)
-// This exercises the type_index matching code at CodeGen_Call_Direct.cpp:754-760
+// This exercises the type_index matching code at IrGenerator_Call_Direct.cpp:754-760
 // because template instantiations produce Type::UserDefined != Type::Struct,
 // which enters the converting constructor check block at line 729.
 template<typename T>

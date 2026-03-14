@@ -1,5 +1,5 @@
 #pragma once
-#include "CodeGen.h"
+#include "IrGenerator.h"
 #include "InlineVector.h"
 
 class AstToIr {
@@ -166,27 +166,25 @@ private:
 	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node);
 	void visitVariableDeclarationNode(const ASTNode& ast_node);
 	void visitStructuredBindingNode(const ASTNode& ast_node);
-	ExprResult visitExpressionNode(const ExpressionNode& exprNode, 
-	ExpressionContext context = ExpressionContext::Load);
+	ExprResult visitExpressionNode(const ExpressionNode& exprNode,
+		ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
-	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode, 
-	ExpressionContext context = ExpressionContext::Load);
+	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
+		ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
-	ExprResult
-		generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
+	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token);
-	ExprResult
-		generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
+	ExprResult generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
-		const ExpressionNode& expr, 
+		const ExpressionNode& expr,
 		int accumulated_offset = 0);
-	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
-	ExpressionContext context = ExpressionContext::Load);
+	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
+		ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
@@ -232,7 +230,7 @@ private:
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
-	ExpressionContext context = ExpressionContext::Load);
+		ExpressionContext context = ExpressionContext::Load);
 	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
@@ -284,9 +282,9 @@ private:
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-	const std::vector<ASTNode>& captured_var_decls);
+		const std::vector<ASTNode>& captured_var_decls);
 
-	// ── inline private helpers (CodeGen_Visitors_TypeInit.cpp) ──
+	// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.
 	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 	// the type_index may point to the unfinalized template base. This resolves it to the
@@ -329,12 +327,12 @@ private:
 	ExprResult tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
-		
+
 		// Pass global symbol table for resolving global variables in sizeof etc.
 		if (global_symbol_table_) {
 			ctx.global_symbols = global_symbol_table_;
 		}
-		
+
 		// If we're in a member function, set the struct_info in the context
 		// This allows sizeof(T) to resolve template parameters from the struct
 		if (current_struct_name_.isValid()) {
@@ -344,10 +342,10 @@ private:
 				ctx.struct_info = struct_type_info->getStructInfo();
 			}
 		}
-		
+
 		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		
+
 		if (eval_result.success()) {
 			// Return the constant value
 			unsigned long long value = 0;
@@ -358,7 +356,7 @@ private:
 			}
 			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value});
 		}
-		
+
 		// Return default ExprResult if evaluation failed
 		return ExprResult{};
 	}
@@ -476,37 +474,37 @@ private:
 	// - Only Indirect (dereference) case is fully implemented
 	// - Future work: Extend LValueInfo or pass additional context to handle all cases
 	bool handleLValueAssignment(const ExprResult& lhs_operands,
-	const ExprResult& rhs_operands,
-	const Token& token);
+		const ExprResult& rhs_operands,
+		const Token& token);
 
 	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
 	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const ExprResult& lhs_operands,
-	const ExprResult& rhs_operands,
-	const Token& token,
-	std::string_view op);
+		const ExprResult& rhs_operands,
+		const Token& token,
+		std::string_view op);
 
 	// Helper functions to emit store instructions
 	// These can be used by both the unified handler and special-case code
-	
+
 	// Emit ArrayStore instruction
 	void emitArrayStore(Type element_type, int element_size_bits,
-	std::variant<StringHandle, TempVar> array,
-	const TypedValue& index, const TypedValue& value,
-	int64_t member_offset, bool is_pointer_to_array,
-	const Token& token);
-	
+		std::variant<StringHandle, TempVar> array,
+		const TypedValue& index, const TypedValue& value,
+		int64_t member_offset, bool is_pointer_to_array,
+		const Token& token);
+
 	// Emit MemberStore instruction
 	void emitMemberStore(const TypedValue& value,
-	std::variant<StringHandle, TempVar> object,
-	StringHandle member_name, int offset,
-	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None,
-	bool is_pointer_to_member = false,
-	const Token& token = Token(),
-	std::optional<size_t> bitfield_width = std::nullopt,
-	size_t bitfield_bit_offset = 0);
-	
+		std::variant<StringHandle, TempVar> object,
+		StringHandle member_name, int offset,
+		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None,
+		bool is_pointer_to_member = false,
+		const Token& token = Token(),
+		std::optional<size_t> bitfield_width = std::nullopt,
+		size_t bitfield_bit_offset = 0);
+
 	// Emit DereferenceStore instruction
 	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
 	std::variant<StringHandle, TempVar> pointer,
@@ -580,7 +578,7 @@ private:
 	const Token& fallback_token) const;
 
 
-	// ── inline private helpers (CodeGen_Lambdas.cpp) ──
+	// ── inline private helpers (IrGenerator_Lambdas.cpp) ──
 	/// Unified symbol lookup: searches local scope first, then falls back to global scope
 	std::optional<ASTNode> lookupSymbol(StringHandle handle) const;
 
@@ -631,7 +629,7 @@ private:
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
-	
+
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
 
@@ -662,7 +660,7 @@ private:
 	// Map from function name to deduced auto return type
 	// Key: function name (mangled), Value: deduced TypeSpecifierNode
 	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
-	
+
 	struct CachedParamInfo {
 		StringHandle name{};
 		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
@@ -683,12 +681,12 @@ private:
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
 	std::unordered_set<int> generated_lambda_ids_;  // Track which lambdas have been generated to prevent duplicates
-	
+
 	// Track generated functions to prevent duplicate codegen
 	// Key: mangled function name - prevents generating the same function body multiple times
 	// Phase 4: Using StringHandle
 	std::unordered_set<StringHandle> generated_function_names_;
-	
+
 	// Generic lambda instantiation tracking
 	// Key: lambda_id concatenated with deduced type signature (e.g., "0_int_double")
 	// Value: The deduced parameter types for that instantiation
@@ -699,17 +697,17 @@ private:
 	};
 	std::vector<GenericLambdaInstantiation> pending_generic_lambda_instantiations_;
 	std::unordered_set<std::string> generated_generic_lambda_instantiations_;  // Track already generated ones
-	
+
 	// Structure to hold info for local struct member functions
 	struct LocalStructMemberInfo {
 		StringHandle struct_name;
 		StringHandle enclosing_function_name;
 		ASTNode member_function_node;
 	};
-	
+
 	// Collected local struct member functions for deferred generation
 	std::vector<LocalStructMemberInfo> collected_local_struct_members_;
-	
+
 	// Deferred member functions discovered during function call resolution
 	// When generateFunctionCallIr resolves a static member call via struct search,
 	// the function body may not have been generated yet (e.g., for template specializations).
@@ -720,7 +718,7 @@ private:
 		std::vector<std::string> namespace_stack;
 	};
 	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
-	
+
 	// Structure to hold template instantiation info for deferred generation
 	struct TemplateInstantiationInfo {
 		StringHandle qualified_template_name;  // e.g., "Container::insert"
@@ -731,13 +729,13 @@ private:
 		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
 		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template
 	};
-	
+
 	// Collected template instantiations for deferred generation
 	std::vector<TemplateInstantiationInfo> collected_template_instantiations_;
 
 	// Track emitted static members to avoid duplicates
 	std::unordered_set<StringHandle> emitted_static_members_;
-	
+
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in gTypesByName)
 	std::unordered_set<const TypeInfo*> processed_type_infos_;

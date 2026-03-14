@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<StringHandle, 4>& template_param_names,

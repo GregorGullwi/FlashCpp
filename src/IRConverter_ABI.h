@@ -116,7 +116,7 @@ constexpr size_t getShadowSpaceSize() {
 }
 
 // Converts an X64Register enum to its corresponding CodeView register code.
-uint16_t getX64RegisterCodeViewCode(X64Register reg) {
+inline uint16_t getX64RegisterCodeViewCode(X64Register reg) {
     switch (reg) {
         case X64Register::RAX: return 328;
         case X64Register::RCX: return 329;
@@ -138,7 +138,7 @@ uint16_t getX64RegisterCodeViewCode(X64Register reg) {
     }
 }
 
-std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
+inline std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 	// For RBP-relative addressing, temporary variables have negative offsets
 	// TempVar with var_number N is at offset -(N * 8)
 	// For example: var_number=1 → offset=-8, var_number=2 → offset=-16, var_number=3 → offset=-24, etc.
@@ -491,5 +491,4 @@ struct RegisterAllocator
 		}
 	}
 };
-
 

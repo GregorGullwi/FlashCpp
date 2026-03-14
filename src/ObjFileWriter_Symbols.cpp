@@ -1,3 +1,7 @@
+#include "ObjFileWriter.h"
+#include "Log.h"
+#include <set>
+
 // ObjFileWriter_Symbols.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
@@ -419,15 +423,15 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 	add_catchable_type(type_name, thrown_properties, 0, -1, 0, throw_size);
 
 	if (thrown_struct_info && !is_simple_type) {
-			std::set<std::pair<const StructTypeInfo*, uint32_t>> visited_public_base_paths;
-			std::function<void(const StructTypeInfo*, uint32_t)> collect_public_bases = [&](const StructTypeInfo* current_struct_info, uint32_t current_offset) {
+		std::set<std::pair<const StructTypeInfo*, uint32_t>> visited_public_base_paths;
+		std::function<void(const StructTypeInfo*, uint32_t)> collect_public_bases = [&](const StructTypeInfo* current_struct_info, uint32_t current_offset) {
 			if (!current_struct_info) {
 				return;
 			}
 
-				if (!visited_public_base_paths.insert({current_struct_info, current_offset}).second) {
-					return;
-				}
+			if (!visited_public_base_paths.insert({current_struct_info, current_offset}).second) {
+				return;
+			}
 
 			for (const auto& base : current_struct_info->base_classes) {
 				if (base.is_deferred || base.access != AccessSpecifier::Public || base.type_index.value >= gTypeInfo.size()) {
@@ -444,12 +448,12 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0u;
 				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size == 0 ? throw_size : base_struct_info->total_size);
 
-					add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, -1, 0, base_size);
+				add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, -1, 0, base_size);
 
-					// Transitive catches through deeply nested virtual bases need their own
-					// CatchableType entries as well. Recurse through both virtual and
-					// non-virtual public bases, while guarding against repeated paths.
-					collect_public_bases(base_struct_info, base_offset);
+				// Transitive catches through deeply nested virtual bases need their own
+				// CatchableType entries as well. Recurse through both virtual and
+				// non-virtual public bases, while guarding against repeated paths.
+				collect_public_bases(base_struct_info, base_offset);
 			}
 		};
 

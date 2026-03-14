@@ -1,3 +1,6 @@
+#include "ObjFileWriter.h"
+#include "ElfFileWriter.h"
+
 // ElfFileWriter_FuncSig.cpp - Out-of-line method definitions for ElfFileWriter
 // Part of ElfFileWriter class (unity build)
 

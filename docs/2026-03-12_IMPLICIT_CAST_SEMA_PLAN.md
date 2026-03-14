@@ -48,11 +48,11 @@ So the right first milestone is **semantic normalization**, not an immediate Cla
 
 ### Semantic decisions currently split across layers
 
-- `CodeGen_Call_Direct.cpp` applies implicit argument conversions with `generateTypeConversion(...)`.
-- `CodeGen_Expr_Operators.cpp` applies assignment conversion and usual arithmetic conversions inline.
-- `CodeGen_Visitors_Namespace.cpp` applies return conversions inline.
+- `IrGenerator_Call_Direct.cpp` applies implicit argument conversions with `generateTypeConversion(...)`.
+- `IrGenerator_Expr_Operators.cpp` applies assignment conversion and usual arithmetic conversions inline.
+- `IrGenerator_Visitors_Namespace.cpp` applies return conversions inline.
 - `Parser_Statements.cpp` already deduces some `auto` declarations during parsing.
-- `CodeGen_Expr_Primitives.cpp` still has a transitional `Type::Auto && size_bits == 0 -> int/32-bit` fallback.
+- `IrGenerator_Expr_Primitives.cpp` still has a transitional `Type::Auto && size_bits == 0 -> int/32-bit` fallback.
 
 ### Syntax-level nodes currently carrying semantic load
 
@@ -470,13 +470,13 @@ This avoids both a large mutability refactor and the cost of universal wrapper-n
 	- AST string/debug printer support
 - `src/AstToIr.h`
 	- add lowering hooks for semantic annotations
-- `src/CodeGen_Expr_Conversions.cpp`
+- `src/IrGenerator_Expr_Conversions.cpp`
 	- make conversion lowering serve semantic annotations instead of owning policy
-- `src/CodeGen_Call_Direct.cpp`
+- `src/IrGenerator_Call_Direct.cpp`
 	- delete direct argument-conversion policy once pass covers it
-- `src/CodeGen_Expr_Operators.cpp`
+- `src/IrGenerator_Expr_Operators.cpp`
 	- delete arithmetic/assignment conversion policy once pass covers it
-- `src/CodeGen_Visitors_Namespace.cpp`
+- `src/IrGenerator_Visitors_Namespace.cpp`
 	- delete return-conversion policy once pass covers it
 
 ### Files for later semantic cleanups
@@ -489,9 +489,9 @@ This avoids both a large mutability refactor and the cost of universal wrapper-n
 	- reduce `TypeSpecifierNode::matches_signature(...)` responsibilities
 - `src/Parser_Statements.cpp`
 	- move `auto` declaration normalization out over time
-- `src/CodeGen_Expr_Primitives.cpp`
+- `src/IrGenerator_Expr_Primitives.cpp`
 	- remove transitional `Type::Auto` fallback
-- `src/CodeGen_Lambdas.cpp`
+- `src/IrGenerator_Lambdas.cpp`
 	- remove synthetic declaration workaround once generic-lambda normalization moves earlier
 
 ## Detailed data transformations to plan for
@@ -516,7 +516,7 @@ Target state:
 
 Current state:
 
-- `CodeGen_Expr_Operators.cpp` computes common type and emits conversions inline
+- `IrGenerator_Expr_Operators.cpp` computes common type and emits conversions inline
 
 Target state:
 
@@ -544,7 +544,7 @@ Target state:
 
 Current state:
 
-- return conversion is applied in `CodeGen_Visitors_Namespace.cpp`
+- return conversion is applied in `IrGenerator_Visitors_Namespace.cpp`
 
 Target state:
 
@@ -647,8 +647,8 @@ That semantic step should:
 - rewrite parameter declarations from placeholder `Type::Auto` to the deduced concrete `TypeSpecifierNode`
 - update the lambda body’s symbol table view so identifier lookup sees the concrete parameter declarations
 - update mangling/signature generation inputs to use normalized types
-- eliminate the need for synthetic deduced declarations in `CodeGen_Lambdas.cpp`
-- eliminate the fallback-to-`int` behavior in `CodeGen_Expr_Primitives.cpp`
+- eliminate the need for synthetic deduced declarations in `IrGenerator_Lambdas.cpp`
+- eliminate the fallback-to-`int` behavior in `IrGenerator_Expr_Primitives.cpp`
 
 #### 3. Non-generic lambda `auto` return type
 
@@ -671,7 +671,7 @@ Recommendation:
 Current state:
 
 - parser has `deduce_and_update_auto_return_type(...)` in `Parser_Expr_QualLookup.cpp`
-- codegen still has a fallback path in `CodeGen_Visitors_Namespace.cpp` that deduces from return expressions if `current_function_return_type_` is still `Type::Auto`
+- codegen still has a fallback path in `IrGenerator_Visitors_Namespace.cpp` that deduces from return expressions if `current_function_return_type_` is still `Type::Auto`
 
 Architectural fit:
 
@@ -761,9 +761,9 @@ Work:
 Exit criteria:
 
 - delete corresponding ad-hoc conversion policy from:
-	- `CodeGen_Call_Direct.cpp`
-	- `CodeGen_Expr_Operators.cpp`
-	- `CodeGen_Visitors_Namespace.cpp`
+	- `IrGenerator_Call_Direct.cpp`
+	- `IrGenerator_Expr_Operators.cpp`
+	- `IrGenerator_Visitors_Namespace.cpp`
 - add regression tests for each migrated context
 
 ### Phase 3: initializer and reference-binding coverage
@@ -816,7 +816,7 @@ Goal:
 Work:
 
 - keep ordinary parser-side `auto` deduction where the parser still depends on it, but add semantic-pass validation/canonicalization around it
-- move generic lambda parameter normalization out of `CodeGen_Lambdas.cpp` into an instantiation-time semantic hook
+- move generic lambda parameter normalization out of `IrGenerator_Lambdas.cpp` into an instantiation-time semantic hook
 - remove synthetic lambda parameter declarations once that hook exists
 - remove `Type::Auto` runtime fallbacks in codegen
 - remove codegen-side fallback deduction of ordinary function `auto` return type
@@ -854,9 +854,9 @@ These areas should not be edited independently by multiple streams at the same t
 - overload resolution ranking/viability
 - parser-side `auto` / lambda deduction paths
 - `SymbolTable` signature lookup behavior
-- function-call conversion policy in `CodeGen_Call_Direct.cpp`
-- arithmetic/comparison conversion policy in `CodeGen_Expr_Operators.cpp`
-- return-conversion policy in `CodeGen_Visitors_Namespace.cpp`
+- function-call conversion policy in `IrGenerator_Call_Direct.cpp`
+- arithmetic/comparison conversion policy in `IrGenerator_Expr_Operators.cpp`
+- return-conversion policy in `IrGenerator_Visitors_Namespace.cpp`
 - any shared logic that decides canonical type identity or constraint satisfaction
 
 If two streams change these areas concurrently, the likely failure mode is not just merge pain; it is semantic drift where ranking, rewriting, diagnostics, and lowering stop agreeing with each other.
@@ -1439,8 +1439,8 @@ Work:
 - `src/AstNodeTypes_Expr.h`
 - `src/AstNodeTypes.cpp`
 - `src/AstToIr.h`
-- `src/CodeGen_Expressions.cpp` or the relevant expression-dispatch file
-- `src/CodeGen_Expr_Conversions.cpp`
+- `src/IrGenerator_Expressions.cpp` or the relevant expression-dispatch file
+- `src/IrGenerator_Expr_Conversions.cpp`
 
 Work:
 
@@ -1473,7 +1473,7 @@ Work:
 #### Step 4: migrate function-call arguments
 
 - `src/SemanticAnalysis.cpp`
-- `src/CodeGen_Call_Direct.cpp`
+- `src/IrGenerator_Call_Direct.cpp`
 
 Work:
 
@@ -1483,12 +1483,12 @@ Work:
 #### Step 5: migrate return conversions
 
 - `src/SemanticAnalysis.cpp`
-- `src/CodeGen_Visitors_Namespace.cpp`
+- `src/IrGenerator_Visitors_Namespace.cpp`
 
 #### Step 6: migrate builtin binary arithmetic/comparison conversions
 
 - `src/SemanticAnalysis.cpp`
-- `src/CodeGen_Expr_Operators.cpp`
+- `src/IrGenerator_Expr_Operators.cpp`
 
 #### Step 7: migrate control-flow conditions
 
@@ -1527,8 +1527,8 @@ Goal:
 #### Step 10: `auto` / generic lambda cleanup
 
 - `src/Parser_Statements.cpp`
-- `src/CodeGen_Expr_Primitives.cpp`
-- `src/CodeGen_Lambdas.cpp`
+- `src/IrGenerator_Expr_Primitives.cpp`
+- `src/IrGenerator_Lambdas.cpp`
 - template/generic-lambda instantiation paths
 
 ### J. Additional helper APIs likely worth adding
