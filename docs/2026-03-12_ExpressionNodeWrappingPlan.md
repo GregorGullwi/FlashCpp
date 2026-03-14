@@ -169,7 +169,7 @@ This is used by callers that need to inspect the qualified name (e.g. to read
 `.name()` or `.namespace_handle()`) after receiving an already-wrapped result
 from the parse helpers.
 
-### Step 4: Update downstream consumers to prefer the normalized shape ❌
+### Step 4: Update downstream consumers to prefer the normalized shape 🟡
 
 After the parser side is normalized, re-audit mixed-shape consumers and remove
 only the compatibility branches that are no longer needed.
@@ -182,10 +182,12 @@ Likely candidates:
 
 Do this cautiously and only after parser behavior is validated.
 
-**Not yet started**. Backward-compatibility branches in
-`ConstExprEvaluator_Core.cpp` and `TemplateRegistry_Lazy.cpp` are intentionally
-preserved for now — those consumers handle synthetic/template-substituted AST
-nodes that may still legitimately hold unwrapped forms.
+**Started**. `AstNodeTypes.h` now centralizes identifier extraction via
+`tryGetIdentifier(const ASTNode&)`, and constexpr/member-access consumers now
+reuse that helper instead of open-coding the wrapped-vs-direct `IdentifierNode`
+checks. Backward-compatibility branches in `ConstExprEvaluator_Core.cpp` and
+`TemplateRegistry_Lazy.cpp` are still intentionally preserved for synthetic /
+template-substituted AST nodes that may legitimately hold unwrapped forms.
 
 ### Step 5: Keep compatibility only where the AST legitimately allows both ❌
 
@@ -242,7 +244,7 @@ For each slice:
 1. Normalize the ~6 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
    sites that are not inside the three helper functions
 2. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
-3. Re-audit downstream consumers (Step 4) and remove compatibility branches
-   that are no longer reachable
-4. Evaluate whether `getIdentifierNameFromAstNode` dual-path logic can be
-   simplified once all expression leaves are wrapped
+3. Continue re-auditing downstream consumers (Step 4), replacing open-coded
+   wrapped-vs-direct identifier handling with centralized helpers first
+4. Only remove compatibility branches once non-parser/synthetic AST paths are
+   confirmed not to rely on them

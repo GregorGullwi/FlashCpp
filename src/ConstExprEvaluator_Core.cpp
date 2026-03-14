@@ -1269,17 +1269,8 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 }
 
 std::optional<Evaluator::ExtractedIdentifier> Evaluator::extract_identifier_from_expression(const ASTNode& object_expr) {
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return std::nullopt;
-		}
-		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-		return ExtractedIdentifier{ &id_node, id_node.name() };
-	}
-	if (object_expr.is<IdentifierNode>()) {
-		const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
-		return ExtractedIdentifier{ &id_node, id_node.name() };
+	if (const IdentifierNode* id_node = tryGetIdentifier(object_expr)) {
+		return ExtractedIdentifier{ id_node, id_node->name() };
 	}
 	return std::nullopt;
 }

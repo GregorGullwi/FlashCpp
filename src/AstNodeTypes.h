@@ -7,16 +7,26 @@
 #include "AstNodeTypes_Expr.h"
 #include "AstNodeTypes_Stmt.h"
 
-inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
+// Parser-produced expression results now prefer IdentifierNode wrapped in
+// ExpressionNode, but older/synthetic ASTs may still store IdentifierNode
+// directly. Keep this helper tolerant of both forms for downstream consumers.
+inline const IdentifierNode* tryGetIdentifier(const ASTNode& node) {
 	if (node.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = node.as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(expr_node)) {
-			return std::get<IdentifierNode>(expr_node).name();
+			return &std::get<IdentifierNode>(expr_node);
 		}
-		return {};
+		return nullptr;
 	}
 	if (node.is<IdentifierNode>()) {
-		return node.as<IdentifierNode>().name();
+		return &node.as<IdentifierNode>();
+	}
+	return nullptr;
+}
+
+inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
+	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
+		return identifier->name();
 	}
 	return {};
 }

@@ -291,17 +291,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	}
 
 	auto extract_callable_identifier = [&]() -> const IdentifierNode* {
-		const ASTNode& object_expr = member_func_call.object();
-		if (object_expr.is<IdentifierNode>()) {
-			return &object_expr.as<IdentifierNode>();
-		}
-		if (object_expr.is<ExpressionNode>()) {
-			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(expr_node)) {
-				return &std::get<IdentifierNode>(expr_node);
-			}
-		}
-		return nullptr;
+		return tryGetIdentifier(member_func_call.object());
 	};
 
 	auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
@@ -472,17 +462,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	auto extract_object_identifier = [&]() -> const IdentifierNode* {
-		const ASTNode& object_expr = member_func_call.object();
-		if (object_expr.is<IdentifierNode>()) {
-			return &object_expr.as<IdentifierNode>();
-		}
-		if (object_expr.is<ExpressionNode>()) {
-			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(expr_node)) {
-				return &std::get<IdentifierNode>(expr_node);
-			}
-		}
-		return nullptr;
+		return tryGetIdentifier(member_func_call.object());
 	};
 
 	const IdentifierNode* object_identifier = extract_object_identifier();
@@ -1840,15 +1820,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// - We need to find the constructor declaration and its member initializer list
 	// - Extract the member value from the initializer expression
 	
-	const IdentifierNode* object_identifier = nullptr;
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(expr_node)) {
-			object_identifier = &std::get<IdentifierNode>(expr_node);
-		}
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-	}
+	const IdentifierNode* object_identifier = tryGetIdentifier(object_expr);
 
 	// The object might be wrapped in an ExpressionNode, so unwrap it
 	std::string_view var_name = getIdentifierNameFromAstNode(object_expr);
@@ -2209,17 +2181,14 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			// For now, we support up to one level of nesting
 			return EvalResult::error("Deeply nested member access (more than 2 levels) not yet supported");
 		}
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex base expression in nested member access not supported");
-		}
-		base_identifier = &std::get<IdentifierNode>(expr_node);
-		base_var_name = base_identifier->name();
-	} else if (base_obj_expr.is<IdentifierNode>()) {
-		base_identifier = &base_obj_expr.as<IdentifierNode>();
-		base_var_name = base_identifier->name();
-	} else {
-		return EvalResult::error("Invalid base expression in nested member access");
 	}
+	base_identifier = tryGetIdentifier(base_obj_expr);
+	if (!base_identifier) {
+		return EvalResult::error(base_obj_expr.is<ExpressionNode>()
+			? "Complex base expression in nested member access not supported"
+			: "Invalid base expression in nested member access");
+	}
+	base_var_name = base_identifier->name();
 
 	ResolvedConstexprObject resolved_object;
 	if (auto resolve_error = resolve_constexpr_object_source(
@@ -3455,17 +3424,13 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return EvalResult::error("Complex expressions in array member access not supported");
-		}
-		object_identifier = &std::get<IdentifierNode>(expr_node);
-		var_name = object_identifier->name();
-	} else if (object_expr.is<IdentifierNode>()) {
-		object_identifier = &object_expr.as<IdentifierNode>();
-		var_name = object_identifier->name();
+	if (const IdentifierNode* identifier = tryGetIdentifier(object_expr)) {
+		object_identifier = identifier;
+		var_name = identifier->name();
 	} else {
+		if (object_expr.is<ExpressionNode>()) {
+			return EvalResult::error("Non-identifier expressions in array member access not supported");
+		}
 		return EvalResult::error("Invalid object expression in array member access");
 	}
 
