@@ -1822,7 +1822,6 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	
 	const IdentifierNode* object_identifier = tryGetIdentifier(object_expr);
 
-	// The object might be wrapped in an ExpressionNode, so unwrap it
 	std::string_view var_name = getIdentifierNameFromAstNode(object_expr);
 	if (var_name.empty()) {
 		if (object_expr.is<ExpressionNode>()) {
@@ -2171,7 +2170,6 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	
 	// Get the base variable name
 	std::string_view base_var_name;
-	const IdentifierNode* base_identifier = nullptr;
 	
 	// Handle deeper nesting recursively
 	if (base_obj_expr.is<ExpressionNode>()) {
@@ -2182,7 +2180,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			return EvalResult::error("Deeply nested member access (more than 2 levels) not yet supported");
 		}
 	}
-	base_identifier = tryGetIdentifier(base_obj_expr);
+	const IdentifierNode* base_identifier = tryGetIdentifier(base_obj_expr);
 	if (!base_identifier) {
 		if (base_obj_expr.is<ExpressionNode>()) {
 			return EvalResult::error("Complex base expression in nested member access not supported");
