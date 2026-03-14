@@ -889,6 +889,7 @@
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.type = Type::UnsignedLongLong;
+						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
 						payload.is_pointer_to_array = false;  // Multidimensional arrays are actual arrays, not pointers
@@ -1647,6 +1648,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
 		dummy_arg.type = Type::Int;
+		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
 		call_op.args.push_back(dummy_arg);

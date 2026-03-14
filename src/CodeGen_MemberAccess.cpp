@@ -138,6 +138,7 @@
 		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
 			ExprResult result;
 			result.type = type;
+			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
 			result.type_index = TypeIndex{type_index};
@@ -247,6 +248,7 @@
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
 				payload.index.type = Type::UnsignedLongLong;
+				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
 				payload.index.value = flat_index;
 
@@ -382,6 +384,7 @@
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 					payload.index.type = Type::UnsignedLongLong;
+					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
 
@@ -838,6 +841,7 @@
 	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index) {
 		ExprResult result;
 		result.type = type;
+		result.ir_type = toIrType(type);
 		result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 		result.value = result_var;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
@@ -1002,7 +1006,7 @@
 				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
-				if (base_type != Type::Struct && base_type != Type::UserDefined) {
+				if (!isIrStructType(toIrType(base_type))) {
 					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
@@ -3376,7 +3380,7 @@ const StructMember*& out_member) const {
 		if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
 			return false;
 		}
-		if (!nested_member || (nested_member->type != Type::Struct && nested_member->type != Type::UserDefined)) {
+		if (!nested_member || !isIrStructType(toIrType(nested_member->type))) {
 			return false;
 		}
 		// Get the type info for the nested member's struct type
@@ -3401,7 +3405,7 @@ const StructMember*& out_member) const {
 	}
 	
 	// The base type should now be a struct type
-	if (base_type.type() != Type::Struct && base_type.type() != Type::UserDefined) {
+	if (!isIrStructType(toIrType(base_type.type()))) {
 		return false;
 	}
 	

@@ -1460,6 +1460,7 @@
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
 					// The actual symbol will be loaded using the vtable_symbol field
 					vptr_store.value.type = Type::Void;
+					vptr_store.value.ir_type = IrType::Void;
 					vptr_store.value.size_in_bits = SizeInBits{64};
 					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
 					

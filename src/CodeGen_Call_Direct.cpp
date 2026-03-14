@@ -842,7 +842,7 @@
 											if (ctor_param_type.type() == arg_type) {
 												param_matches = true;
 												// For class types, require exact type match, not just Type::Struct kind.
-												if ((arg_type == Type::Struct || arg_type == Type::UserDefined) &&
+												if (isIrStructType(toIrType(arg_type)) &&
 													(!arg_type_index.is_valid() || !ctor_param_type.type_index().is_valid() ||
 													ctor_param_type.type_index() != arg_type_index)) {
 													param_matches = false;

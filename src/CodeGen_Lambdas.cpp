@@ -204,6 +204,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
 							store_this.value.type = Type::Void;
+							store_this.value.ir_type = IrType::Void;
 							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
 							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);

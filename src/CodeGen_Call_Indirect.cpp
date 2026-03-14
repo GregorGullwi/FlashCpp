@@ -221,6 +221,7 @@
 						// Convert to TypedValue
 						TypedValue arg;
 						arg.type = type_node.type();
+						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
 						call_op.args.push_back(arg);
@@ -992,6 +993,7 @@
 					
 					TypedValue tv;
 					tv.type = type_node.type();
+					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());
 					vcall_op.arguments.push_back(tv);
