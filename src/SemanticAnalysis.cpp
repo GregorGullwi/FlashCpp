@@ -299,6 +299,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 			}
+			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				normalizeExpression(e.object(), ctx);
+				normalizeExpression(e.member_pointer(), ctx);
+			}
 			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				normalizeExpression(e.object(), ctx);
 				for (const auto& arg : e.arguments()) {
@@ -309,7 +313,99 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.array_expr(), ctx);
 				normalizeExpression(e.index_expr(), ctx);
 			}
-			// Leaf nodes (IdentifierNode, NumericLiteralNode, etc.) have no children
+			else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+				if (!e.is_type()) {
+					normalizeExpression(e.type_or_expr(), ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+				if (!e.is_type()) {
+					normalizeExpression(e.type_or_expr(), ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+				if (e.size_expr().has_value()) {
+					normalizeExpression(*e.size_expr(), ctx);
+				}
+				for (const auto& arg : e.constructor_args()) {
+					normalizeExpression(arg, ctx);
+				}
+				for (const auto& arg : e.placement_args()) {
+					normalizeExpression(arg, ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, StaticCastNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, ConstCastNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, TypeidNode>) {
+				if (!e.is_type()) {
+					normalizeExpression(e.operand(), ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+				for (const auto& capture : e.captures()) {
+					// Non-init captures are stored as identifier tokens only; the
+					// initializer is the only child expression carried by the node.
+					if (capture.has_initializer()) {
+						normalizeExpression(*capture.initializer(), ctx);
+					}
+				}
+				for (const auto& param : e.parameters()) {
+					if (param.template is<DeclarationNode>()) {
+						const auto& decl = param.template as<DeclarationNode>();
+						for (const auto& dim : decl.array_dimensions()) {
+							normalizeExpression(dim, ctx);
+						}
+						if (decl.has_default_value()) {
+							normalizeExpression(decl.default_value(), ctx);
+						}
+					}
+					else {
+						throw InternalError("Lambda parameter must be a DeclarationNode");
+					}
+				}
+				normalizeStatement(e.body(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+				if (e.init_expr().has_value()) {
+					normalizeExpression(*e.init_expr(), ctx);
+				}
+				if (e.pack_expr().has_value()) {
+					normalizeExpression(*e.pack_expr(), ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+				normalizeExpression(e.pattern(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+				normalizeExpression(e.expr(), ctx);
+			}
+			else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+				for (const auto& element : e.elements()) {
+					normalizeExpression(element, ctx);
+				}
+			}
+			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+				if (e.expression().has_value()) {
+					normalizeExpression(*e.expression(), ctx);
+				}
+			}
+			// Leaf nodes (IdentifierNode, QualifiedIdentifierNode, StringLiteralNode,
+			// NumericLiteralNode, BoolLiteralNode, SizeofPackNode, OffsetofExprNode,
+			// TypeTraitExprNode, TemplateParameterReferenceNode, PseudoDestructorCallNode)
+			// do not recurse into child expressions here.
 		}, expr);
 	}
 

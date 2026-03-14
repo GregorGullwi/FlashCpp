@@ -20,6 +20,11 @@ int factorial(int n) {
 	return n * factorial(n - 1);
 }
 
+template<typename... Ts>
+int fold_with_init(Ts... values) {
+	return (5 + ... + values);
+}
+
 int loop_sum(int n) {
 	int total = 0;
 	for (int i = 0; i < n; i++) {
@@ -73,6 +78,8 @@ int main() {
 	int arr[3] = {1, 2, 3};
 	int elem = arr[1];
 
+	int fold_a = fold_with_init(1, 2, 3);
+
 	// Return 0 if pipeline produces correct output
-	return result - result + sw - sw + elem - elem + w - w + dw - dw;
+	return result - result + sw - sw + elem - elem + w - w + dw - dw + fold_a - fold_a;
 }
