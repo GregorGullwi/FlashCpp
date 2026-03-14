@@ -79,6 +79,17 @@ private:
 	// parameter without a default value is encountered (indicates an overload
 	// resolution bug).
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	// Fill trailing default arguments for a constructor overload that has already
+	// been selected, starting after the explicitly provided arguments.
+	void fillInConstructorDefaultArguments(
+		ConstructorCallOp& ctor_op,
+		const ConstructorDeclarationNode& ctor_node,
+		size_t explicit_arg_count);
+	TypedValue materializeDefaultArgument(
+		const ASTNode& default_expr,
+		const TypeSpecifierNode& param_type_spec,
+		std::string_view error_context);
 
 	std::vector<std::vector<ScopeVariableInfo>> scope_stack_;
 

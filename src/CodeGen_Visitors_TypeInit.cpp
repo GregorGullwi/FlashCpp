@@ -1090,6 +1090,7 @@
 							call_op.struct_name = base_type_it->second->name();
 							call_op.object = StringTable::getOrInternStringHandle("this");
 							// No arguments for default constructor
+							fillInDefaultConstructorArguments(call_op, *base_struct_info);
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
 						}
 					}

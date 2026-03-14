@@ -1046,23 +1046,8 @@
 									arg_index++;
 								}
 								
-								// Fill in default arguments for missing parameters
 								if (matching_ctor) {
-									const auto& params = matching_ctor->parameter_nodes();
-									size_t num_explicit_args = ctor_op.arguments.size();
-									for (size_t i = num_explicit_args; i < params.size(); ++i) {
-										if (params[i].is<DeclarationNode>()) {
-											const auto& param_decl = params[i].as<DeclarationNode>();
-											if (param_decl.has_default_value()) {
-												const ASTNode& default_node = param_decl.default_value();
-												if (default_node.is<ExpressionNode>()) {
-													ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-														TypedValue default_arg = toTypedValue(default_operands);
-														ctor_op.arguments.push_back(std::move(default_arg));
-												}
-											}
-										}
-									}
+									fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 								}
 								
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
@@ -1725,6 +1710,7 @@
 									ConstructorCallOp default_ctor_op;
 									default_ctor_op.struct_name = type_info.name();
 									default_ctor_op.object = decl.identifier_token().handle();
+									fillInDefaultConstructorArguments(default_ctor_op, *type_info.struct_info_);
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 
 									// Then emit member stores for each argument
@@ -1855,6 +1841,10 @@
 								}
 								arg_index++;
 							});
+
+							if (matching_ctor) {
+								fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
+							}
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
