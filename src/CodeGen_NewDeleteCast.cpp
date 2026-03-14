@@ -93,8 +93,8 @@
 									
 									// Generate: element_ptr = result_var + (i * element_size)
 									BinaryOp offset_op{
-										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
-										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
+										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -147,8 +147,8 @@
 								
 								// Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
-									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
-									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
+									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -214,8 +214,8 @@
 									
 									TempVar element_ptr = var_counter.next();
 									BinaryOp offset_op{
-										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
-										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
+										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -252,8 +252,8 @@
 							if (init.is<ExpressionNode>()) {
 								TempVar element_ptr = var_counter.next();
 								BinaryOp offset_op{
-									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
-									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(i * element_size)},
+									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -277,8 +277,8 @@
 					TempVar i_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 						.result = i_var,
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 0ULL},
+						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
 					}, Token()));
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -286,15 +286,15 @@
 					// cmp = (i_var < count)
 					TempVar cmp_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = count_value},
+						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_value),
 						.result = cmp_var,
 					}, Token()));
 
 					CondBranchOp cond;
 					cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
 					cond.label_false = loop_end;
-					cond.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_var};
+					cond.condition = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
 					// We use a body label right after the branch
 					auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
 					cond.label_true = loop_body;
@@ -305,16 +305,16 @@
 					// offset_var = i_var * elem_sz
 					TempVar offset_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(elem_sz)},
+						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 						.result = offset_var,
 					}, Token()));
 
 					// elem_ptr = result_var + offset_var
 					TempVar elem_ptr = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = result_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = offset_var},
+						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
+						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
 						.result = elem_ptr,
 					}, Token()));
 
@@ -327,8 +327,8 @@
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-						.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 1ULL},
+						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
 						.result = i_var,
 					}, Token()));
 
@@ -490,8 +490,8 @@
 						// Read count from cookie: raw_ptr = ptr - 8
 						TempVar raw_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = ptr_value},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 8ULL},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 8ULL),
 							.result = raw_ptr,
 						}, Token()));
 
@@ -499,7 +499,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = raw_ptr, .pointer_depth = PointerDepth{1}},
+							.pointer = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{}, PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -514,8 +514,8 @@
 						TempVar i_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 							.result = i_var,
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = count_var},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_var),
 						}, Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -523,36 +523,36 @@
 						// if i_var == 0 goto loop_end
 						TempVar cmp_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 0ULL},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
 							.result = cmp_var,
 						}, Token()));
 						CondBranchOp cond;
 						cond.label_true  = loop_body;
 						cond.label_false = loop_end;
-						cond.condition   = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{1}, .value = cmp_var};
+						cond.condition   = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
 						// i_var = i_var - 1  (decrement first, so index runs count-1..0)
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = 1ULL},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
 							.result = i_var,
 						}, Token()));
 
 						// elem_ptr = ptr + i_var * elem_sz
 						TempVar offset_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = i_var},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = static_cast<unsigned long long>(elem_sz)},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 							.result = offset_var,
 						}, Token()));
 						TempVar elem_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-							.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = ptr_value},
-							.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = SizeInBits{64}, .value = offset_var},
+							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
 							.result = elem_ptr,
 						}, Token()));
 
@@ -647,8 +647,8 @@
 			const TempVar& source_var = std::get<TempVar>(base);
 			AssignmentOp assign_op;
 			assign_op.result = result_var;
-			assign_op.lhs = TypedValue{target_type, SizeInBits{64}, result_var};  // 64-bit pointer dest
-			assign_op.rhs = TypedValue{target_type, SizeInBits{64}, source_var};  // 64-bit pointer source
+			assign_op.lhs = makeTypedValue(target_type, SizeInBits{64}, result_var);  // 64-bit pointer dest
+			assign_op.rhs = makeTypedValue(target_type, SizeInBits{64}, source_var);  // 64-bit pointer source
 			assign_op.is_pointer_store = false;
 			assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
@@ -798,7 +798,7 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
+				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
 				.to_type = target_type,
 				.to_size_in_bits = SizeInBits{target_size
 			}};
@@ -822,7 +822,7 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
+				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
 				.to_type = target_type,
 				.to_size_in_bits = SizeInBits{target_size
 			}};
@@ -846,7 +846,7 @@
 			
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, from_value},
+				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
 				.to_type = target_type,
 				.to_size_in_bits = SizeInBits{target_size
 			}};
@@ -860,7 +860,7 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, 0ULL},
+				.rhs = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, 0ULL),
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
@@ -872,7 +872,7 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = TypedValue{source_type, SizeInBits{static_cast<int>(source_size)}, 0.0},
+				.rhs = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, 0.0),
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
@@ -988,8 +988,8 @@
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
-			load_op.lhs = TypedValue{expr_operands.type, expr_operands.size_in_bits, source_ptr};
-			load_op.rhs = TypedValue{expr_operands.type, expr_operands.size_in_bits, var_name_handle};
+			load_op.lhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, source_ptr);
+			load_op.rhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, var_name_handle);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
