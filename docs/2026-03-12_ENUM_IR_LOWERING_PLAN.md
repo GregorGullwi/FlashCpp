@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-3 slices landed through 2026-03-13)  
+**Status**: In Progress (Phase 0-3 landed through 2026-03-14)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -386,6 +386,49 @@ useful next cleanup would be to make the separation explicit between:
 That keeps `IrType` small while moving policy decisions out of parser/codegen
 glue and into the correct compiler layer.
 
+**UPDATE (2026-03-14)**: A second Phase 3 slice is now in place:
+
+- `carriesSemanticTypeIndex(Type)` helper added to `IrType.h` — centralizes the
+  recurring `Type::Struct || Type::Enum || Type::UserDefined` pattern into a
+  single named function.  Used by identifier lowering, ExprResult construction,
+  and inc/dec metadata paths.
+- `getSizeInBytes` now uses `isIrStructType(toIrType(type))` — catches both
+  `Type::Struct` and `Type::UserDefined` (typedef-to-struct aliases) in the
+  struct-layout path, while preserving the assert for genuine `Type::Struct`.
+- `handleLValueAssignment` / `handleLValueCompoundAssignment` `inferLValueSizeBits`
+  now uses `isIrStructType(toIrType(lvalue_type))` instead of the two-way
+  `Type::Struct || Type::UserDefined` disjunction.
+- `populateIncDecTypedValueMetadata` in `generateBuiltinIncDec` now uses
+  `carriesSemanticTypeIndex(typed_value.type)` — previously missed
+  `Type::UserDefined` (only checked Struct and Enum).
+- Return type_index patterns in `CodeGen_Call_Direct.cpp` and
+  `CodeGen_Call_Indirect.cpp` now use `isIrStructType(toIrType(...))`.
+- Struct checks in `IRConverter_Conv_Calls.h` (constructor overload resolution
+  and implicit copy/move detection) migrated to `isIrStructType(toIrType(...))`.
+- `carries_type_index` patterns in `CodeGen_Expr_Primitives.cpp` now use
+  `carriesSemanticTypeIndex(...)` and `isIrStructType(toIrType(...))`.
+- Struct member type checks in `CodeGen_MemberAccess.cpp` (trivially-copyable,
+  trivial, struct info lookup, this-pointer resolution) migrated.
+- Nested struct detection in `CodeGen_Stmt_Decl.cpp` and
+  `CodeGen_Visitors_TypeInit.cpp` (recursive zero-fill) migrated.
+
+**Remaining Phase 3 work:**
+- `CodeGen_Expr_Operators.cpp` lines 793, 798, 899 — user-defined operator
+  detection (semantic: intentionally uses `Type::Struct || Type::UserDefined`)
+- `CodeGen_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
+  applicability (semantic: checks Type::Enum for overload semantics)
+- `CodeGen_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
+  and enum↔int cast rules
+- `CodeGen_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
+  scalar classification (semantic)
+- `CodeGen_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
+- `CodeGen_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+
+These remaining sites are **semantic checks** that intentionally need `Type::Enum`
+or the full `Type` enum.  They will stay as-is until Phase 4 (or a semantic
+analysis pass) provides a clean way to query semantic identity without
+touching the runtime type field.
+
 ### Phase 4 — Remove `Type type` from `TypedValue`
 
 Once all consumers read `ir_type`, remove the old `type` field. Any remaining
@@ -623,6 +666,9 @@ assumed ~8 files would need changes; actual scope is 25+ files.
 | `test_enum_comparison_ret0.cpp` | Enum comparisons |
 | `test_enum_bitwise_ret0.cpp` | Enum bitwise operations |
 | `test_enum_increment_decrement_ret0.cpp` | Enum increment/decrement |
+| `test_enum_compound_assign_ret0.cpp` | Enum compound assignment (`+=`, `|=`, `-=`) |
+| `test_enum_lvalue_assign_ret0.cpp` | Enum lvalue assignment (array element, pointer deref, stride) |
+| `test_struct_typedef_alias_ret0.cpp` | Struct typedef alias (UserDefined → IrType::Struct path) |
 
 ### Known Gaps
 
