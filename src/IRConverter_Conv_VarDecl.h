@@ -210,7 +210,7 @@
 					auto temp_var = std::get<TempVar>(init.value);
 					int src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits.value);
 					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
-					          " init.type=", static_cast<int>(init.type), 
+					          " init.ir_type=", static_cast<int>(init.effectiveIrType()), 
 					          " init.size_in_bits=", init.size_in_bits);
 					// Check if source is itself a pointer/reference - if so, load the value
 					// Otherwise, take the address
@@ -224,8 +224,11 @@
 						// For __range_begin_ and similar, which are int64 pointers
 						// Also check for struct types that returned as pointers (reference returns)
 						// And function pointers which are always 64-bit addresses
+						// Positive whitelist: only types that genuinely hold 64-bit pointer/address values.
+						// Excludes Void, Bool, Nullptr, etc. which happen to be non-float but aren't pointers.
+						IrType init_ir = init.effectiveIrType();
 						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} &&
-						                          !isIrFloatingPointType(init.effectiveIrType()));  // Struct references and function references return 64-bit pointers
+						                          (isIrIntegerType(init_ir) || isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value
@@ -241,7 +244,7 @@
 					
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 					if (src_it != current_scope.variables.end()) {
-						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', type=", static_cast<int>(init.type), ", size=", init.size_in_bits);
+						FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', ir_type=", static_cast<int>(init.effectiveIrType()), ", size=", init.size_in_bits);
 						// Check if source is a reference
 						auto src_ref_info = getIndirectStackInfo(src_it->second.offset);
 						if (src_ref_info.has_value()) {

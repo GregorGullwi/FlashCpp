@@ -419,6 +419,9 @@
 			.operand_type = operand_type,
 			.operand_size_in_bits = operand_size
 		};
+		// Propagate signedness so downstream consumers don't need to query via isSignedType(ctx.result_value.type).
+		// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
+		ctx.result_value.is_signed = isSignedType(result_type);
 
 		// Use IrType for runtime representation dispatch instead of branching on
 		// semantic Type::Enum / Type::UserDefined.  effectiveIrType() computes the
@@ -1208,6 +1211,7 @@
 
 	struct IndirectStorageInfo {
 		Type value_type = Type::Invalid;
+		IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field, will replace value_type
 		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
 		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
@@ -1225,6 +1229,7 @@
 
 		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
 			.value_type = value_type,
+			.ir_type = toIrType(value_type),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
@@ -1353,16 +1358,20 @@
 		// Check TempVar metadata first
 		if (temp_var.var_number != 0) {
 			if (isTempVarReference(temp_var)) {
+				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = getTempVarValueType(temp_var),
+					.value_type = vt,
+					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
 					.holds_address_only = false
 				};
 			}
 			if (isTempVarAddressOnly(temp_var)) {
+				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = getTempVarValueType(temp_var),
+					.value_type = vt,
+					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
 					.holds_address_only = true
