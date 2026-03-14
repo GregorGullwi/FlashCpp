@@ -145,7 +145,7 @@
 							return 0ULL;
 						}
 					}, argumentIrOperands.value);
-					arguments.push_back(TypedValue{arg_type, SizeInBits{arg_size}, arg_value});
+					arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
 				});
 
 				// Add the indirect call instruction
@@ -194,11 +194,7 @@
 					call_op.is_variadic = false;
 					
 					// Add the object (self) as the first argument (this pointer)
-					call_op.args.push_back(TypedValue{
-						.type = Type::Struct,
-						.size_in_bits = SizeInBits{64},  // Pointer size
-						.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
-					});
+					call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 					
 					// Generate IR for the remaining arguments and collect types for mangling
 					std::vector<TypeSpecifierNode> arg_types;
@@ -225,11 +221,7 @@
 						if (is_self_arg) {
 							// For the self argument in recursive lambda calls, pass the reference directly
 							// Don't call visitExpressionNode which would dereference it
-							call_op.args.push_back(TypedValue{
-								.type = Type::Struct,
-								.size_in_bits = SizeInBits{64},  // Reference/pointer size
-								.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
-							});
+							call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 							
 							// Type for mangling is rvalue reference to closure type
 							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
@@ -249,7 +241,7 @@
 									return 0ULL;
 								}
 							}, argumentIrOperands.value);
-							call_op.args.push_back(TypedValue{arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value});
+							call_op.args.push_back(makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value));
 							
 							// Type for mangling
 							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
@@ -1094,8 +1086,8 @@
 						}
 						
 						// Create TypedValue for lhs and rhs
-						assign_op.lhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var};
-						assign_op.rhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value};
+						assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
+						assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
@@ -1203,12 +1195,7 @@
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
-			call_op.args.push_back(TypedValue{
-				.type = this_type,
-				.size_in_bits = SizeInBits{64},
-				.value = IrValue(StringTable::getOrInternStringHandle("this")),
-				.type_index = this_type_index,
-			});
+			call_op.args.push_back(makeTypedValue(this_type, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this")), this_type_index));
 		}
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)

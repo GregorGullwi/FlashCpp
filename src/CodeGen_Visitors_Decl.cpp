@@ -482,8 +482,8 @@
 								// Check if result != 0 (members not equal)
 								TempVar ne_result = var_counter.next();
 								BinaryOp ne_op{
-									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
-									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
+									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
 									.result = IrValue{ne_result}
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -492,7 +492,7 @@
 								CondBranchOp ne_branch;
 								ne_branch.label_true = diff_label;
 								ne_branch.label_false = next_label;
-								ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
+								ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
 								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 								// Label: diff - return the inner <=> result
@@ -536,8 +536,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -546,7 +546,7 @@
 						CondBranchOp ne_branch;
 						ne_branch.label_true = diff_label;
 						ne_branch.label_false = next_label;
-						ne_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{ne_result}};
+						ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 						// Label: diff - members are not equal
@@ -555,8 +555,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type)},
+							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -565,7 +565,7 @@
 						CondBranchOp lt_branch;
 						lt_branch.label_true = lt_label;
 						lt_branch.label_false = gt_label;
-						lt_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = SizeInBits{8}, .value = IrValue{lt_result}};
+						lt_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{lt_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
 						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
@@ -692,8 +692,8 @@
 				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
 				BinaryOp cmp_op{
-					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true},
-					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true},
+					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
 					.result = IrValue{cmp_result}
 				};
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
@@ -2207,7 +2207,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_op.element_type = element_type;
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
-		store_op.index = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i)};
+		store_op.index = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
 		store_op.value = toTypedValue(element_operands[i]);
 		store_op.member_offset = 0;  // Not a member array - direct local array
 		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
@@ -2268,7 +2268,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.object = init_list_name;  // Use StringHandle
 		store_size.member_name = size_member.getName();
 		store_size.offset = static_cast<int>(size_member.offset);
-		store_size.value = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size)};
+		store_size.value = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
 		store_size.struct_type_info = nullptr;
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));

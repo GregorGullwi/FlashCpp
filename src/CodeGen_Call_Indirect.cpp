@@ -428,11 +428,7 @@
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 										ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-										arguments.push_back(TypedValue{
-											argument_result.type,
-											argument_result.size_in_bits,
-											toIrValue(argument_result.value)
-										});
+										arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
 									});
 									
 									IndirectCallOp op{
@@ -732,11 +728,7 @@
 						std::vector<TypedValue> arguments;
 						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 							ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-							arguments.push_back(TypedValue{
-								argument_result.type,
-								argument_result.size_in_bits,
-								toIrValue(argument_result.value)
-							});
+							arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
 						});
 
 						IndirectCallOp op{
@@ -1295,11 +1287,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
 				this_arg_value = IrValue(this_addr);
 			}
-			call_op.args.push_back(TypedValue{
-				.type = object_type.type(),
-				.size_in_bits = SizeInBits{64},  // Pointer size - always 64 bits on x64 architecture
-				.value = this_arg_value
-			});
+			call_op.args.push_back(makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value));
 
 			// Generate IR for function arguments and add to CallOp
 			size_t arg_index = 0;
@@ -1342,11 +1330,7 @@
 					// Check if this is a function being passed as a function pointer argument
 					if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 						// Function being passed as function pointer - just pass its name
-						call_op.args.push_back(TypedValue{
-							.type = Type::FunctionPointer,
-							.size_in_bits = SizeInBits{64},  // Pointer size
-							.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
-						});
+						call_op.args.push_back(makeTypedValue(Type::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
@@ -1361,8 +1345,9 @@
 									.type = type_node.type(),
 									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.ref_qualifier = ReferenceQualifier::LValueReference
-								});
+									.ref_qualifier = ReferenceQualifier::LValueReference,
+									.ir_type = toIrType(type_node.type())
+});
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
@@ -1372,16 +1357,13 @@
 									.type = type_node.type(),
 									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference
-								});
+									.ref_qualifier = ReferenceQualifier::LValueReference,
+									.ir_type = toIrType(type_node.type())
+});
 							}
 						} else {
 							// Regular pass by value
-							call_op.args.push_back(TypedValue{
-								.type = type_node.type(),
-								.size_in_bits = SizeInBits{type_node.size_in_bits()},
-								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
-							});
+							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{type_node.size_in_bits()}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 						}
 					} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 						// Handle VariableDeclarationNode (local variables)
@@ -1399,8 +1381,9 @@
 									.type = type_node.type(),
 									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.ref_qualifier = ReferenceQualifier::LValueReference
-								});
+									.ref_qualifier = ReferenceQualifier::LValueReference,
+									.ir_type = toIrType(type_node.type())
+});
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
@@ -1410,16 +1393,13 @@
 									.type = type_node.type(),
 									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference
-								});
+									.ref_qualifier = ReferenceQualifier::LValueReference,
+									.ir_type = toIrType(type_node.type())
+});
 							}
 						} else {
 							// Regular pass by value
-							call_op.args.push_back(TypedValue{
-								.type = type_node.type(),
-								.size_in_bits = SizeInBits{type_node.size_in_bits()},
-								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
-							});
+							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{type_node.size_in_bits()}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 						}
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
@@ -1462,8 +1442,8 @@
 							}
 							
 							// Create TypedValue for lhs and rhs
-							assign_op.lhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var};
-							assign_op.rhs = TypedValue{literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value};
+							assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
+							assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 							
@@ -1475,8 +1455,9 @@
 								.type = literal_type,
 								.size_in_bits = SizeInBits{64},  // Pointer size
 								.value = IrValue(addr_var),
-								.ref_qualifier = ReferenceQualifier::LValueReference
-							});
+								.ref_qualifier = ReferenceQualifier::LValueReference,
+								.ir_type = toIrType(literal_type)
+});
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -1490,8 +1471,9 @@
 									.type = expr_type,
 									.size_in_bits = SizeInBits{64},  // Pointer size
 									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference
-								});
+									.ref_qualifier = ReferenceQualifier::LValueReference,
+									.ir_type = toIrType(expr_type)
+});
 							} else {
 								// Fallback - just pass through
 								call_op.args.push_back(toTypedValue(argument_result));
