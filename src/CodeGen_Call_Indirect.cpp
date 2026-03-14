@@ -948,6 +948,7 @@
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
 			vcall_op.result.type = return_type.type();
+			vcall_op.result.ir_type = toIrType(return_type.type());
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
 			FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.pointer_depth(),
@@ -1269,6 +1270,7 @@
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
 					addr_op.operand.type = object_type.type();
+					addr_op.operand.ir_type = toIrType(object_type.type());
 					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 					addr_op.operand.value = obj_temp;
@@ -1284,6 +1286,7 @@
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
 				addr_op.operand.type = object_type.type();
+				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);

@@ -1015,6 +1015,7 @@
 														AddressOfOp addr_op;
 														addr_op.result = addr_var;
 														addr_op.operand.type = arg_type.type();
+														addr_op.operand.ir_type = toIrType(arg_type.type());
 														addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 														addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1022,6 +1023,7 @@
 														
 														// Create TypedValue with the address
 														tv.type = arg_type.type();
+														tv.ir_type = toIrType(arg_type.type());
 														tv.size_in_bits = SizeInBits{64};  // Pointer size
 														tv.value = addr_var;
 														tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -1339,6 +1341,7 @@
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
 										addr_op.operand.type = init_type;
+										addr_op.operand.ir_type = toIrType(init_type);
 										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
@@ -1347,6 +1350,7 @@
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = init_type;
+										this_arg.ir_type = toIrType(init_type);
 										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 										this_arg.value = this_ptr;
 										this_arg.type_index = TypeIndex{init_type_index};
@@ -1359,6 +1363,7 @@
 										// This is because visitExpressionNode returns addresses for struct identifiers.
 										TypedValue this_arg;
 										this_arg.type = init_type;
+										this_arg.ir_type = toIrType(init_type);
 										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 										this_arg.value = std::get<TempVar>(source_value);
 										this_arg.type_index = TypeIndex{init_type_index};
@@ -1447,6 +1452,7 @@
 					IrValue index_value = lv_info.array_index.value();
 					addr_op.index.value = index_value;
 					addr_op.index.type = Type::Int;  // Index type (typically int)
+					addr_op.index.ir_type = IrType::Integer;
 					addr_op.index.size_in_bits = SizeInBits{32};  // Standard index size
 					
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
@@ -1457,6 +1463,7 @@
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
 					tv.type = std::get<Type>(operands[7]);
+					tv.ir_type = toIrType(std::get<Type>(operands[7]));
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
 					decl_op.initializer = std::move(tv);
@@ -1793,6 +1800,7 @@
 												AddressOfOp addr_op;
 												addr_op.result = addr_var;
 												addr_op.operand.type = arg_type.type();
+												addr_op.operand.ir_type = toIrType(arg_type.type());
 												addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1800,6 +1808,7 @@
 												
 												// Create TypedValue with the address
 												tv.type = arg_type.type();
+												tv.ir_type = toIrType(arg_type.type());
 												tv.size_in_bits = SizeInBits{64};  // Pointer size
 												tv.value = addr_var;
 												tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -1969,6 +1978,7 @@
 											AddressOfOp addr_op;
 											addr_op.result = addr_var;
 											addr_op.operand.type = init_type.type();
+											addr_op.operand.ir_type = toIrType(init_type.type());
 											addr_op.operand.size_in_bits = SizeInBits{init_type.size_in_bits()};
 											addr_op.operand.pointer_depth = PointerDepth{};
 											addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1976,6 +1986,7 @@
 											
 											// Create TypedValue with the address
 											init_arg.type = init_type.type();
+											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
 											init_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
@@ -2258,6 +2269,7 @@
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
 					addr_op.operand.type = init_type;
+					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
 					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
@@ -2660,6 +2672,7 @@
 						// Pass the hidden variable as argument
 						TypedValue arg;
 						arg.type = init_type;
+						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
 						arg.type_index = TypeIndex{init_type_index};
@@ -2816,6 +2829,7 @@
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
 				load_op.result.type = member.type;
+				load_op.result.ir_type = toIrType(member.type);
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;
 				load_op.result.type_index = member.type_index;

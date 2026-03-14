@@ -951,6 +951,7 @@
 									// Add 'this' as first argument
 									TypedValue this_arg;
 									this_arg.type = arg_type;
+									this_arg.ir_type = toIrType(arg_type);
 									this_arg.size_in_bits = SizeInBits{64};  // Pointer size
 									this_arg.value = this_ptr;
 									this_arg.type_index = arg_type_index;
@@ -959,6 +960,7 @@
 									// It's already a temporary
 									TypedValue this_arg;
 									this_arg.type = arg_type;
+									this_arg.ir_type = toIrType(arg_type);
 									this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
 									this_arg.value = std::get<TempVar>(source_value);
 									this_arg.type_index = arg_type_index;

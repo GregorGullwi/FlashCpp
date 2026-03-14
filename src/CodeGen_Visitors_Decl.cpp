@@ -2536,6 +2536,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						AddressOfOp addr_op;
 						addr_op.result = addr_var;
 						addr_op.operand.type = arg_type.type();
+						addr_op.operand.ir_type = toIrType(arg_type.type());
 						addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -2543,6 +2544,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						
 						// Create TypedValue with the address
 						tv.type = arg_type.type();
+						tv.ir_type = toIrType(arg_type.type());
 						tv.size_in_bits = SizeInBits{64};  // Pointer size
 						tv.value = addr_var;
 						tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter

@@ -474,6 +474,7 @@
 
 									// Set index as TypedValue
 									payload.index.type = index_result.type;
+									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
 
@@ -717,6 +718,7 @@
 		Type index_type = index_result.type;
 		int index_size = index_result.size_in_bits.value;
 		payload.index.type = index_type;
+		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
 		if (std::holds_alternative<unsigned long long>(index_result.value)) {

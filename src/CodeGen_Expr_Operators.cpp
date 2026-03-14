@@ -653,6 +653,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
 					load_op.result.type = gsi.type;
+					load_op.result.ir_type = toIrType(gsi.type);
 					load_op.result.size_in_bits = gsi.size_in_bits;
 					load_op.result.value = loaded;
 					load_op.global_name = gsi.store_name;
@@ -803,6 +804,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		auto makeReferenceArgument = [&](const ExprResult& operand_result, Type operand_type, int operand_size) -> std::optional<TypedValue> {
 			TypedValue arg;
 			arg.type = operand_type;
+			arg.ir_type = toIrType(operand_type);
 			arg.size_in_bits = SizeInBits{64};
 
 			if (std::holds_alternative<StringHandle>(operand_result.value)) {
@@ -938,6 +940,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
 							addr_op.operand.type = lhsType;
+							addr_op.operand.ir_type = toIrType(lhsType);
 							addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 							addr_op.operand.pointer_depth = PointerDepth{};
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
@@ -951,6 +954,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
 							this_arg.type = lhsType;
+							this_arg.ir_type = toIrType(lhsType);
 							this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
 							call_op.args.push_back(this_arg);
@@ -1401,6 +1405,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AddressOfOp addr_op;
 				addr_op.result = lhs_addr;
 				addr_op.operand.type = lhsType;
+				addr_op.operand.ir_type = toIrType(lhsType);
 				addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 				// Convert std::variant<StringHandle, TempVar> to IrValue
@@ -1455,6 +1460,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Add 'this' pointer as first argument
 				TypedValue this_arg;
 				this_arg.type = lhsType;
+				this_arg.ir_type = toIrType(lhsType);
 				this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 				this_arg.value = lhs_addr;
 				call_op.args.push_back(this_arg);
@@ -3362,6 +3368,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 				addr_op.operand.type = param_type.type();
+				addr_op.operand.ir_type = toIrType(param_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 				addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
@@ -3619,6 +3626,7 @@ const Token& token) {
 			// This is important: the size must match the array element type
 			TypedValue value_tv;
 			value_tv.type = lhs_operands.type;
+			value_tv.ir_type = lhs_operands.effectiveIrType();
 			value_tv.size_in_bits = lhs_operands.size_in_bits;
 			value_tv.value = toIrValue(rhs_operands.value);
 
@@ -3657,6 +3665,7 @@ const Token& token) {
 			// This is important: the size must match the member being stored to, not the RHS
 			TypedValue value_tv;
 			value_tv.type = lhs_operands.type;
+			value_tv.ir_type = lhs_operands.effectiveIrType();
 			value_tv.size_in_bits = SizeInBits{static_cast<int>(lhs_size)};
 			value_tv.value = toIrValue(rhs_operands.value);
 
@@ -3683,6 +3692,7 @@ const Token& token) {
 			int pointee_size_bits = inferLValueSizeBits();
 			TypedValue value_tv;
 			value_tv.type = pointee_type;
+			value_tv.ir_type = toIrType(pointee_type);
 			value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
 			value_tv.value = toIrValue(rhs_operands.value);
 
@@ -3839,6 +3849,7 @@ std::string_view op) {
 		// Store result back through the pointer using DereferenceStore
 		TypedValue result_tv;
 		result_tv.type = lvalue_type;
+		result_tv.ir_type = toIrType(lvalue_type);
 		result_tv.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		result_tv.value = result_temp;
 
@@ -4007,6 +4018,7 @@ std::string_view op) {
 	MemberLoadOp load_op;
 	load_op.result.value = current_value_temp;
 	load_op.result.type = lhs_operands.type;
+	load_op.result.ir_type = lhs_operands.effectiveIrType();
 	load_op.result.size_in_bits = lhs_operands.size_in_bits;
 	load_op.object = lv_info.base;
 	load_op.member_name = lv_info.member_name.value();

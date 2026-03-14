@@ -1637,6 +1637,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	TypedValue this_arg;
 	this_arg.type = operandType;
+	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
 	call_op.args.push_back(this_arg);
