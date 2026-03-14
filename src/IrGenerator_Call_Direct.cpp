@@ -212,9 +212,8 @@
 						// In that case, we should pass the reference directly without dereferencing
 						bool is_self_arg = false;
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-							const auto& id = std::get<IdentifierNode>(arg_expr);
-							if (id.name() == func_name_view) {
+						if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
+							if (id->name() == func_name_view) {
 								is_self_arg = true;
 							}
 						}
@@ -1082,10 +1081,10 @@
 
 						// Convert IrOperand to IrValue for the literal
 						IrValue rhs_value;
-						if (std::holds_alternative<unsigned long long>(argumentIrOperands.value)) {
-							rhs_value = std::get<unsigned long long>(argumentIrOperands.value);
-						} else if (std::holds_alternative<double>(argumentIrOperands.value)) {
-							rhs_value = std::get<double>(argumentIrOperands.value);
+						if (const auto* ull_val = std::get_if<unsigned long long>(&argumentIrOperands.value)) {
+							rhs_value = *ull_val;
+						} else if (const auto* d_val = std::get_if<double>(&argumentIrOperands.value)) {
+							rhs_value = *d_val;
 						}
 
 						// Create TypedValue for lhs and rhs

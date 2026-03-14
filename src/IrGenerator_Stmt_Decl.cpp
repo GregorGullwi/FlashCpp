@@ -164,12 +164,12 @@
 					return bits;
 				} else if (std::holds_alternative<double>(eval_result.value)) {
 					return static_cast<unsigned long long>(eval_result.as_int());
-				} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-					return std::get<unsigned long long>(eval_result.value);
-				} else if (std::holds_alternative<long long>(eval_result.value)) {
-					return static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-				} else if (std::holds_alternative<bool>(eval_result.value)) {
-					return std::get<bool>(eval_result.value) ? 1 : 0ULL;
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+					return *ull_val;
+				} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+					return static_cast<unsigned long long>(*ll_val);
+				} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+					return *b_val ? 1 : 0ULL;
 				}
 				return 0;
 			};
@@ -403,8 +403,8 @@
 										if (mem_init.member_name == StringTable::getStringView(member.getName())) {
 											if (mem_init.initializer_expr.is<ExpressionNode>()) {
 												const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
-												if (std::holds_alternative<IdentifierNode>(init_e)) {
-													auto it = param_values.find(std::get<IdentifierNode>(init_e).name());
+												if (const auto* identifier = std::get_if<IdentifierNode>(&init_e)) {
+													auto it = param_values.find(identifier->name());
 													if (it != param_values.end()) member_val = it->second;
 												}
 											}
@@ -1129,10 +1129,10 @@
 												member_value = std::get<TempVar>(init_operands.value);
 											} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
 												member_value = std::get<unsigned long long>(init_operands.value);
-											} else if (std::holds_alternative<double>(init_operands.value)) {
-												member_value = std::get<double>(init_operands.value);
-											} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
-												member_value = std::get<StringHandle>(init_operands.value);
+											} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+												member_value = *d_val;
+											} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+												member_value = *string;
 											} else {
 												member_value = 0ULL;  // fallback
 											}
@@ -1147,10 +1147,10 @@
 													member_value = std::get<unsigned long long>(eval_result.value);
 												} else if (std::holds_alternative<long long>(eval_result.value)) {
 													member_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-												} else if (std::holds_alternative<bool>(eval_result.value)) {
-													member_value = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
-												} else if (std::holds_alternative<double>(eval_result.value)) {
-													member_value = std::get<double>(eval_result.value);
+												} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+													member_value = *b_val ? 1ULL : 0ULL;
+												} else if (const auto* d_val_ptr = std::get_if<double>(&eval_result.value)) {
+													member_value = *d_val_ptr;
 												} else {
 													member_value = 0ULL;
 												}
@@ -1421,8 +1421,8 @@
 		if (decl.is_array() && operands.size() >= 10) {
 			decl_op.array_element_type = std::get<Type>(operands[7]);
 			decl_op.array_element_size = std::get<int>(operands[8]);
-			if (std::holds_alternative<unsigned long long>(operands[9])) {
-				decl_op.array_count = std::get<unsigned long long>(operands[9]);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
+				decl_op.array_count = *ull_val;
 			}
 		}
 		if (node.initializer() && !decl.is_array() && operands.size() >= 10) {

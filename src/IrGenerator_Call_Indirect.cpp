@@ -21,9 +21,9 @@
 			lambda_ptr = &object_node.as<LambdaExpressionNode>();
 		} else if (object_node.is<ExpressionNode>()) {
 			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
-			if (std::holds_alternative<LambdaExpressionNode>(object_expr)) {
+			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&object_expr)) {
 				// Lambda wrapped in ExpressionNode
-				lambda_ptr = &std::get<LambdaExpressionNode>(object_expr);
+				lambda_ptr = &*lambda_expression;
 			}
 		}
 
@@ -1422,10 +1422,10 @@
 
 							// Convert IrOperand to IrValue for the literal
 							IrValue rhs_value;
-							if (std::holds_alternative<unsigned long long>(argument_result.value)) {
-								rhs_value = std::get<unsigned long long>(argument_result.value);
-							} else if (std::holds_alternative<double>(argument_result.value)) {
-								rhs_value = std::get<double>(argument_result.value);
+							if (const auto* ull_val = std::get_if<unsigned long long>(&argument_result.value)) {
+								rhs_value = *ull_val;
+							} else if (const auto* d_val = std::get_if<double>(&argument_result.value)) {
+								rhs_value = *d_val;
 							}
 
 							// Create TypedValue for lhs and rhs

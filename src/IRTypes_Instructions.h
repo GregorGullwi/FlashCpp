@@ -194,12 +194,12 @@ public:
 				const auto& val = op.return_value.value();
 				if (std::holds_alternative<unsigned long long>(val)) {
 					oss << std::get<unsigned long long>(val);
-				} else if (std::holds_alternative<TempVar>(val)) {
-					oss << '%' << std::get<TempVar>(val).var_number;
-				} else if (std::holds_alternative<StringHandle>(val)) {
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(val));
-				} else if (std::holds_alternative<double>(val)) {
-					oss << std::get<double>(val);
+				} else if (const auto* temp_var = std::get_if<TempVar>(&val)) {
+					oss << '%' << temp_var->var_number;
+				} else if (const auto* string = std::get_if<StringHandle>(&val)) {
+					oss << '%' << StringTable::getStringView(*string);
+				} else if (const auto* d_val = std::get_if<double>(&val)) {
+					oss << *d_val;
 				}
 			} else {
 				// Void return
@@ -362,12 +362,12 @@ public:
 
 			// Condition value
 			const auto& val = op.condition.value;
-			if (std::holds_alternative<unsigned long long>(val)) {
-				oss << std::get<unsigned long long>(val);
-			} else if (std::holds_alternative<TempVar>(val)) {
-				oss << '%' << std::get<TempVar>(val).var_number;
-			} else if (std::holds_alternative<StringHandle>(val)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(val));
+			if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+				oss << *ull_val;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&val)) {
+				oss << '%' << temp_var->var_number;
+			} else if (const auto* string = std::get_if<StringHandle>(&val)) {
+				oss << '%' << StringTable::getStringView(*string);
 			}
 
 			oss << ", label %" << op.getLabelTrue();   // Phase 4: Use helper
@@ -542,8 +542,8 @@ public:
 			oss << "[" << static_cast<int>(op.result_type) << "]" << op.result_size_bits << " ";
 
 			// Print base
-			if (std::holds_alternative<StringHandle>(op.base)) {
-				oss << "base: %" << StringTable::getStringView(std::get<StringHandle>(op.base));
+			if (const auto* string = std::get_if<StringHandle>(&op.base)) {
+				oss << "base: %" << StringTable::getStringView(*string);
 			} else {
 				oss << "base: %" << std::get<TempVar>(op.base).var_number;
 			}
@@ -552,10 +552,10 @@ public:
 			for (size_t i = 0; i < op.array_indices.size(); ++i) {
 				const auto& arr_idx = op.array_indices[i];
 				oss << ", idx" << i << ": ";
-				if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
-					oss << std::get<unsigned long long>(arr_idx.index);
-				} else if (std::holds_alternative<TempVar>(arr_idx.index)) {
-					oss << "%" << std::get<TempVar>(arr_idx.index).var_number;
+				if (const auto* ull_val = std::get_if<unsigned long long>(&arr_idx.index)) {
+					oss << *ull_val;
+				} else if (const auto* temp_var = std::get_if<TempVar>(&arr_idx.index)) {
+					oss << "%" << temp_var->var_number;
 				} else {
 					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
 				}
@@ -905,8 +905,8 @@ public:
 			// %result = typeid [type_name_or_expr] [is_type]
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
-			if (std::holds_alternative<StringHandle>(op.operand)) {
-				oss << StringTable::getStringView(std::get<StringHandle>(op.operand));
+			if (const auto* string = std::get_if<StringHandle>(&op.operand)) {
+				oss << StringTable::getStringView(*string);
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
@@ -1090,10 +1090,10 @@ public:
 		{
 			const GlobalLoadOp& op = getTypedPayload<GlobalLoadOp>();
 			// %result = global_load @global_name
-			if (std::holds_alternative<TempVar>(op.result.value)) {
-				oss << '%' << std::get<TempVar>(op.result.value).var_number;
-			} else if (std::holds_alternative<StringHandle>(op.result.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+			if (const auto* temp_var = std::get_if<TempVar>(&op.result.value)) {
+				oss << '%' << temp_var->var_number;
+			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
+				oss << '%' << StringTable::getStringView(*string_ptr);
 			}
 			oss << " = global_load @" << op.getGlobalName();  // Phase 4: Use helper
 		}
@@ -1112,10 +1112,10 @@ public:
 		{
 			// %result = function_address @function_name
 			auto& op = getTypedPayload<FunctionAddressOp>();
-			if (std::holds_alternative<TempVar>(op.result.value)) {
-				oss << '%' << std::get<TempVar>(op.result.value).var_number;
-			} else if (std::holds_alternative<StringHandle>(op.result.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+			if (const auto* temp_var = std::get_if<TempVar>(&op.result.value)) {
+				oss << '%' << temp_var->var_number;
+			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
+				oss << '%' << StringTable::getStringView(*string_ptr);
 			}
 			oss << " = function_address @" << op.getFunctionName();  // Phase 4: Use helper
 		}
@@ -1128,8 +1128,8 @@ public:
 			oss << '%' << op.result.var_number << " = indirect_call ";
 
 			// Function pointer can be either a TempVar or a variable name (string_view)
-			if (std::holds_alternative<TempVar>(op.function_pointer)) {
-				oss << '%' << std::get<TempVar>(op.function_pointer).var_number;
+			if (const auto* temp_var = std::get_if<TempVar>(&op.function_pointer)) {
+				oss << '%' << temp_var->var_number;
 			} else {
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.function_pointer));
 			}
@@ -1144,12 +1144,12 @@ public:
 				oss << arg.size_in_bits << " ";
 				if (std::holds_alternative<TempVar>(arg.value)) {
 					oss << '%' << std::get<TempVar>(arg.value).var_number;
-				} else if (std::holds_alternative<StringHandle>(arg.value)) {
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
-				} else if (std::holds_alternative<unsigned long long>(arg.value)) {
-					oss << std::get<unsigned long long>(arg.value);
-				} else if (std::holds_alternative<double>(arg.value)) {
-					oss << std::get<double>(arg.value);
+				} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+					oss << '%' << StringTable::getStringView(*string);
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
+					oss << *ull_val;
+				} else if (const auto* d_val = std::get_if<double>(&arg.value)) {
+					oss << *d_val;
 				}
 			}
 		}
@@ -1176,12 +1176,12 @@ public:
 			oss << op.from.size_in_bits << " ";
 			if (std::holds_alternative<TempVar>(op.from.value)) {
 				oss << '%' << std::get<TempVar>(op.from.value).var_number;
-			} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.from.value));
-			} else if (std::holds_alternative<unsigned long long>(op.from.value)) {
-				oss << std::get<unsigned long long>(op.from.value);
-			} else if (std::holds_alternative<double>(op.from.value)) {
-				oss << std::get<double>(op.from.value);
+			} else if (const auto* string = std::get_if<StringHandle>(&op.from.value)) {
+				oss << '%' << StringTable::getStringView(*string);
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.from.value)) {
+				oss << *ull_val;
+			} else if (const auto* d_val = std::get_if<double>(&op.from.value)) {
+				oss << *d_val;
 			}
 			oss << " to ";
 			auto to_type_info = gNativeTypes.find(op.to_type);
@@ -1241,11 +1241,11 @@ public:
 				oss << "%" << std::get<TempVar>(op.exception_value).var_number;
 			} else if (std::holds_alternative<unsigned long long>(op.exception_value)) {
 				oss << std::get<unsigned long long>(op.exception_value);
-			} else if (std::holds_alternative<double>(op.exception_value)) {
-				oss << std::get<double>(op.exception_value);
-			} else if (std::holds_alternative<StringHandle>(op.exception_value)) {
+			} else if (const auto* d_val = std::get_if<double>(&op.exception_value)) {
+				oss << *d_val;
+			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.exception_value)) {
 				// StringHandle represents a string constant - print as quoted string
-				oss << "\"" << StringTable::getStringView(std::get<StringHandle>(op.exception_value)) << "\"";
+				oss << "\"" << StringTable::getStringView(*string_ptr) << "\"";
 			}
 			oss << " : type_" << op.type_index.value << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";

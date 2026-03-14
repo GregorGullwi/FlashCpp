@@ -267,8 +267,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						int64_t value = 0;
 						if (std::holds_alternative<unsigned long long>(raw_value)) {
 							value = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
-						} else if (std::holds_alternative<double>(raw_value)) {
-							value = static_cast<int64_t>(std::get<double>(raw_value));
+						} else if (const auto* d_val = std::get_if<double>(&raw_value)) {
+							value = static_cast<int64_t>(*d_val);
 						} else {
 							FLASH_LOG(Templates, Debug, "    Numeric literal value variant type not handled for template arg extraction");
 							failed_value_extraction = true;

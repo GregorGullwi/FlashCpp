@@ -1528,11 +1528,11 @@ ParseResult Parser::parse_type_specifier()
 																	if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																		bool val = std::get<BoolLiteralNode>(init_expr).value();
 																		filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
-																	} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-																		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																	} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
+																		const NumericLiteralNode& lit = *numeric_literal;
 																		const auto& val = lit.value();
-																		if (std::holds_alternative<unsigned long long>(val)) {
-																			filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																		if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
+																			filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
 																		}
 																	}
 																}
@@ -1547,13 +1547,13 @@ ParseResult Parser::parse_type_specifier()
 								} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 									const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 									const auto& val = lit.value();
-									if (std::holds_alternative<unsigned long long>(val)) {
-										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
-									} else if (std::holds_alternative<double>(val)) {
-										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+									if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+									} else if (const auto* d_val = std::get_if<double>(&val)) {
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
 									}
-								} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
-									const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+								} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
+									const BoolLiteralNode& lit = *bool_literal;
 									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 								}
 							}
@@ -2135,11 +2135,11 @@ ParseResult Parser::parse_type_specifier()
 																if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 																	bool val = std::get<BoolLiteralNode>(init_expr).value();
 																	filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
-																} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-																	const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
+																	const NumericLiteralNode& lit = *numeric_literal;
 																	const auto& val = lit.value();
-																	if (std::holds_alternative<unsigned long long>(val)) {
-																		filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																	if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
+																		filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
 																	}
 																}
 															}
@@ -2154,13 +2154,13 @@ ParseResult Parser::parse_type_specifier()
 							} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 								const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 								const auto& val = lit.value();
-								if (std::holds_alternative<unsigned long long>(val)) {
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
-								} else if (std::holds_alternative<double>(val)) {
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+								if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+								} else if (const auto* d_val = std::get_if<double>(&val)) {
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
 								}
-							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
-								const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+							} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
+								const BoolLiteralNode& lit = *bool_literal;
 								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 							}
 						}

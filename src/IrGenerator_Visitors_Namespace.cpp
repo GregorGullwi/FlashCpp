@@ -416,10 +416,10 @@
 
 				// Mark the temp as a return value for potential NRVO analysis
 				markTempVarAsReturnValue(return_temp);
-			} else if (std::holds_alternative<StringHandle>(operands.value)) {
-				return_value = std::get<StringHandle>(operands.value);
-			} else if (std::holds_alternative<double>(operands.value)) {
-				return_value = std::get<double>(operands.value);
+			} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
+				return_value = *string;
+			} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
+				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
 			emitReturn(return_value, current_function_return_type_, current_function_return_size_,

@@ -188,12 +188,11 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			ternary.get_token()));
 	}
 
-	if (std::holds_alternative<StaticCastNode>(expr)) {
-		const auto& cast = std::get<StaticCastNode>(expr);
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
 		return ASTNode::emplace_node<ExpressionNode>(StaticCastNode(
-			cast.target_type(),
-			rebindStaticMemberInitializerFunctionCalls(cast.expr(), struct_info),
-			cast.cast_token()));
+			cast->target_type(),
+			rebindStaticMemberInitializerFunctionCalls(cast->expr(), struct_info),
+			cast->cast_token()));
 	}
 
 	return node;
@@ -353,11 +352,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::string_view param_name_to_substitute;
 		
 		// Check if the initializer is a template parameter reference or identifier
-		if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
-			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
+		if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&init_expr)) {
+			const TemplateParameterReferenceNode& tparam_ref = *template_parameter_reference;
 			param_name_to_substitute = tparam_ref.param_name().view();
-		} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
-			const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
+		} else if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&init_expr)) {
+			const IdentifierNode& ident = *identifier_ptr;
 			param_name_to_substitute = ident.name();
 		}
 		
@@ -680,8 +679,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 															const auto& val = lit.value();
-															if (std::holds_alternative<unsigned long long>(val)) {
-																TemplateTypeArg arg(static_cast<int64_t>(std::get<unsigned long long>(val)));
+															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+																TemplateTypeArg arg(static_cast<int64_t>(*ull_val));
 																filled_args_for_pattern_match.push_back(arg);
 															}
 														}
@@ -697,8 +696,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 						const auto& val = lit.value();
-						if (std::holds_alternative<unsigned long long>(val)) {
-							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
 						}
 					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
@@ -1121,10 +1120,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						bool expanded = false;
 						if (arg_info.node.is<ExpressionNode>()) {
 							const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
-							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-								expanded = try_expand(std::get<TemplateParameterReferenceNode>(expr).param_name());
-							} else if (std::holds_alternative<IdentifierNode>(expr)) {
-								StringHandle h = StringTable::getOrInternStringHandle(std::get<IdentifierNode>(expr).name());
+							if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+								expanded = try_expand(template_parameter_reference->param_name());
+							} else if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+								StringHandle h = StringTable::getOrInternStringHandle(identifier->name());
 								expanded = try_expand(h);
 							}
 						} else if (arg_info.node.is<TypeSpecifierNode>()) {
@@ -1545,9 +1544,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							);
 						};
 						
-						if (std::holds_alternative<SizeofPackNode>(expr)) {
+						if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
 							// Direct sizeof... expression
-							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+							const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 								substituted_initializer = make_pack_size_literal(*pack_size);
 							}
@@ -1557,8 +1556,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
 							if (cast_node.expr().is<ExpressionNode>()) {
 								const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-								if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
-									const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+								if (const auto* cast_sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
+									const SizeofPackNode& sizeof_pack = *cast_sizeof_pack_ptr;
 									if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 										substituted_initializer = make_pack_size_literal(*pack_size);
 									}
@@ -1571,8 +1570,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							
 							// Helper to extract pack size from various expression forms
 							auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
-								if (std::holds_alternative<SizeofPackNode>(e)) {
-									const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(e);
+								if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
+									const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 									return calculate_pack_size(sizeof_pack.pack_name());
 								}
 								// Handle static_cast<T>(sizeof...(Ts))
@@ -1580,8 +1579,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 									if (cast_node.expr().is<ExpressionNode>()) {
 										const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-										if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
-											const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+										if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
+											const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 											return calculate_pack_size(sizeof_pack.pack_name());
 										}
 									}
@@ -1591,8 +1590,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							
 							// Helper to extract numeric value from expression
 							auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
-								if (std::holds_alternative<NumericLiteralNode>(e)) {
-									const NumericLiteralNode& num = std::get<NumericLiteralNode>(e);
+								if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&e)) {
+									const NumericLiteralNode& num = *numeric_literal;
 									auto val = num.value();
 									return std::holds_alternative<unsigned long long>(val) 
 										? std::get<unsigned long long>(val)
@@ -2530,8 +2529,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 														const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 														const auto& val = lit.value();
-														if (std::holds_alternative<unsigned long long>(val)) {
-															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+														if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to numeric value");
 														}
 													}
@@ -2548,11 +2547,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (std::holds_alternative<NumericLiteralNode>(expr)) {
 					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 					const auto& val = lit.value();
-					if (std::holds_alternative<unsigned long long>(val)) {
-						int64_t int_val = static_cast<int64_t>(std::get<unsigned long long>(val));
+					if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+						int64_t int_val = static_cast<int64_t>(*ull_val);
 						filled_template_args.push_back(TemplateTypeArg(int_val));
-					} else if (std::holds_alternative<double>(val)) {
-						int64_t int_val = static_cast<int64_t>(std::get<double>(val));
+					} else if (const auto* d_val = std::get_if<double>(&val)) {
+						int64_t int_val = static_cast<int64_t>(*d_val);
 						filled_template_args.push_back(TemplateTypeArg(int_val));
 					}
 				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
@@ -2611,11 +2610,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															bool val = std::get<BoolLiteralNode>(init_expr).value();
 															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
-														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+														} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
+															const NumericLiteralNode& lit = *numeric_literal;
 															const auto& val = lit.value();
-															if (std::holds_alternative<unsigned long long>(val)) {
-																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
 															}
 														}
 													}
@@ -3552,11 +3551,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						identifier_name = tparam_ref.param_name().view();
-					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
-						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+						const NumericLiteralNode& lit = *numeric_literal;
 						const auto& val = lit.value();
-						if (std::holds_alternative<unsigned long long>(val)) {
-							literal_value = static_cast<int64_t>(std::get<unsigned long long>(val));
+						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+							literal_value = static_cast<int64_t>(*ull_val);
 						}
 					}
 				}
@@ -3688,11 +3687,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const ASTNode& size_node = *substituted_array_size;
 				if (size_node.is<ExpressionNode>()) {
 					const ExpressionNode& expr = size_node.as<ExpressionNode>();
-					if (std::holds_alternative<NumericLiteralNode>(expr)) {
-						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+					if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+						const NumericLiteralNode& lit = *numeric_literal;
 						const auto& val = lit.value();
-						if (std::holds_alternative<unsigned long long>(val)) {
-							array_size = static_cast<size_t>(std::get<unsigned long long>(val));
+						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+							array_size = static_cast<size_t>(*ull_val);
 						}
 					}
 				}
@@ -3845,8 +3844,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) return true;
 			
 			// Check for static_cast wrapping sizeof...
-			if (std::holds_alternative<StaticCastNode>(expr)) {
-				const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+			if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
+				const StaticCastNode& cast_node = *static_cast_node;
 				if (cast_node.expr().is<ExpressionNode>()) {
 					const ExpressionNode& inner = cast_node.expr().as<ExpressionNode>();
 					if (std::holds_alternative<SizeofPackNode>(inner)) return true;
@@ -3958,8 +3957,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				};
 				
 				// Handle SizeofPackNode (e.g., static constexpr int value = sizeof...(Ts);)
-				if (std::holds_alternative<SizeofPackNode>(expr)) {
-					const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+				if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
+					const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 					if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 						substituted_initializer = make_pack_size_literal(*pack_size);
 						FLASH_LOG(Templates, Debug, "Substituted sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
@@ -3970,8 +3969,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
 					if (cast_node.expr().is<ExpressionNode>()) {
 						const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-						if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
-							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+						if (const auto* cast_sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
+							const SizeofPackNode& sizeof_pack = *cast_sizeof_pack_ptr;
 							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 								substituted_initializer = make_pack_size_literal(*pack_size);
 								FLASH_LOG(Templates, Debug, "Substituted static_cast of sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
@@ -3990,8 +3989,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const ExpressionNode& expr_node = node.as<ExpressionNode>();
 						
 						// Handle SizeofPackNode directly
-						if (std::holds_alternative<SizeofPackNode>(expr_node)) {
-							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr_node);
+						if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr_node)) {
+							const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 								return make_pack_size_literal(*pack_size);
 							}
@@ -6020,9 +6019,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						);
 					};
 					
-					if (std::holds_alternative<SizeofPackNode>(expr)) {
+					if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
 						// Direct sizeof... expression
-						const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+						const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 						if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 							substituted_initializer = make_pack_size_literal(*pack_size);
 						}
@@ -6033,8 +6032,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						
 						// Helper to extract pack size from various expression forms (including static_cast)
 						auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
-							if (std::holds_alternative<SizeofPackNode>(e)) {
-								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(e);
+							if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
+								const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 								return calculate_pack_size(sizeof_pack.pack_name());
 							}
 							// Handle static_cast<T>(sizeof...(Ts))
@@ -6042,8 +6041,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 								if (cast_node.expr().is<ExpressionNode>()) {
 									const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-									if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
-										const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+									if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&cast_inner)) {
+										const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 										return calculate_pack_size(sizeof_pack.pack_name());
 									}
 								}
@@ -6053,8 +6052,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						
 						// Helper to extract numeric value from expression
 						auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
-							if (std::holds_alternative<NumericLiteralNode>(e)) {
-								const NumericLiteralNode& num = std::get<NumericLiteralNode>(e);
+							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&e)) {
+								const NumericLiteralNode& num = *numeric_literal;
 								auto val = num.value();
 								return std::holds_alternative<unsigned long long>(val) 
 									? std::get<unsigned long long>(val)
@@ -6124,8 +6123,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					else if (std::holds_alternative<TemplateParameterReferenceNode>(expr) || 
 					         std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view param_name;
-						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
+						if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+							param_name = template_parameter_reference->param_name().view();
 						} else {
 							param_name = std::get<IdentifierNode>(expr).name();
 						}

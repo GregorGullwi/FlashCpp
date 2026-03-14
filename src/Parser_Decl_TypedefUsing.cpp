@@ -761,8 +761,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							if (std::holds_alternative<NumericLiteralNode>(expr)) {
 								const auto& lit = std::get<NumericLiteralNode>(expr);
 								const auto& val = lit.value();
-								if (std::holds_alternative<unsigned long long>(val)) {
-									value = static_cast<int64_t>(std::get<unsigned long long>(val));
+								if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+									value = static_cast<int64_t>(*ull_val);
 									value_extracted = true;
 								}
 							}
@@ -1164,11 +1164,11 @@ ParseResult Parser::parse_typedef_declaration()
 						if (std::holds_alternative<NumericLiteralNode>(expr)) {
 							const auto& lit = std::get<NumericLiteralNode>(expr);
 							const auto& val = lit.value();
-							if (std::holds_alternative<unsigned long long>(val)) {
-								value = static_cast<int64_t>(std::get<unsigned long long>(val));
+							if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+								value = static_cast<int64_t>(*ull_val);
 								value_extracted = true;
-							} else if (std::holds_alternative<double>(val)) {
-								value = static_cast<int64_t>(std::get<double>(val));
+							} else if (const auto* d_val = std::get_if<double>(&val)) {
+								value = static_cast<int64_t>(*d_val);
 								value_extracted = true;
 							}
 						}

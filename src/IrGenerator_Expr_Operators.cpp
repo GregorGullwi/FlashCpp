@@ -612,8 +612,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					store_operands.emplace_back(gsi.store_name);
 
 					// Extract the value from RHS
-					if (std::holds_alternative<TempVar>(rhsExprResult.value)) {
-						store_operands.emplace_back(std::get<TempVar>(rhsExprResult.value));
+					if (const auto* temp_var = std::get_if<TempVar>(&rhsExprResult.value)) {
+						store_operands.emplace_back(*temp_var);
 					} else if (std::holds_alternative<StringHandle>(rhsExprResult.value)
 					|| std::holds_alternative<unsigned long long>(rhsExprResult.value)
 					|| std::holds_alternative<double>(rhsExprResult.value)) {
@@ -808,8 +808,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			arg.ir_type = toIrType(operand_type);
 			arg.size_in_bits = SizeInBits{64};
 
-			if (std::holds_alternative<StringHandle>(operand_result.value)) {
-				arg.value = emitAddressOf(operand_type, operand_size, IrValue(std::get<StringHandle>(operand_result.value)));
+			if (const auto* string = std::get_if<StringHandle>(&operand_result.value)) {
+				arg.value = emitAddressOf(operand_type, operand_size, IrValue(*string));
 				return arg;
 			}
 
@@ -847,8 +847,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.lhs = makeTypedValue(operand_type, SizeInBits{static_cast<int>(operand_size)}, temp_var);
 
 			IrValue rhs_value;
-			if (std::holds_alternative<unsigned long long>(operand_result.value)) {
-				rhs_value = std::get<unsigned long long>(operand_result.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operand_result.value)) {
+				rhs_value = *ull_val;
 			} else {
 				rhs_value = std::get<double>(operand_result.value);
 			}
@@ -930,8 +930,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							std::variant<StringHandle, TempVar> lhs_value;
 							if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
 								lhs_value = std::get<StringHandle>(lhsExprResult.value);
-							} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
-								lhs_value = std::get<TempVar>(lhsExprResult.value);
+							} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
+								lhs_value = *temp_var;
 							} else {
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return ExprResult{};
@@ -1080,16 +1080,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				return std::nullopt;
 			}
-			if (std::holds_alternative<StaticCastNode>(expr)) {
-				const auto& cast = std::get<StaticCastNode>(expr);
-				if (cast.target_type().is<TypeSpecifierNode>()) {
-					return normalizeSyntaxTypeSpec(cast.target_type().as<TypeSpecifierNode>());
+			if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+				if (cast->target_type().is<TypeSpecifierNode>()) {
+					return normalizeSyntaxTypeSpec(cast->target_type().as<TypeSpecifierNode>());
 				}
 				return std::nullopt;
 			}
-			if (std::holds_alternative<NumericLiteralNode>(expr)) {
-				const auto& literal = std::get<NumericLiteralNode>(expr);
-				return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
+			if (const auto* literal = std::get_if<NumericLiteralNode>(&expr)) {
+				return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits());
 			}
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
@@ -1394,8 +1392,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				std::variant<StringHandle, TempVar> lhs_value;
 				if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
 					lhs_value = std::get<StringHandle>(lhsExprResult.value);
-				} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
-					lhs_value = std::get<TempVar>(lhsExprResult.value);
+				} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
+					lhs_value = *temp_var;
 				} else {
 					// Can't take address of non-lvalue
 					FLASH_LOG(Codegen, Error, "Cannot take address of binary operator LHS - not an lvalue");
@@ -1410,8 +1408,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 				// Convert std::variant<StringHandle, TempVar> to IrValue
-				if (std::holds_alternative<StringHandle>(lhs_value)) {
-					addr_op.operand.value = std::get<StringHandle>(lhs_value);
+				if (const auto* string_ptr = std::get_if<StringHandle>(&lhs_value)) {
+					addr_op.operand.value = *string_ptr;
 				} else {
 					addr_op.operand.value = std::get<TempVar>(lhs_value);
 				}
@@ -1545,8 +1543,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					spaceship_lhs_type_index = member_ir.type_index;
 				} else {
 					// Other expression types - use the already-generated ExprResult
-					if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
-						lhs_value = std::get<TempVar>(lhsExprResult.value);
+					if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
+						lhs_value = *temp_var;
 					} else {
 						// Complex expression that doesn't produce a temp var
 						return ExprResult{};
@@ -1648,8 +1646,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							lhs_arg.ir_type = toIrType(lhsType);
 							lhs_arg.size_in_bits = SizeInBits{lhsSize};
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
-							if (std::holds_alternative<StringHandle>(lhs_value)) {
-								lhs_arg.value = IrValue(std::get<StringHandle>(lhs_value));
+							if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
+								lhs_arg.value = IrValue(*string);
 							} else {
 								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
 							}
@@ -2000,8 +1998,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Extract the LHS value directly (it's either StringHandle or TempVar)
 			if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
 				assign_op.result = std::get<StringHandle>(lhsExprResult.value);
-			} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
-				assign_op.result = std::get<TempVar>(lhsExprResult.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
+				assign_op.result = *temp_var;
 			} else {
 				// LHS is an immediate value - this shouldn't happen for valid assignments
 				throw InternalError("Assignment LHS cannot be an immediate value");
@@ -2611,8 +2609,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		std::variant<StringHandle, TempVar> va_list_var;
 		if (std::holds_alternative<TempVar>(vaListExprResult.value)) {
 			va_list_var = std::get<TempVar>(vaListExprResult.value);
-		} else if (std::holds_alternative<StringHandle>(vaListExprResult.value)) {
-			va_list_var = std::get<StringHandle>(vaListExprResult.value);
+		} else if (const auto* string = std::get_if<StringHandle>(&vaListExprResult.value)) {
+			va_list_var = *string;
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
 			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
@@ -2917,8 +2915,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AssignmentOp load_ptr_op;
 				load_ptr_op.result = va_list_struct_ptr;
 				load_ptr_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
-				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
+				if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
+					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *string);
 				} else {
 					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 				}
@@ -3174,8 +3172,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AssignmentOp load_ptr_op;
 				load_ptr_op.result = current_ptr;
 				load_ptr_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, current_ptr);
-				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
+				if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
+					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *string);
 				} else {
 					load_ptr_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 				}
@@ -3232,8 +3230,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Step 4: Store the updated pointer back to va_list
 				AssignmentOp assign_op;
 				assign_op.result = var_counter.next();  // unused but required
-				if (std::holds_alternative<TempVar>(va_list_var)) {
-					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
+				if (const auto* temp_var = std::get_if<TempVar>(&va_list_var)) {
+					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *temp_var);
 				} else {
 					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
 				}
@@ -3298,17 +3296,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = va_list_name_handle;
 			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
 				va_list_var = std::get<TempVar>(arg0ExprResult.value);
-			} else if (std::holds_alternative<StringHandle>(arg0ExprResult.value)) {
-				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
+			} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
+				va_list_var = *string;
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
 			}
 
 			AssignmentOp final_assign;
-			if (std::holds_alternative<StringHandle>(va_list_var)) {
-				final_assign.result = std::get<StringHandle>(va_list_var);
-				final_assign.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
+			if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
+				final_assign.result = *string;
+				final_assign.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *string);
 			} else {
 				final_assign.result = std::get<TempVar>(va_list_var);
 				final_assign.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
@@ -3326,8 +3324,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = va_list_name_handle;
 			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
 				va_list_var = std::get<TempVar>(arg0ExprResult.value);
-			} else if (std::holds_alternative<StringHandle>(arg0ExprResult.value)) {
-				va_list_var = std::get<StringHandle>(arg0ExprResult.value);
+			} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
+				va_list_var = *string;
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL});
@@ -3343,9 +3341,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Assign to va_list variable
 				AssignmentOp assign_op;
-				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					assign_op.result = std::get<StringHandle>(va_list_var);
-					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
+				if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
+					assign_op.result = *string;
+					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *string);
 				} else {
 					assign_op.result = std::get<TempVar>(va_list_var);
 					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
@@ -3385,9 +3383,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Assign to va_list variable
 				AssignmentOp assign_op;
-				if (std::holds_alternative<StringHandle>(va_list_var)) {
-					assign_op.result = std::get<StringHandle>(va_list_var);
-					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
+				if (const auto* string = std::get_if<StringHandle>(&va_list_var)) {
+					assign_op.result = *string;
+					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, *string);
 				} else {
 					assign_op.result = std::get<TempVar>(va_list_var);
 					assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
@@ -3823,9 +3821,9 @@ std::string_view op) {
 		if (std::holds_alternative<TempVar>(lv_info.base)) {
 			deref_op.pointer.value = std::get<TempVar>(lv_info.base);
 			base_value = std::get<TempVar>(lv_info.base);
-		} else if (std::holds_alternative<StringHandle>(lv_info.base)) {
-			deref_op.pointer.value = std::get<StringHandle>(lv_info.base);
-			base_value = std::get<StringHandle>(lv_info.base);
+		} else if (const auto* string = std::get_if<StringHandle>(&lv_info.base)) {
+			deref_op.pointer.value = *string;
+			base_value = *string;
 		} else {
 			FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar or StringHandle base");
 			return false;

@@ -125,12 +125,12 @@ struct EvalResult {
 		// Any non-zero value is true
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value);
-		} else if (std::holds_alternative<long long>(value)) {
-			return std::get<long long>(value) != 0;
-		} else if (std::holds_alternative<unsigned long long>(value)) {
-			return std::get<unsigned long long>(value) != 0;
-		} else if (std::holds_alternative<double>(value)) {
-			return std::get<double>(value) != 0.0;
+		} else if (const auto* ll_val = std::get_if<long long>(&value)) {
+			return *ll_val != 0;
+		} else if (const auto* ull_val = std::get_if<unsigned long long>(&value)) {
+			return *ull_val != 0;
+		} else if (const auto* d_val = std::get_if<double>(&value)) {
+			return *d_val != 0.0;
 		}
 		return false;
 	}
@@ -140,12 +140,12 @@ struct EvalResult {
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1 : 0;
-		} else if (std::holds_alternative<long long>(value)) {
-			return std::get<long long>(value);
-		} else if (std::holds_alternative<unsigned long long>(value)) {
-			return static_cast<long long>(std::get<unsigned long long>(value));
-		} else if (std::holds_alternative<double>(value)) {
-			return static_cast<long long>(std::get<double>(value));
+		} else if (const auto* ll_val = std::get_if<long long>(&value)) {
+			return *ll_val;
+		} else if (const auto* ull_val = std::get_if<unsigned long long>(&value)) {
+			return static_cast<long long>(*ull_val);
+		} else if (const auto* d_val = std::get_if<double>(&value)) {
+			return static_cast<long long>(*d_val);
 		}
 		return 0;
 	}
@@ -155,12 +155,12 @@ struct EvalResult {
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1.0 : 0.0;
-		} else if (std::holds_alternative<long long>(value)) {
-			return static_cast<double>(std::get<long long>(value));
-		} else if (std::holds_alternative<unsigned long long>(value)) {
-			return static_cast<double>(std::get<unsigned long long>(value));
-		} else if (std::holds_alternative<double>(value)) {
-			return std::get<double>(value);
+		} else if (const auto* ll_val = std::get_if<long long>(&value)) {
+			return static_cast<double>(*ll_val);
+		} else if (const auto* ull_val = std::get_if<unsigned long long>(&value)) {
+			return static_cast<double>(*ull_val);
+		} else if (const auto* d_val = std::get_if<double>(&value)) {
+			return *d_val;
 		}
 		return 0.0;
 	}

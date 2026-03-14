@@ -76,31 +76,29 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	FLASH_LOG(ConstExpr, Trace, "ConstExpr::evaluate: expr index=", expr.index());
 
 	// Check what type of expression it is
-	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		EvalResult result = EvalResult::from_bool(std::get<BoolLiteralNode>(expr).value());
+	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
+		EvalResult result = EvalResult::from_bool(bool_literal->value());
 		result.set_exact_type(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
 		return result;
 	}
 
-	if (std::holds_alternative<NumericLiteralNode>(expr)) {
-		return evaluate_numeric_literal(std::get<NumericLiteralNode>(expr));
+	if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+		return evaluate_numeric_literal(*numeric_literal);
 	}
 
 	// For BinaryOperatorNode, we need to check if it's in the variant
-	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
-		return evaluate_binary_operator(bin_op.get_lhs(), bin_op.get_rhs(), bin_op.op(), context);
+	if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
+		return evaluate_binary_operator(bin_op->get_lhs(), bin_op->get_rhs(), bin_op->op(), context);
 	}
 
 	// For UnaryOperatorNode
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unary_op = std::get<UnaryOperatorNode>(expr);
-		return evaluate_unary_operator(unary_op.get_operand(), unary_op.op(), context);
+	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
+		return evaluate_unary_operator(unary_op->get_operand(), unary_op->op(), context);
 	}
 
 	// For SizeofExprNode
-	if (std::holds_alternative<SizeofExprNode>(expr)) {
-		return evaluate_sizeof(std::get<SizeofExprNode>(expr), context);
+	if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&expr)) {
+		return evaluate_sizeof(*sizeof_expr, context);
 	}
 	
 	// For SizeofPackNode (sizeof... operator)
@@ -126,28 +124,28 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	}
 
 	// For AlignofExprNode
-	if (std::holds_alternative<AlignofExprNode>(expr)) {
-		return evaluate_alignof(std::get<AlignofExprNode>(expr), context);
+	if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&expr)) {
+		return evaluate_alignof(*alignof_expr, context);
 	}
 
 	// For OffsetofExprNode
-	if (std::holds_alternative<OffsetofExprNode>(expr)) {
-		return evaluate_offsetof(std::get<OffsetofExprNode>(expr));
+	if (const auto* offsetof_expr = std::get_if<OffsetofExprNode>(&expr)) {
+		return evaluate_offsetof(*offsetof_expr);
 	}
 
 	// For NoexceptExprNode
-	if (std::holds_alternative<NoexceptExprNode>(expr)) {
-		return evaluate_noexcept_expr(std::get<NoexceptExprNode>(expr), context);
+	if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr)) {
+		return evaluate_noexcept_expr(*noexcept_expr, context);
 	}
 
 	// For ConstructorCallNode (type conversions like float(3.14), int(100))
-	if (std::holds_alternative<ConstructorCallNode>(expr)) {
-		return evaluate_constructor_call(std::get<ConstructorCallNode>(expr), context);
+	if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
+		return evaluate_constructor_call(*constructor_call, context);
 	}
 
 	// For IdentifierNode (variable references like 'x' in 'constexpr int y = x + 1;')
-	if (std::holds_alternative<IdentifierNode>(expr)) {
-		return evaluate_identifier(std::get<IdentifierNode>(expr), context);
+	if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+		return evaluate_identifier(*identifier, context);
 	}
 
 	// For TemplateParameterReferenceNode (references to template parameters like 'T' or 'N')
@@ -161,48 +159,48 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	}
 
 	// For TernaryOperatorNode (condition ? true_expr : false_expr)
-	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		return evaluate_ternary_operator(std::get<TernaryOperatorNode>(expr), context);
+	if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr)) {
+		return evaluate_ternary_operator(*ternary_operator, context);
 	}
 
 	// For FunctionCallNode (constexpr function calls)
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		return evaluate_function_call(std::get<FunctionCallNode>(expr), context);
+	if (const auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
+		return evaluate_function_call(*function_call, context);
 	}
 
 	// For LambdaExpressionNode (callable lambda values)
-	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context);
+	if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
+		return materialize_lambda_value(*lambda_expression, context);
 	}
 
 	// For QualifiedIdentifierNode (e.g., Template<T>::member)
-	if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-		return evaluate_qualified_identifier(std::get<QualifiedIdentifierNode>(expr), context);
+	if (const auto* qualified_identifier = std::get_if<QualifiedIdentifierNode>(&expr)) {
+		return evaluate_qualified_identifier(*qualified_identifier, context);
 	}
 
 	// For MemberAccessNode (e.g., obj.member or ptr->member)
-	if (std::holds_alternative<MemberAccessNode>(expr)) {
-		return evaluate_member_access(std::get<MemberAccessNode>(expr), context);
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		return evaluate_member_access(*member_access, context);
 	}
 
 	// For MemberFunctionCallNode (e.g., obj.method() in constexpr context)
-	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		return evaluate_member_function_call(std::get<MemberFunctionCallNode>(expr), context);
+	if (const auto* member_function_call = std::get_if<MemberFunctionCallNode>(&expr)) {
+		return evaluate_member_function_call(*member_function_call, context);
 	}
 
 	// For StaticCastNode (static_cast<Type>(expr) and C-style casts)
-	if (std::holds_alternative<StaticCastNode>(expr)) {
-		return evaluate_static_cast(std::get<StaticCastNode>(expr), context);
+	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
+		return evaluate_static_cast(*static_cast_node, context);
 	}
 
 	// For ArraySubscriptNode (e.g., arr[0] or obj.data[1])
-	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-		return evaluate_array_subscript(std::get<ArraySubscriptNode>(expr), context);
+	if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return evaluate_array_subscript(*array_subscript, context);
 	}
 
 	// For TypeTraitExprNode (e.g., __is_void(int), __is_constant_evaluated())
-	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
-		return evaluate_type_trait(std::get<TypeTraitExprNode>(expr));
+	if (const auto* type_trait_expr = std::get_if<TypeTraitExprNode>(&expr)) {
+		return evaluate_type_trait(*type_trait_expr);
 	}
 
 	// For FoldExpressionNode (e.g., (args && ...))
@@ -235,8 +233,8 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 			: EvalResult::from_int(static_cast<long long>(val));
 		result.set_exact_type(literal_type);
 		return result;
-	} else if (std::holds_alternative<double>(value)) {
-		double val = std::get<double>(value);
+	} else if (const auto* d_val = std::get_if<double>(&value)) {
+		double val = *d_val;
 		EvalResult result = EvalResult::from_double(val);
 		result.set_exact_type(literal_type);
 		return result;
@@ -564,9 +562,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			}
 			
 			// For numeric literals, we can determine the size from the literal itself
-			if (std::holds_alternative<NumericLiteralNode>(expr)) {
-				const auto& lit = std::get<NumericLiteralNode>(expr);
-				unsigned long long size_in_bytes = lit.sizeInBits() / 8;
+			if (const auto* lit = std::get_if<NumericLiteralNode>(&expr)) {
+				unsigned long long size_in_bytes = lit->sizeInBits() / 8;
 				return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 			}
 			
@@ -884,10 +881,9 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		return lhs_noexcept && rhs_noexcept;
 	}
 
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unary = std::get<UnaryOperatorNode>(expr);
-		return !unary.get_operand().is<ExpressionNode>() ||
-			is_expression_noexcept(unary.get_operand().as<ExpressionNode>(), context);
+	if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
+		return !unary->get_operand().is<ExpressionNode>() ||
+			is_expression_noexcept(unary->get_operand().as<ExpressionNode>(), context);
 	}
 
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
@@ -901,39 +897,33 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		return cond_noexcept && true_noexcept && false_noexcept;
 	}
 
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(func_call, context);
+	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
+		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(*func_call, context);
 		return func_decl && is_function_decl_noexcept(*func_decl, context);
 	}
 
-	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		return is_function_decl_noexcept(member_call.function_declaration(), context);
+	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
+		return is_function_decl_noexcept(member_call->function_declaration(), context);
 	}
 
-	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-		const auto& subscript = std::get<ArraySubscriptNode>(expr);
-		return !subscript.index_expr().is<ExpressionNode>() ||
-			is_expression_noexcept(subscript.index_expr().as<ExpressionNode>(), context);
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return !subscript->index_expr().is<ExpressionNode>() ||
+			is_expression_noexcept(subscript->index_expr().as<ExpressionNode>(), context);
 	}
 
-	if (std::holds_alternative<StaticCastNode>(expr)) {
-		const auto& cast = std::get<StaticCastNode>(expr);
-		return !cast.expr().is<ExpressionNode>() ||
-			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+		return !cast->expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
-	if (std::holds_alternative<ConstCastNode>(expr)) {
-		const auto& cast = std::get<ConstCastNode>(expr);
-		return !cast.expr().is<ExpressionNode>() ||
-			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		return !cast->expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
-	if (std::holds_alternative<ReinterpretCastNode>(expr)) {
-		const auto& cast = std::get<ReinterpretCastNode>(expr);
-		return !cast.expr().is<ExpressionNode>() ||
-			is_expression_noexcept(cast.expr().as<ExpressionNode>(), context);
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		return !cast->expr().is<ExpressionNode>() ||
+			is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
 	if (std::holds_alternative<DynamicCastNode>(expr) ||
@@ -1261,8 +1251,8 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 	// Check for lambda expression (wrapped in ExpressionNode)
 	if (initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = initializer->as<ExpressionNode>();
-		if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-			return &std::get<LambdaExpressionNode>(expr);
+		if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
+			return &*lambda_expression;
 		}
 	}
 	
@@ -1775,10 +1765,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned long long value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = std::get<unsigned long long>(arg_result.value);
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = *ull_val;
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned long long>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_clzll argument must be an integer");
 		}
@@ -1811,10 +1801,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned int value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ull_val);
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_clz argument must be an integer");
 		}
@@ -1842,10 +1832,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned long long value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = std::get<unsigned long long>(arg_result.value);
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = *ull_val;
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned long long>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_ctzll argument must be an integer");
 		}
@@ -1872,10 +1862,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned int value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ull_val);
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_ctz argument must be an integer");
 		}
@@ -1902,10 +1892,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned long long value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = std::get<unsigned long long>(arg_result.value);
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = *ull_val;
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned long long>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_popcountll argument must be an integer");
 		}
@@ -1928,10 +1918,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned int value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ull_val);
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_popcount argument must be an integer");
 		}
@@ -1954,10 +1944,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned long long value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = std::get<unsigned long long>(arg_result.value);
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = *ull_val;
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned long long>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_ffsll argument must be an integer");
 		}
@@ -1984,10 +1974,10 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return arg_result;
 		}
 		unsigned int value;
-		if (std::holds_alternative<unsigned long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
-		} else if (std::holds_alternative<long long>(arg_result.value)) {
-			value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ull_val);
+		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
+			value = static_cast<unsigned int>(*ll_val);
 		} else {
 			return EvalResult::error("__builtin_ffs argument must be an integer");
 		}
@@ -2797,8 +2787,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					ctor_call = &init_expr.as<ConstructorCallNode>();
 				} else if (init_expr.is<ExpressionNode>()) {
 					const ExpressionNode& expr = init_expr.as<ExpressionNode>();
-					if (std::holds_alternative<ConstructorCallNode>(expr)) {
-						ctor_call = &std::get<ConstructorCallNode>(expr);
+					if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
+						ctor_call = &*constructor_call;
 					}
 				}
 

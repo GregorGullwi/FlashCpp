@@ -2172,8 +2172,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						// Try AssignmentOp (for materializing literals to temporaries)
 						else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
 							// Track the LHS TempVar if it's a TempVar
-							if (std::holds_alternative<TempVar>(assign_op->lhs.value)) {
-								auto temp_var = std::get<TempVar>(assign_op->lhs.value);
+							if (const auto* temp_var_ptr = std::get_if<TempVar>(&assign_op->lhs.value)) {
+								auto temp_var = *temp_var_ptr;
 								// Phase 5: Convert temp var name to StringHandle
 								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits.value;
 								handled_by_typed_payload = true;
@@ -2193,8 +2193,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						}
 						// Try GlobalLoadOp (for loading global variables)
 						else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
-							if (std::holds_alternative<TempVar>(global_load_op->result.value)) {
-								auto temp_var = std::get<TempVar>(global_load_op->result.value);
+							if (const auto* temp_var_ptr = std::get_if<TempVar>(&global_load_op->result.value)) {
+								auto temp_var = *temp_var_ptr;
 								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = global_load_op->result.size_in_bits.value;
 								handled_by_typed_payload = true;
 							}
@@ -3774,10 +3774,10 @@ int32_t IrToObjConverter<TWriterClass>::getVariableOffsetOrThrow(StringHandle va
 
 template<class TWriterClass>
 int IrToObjConverter<TWriterClass>::resolveTypedValueFrameOffset(const TypedValue& arg)  {
-		if (std::holds_alternative<StringHandle>(arg.value)) {
-			return getVariableOffsetOrThrow(std::get<StringHandle>(arg.value), "resolveTypedValueFrameOffset");
-		} else if (std::holds_alternative<TempVar>(arg.value)) {
-			return getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+		if (const auto* string_ptr = std::get_if<StringHandle>(&arg.value)) {
+			return getVariableOffsetOrThrow(*string_ptr, "resolveTypedValueFrameOffset");
+		} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&arg.value)) {
+			return getStackOffsetFromTempVar(*temp_var_ptr);
 		}
 		return 0;
 	}
@@ -4019,8 +4019,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							int var_offset = getStackOffsetFromTempVar(temp_var);
 							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
-						} else if (std::holds_alternative<StringHandle>(arg.value)) {
-							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
+						} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+							StringHandle var_name_handle = *string;
 							int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall stack float arg");
 							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
@@ -4899,11 +4899,11 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							emitMovImm64(temp_gpr, bits);
 							emitMovqGprToXmm(temp_gpr, temp_xmm);
 							regAlloc.release(temp_gpr);
-						} else if (std::holds_alternative<TempVar>(arg.value)) {
-							int var_offset = getStackOffsetFromTempVar(std::get<TempVar>(arg.value));
+						} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
+							int var_offset = getStackOffsetFromTempVar(*temp_var);
 							emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
-						} else if (std::holds_alternative<StringHandle>(arg.value)) {
-							int var_offset = getVariableOffsetOrThrow(std::get<StringHandle>(arg.value), "handleConstructorCall stack float arg");
+						} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+							int var_offset = getVariableOffsetOrThrow(*string, "handleConstructorCall stack float arg");
 							emitFloatMovFromFrame(temp_xmm, var_offset, arg.effectiveIrType() == IrType::Float);
 						}
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
@@ -5151,8 +5151,8 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 		if (std::holds_alternative<TempVar>(dtor_op.object)) {
 			// TempVars are always pointers in destructor calls (from heap_free)
 			object_is_pointer = true;
-		} else if (std::holds_alternative<StringHandle>(dtor_op.object)) {
-			StringHandle obj_handle = std::get<StringHandle>(dtor_op.object);
+		} else if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
+			StringHandle obj_handle = *string_ptr;
 			object_is_pointer = dtor_op.object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 		}
 
@@ -5218,8 +5218,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 		// Get object offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(op.object)) {
-			const TempVar& temp_var = std::get<TempVar>(op.object);
+		if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.object)) {
+			const TempVar& temp_var = *temp_var_ptr;
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(op.object);
@@ -5359,8 +5359,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 							int var_offset = getStackOffsetFromTempVar(temp_var);
 							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
-						} else if (std::holds_alternative<StringHandle>(arg.value)) {
-							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
+						} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+							StringHandle var_name_handle = *string;
 							int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister float");
 							bool is_float = (arg.effectiveIrType() == IrType::Float);
 							emitFloatMovFromFrame(target_reg, var_offset, is_float);
@@ -5374,8 +5374,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 							const auto& temp_var = std::get<TempVar>(arg.value);
 							int var_offset = getStackOffsetFromTempVar(temp_var);
 							emitMovFromFrame(target_reg, var_offset);
-						} else if (std::holds_alternative<StringHandle>(arg.value)) {
-							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
+						} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+							StringHandle var_name_handle = *string;
 							int var_offset = getVariableOffsetOrThrow(var_name_handle, "loadTypedValueIntoRegister integer");
 							emitMovFromFrame(target_reg, var_offset);
 						}
@@ -5525,8 +5525,8 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 				if (it != variable_scopes.back().variables.end()) {
 					emitMovFromFrameSized(SizedRegister{count_reg, 64, false}, SizedStackSlot{it->second.offset, 64, false});
 				}
-			} else if (std::holds_alternative<unsigned long long>(op.count)) {
-				emitMovImm64(count_reg, std::get<unsigned long long>(op.count));
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.count)) {
+				emitMovImm64(count_reg, *ull_val);
 			}
 			// MOV QWORD PTR [RAX], count_reg
 			emitStoreToMemory(textSectionData, count_reg, X64Register::RAX, 0, 8);
@@ -9875,13 +9875,13 @@ void IrToObjConverter<TWriterClass>::storeIncDecResultValue(TempVar result_var, 
 
 template<class TWriterClass>
 typename IrToObjConverter<TWriterClass>::UnaryOperandLocation IrToObjConverter<TWriterClass>::resolveTypedValueLocation(const TypedValue& typed_value)  {
-		if (std::holds_alternative<TempVar>(typed_value.value)) {
-			auto temp = std::get<TempVar>(typed_value.value);
+		if (const auto* temp_var = std::get_if<TempVar>(&typed_value.value)) {
+			auto temp = *temp_var;
 			return UnaryOperandLocation::stack(getStackOffsetFromTempVar(temp));
 		}
 
-		if (std::holds_alternative<StringHandle>(typed_value.value)) {
-			StringHandle name = std::get<StringHandle>(typed_value.value);
+		if (const auto* string = std::get_if<StringHandle>(&typed_value.value)) {
+			StringHandle name = *string;
 			if (auto offset = findIdentifierStackOffset(name); offset.has_value()) {
 				return UnaryOperandLocation::stack(offset.value());
 			}
@@ -10720,8 +10720,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				if (it != variable_scopes.back().variables.end()) {
 					lhs_offset = it->second.offset;
 				}
-			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
-				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
+				TempVar lhs_var = *temp_var;
 				lhs_offset = getStackOffsetFromTempVar(lhs_var);
 			}
 
@@ -10739,9 +10739,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 				// Load function address from RHS stack location into RAX
 				emitMovFromFrame(source_reg, rhs_offset);
-			} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
 				// RHS is an immediate value (e.g., nullptr = 0)
-				unsigned long long rhs_value = std::get<unsigned long long>(op.rhs.value);
+				unsigned long long rhs_value = *ull_val;
 				emitMovImm64(source_reg, rhs_value);
 			}
 
@@ -10774,8 +10774,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				if (it != variable_scopes.back().variables.end()) {
 					lhs_offset = it->second.offset;
 				}
-			} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
-				TempVar lhs_var = std::get<TempVar>(op.lhs.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
+				TempVar lhs_var = *temp_var;
 				lhs_offset = getStackOffsetFromTempVar(lhs_var);
 			}
 
@@ -10793,8 +10793,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				if (it != variable_scopes.back().variables.end()) {
 					rhs_offset = it->second.offset;
 				}
-			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
-				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.rhs.value)) {
+				TempVar rhs_var = *temp_var;
 				rhs_offset = getStackOffsetFromTempVar(rhs_var);
 			}
 
@@ -10910,10 +10910,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		auto lhs_ref_info = getIndirectStackInfo(lhs_offset);
 
 		// Debug: check what type LHS is
-		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-			FLASH_LOG(Codegen, Debug, "LHS is string_view: '", std::get<StringHandle>(op.lhs.value), "'");
-		} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
-			FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", std::get<TempVar>(op.lhs.value).name(), "'");
+		if (const auto* string = std::get_if<StringHandle>(&op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is string_view: '", *string, "'");
+		} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
+			FLASH_LOG(Codegen, Debug, "LHS is TempVar: '", temp_var->name(), "'");
 		} else {
 			FLASH_LOG(Codegen, Debug, "LHS is other type");
 		}
@@ -11408,8 +11408,8 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		if (std::holds_alternative<StringHandle>(op.array)) {
 			array_name_handle = std::get<StringHandle>(op.array);
 			array_name_view = StringTable::getStringView(array_name_handle);
-		} else if (std::holds_alternative<TempVar>(op.array)) {
-			TempVar array_temp_var = std::get<TempVar>(op.array);
+		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
+			TempVar array_temp_var = *temp_var;
 			array_base_offset = getStackOffsetFromTempVar(array_temp_var);
 			is_array_pointer = true;  // TempVar always means pointer
 		}
@@ -11653,11 +11653,11 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 
 			// Get the array base address
 			int64_t array_base_offset = 0;
-			if (std::holds_alternative<StringHandle>(op.array)) {
-				StringHandle array_name_handle = std::get<StringHandle>(op.array);
+			if (const auto* string = std::get_if<StringHandle>(&op.array)) {
+				StringHandle array_name_handle = *string;
 				array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
-			} else if (std::holds_alternative<TempVar>(op.array)) {
-				TempVar array_temp = std::get<TempVar>(op.array);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
+				TempVar array_temp = *temp_var;
 				array_base_offset = getStackOffsetFromTempVar(array_temp);
 			}
 
@@ -11793,10 +11793,10 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			if (std::holds_alternative<StringHandle>(op.array)) {
 				array_name_handle = std::get<StringHandle>(op.array);
 				array_name_view = StringTable::getStringView(array_name_handle);
-			} else if (std::holds_alternative<TempVar>(op.array)) {
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
 				// Array is a TempVar (e.g., from member_access for struct.array_member)
 				// The TempVar holds a pointer to the array base
-				TempVar array_temp = std::get<TempVar>(op.array);
+				TempVar array_temp = *temp_var;
 				array_base_offset = getStackOffsetFromTempVar(array_temp);
 				array_is_tempvar = true;
 			}
@@ -12505,9 +12505,9 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			is_literal = true;
 			is_double_literal = true;
 			literal_double_value = std::get<double>(op.value.value);
-		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
+		} else if (const auto* string = std::get_if<StringHandle>(&op.value.value)) {
 			is_variable = true;
-			variable_name = std::get<StringHandle>(op.value.value);
+			variable_name = *string;
 		} else {
 			throw InternalError("Value must be TempVar, unsigned long long, double, or StringHandle");
 			return;
@@ -12881,9 +12881,9 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			} else {
 				// Taking address of a named variable
 				std::string_view operand_str;
-				if (std::holds_alternative<StringHandle>(op.operand.value)) {
-					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand.value));
-					global_name_handle = std::get<StringHandle>(op.operand.value);
+				if (const auto* string = std::get_if<StringHandle>(&op.operand.value)) {
+					operand_str = StringTable::getStringView(*string);
+					global_name_handle = *string;
 				} else {
 					assert(std::holds_alternative<TempVar>(op.operand.value) && "AddressOf operand must be StringHandle or TempVar");
 					return;
@@ -13505,9 +13505,9 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 					}
 				}
 			}
-		} else if (std::holds_alternative<unsigned long long>(condition_value)) {
+		} else if (const auto* ull_val = std::get_if<unsigned long long>(&condition_value)) {
 			// Immediate value
-			unsigned long long value = std::get<unsigned long long>(condition_value);
+			unsigned long long value = *ull_val;
 
 			// MOV RAX, imm64
 			emitMovImm64(X64Register::RAX, value);
@@ -13670,9 +13670,9 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 						SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 					);
 				}
-			} else if (std::holds_alternative<unsigned long long>(arg.value)) {
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
 				// Immediate value
-				unsigned long long value = std::get<unsigned long long>(arg.value);
+				unsigned long long value = *ull_val;
 				emitMovImm64(target_reg, value);
 			}
 		}

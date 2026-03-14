@@ -229,8 +229,8 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			IrValue exception_value;
 			bool is_rvalue = !std::holds_alternative<StringHandle>(expr_result.value);
 			bool value_is_materialized = false;
-			if (std::holds_alternative<TempVar>(expr_result.value)) {
-				is_rvalue = !isTempVarLValue(std::get<TempVar>(expr_result.value));
+			if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+				is_rvalue = !isTempVarLValue(*temp_var);
 			}
 
 			if (std::holds_alternative<TempVar>(expr_result.value)) {
@@ -239,8 +239,8 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				exception_value = std::get<StringHandle>(expr_result.value);
 			} else if (std::holds_alternative<unsigned long long>(expr_result.value)) {
 				exception_value = std::get<unsigned long long>(expr_result.value);
-			} else if (std::holds_alternative<double>(expr_result.value)) {
-				exception_value = std::get<double>(expr_result.value);
+			} else if (const auto* d_val = std::get_if<double>(&expr_result.value)) {
+				exception_value = *d_val;
 			} else {
 				// Unknown operand type - log warning and default to zero value
 				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
@@ -336,9 +336,9 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			const auto& unary = std::get<UnaryOperatorNode>(filter_inner_expr);
 			if (unary.op() == "-" && unary.get_operand().is<ExpressionNode>()) {
 				const auto& inner = unary.get_operand().as<ExpressionNode>();
-				if (std::holds_alternative<NumericLiteralNode>(inner)) {
+				if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&inner)) {
 					is_constant_filter = true;
-					const auto& lit = std::get<NumericLiteralNode>(inner);
+					const auto& lit = *numeric_literal;
 					constant_filter_value = -static_cast<int32_t>(std::get<unsigned long long>(lit.value()));
 					FLASH_LOG(Codegen, Debug, "SEH filter is constant negated literal: ", constant_filter_value);
 				}

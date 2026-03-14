@@ -173,8 +173,8 @@ const Token& token) {
 	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
-	if (std::holds_alternative<StringHandle>(pointer)) {
-		store_op.pointer.value = std::get<StringHandle>(pointer);
+	if (const auto* string = std::get_if<StringHandle>(&pointer)) {
+		store_op.pointer.value = *string;
 	} else {
 		store_op.pointer.value = std::get<TempVar>(pointer);
 	}

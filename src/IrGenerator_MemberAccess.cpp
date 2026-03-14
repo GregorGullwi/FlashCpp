@@ -647,10 +647,10 @@
 			// computed operands to keep a valid base (TempVar or StringHandle) instead of
 			// leaving an empty StringHandle that leads to invalid offsets.
 			if (base_variant.valueless_by_exception()) {
-				if (std::holds_alternative<TempVar>(array_result.value)) {
-					base_variant = std::get<TempVar>(array_result.value);
-				} else if (std::holds_alternative<StringHandle>(array_result.value)) {
-					base_variant = std::get<StringHandle>(array_result.value);
+				if (const auto* temp_var = std::get_if<TempVar>(&array_result.value)) {
+					base_variant = *temp_var;
+				} else if (const auto* string_ptr = std::get_if<StringHandle>(&array_result.value)) {
+					base_variant = *string_ptr;
 				}
 			}
 		}
@@ -677,8 +677,8 @@
 			}
 		}
 		if (!std::holds_alternative<StringHandle>(base_variant)) {
-			if (std::holds_alternative<StringHandle>(array_result.value)) {
-				base_variant = std::get<StringHandle>(array_result.value);
+			if (const auto* string = std::get_if<StringHandle>(&array_result.value)) {
+				base_variant = *string;
 			}
 		}
 		// Prefer keeping TempVar base when available to preserve stack offsets for nested accesses
@@ -709,10 +709,10 @@
 		payload.is_pointer_to_array = is_pointer_to_array;
 
 		// Set array (either variable name or temp)
-		if (std::holds_alternative<StringHandle>(array_result.value)) {
-			payload.array = std::get<StringHandle>(array_result.value);
-		} else if (std::holds_alternative<TempVar>(array_result.value)) {
-			payload.array = std::get<TempVar>(array_result.value);
+		if (const auto* string = std::get_if<StringHandle>(&array_result.value)) {
+			payload.array = *string;
+		} else if (const auto* temp_var = std::get_if<TempVar>(&array_result.value)) {
+			payload.array = *temp_var;
 		}
 
 		// Set index as TypedValue
@@ -722,12 +722,12 @@
 		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
-		if (std::holds_alternative<unsigned long long>(index_result.value)) {
-			payload.index.value = std::get<unsigned long long>(index_result.value);
-		} else if (std::holds_alternative<TempVar>(index_result.value)) {
-			payload.index.value = std::get<TempVar>(index_result.value);
-		} else if (std::holds_alternative<StringHandle>(index_result.value)) {
-			payload.index.value = std::get<StringHandle>(index_result.value);
+		if (const auto* ull_val = std::get_if<unsigned long long>(&index_result.value)) {
+			payload.index.value = *ull_val;
+		} else if (const auto* temp_var = std::get_if<TempVar>(&index_result.value)) {
+			payload.index.value = *temp_var;
+		} else if (const auto* string_ptr = std::get_if<StringHandle>(&index_result.value)) {
+			payload.index.value = *string_ptr;
 		}
 
 		// When context is LValueAddress, skip the load and return address/metadata only
@@ -831,8 +831,8 @@
 		base_type = operands.type;
 		if (std::holds_alternative<TempVar>(operands.value)) {
 			base_object = std::get<TempVar>(operands.value);
-		} else if (std::holds_alternative<StringHandle>(operands.value)) {
-			base_object = std::get<StringHandle>(operands.value);
+		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
+			base_object = *string;
 		} else {
 			FLASH_LOG(Codegen, Error, error_context, " result has unsupported value type");
 			return false;
@@ -1147,8 +1147,8 @@
 
 		if (!type_info || !type_info->getStructInfo()) {
 			std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.value << "\n";
-			if (std::holds_alternative<StringHandle>(base_object)) {
-				std::cerr << "  Object name: " << std::get<StringHandle>(base_object) << "\n";
+			if (const auto* string_ptr = std::get_if<StringHandle>(&base_object)) {
+				std::cerr << "  Object name: " << *string_ptr << "\n";
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {

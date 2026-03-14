@@ -349,10 +349,10 @@ private:
 		if (eval_result.success()) {
 			// Return the constant value
 			unsigned long long value = 0;
-			if (std::holds_alternative<long long>(eval_result.value)) {
-				value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-				value = std::get<unsigned long long>(eval_result.value);
+			if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+				value = static_cast<unsigned long long>(*ll_val);
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+				value = *ull_val;
 			}
 			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value});
 		}

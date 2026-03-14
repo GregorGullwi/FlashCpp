@@ -166,8 +166,8 @@
 				assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
 				assign_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_result.value)) {
-				object_addr = std::get<TempVar>(object_result.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
+				object_addr = *temp_var;
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
 				return ExprResult{};
@@ -185,8 +185,8 @@
 					.ir_type = toIrType(object_result.type)
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-			} else if (std::holds_alternative<TempVar>(object_result.value)) {
-				object_addr = std::get<TempVar>(object_result.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
+				object_addr = *temp_var;
 			} else {
 				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
 				return ExprResult{};

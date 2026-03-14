@@ -302,8 +302,8 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 								if (std::holds_alternative<StringHandle>(init_value)) {
 									addr_op.operand.value = std::get<StringHandle>(init_value);
-								} else if (std::holds_alternative<TempVar>(init_value)) {
-									addr_op.operand.value = std::get<TempVar>(init_value);
+								} else if (const auto* temp_var = std::get_if<TempVar>(&init_value)) {
+									addr_op.operand.value = *temp_var;
 								} else {
 									// For other types, skip
 									continue;
@@ -337,8 +337,8 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 									member_store.value.value = std::get<unsigned long long>(init_value);
 								} else if (std::holds_alternative<double>(init_value)) {
 									member_store.value.value = std::get<double>(init_value);
-								} else if (std::holds_alternative<StringHandle>(init_value)) {
-									member_store.value.value = std::get<StringHandle>(init_value);
+								} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
+									member_store.value.value = *string;
 								} else {
 									// For other types, skip this capture
 									continue;
@@ -1240,8 +1240,8 @@ const LambdaExpressionNode* AstToIr::extractLambdaFromInitializer(const ASTNode&
 	}
 	if (init.is<ExpressionNode>()) {
 		const ExpressionNode& expr = init.as<ExpressionNode>();
-		if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-			return &std::get<LambdaExpressionNode>(expr);
+		if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
+			return &*lambda_expression;
 		}
 	}
 	return nullptr;

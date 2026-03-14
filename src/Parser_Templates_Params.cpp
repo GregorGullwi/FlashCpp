@@ -991,12 +991,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						bool finished_parsing = false;  // Track if we consumed '>' and should break
 						std::string_view param_name_to_check;
 						
-						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-							param_name_to_check = StringTable::getStringView(tparam_ref.param_name());
-						} else if (std::holds_alternative<IdentifierNode>(expr)) {
-							const auto& id = std::get<IdentifierNode>(expr);
-							param_name_to_check = id.name();
+						if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+							param_name_to_check = StringTable::getStringView(tparam_ref->param_name());
+						} else if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
+							param_name_to_check = id->name();
 						}
 						
 						if (!param_name_to_check.empty()) {

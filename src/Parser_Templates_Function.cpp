@@ -860,8 +860,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	FLASH_LOG_FORMAT(Templates, Debug, "Expression variant index: {}", expr.index());
 	
 	// Handle boolean literals directly
-	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
+		const BoolLiteralNode& lit = *bool_literal;
 		return ConstantValue{lit.value() ? 1 : 0, Type::Bool};
 	}
 	
@@ -869,10 +869,10 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 		const auto& val = lit.value();
-		if (std::holds_alternative<unsigned long long>(val)) {
-			return ConstantValue{static_cast<int64_t>(std::get<unsigned long long>(val)), lit.type()};
-		} else if (std::holds_alternative<double>(val)) {
-			return ConstantValue{static_cast<int64_t>(std::get<double>(val)), lit.type()};
+		if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+			return ConstantValue{static_cast<int64_t>(*ull_val), lit.type()};
+		} else if (const auto* d_val = std::get_if<double>(&val)) {
+			return ConstantValue{static_cast<int64_t>(*d_val), lit.type()};
 		}
 	}
 	

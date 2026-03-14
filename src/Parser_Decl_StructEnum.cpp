@@ -3518,11 +3518,11 @@ ParseResult Parser::parse_enum_declaration()
 					if (std::holds_alternative<NumericLiteralNode>(expr)) {
 						const auto& literal = std::get<NumericLiteralNode>(expr);
 						const auto& literal_value = literal.value();
-						if (std::holds_alternative<unsigned long long>(literal_value)) {
-							value = static_cast<long long>(std::get<unsigned long long>(literal_value));
+						if (const auto* ull_val = std::get_if<unsigned long long>(&literal_value)) {
+							value = static_cast<long long>(*ull_val);
 							value_extracted = true;
-						} else if (std::holds_alternative<double>(literal_value)) {
-							value = static_cast<long long>(std::get<double>(literal_value));
+						} else if (const auto* d_val = std::get_if<double>(&literal_value)) {
+							value = static_cast<long long>(*d_val);
 							value_extracted = true;
 						}
 					}

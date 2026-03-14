@@ -777,12 +777,12 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	oss << op.value.size_in_bits << " ";
 	
 	// Operand value
-	if (std::holds_alternative<TempVar>(op.value.value)) {
-		oss << '%' << std::get<TempVar>(op.value.value).var_number;
-	} else if (std::holds_alternative<StringHandle>(op.value.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.value.value));
-	} else if (std::holds_alternative<unsigned long long>(op.value.value)) {
-		oss << std::get<unsigned long long>(op.value.value);
+	if (const auto* temp_var = std::get_if<TempVar>(&op.value.value)) {
+		oss << '%' << temp_var->var_number;
+	} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.value.value)) {
+		oss << '%' << StringTable::getStringView(*string_ptr);
+	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value)) {
+		oss << *ull_val;
 	}
 	
 	return oss.str();
@@ -1047,12 +1047,12 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << op.from.size_in_bits << " ";
 	
 	// Source value
-	if (std::holds_alternative<TempVar>(op.from.value)) {
-		oss << '%' << std::get<TempVar>(op.from.value).var_number;
-	} else if (std::holds_alternative<unsigned long long>(op.from.value)) {
-		oss << std::get<unsigned long long>(op.from.value);
-	} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.from.value));
+	if (const auto* temp_var = std::get_if<TempVar>(&op.from.value)) {
+		oss << '%' << temp_var->var_number;
+	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.from.value)) {
+		oss << *ull_val;
+	} else if (const auto* string_val = std::get_if<StringHandle>(&op.from.value)) {
+		oss << '%' << StringTable::getStringView(*string_val);
 	}
 	
 	oss << " to ";
@@ -1073,10 +1073,10 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	
 	// Result variable (now an IrValue that could be TempVar or string_view)
 	oss << '%';
-	if (std::holds_alternative<TempVar>(op.result)) {
-		oss << std::get<TempVar>(op.result).var_number;
-	} else if (std::holds_alternative<StringHandle>(op.result)) {
-		oss << StringTable::getStringView(std::get<StringHandle>(op.result));
+	if (const auto* temp_var = std::get_if<TempVar>(&op.result)) {
+		oss << temp_var->var_number;
+	} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result)) {
+		oss << StringTable::getStringView(*string_ptr);
 	}
 	oss << " = " << op_name << " ";
 	
@@ -1090,12 +1090,12 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	// LHS value
 	if (std::holds_alternative<unsigned long long>(op.lhs.value)) {
 		oss << std::get<unsigned long long>(op.lhs.value);
-	} else if (std::holds_alternative<double>(op.lhs.value)) {
-		oss << std::get<double>(op.lhs.value);
-	} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
-		oss << '%' << std::get<TempVar>(op.lhs.value).var_number;
-	} else if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.lhs.value));
+	} else if (const auto* d_val = std::get_if<double>(&op.lhs.value)) {
+		oss << *d_val;
+	} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.lhs.value)) {
+		oss << '%' << temp_var_ptr->var_number;
+	} else if (const auto* string_val = std::get_if<StringHandle>(&op.lhs.value)) {
+		oss << '%' << StringTable::getStringView(*string_val);
 	}
 	
 	oss << ", ";
@@ -1103,12 +1103,12 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	// RHS value
 	if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
 		oss << std::get<unsigned long long>(op.rhs.value);
-	} else if (std::holds_alternative<double>(op.rhs.value)) {
-		oss << std::get<double>(op.rhs.value);
-	} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
-		oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
-	} else if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.rhs.value));
+	} else if (const auto* d_val = std::get_if<double>(&op.rhs.value)) {
+		oss << *d_val;
+	} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
+		oss << '%' << temp_var_ptr->var_number;
+	} else if (const auto* string_val = std::get_if<StringHandle>(&op.rhs.value)) {
+		oss << '%' << StringTable::getStringView(*string_val);
 	}
 	
 	return oss.str();

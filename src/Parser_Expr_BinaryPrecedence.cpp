@@ -147,9 +147,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					//    treat < as comparison operator
 					
 					std::string_view member_name;
-					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-						member_name = qual_id.name();
+					if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
+						member_name = qual_id->name();
 					} else {
 						const auto& member_access = std::get<MemberAccessNode>(expr);
 						member_name = member_access.member_name();
@@ -208,8 +207,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					std::string_view base_name;
 					if (result.node()->is<ExpressionNode>()) {
 						const auto& expr = result.node()->as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(expr)) {
-							base_name = std::get<IdentifierNode>(expr).name();
+						if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+							base_name = identifier_ptr->name();
 						}
 					}
 					
