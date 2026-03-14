@@ -1,6 +1,7 @@
 #include "SemanticAnalysis.h"
 #include "Parser.h"
 #include "CompileContext.h"
+#include "CompileError.h"
 #include "SymbolTable.h"
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
@@ -54,6 +55,9 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 }
 
 // --- Determine StandardConversionKind from two primitive Type values ---
+// TODO: Consider unifying this with can_convert_type (OverloadResolution.h) into a single
+// buildConversionPlan() helper that returns both the rank and the StandardConversionKind,
+// per the plan (§B.3 / appendix §B). For now the two analyses are separate but consistent.
 
 static StandardConversionKind determineConversionKind(Type from, Type to) {
 	if (to == Type::Bool) return StandardConversionKind::BooleanConversion;
@@ -77,7 +81,8 @@ static StandardConversionKind determineConversionKind(Type from, Type to) {
 	if (from_int && to_flt) return StandardConversionKind::FloatingIntegralConversion;
 	if (from_flt && to_int) return StandardConversionKind::FloatingIntegralConversion;
 
-	return StandardConversionKind::IntegralConversion;  // safe fallback
+	// Should not be reached: tryAnnotateReturnConversion guards against struct/pointer/invalid types.
+	throw InternalError("determineConversionKind: unhandled type pair");
 }
 
 // --- SemanticAnalysis ---
@@ -168,19 +173,15 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 			const auto& decl = param_node.as<DeclarationNode>();
 			const ASTNode ptype = decl.type_node();
 			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				CanonicalTypeId tid = type_context_.intern(
-					[&]() {
-						CanonicalTypeDesc d;
-						const auto& ts = ptype.as<TypeSpecifierNode>();
-						d.base_type = ts.type();
-						d.type_index = ts.type_index();
-						d.base_cv = ts.cv_qualifier();
-						d.ref_qualifier = ts.reference_qualifier();
-						return d;
-					}()
-				);
-				std::string_view pname = decl.identifier_token().value();
-				if (!pname.empty())
+				CanonicalTypeDesc d;
+				const auto& ts = ptype.as<TypeSpecifierNode>();
+				d.base_type = ts.type();
+				d.type_index = ts.type_index();
+				d.base_cv = ts.cv_qualifier();
+				d.ref_qualifier = ts.reference_qualifier();
+				const CanonicalTypeId tid = type_context_.intern(d);
+				const StringHandle pname = decl.identifier_token().handle();
+				if (pname.isValid())
 					addLocalType(pname, tid);
 			}
 		}
@@ -258,7 +259,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			desc.type_index = ts.type_index();
 			desc.base_cv = ts.cv_qualifier();
 			desc.ref_qualifier = ts.reference_qualifier();
-			addLocalType(decl.identifier_token().value(), type_context_.intern(desc));
+			const StringHandle vname = decl.identifier_token().handle();
+			if (vname.isValid())
+				addLocalType(vname, type_context_.intern(desc));
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
@@ -542,12 +545,12 @@ void SemanticAnalysis::popScope() {
 		scope_stack_.pop_back();
 }
 
-void SemanticAnalysis::addLocalType(std::string_view name, CanonicalTypeId type_id) {
+void SemanticAnalysis::addLocalType(StringHandle name, CanonicalTypeId type_id) {
 	if (!scope_stack_.empty())
 		scope_stack_.back()[name] = type_id;
 }
 
-CanonicalTypeId SemanticAnalysis::lookupLocalType(std::string_view name) const {
+CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
 	for (auto it = scope_stack_.rbegin(); it != scope_stack_.rend(); ++it) {
 		auto found = it->find(name);
 		if (found != it->end())
@@ -576,7 +579,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
-				return lookupLocalType(e.name());
+				return lookupLocalType(e.nameHandle());
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				// Pass-through for simple unary +/-
@@ -617,10 +620,11 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc   = type_context_.get(*ctx.current_function_return_type_id);
 
-	// Only handle plain primitive conversions (no pointers, no arrays, no structs)
+	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums)
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return;
 	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return;
+	if (from_desc.base_type == Type::Enum  || to_desc.base_type == Type::Enum)   return;
 	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return;
 

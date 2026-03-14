@@ -73,10 +73,11 @@ private:
 	void tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
+	// Keys are StringHandles from the string pool (stable for the compilation lifetime).
 	void pushScope();
 	void popScope();
-	void addLocalType(std::string_view name, CanonicalTypeId type_id);
-	CanonicalTypeId lookupLocalType(std::string_view name) const;
+	void addLocalType(StringHandle name, CanonicalTypeId type_id);
+	CanonicalTypeId lookupLocalType(StringHandle name) const;
 
 	// State
 	Parser& parser_;
@@ -89,6 +90,6 @@ private:
 	// Side table: expression node pointer → semantic slot.
 	std::unordered_map<const void*, SemanticSlot> semantic_slots_;
 
-	// Scope stack: each entry maps local variable name → canonical type id.
-	std::vector<std::unordered_map<std::string_view, CanonicalTypeId>> scope_stack_;
+	// Scope stack: each entry maps local variable StringHandle → canonical type id.
+	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
 };
