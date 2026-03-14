@@ -399,7 +399,7 @@ private:
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
-	Type type = Type::Void;	// 4 bytes (enum)
+	Type type = Type::Void;	// 4 bytes (enum) — semantic type (kept during transition, will be removed in Phase 4)
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrValue value;          // 32 bytes (variant)
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
@@ -407,11 +407,25 @@ struct TypedValue {
 	TypeIndex type_index {};   // Index into gTypeInfo for struct/enum types (0 = not set)
 	PointerDepth pointer_depth = PointerDepth{};  // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
+	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 	
 	// Helper methods for reference checks
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
+
+	// Returns the effective runtime representation type.
+	// During the transition period (Phase 1-3), some construction sites may not
+	// explicitly set ir_type.  This method computes it from the semantic type if
+	// ir_type is still the default.  Once all sites are migrated, this method
+	// can be replaced by a direct ir_type read.
+	IrType effectiveIrType() const {
+		// Return ir_type if it was explicitly set (non-Void), or if the semantic
+		// type IS Void (to avoid toIrType recomputation for genuinely void values).
+		if (ir_type != IrType::Void || type == Type::Void)
+			return ir_type;
+		return toIrType(type);
+	}
 };
 
 // Helper function to print TypedValue

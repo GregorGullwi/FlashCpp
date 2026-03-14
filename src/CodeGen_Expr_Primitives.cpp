@@ -211,6 +211,21 @@
 		);
 	}
 
+	// Temporary migration helper: generic lambda local parameters can still reach
+	// identifier lowering as unresolved Type::Auto with size 0.  When that
+	// happens, this mutates both `type` and `size_bits` to the transitional
+	// int/32-bit fallback and returns true; otherwise it leaves them unchanged and
+	// returns false.  This can be removed once deduced lambda parameter types are
+	// threaded into lambda body codegen.
+	static bool applyTransitionalAutoRuntimeFallback(Type& type, int& size_bits) {
+		if (type == Type::Auto && size_bits == 0) {
+			type = Type::Int;
+			size_bits = 32;
+			return true;
+		}
+		return false;
+	}
+
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
@@ -222,11 +237,16 @@
 		} else {
 			// For regular variables, return the variable size
 			size_bits = static_cast<int>(type_node.size_in_bits());
-			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+			// Fallback: if size_bits is 0, calculate from type. Generic lambda auto
+			// parameters still use a transitional int fallback here; other types keep
+			// the warning because size 0 indicates parser metadata drift.
 			if (size_bits == 0) {
-				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
-				"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
-				size_bits = get_type_size_bits(type_node.type());
+				Type fallback_type = type_node.type();
+				if (!applyTransitionalAutoRuntimeFallback(fallback_type, size_bits)) {
+					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
+					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+					size_bits = get_type_size_bits(type_node.type());
+				}
 			}
 		}
 		
@@ -485,19 +505,8 @@
 					if (fast_sym->is<DeclarationNode>()) {
 						const auto& decl_n = fast_sym->as<DeclarationNode>();
 						const auto& type_n = decl_n.type_node().as<TypeSpecifierNode>();
-						// Check for enum constant
-						if (type_n.type() == Type::Enum && !type_n.is_reference() && type_n.pointer_depth() == 0) {
-							size_t enum_idx = type_n.type_index().value;
-							if (enum_idx < gTypeInfo.size()) {
-								const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
-								if (enum_info) {
-									const Enumerator* enumerator = enum_info->findEnumerator(identifier_handle);
-									if (enumerator) {
-										return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-											static_cast<unsigned long long>(enumerator->value));
-									}
-								}
-							}
+						if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(type_n, identifier_handle)) {
+							return *enumerator_constant;
 						}
 						bool is_array_type = decl_n.is_array() || type_n.is_array();
 						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
@@ -816,10 +825,8 @@
 						if (enum_idx.value < gTypeInfo.size()) {
 							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
-								const Enumerator* enumerator = enum_info->findEnumerator(id_handle);
-								if (enumerator) {
-									return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-									static_cast<unsigned long long>(enumerator->value));
+								if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(*enum_info, id_handle)) {
+									return *enumerator_constant;
 								}
 							}
 						}
@@ -843,23 +850,10 @@
 			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
 			// Only non-reference, non-pointer enum-typed identifiers CAN BE enumerators
 			// We must verify the identifier actually exists as an enumerator before treating it as a constant
-			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
-				// Check if this identifier is actually an enumerator (not just a variable of enum type)
-				size_t enum_type_index = type_node.type_index().value;
-				if (enum_type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[enum_type_index];
-					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-					if (enum_info) {
-						// Use findEnumerator to check if this identifier is actually an enumerator
-						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
-						if (enumerator) {
-							// This IS an enumerator constant - return its value using the underlying type
-							return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-							static_cast<unsigned long long>(enumerator->value));
-						}
-						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
-					}
-				}
+			if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(
+				type_node,
+				StringTable::getOrInternStringHandle(identifierNode.name()))) {
+				return *enumerator_constant;
 			}
 
 			// Check if this is a global variable
@@ -981,16 +975,13 @@
 					pointee_size = 32;
 				}
 				
-				// For enum references, treat dereferenced value as underlying type
-				// This allows enum variables to work in arithmetic/bitwise operations
-				if (pointee_type == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
-					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-					if (enum_info) {
-						pointee_type = enum_info->underlying_type;
-						pointee_size = static_cast<int>(enum_info->underlying_size);
-					}
-				}
+				Type semantic_pointee_type = pointee_type;
+
+				// For enum references, lower the dereferenced value to its runtime
+				// representation so arithmetic/bitwise operations consume the
+				// underlying integer type.
+				pointee_type = getRuntimeValueType(semantic_pointee_type, type_node.type_index(), PointerDepth{});
+				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 				
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1013,17 +1004,21 @@
 			// Use helper function to calculate size_bits with proper fallback handling
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 			
-			// For non-pointer enum variables (not enumerators), return the underlying integer type
-			// This allows enum variables to work in arithmetic/bitwise operations
-			Type return_type = type_node.type();
-			if (type_node.type() == Type::Enum && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
-				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-				if (enum_info) {
-					return_type = enum_info->underlying_type;
-					size_bits = static_cast<int>(enum_info->underlying_size);
-				}
-			}
+			// Lower non-pointer variables to their runtime representation. For enums
+			// this produces the underlying integer type/size while preserving
+			// semantic type metadata separately via type_index below.
+			assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
+				"Pointer depth exceeds maximum int value for PointerDepth construction");
+			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
+			Type return_type = getRuntimeValueType(
+				type_node.type(),
+				type_node.type_index(),
+				identifier_pointer_depth);
+			size_bits = getRuntimeValueSizeBits(
+				type_node.type(),
+				type_node.type_index(),
+				size_bits,
+				identifier_pointer_depth);
 			
 			// For the 4th element: 
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
@@ -1178,22 +1173,34 @@
 					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
 				
-				// Regular local variable (not a reference) - return variable name
-				// Use helper function to calculate size_bits with proper fallback handling
+				// Regular local variable (not a reference) - return variable name.
+				// Generic lambda auto parameters still reach this path during the
+				// transition; keep the existing int fallback used by mangling and
+				// reference lowering so arithmetic/comparison codegen sees a concrete
+				// signed integer representation instead of Type::Auto with size 0.
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+				Type result_type = type_node.type();
+				TypeIndex result_type_index = type_node.type_index();
+				{
+					int probe_size = static_cast<int>(type_node.size_in_bits());
+					if (applyTransitionalAutoRuntimeFallback(result_type, probe_size)) {
+						result_type_index = TypeIndex{};
+					}
+				}
+
 				
 				// For the 4th element: 
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
 				return makeIdentifierResult(
-					type_node.type(),
+					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					(type_node.type() == Type::Struct || type_node.type() == Type::Enum || type_node.type() == Type::UserDefined)
-						? type_node.type_index()
+					(result_type == Type::Struct || result_type == Type::Enum || result_type == Type::UserDefined)
+						? result_type_index
 						: TypeIndex{},
-					PointerDepth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+					PointerDepth{(result_type == Type::Struct || result_type == Type::UserDefined)
 						? 0
 						: static_cast<int>(type_node.pointer_depth())});
 			}

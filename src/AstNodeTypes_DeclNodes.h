@@ -812,6 +812,19 @@ struct TypeInfo
 
 extern std::deque<TypeInfo> gTypeInfo;
 
+// Resolve primitive type aliases (typedefs / using aliases represented as
+// Type::UserDefined) to their underlying primitive type. This intentionally
+// preserves struct and enum identity.
+inline Type resolve_type_alias(Type type, TypeIndex type_index) {
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index.value];
+		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
+			return type_info.type_;
+		}
+	}
+	return type;
+}
+
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
@@ -1038,11 +1051,11 @@ public:
 	bool matches_signature(const TypeSpecifierNode& other) const {
 		// Check basic type
 		if (type_ != other.type_) {
-			// Be lenient for typedef/alias cases where the underlying size and indirection match
-			bool same_size = size_ != 0 && other.size_ != 0 && size_ == other.size_;
-			bool same_indirection = pointer_levels_.size() == other.pointer_levels_.size()
-				&& reference_qualifier_ == other.reference_qualifier_;
-			if (!(same_size && same_indirection)) {
+			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
+			// types such as enum vs int just because they share a runtime size.
+			Type resolved_type = resolve_type_alias(type_, type_index_);
+			Type other_resolved_type = resolve_type_alias(other.type_, other.type_index_);
+			if (resolved_type != other_resolved_type) {
 				return false;
 			}
 		}

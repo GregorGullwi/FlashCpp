@@ -12,6 +12,7 @@
 #include <cassert>
 
 #include "AstNodeTypes.h"
+#include "IrType.h"
 #include "Log.h"
 
 // Forward declare IrInstruction for circular dependency resolution

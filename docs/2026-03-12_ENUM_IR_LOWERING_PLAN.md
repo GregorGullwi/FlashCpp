@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: Proposed  
+**Status**: In Progress (Phase 0-3 slices landed through 2026-03-13)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -181,6 +181,42 @@ No `Enum`. No `UserDefined`. No `Char` vs `Int` vs `Long` (they are all
 `Integer` with different `size_in_bits` and `is_signed`). No `Auto`, `Template`,
 `Invalid` — those are parser/semantic concerns that must not leak into IR.
 
+#### Why `Integer` stays coarse instead of `Int8` / `UInt8` / `Int16` / ...
+
+For this migration, `IrType` is intentionally a **runtime family** enum, not a
+full scalar-layout lattice. Width and signedness are already carried by existing
+IR metadata (`size_in_bits`, `is_signed`), and most backend decisions in
+FlashCpp already consume those fields. Splitting `IrType::Integer` into
+`Int8`/`UInt8`/`Int16`/`UInt16`/… would multiply enum variants without removing
+the need for `size_in_bits` or `is_signed`, because structs, pointers, member
+pointers, and ABI-specific cases still need separate metadata anyway.
+
+If later backend work wants a richer scalar classification, add a dedicated
+scalar-layout helper or field rather than overloading `IrType` itself with every
+bit-width / signedness combination.
+
+#### Why `Struct` still relies on separate layout metadata
+
+`IrType::Struct` only answers “this is aggregate / user-defined runtime
+storage”. Exact layout remains separate on purpose:
+
+- `type_index` answers which aggregate/member-pointer ABI rules apply
+- `size_in_bits` answers current storage width
+- later ABI lowering can derive calling-convention classes from that metadata
+
+That separation is intentional. `IrType` should stay coarse; exact size/layout
+should not be encoded by exploding the enum itself.
+
+#### Why `MemberFunctionPointer`, `MemberObjectPointer`, and `Nullptr` exist
+
+- **Member pointers** stay distinct because their representation is not a plain
+  raw pointer on common ABIs. Keeping them separate prevents backend code from
+  accidentally treating them as ordinary pointer integers too early.
+- **`Nullptr`** exists as a transitional pointer-like runtime family so codegen
+  does not silently treat `nullptr` as an integer literal during the migration.
+  Once null pointer constants are lowered earlier to concrete zero/pointer-form
+  values, this dedicated variant can disappear.
+
 ### Where the conversion happens
 
 `AstToIr` is the converter. It already reads `TypeSpecifierNode` (which carries
@@ -260,7 +296,8 @@ The mapping is:
 | `MemberObjectPointer` | `MemberObjectPointer` |
 | `Nullptr` | `Nullptr` |
 | `Void` | `Void` |
-| `Auto`, `Template`, `Function`, `Invalid` | assert — these must not reach IR |
+| `Auto` | `Integer` during transition (preserves generic-lambda runtime arithmetic until `auto` is lowered earlier) |
+| `Template`, `Function`, `Invalid` | assert — these must not reach IR |
 
 This phase adds new code only. Nothing changes behavior.
 
@@ -269,13 +306,14 @@ This phase adds new code only. Nothing changes behavior.
 Add small helpers with a single definition of “enum runtime representation”:
 
 ```cpp
-Type getRuntimeValueType(Type semantic_type, TypeIndex type_index);
-int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits);
-bool preservesNominalIdentityInBackend(Type semantic_type);
+Type getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth);
+int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth);
+std::optional<ExprResult> tryMakeEnumeratorConstantExpr(...);
 ```
 
-For enums, these would map to the underlying integral type/size from
-`EnumTypeInfo`.
+For enums, these helpers map the runtime value representation to the underlying
+integral type/size from `EnumTypeInfo`, while `tryMakeEnumeratorConstantExpr`
+centralizes lowering of enumerator constants to immediate IR values.
 
 Important:
 
@@ -303,6 +341,8 @@ This is the main work phase. Convert codegen helpers that currently branch on
 
 - `generateBuiltinIncDec` — pointer stride comes from `size_in_bits`, not
   from recovering enum pointee size via `gTypeInfo`
+- direct identifier / function-argument enumerator lowering — use a shared helper
+  instead of duplicating `EnumTypeInfo::findEnumerator` + underlying-type logic
 - `toTypedValue(...)` / `toExprResult(...)` — slot-4 ambiguity disappears
   because `IrType::Integer` with `pointer_depth > 0` is unambiguously a pointer
 - `handleLValueAssignment` / `handleLValueCompoundAssignment` — size inference
@@ -312,21 +352,59 @@ This is the main work phase. Convert codegen helpers that currently branch on
 Helpers that legitimately need semantic identity (overload resolution, mangling,
 type traits) continue to use `Type` from the AST — they never touch `TypedValue`.
 
+**UPDATE (2026-03-13)**: A first Phase 3 slice is now in place:
+
+- `getRuntimeValueType(...)` / `getRuntimeValueSizeBits(...)` centralize runtime
+  value lowering for identifier paths and `getSizeInBytes()`
+- `tryMakeEnumeratorConstantExpr(...)` centralizes enumerator-immediate lowering
+  for direct identifiers, nested unscoped enum lookup, and function arguments
+- `toIrType(Type::Auto)` now maps to `IrType::Integer` during the transition so
+  generic-lambda arithmetic keeps integer signedness/width behavior until `auto`
+  stops reaching backend arithmetic dispatch
+- generic-lambda identifier lowering now falls back from unresolved local
+  `Type::Auto` + `size_bits == 0` to `int`/32-bit, matching the existing
+  transitional mangling/reference fallback and avoiding broken signed compares
+- instantiated generic lambdas now register synthetic parameter declarations in
+  their body symbol tables using the deduced `TypeSpecifierNode`, so identifier
+  loads inside the body preserve narrow signed integer behavior instead of
+  re-reading the original unresolved `auto` declaration
+
+**Architecture note:** this codegen-side synthetic-declaration fix is the
+smallest correct local repair for the current PR, but it is not the desired end
+state. `auto` deduction and implicit-conversion normalization should still move
+into a dedicated post-parse semantic pass instead of continuing to accrete in
+parser/codegen boundary code.
+
+**Layering follow-up:** after the `Type` → `IrType` migration is complete, a
+useful next cleanup would be to make the separation explicit between:
+
+1. **runtime family** (`IrType`: integer / float / struct / pointer-family)
+2. **scalar/layout metadata** (`size_in_bits`, `is_signed`, `type_index`)
+3. **semantic normalization** (implicit conversions, enum identity,
+   generic-lambda `auto`, `nullptr` contextual conversions) in a semantic pass
+
+That keeps `IrType` small while moving policy decisions out of parser/codegen
+glue and into the correct compiler layer.
+
 ### Phase 4 — Remove `Type type` from `TypedValue`
 
 Once all consumers read `ir_type`, remove the old `type` field. Any remaining
 code that tries to match on `Type::Enum` inside a codegen helper will fail to
 compile — the bug class becomes structurally impossible.
 
-### Phase 5 — Simplify `ExprResult` / slot-4 compatibility
+### Phase 5 — Simplify `ExprResult`
 
-With `IrType` in place:
+**UPDATE (2026-03-13)**: The ExprResult migration is **already complete**. The old
+slot-4 positional encoding, `encoded_metadata`, `preserveEncodedExprMetadata`, and
+`toExprResult(...)` shim have all been removed. `ExprResult` now uses named fields
+(`type`, `size_in_bits`, `value`, `type_index`, `pointer_depth`). The original
+slot-4 ambiguity (same slot for `type_index` and `pointer_depth`) no longer exists.
+
+Remaining work for this phase:
 
 - `ExprResult` can carry `IrType` instead of `Type` for its runtime fields
-- the slot-4 encoding/decoding heuristics in `toExprResult(...)` become trivial
-  or unnecessary (no more guessing whether metadata means `type_index` or
-  `pointer_depth` for enum types)
-- `encoded_metadata` can be removed once all producers emit `ExprResult` directly
+- `makeExprResult(...)` helpers should accept `IrType` instead of `Type`
+- `toTypedValue(const ExprResult&)` can copy `ir_type` directly
 
 ### Phase 6 — Audit and cleanup
 
@@ -399,12 +477,13 @@ The migration must distinguish between "real" user-defined types and template
 parameters. Template parameters should NOT reach codegen - they must be resolved
 earlier in template instantiation.
 
-### 6. **NEW** ExprResult slot-4 encoding is structurally flawed
+### 6. ~~ExprResult slot-4 encoding is structurally flawed~~ (RESOLVED)
 
-The current slot-4 encoding in `IROperandHelpers.h` uses the same storage slot
-for both `type_index` and `pointer_depth`. Simply adding `IrType` doesn't fix
-this - the encoding scheme itself needs redesign to use separate fields or a
-discriminated union.
+**UPDATE (2026-03-13)**: This risk is **resolved**. The ExprResult migration
+(completed 2026-03-12, see `docs/EXPR_RESULT_MIGRATION.md`) removed the slot-4
+encoding entirely. `ExprResult` now uses named fields with strong wrapper types
+(`TypeIndex`, `PointerDepth`, `SizeInBits`), making the ambiguity structurally
+impossible.
 
 ---
 
@@ -457,7 +536,7 @@ The phased approach allows incremental migration:
 - **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum
 - **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined)
 - **Phase 4** (remove old `Type` field): Low risk once Phase 3 is complete — compile errors guide remaining sites
-- **Phase 5-6** (ExprResult + audit): Medium risk - slot-4 encoding redesign needed
+- **Phase 5-6** (ExprResult + audit): Low risk - slot-4 encoding already resolved by ExprResult migration
 
 **Revised Estimate**: Work is approximately **3-4x larger** than originally estimated 
 due to extensive codegen usage of Type::Enum and Type::UserDefined.
@@ -469,12 +548,9 @@ due to extensive codegen usage of Type::Enum and Type::UserDefined.
 The narrowest, safest starting point:
 
 1. add `src/IrType.h` with the `IrType` enum and `toIrType(Type, TypeIndex)`
-2. add `IrType ir_type` field to `TypedValue` and populate it at all
+2. add `IrType ir_type` field to `TypedValue` and `ExprResult`, populate it at all
    construction sites (mechanical, no behavior change)
-3. **CRITICAL**: Redesign `IROperandHelpers.h` slot-4 encoding - the current
-   design uses the same slot for both `type_index` and `pointer_depth`,
-   which is the root cause of the ambiguity. Simply adding `IrType` won't
-   fix this - the encoding needs separate fields or a discriminated union.
+3. update `toTypedValue(const ExprResult&)` and `makeExprResult(...)` to carry `ir_type`
 4. add a static assert or `[[deprecated]]` on `TypedValue::type` to catch any
    new code that sets it directly — this surfaces sites that still need updating
 5. add focused tests that would fail if `Type::Enum` leaked into IR arithmetic:
@@ -482,6 +558,10 @@ The narrowest, safest starting point:
    - enum pointer array subscript
    - overload resolution still preferring enum overloads over integer overloads
    - mangling for enum parameters unchanged
+
+**Note**: The original item 3 ("redesign IROperandHelpers.h slot-4 encoding") is
+**no longer needed** — the ExprResult migration already removed the slot-4 encoding
+and replaced it with named fields.
 
 ---
 
@@ -616,5 +696,6 @@ This plan proposes:
   built, keeping enum identity in the AST/semantic layer where it belongs
 - The backend (`IRConverter`) never sees `Type::Enum` or `Type::UserDefined` —
   this is already true in practice; `IrType` makes it a compile-time guarantee
-- The slot-4 encoding ambiguity, enum-pointer stride bugs, and `getSizeInBytes`
-  special cases all disappear as natural consequences of the type boundary
+- The slot-4 encoding ambiguity has already been resolved by the ExprResult migration.
+  The remaining enum-pointer stride bugs, and `getSizeInBytes` special cases all
+  disappear as natural consequences of the type boundary

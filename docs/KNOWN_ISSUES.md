@@ -32,3 +32,14 @@ uniformly.
 - This was observed while trying to build a deep `noexcept(...)` stress test: the new
   constexpr evaluator recursion guard works, but the parser can still fail first on
   sufficiently deep source expressions.
+
+## Generic lambda `auto` parameter normalization still lives in codegen
+
+Generic lambda bodies now receive synthetic parameter declarations carrying the
+deduced `TypeSpecifierNode`, which fixes narrow signed integer regressions such
+as `signed char` in `test_generic_lambda_auto_narrow_signed_char_ret0.cpp`.
+However, the overall normalization still happens in codegen instead of a
+dedicated semantic pass. The long-term architectural fix is still to move this
+kind of deduced-parameter and implicit-conversion normalization into a
+post-parse semantic analysis stage rather than keep growing codegen-local
+fallbacks and synthetic declarations.

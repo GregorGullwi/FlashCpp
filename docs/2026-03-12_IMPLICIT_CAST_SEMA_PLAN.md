@@ -87,14 +87,55 @@ home for other semantic normalizations that codegen should not own:
 - array/function decay where required
 - derived-to-base adjustments for object arguments and return paths
 - enum promotion / underlying-type normalization where the standard requires it
+- generic lambda parameter normalization after deduction / instantiation so the
+  lambda body sees concrete parameter types instead of late codegen-time
+  fallbacks or synthetic declarations
 - diagnostics for narrowing or disallowed implicit conversions
 - a single place to classify value category (`lvalue` / `xvalue` / `prvalue`) after wrapping
+- function signature equivalence (`TypeSpecifierNode::matches_signature`) — currently
+  a heuristic on a syntax-level AST node that reaches into `gTypeInfo` via
+  `resolve_type_alias` to approximate semantic type identity; should be replaced
+  by a proper semantic type comparison once canonical types are available (see
+  note below)
 
 Longer-term, the same framework could also host:
 
 - constant-expression marking / early constexpr folding hooks
 - unreachable semantic diagnostics after overload resolution
 - standard conversion ranking data reused by overload resolution explanations
+
+### `matches_signature` — semantic decision on a syntax node
+
+`TypeSpecifierNode::matches_signature` (in `src/AstNodeTypes_DeclNodes.h`) is
+called from `SymbolTable::insert()` during parsing to decide whether a new
+function declaration is a redeclaration of an existing overload or a distinct
+overload. This is a semantic decision (function signature equivalence per
+C++20 [over.load]), but it lives on a syntax-level AST node that only has
+access to raw parser metadata (`type_`, `size_`, `pointer_levels_`).
+
+**History:** the old implementation used a size-and-indirection heuristic
+(`same_size && same_indirection`) that allowed `Type::Enum` (32-bit) to match
+`Type::Int` (32-bit), incorrectly merging `f(Color)` and `f(int)` as the same
+signature. PR #907 replaced this with `resolve_type_alias` comparison, which
+preserves enum identity but drops the old `size_ != 0` safety guard for
+incomplete types.
+
+**Why this belongs in the semantic pass:**
+
+- Signature equivalence depends on canonical type identity, not raw parser
+  metadata. A semantic pass that canonicalizes types (resolving typedefs,
+  preserving enum/struct identity) would make this comparison trivial and
+  correct by construction.
+- The current `resolve_type_alias` call from a syntax node method reaches into
+  the global `gTypeInfo` table — a layering violation that would disappear if
+  the comparison operated on already-canonicalized semantic types.
+- The dropped size check is only a concern for malformed/incomplete AST nodes,
+  which would not exist after a semantic pass validates type completeness.
+
+**Migration path:** once the semantic pass canonicalizes parameter types,
+`matches_signature` can be replaced by direct comparison of canonical type
+identities, eliminating both the alias-resolution heuristic and any residual
+size-based workarounds.
 
 ## What should stay out of the parser
 
@@ -141,6 +182,11 @@ Extend the pass to:
 - reference binding
 - temporary materialization
 - conditional expressions
+- generic lambda body normalization:
+	- replace instantiated `auto` parameter declarations with their deduced types
+	- preserve cv/ref qualifiers and `TypeIndex` for struct/enum cases
+	- ensure all identifier/body lookups see the normalized declaration, not the
+	  original unresolved syntax-only parameter node
 
 ### Phase D: remove codegen-local semantic rules
 
@@ -150,6 +196,8 @@ As coverage grows, delete the ad-hoc conversion calls from codegen:
 - return lowering
 - direct function-call argument lowering
 - any initializer-specific fallback conversion paths
+- `TypeSpecifierNode::matches_signature` heuristic — replace with canonical
+  type comparison once the semantic pass provides resolved type identities
 
 The end state is:
 
@@ -171,6 +219,12 @@ called once after parsing succeeds and before `AstToIr` starts.
 That gives a clean seam without rewriting the parser. Early slices can process
 only a subset of expression kinds and leave the rest untouched.
 
+For generic lambdas specifically, the pass should run after call-site deduction
+metadata is available for an instantiation but before AstToIr lowers the chosen
+instantiated body. The pass can then normalize the parameter declarations
+themselves instead of forcing codegen to synthesize replacement declarations in
+the function symbol table.
+
 ## Why not “just do it inline in AstToIr”?
 
 That is better than parser-inline logic, but still inferior to a separate pass.
@@ -187,6 +241,8 @@ If a full pass feels too large for the first patch, a reasonable stepping stone 
 1. add `ImplicitCastNode`
 2. add a tiny semantic walker that only rewrites call arguments / returns / binary ops
 3. lower that node in AstToIr
+4. add a tiny generic-lambda normalization hook that rewrites instantiated
+   parameter declarations from deduced metadata before body lowering
 
 That still preserves the right architecture and avoids parser entanglement.
 
