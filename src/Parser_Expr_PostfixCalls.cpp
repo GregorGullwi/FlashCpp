@@ -990,8 +990,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			if (qualified_symbol.has_value()) {
 				// Just a qualified identifier reference (e.g., Namespace::globalValue or Class::staticMember)
 				NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-				result = emplace_node<ExpressionNode>(qualified_node_ast.as<QualifiedIdentifierNode>());
+				QualifiedIdentifierNode qual_node(ns_handle, final_identifier);
+				result = emplace_node<ExpressionNode>(qual_node);
 				continue; // Check for more postfix operators
 			} else {
 				return ParseResult::error("Undefined qualified identifier", final_identifier);

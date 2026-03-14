@@ -896,9 +896,7 @@
 
 		// Helper lambdas to check node types across both ExpressionNode variant and top-level ASTNode
 		auto get_identifier = [&]() -> const IdentifierNode* {
-			if (expr && std::holds_alternative<IdentifierNode>(*expr)) return &std::get<IdentifierNode>(*expr);
-			if (object_node.is<IdentifierNode>()) return &object_node.as<IdentifierNode>();
-			return nullptr;
+			return tryGetIdentifier(object_node);
 		};
 		auto get_member_func_call = [&]() -> const MemberFunctionCallNode* {
 			if (expr && std::holds_alternative<MemberFunctionCallNode>(*expr)) return &std::get<MemberFunctionCallNode>(*expr);

@@ -1,7 +1,7 @@
 # ExpressionNode Wrapping Normalization Plan
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Steps 1–3 complete for `QualifiedIdentifierNode`; Steps 4–5 pending)  
+**Status**: Complete — all steps from the initial plan are finished  
 **Context**: Parser / AST cleanup plan for expression-valued parse results
 
 ## Problem Statement
@@ -133,7 +133,7 @@ Prioritize:
 (see Inconsistency Inventory §1 above). Remaining expression leaf types have
 not yet been fully audited.
 
-### Step 2: Normalize the lowest-risk leaf sites first ✅ (partial)
+### Step 2: Normalize the lowest-risk leaf sites first ✅
 
 Start with direct returns of:
 
@@ -148,9 +148,13 @@ precedence or ownership logic.
 that used `.as<QualifiedIdentifierNode>()` were updated to use the new
 `asQualifiedIdentifier()` helper, and redundant re-wrapping was removed.
 
-**Remaining**: Other direct identifier-like leaves have not been normalized yet.
 All inline `emplace_node<QualifiedIdentifierNode>(...)` sites have been converted
-to stack-local construction in this PR (see Inconsistency Inventory §2).
+to stack-local construction (see Inconsistency Inventory §2), including the last
+one in `Parser_Expr_PostfixCalls.cpp`.
+
+**No direct `IdentifierNode` parser return paths found**: Audit confirmed that
+all parser expression paths already wrap `IdentifierNode` in `ExpressionNode`
+before returning. No normalization needed there.
 
 ### Step 3: Add a tiny parser-side helper if repetition appears ✅
 
@@ -177,7 +181,7 @@ This is used by callers that need to inspect the qualified name (e.g. to read
 `.name()` or `.namespace_handle()`) after receiving an already-wrapped result
 from the parse helpers.
 
-### Step 4: Update downstream consumers to prefer the normalized shape 🟡
+### Step 4: Update downstream consumers to prefer the normalized shape ✅
 
 After the parser side is normalized, re-audit mixed-shape consumers and remove
 only the compatibility branches that are no longer needed.
@@ -190,21 +194,37 @@ Likely candidates:
 
 Do this cautiously and only after parser behavior is validated.
 
-**Started**. `AstNodeTypes.h` now centralizes identifier extraction via
-`tryGetIdentifier(const ASTNode&)`, and constexpr/member-access consumers now
-reuse that helper instead of open-coding the wrapped-vs-direct `IdentifierNode`
-checks. Backward-compatibility branches in `ConstExprEvaluator_Core.cpp` and
-`TemplateRegistry_Lazy.cpp` are still intentionally preserved for synthetic /
-template-substituted AST nodes that may legitimately hold unwrapped forms.
+**Completed**. `AstNodeTypes.h` now centralizes identifier extraction via
+`tryGetIdentifier(const ASTNode&)` and `tryGetQualifiedIdentifier(const ASTNode&)`.
+All known downstream open-coded wrapped-vs-direct checks have been updated:
+- `ConstExprEvaluator_Core.cpp`: removed local `extract_identifier_name` lambda,
+  now uses `getIdentifierNameFromAstNode()` directly
+- `ConstExprEvaluator_Members.cpp`: uses `tryGetIdentifier()` throughout
+- `CodeGen_Lambdas.cpp`: collapsed `is<IdentifierNode>()` / `is<ExpressionNode>()`
+  init-capture branches into single `tryGetIdentifier()` check
+- `CodeGen_MemberAccess.cpp`: `get_identifier` local lambda now delegates to
+  `tryGetIdentifier(object_node)`
+- `Parser_Expr_QualLookup.cpp`: unary-`+` lambda-decay path uses `tryGetIdentifier()`
+- `TemplateRegistry_Lazy.cpp`: dependent qualified-id checks use
+  `tryGetQualifiedIdentifier()`
 
-### Step 5: Keep compatibility only where the AST legitimately allows both ❌
+Backward-compatibility branches in `tryGetIdentifier` and `tryGetQualifiedIdentifier`
+are intentionally preserved for synthetic / template-substituted AST nodes that
+may legitimately hold unwrapped forms.
+
+### Step 5: Keep compatibility only where the AST legitimately allows both ✅
 
 Some APIs may still need to accept both forms temporarily or permanently if
 they consume older nodes, synthetic nodes, or non-parser-produced AST values.
 
 Do not force a cleanup that breaks valid non-parser construction paths.
 
-**Not yet started**. Depends on Step 4 audit results.
+**Completed**. The `tryGetIdentifier()` and `tryGetQualifiedIdentifier()` helpers
+in `AstNodeTypes.h` retain backward-compatible fallback branches for direct node
+storage. These are the only remaining "both forms" code paths and are
+intentionally preserved — they are the right long-term API for any consumer that
+may see synthetic or template-substituted AST nodes in addition to
+parser-normalized `ExpressionNode`-wrapped forms.
 
 ## Validation Strategy
 
@@ -244,20 +264,34 @@ For each slice:
 
 1. ~~audit all expression-valued `ParseResult` return sites~~ ✅
 2. ~~normalize direct `QualifiedIdentifierNode` expression returns first~~ ✅
-3. validate downstream constexpr/codegen consumers
-4. only then widen the cleanup to the remaining expression leaves
+3. ~~validate downstream constexpr/codegen consumers~~ ✅
+4. ~~widen the cleanup to the remaining expression leaves~~ ✅
 
-**Current next steps** (post PR #909):
+**All steps complete** (post PR #909 + follow-up commits):
 
-1. ~~Evaluate removing `parse_qualified_identifier()`~~ ✅ — removed as dead code
-   in this PR.
+1. ~~Evaluate removing `parse_qualified_identifier()`~~ ✅ — removed as dead code.
 2. ~~Simplify the remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
-   sites~~ ✅ — all converted to stack-local construction in this PR.
-3. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
-4. Continue re-auditing downstream consumers (Step 4), replacing open-coded
-   wrapped-vs-direct identifier handling with centralized helpers first
-5. Only remove compatibility branches once non-parser/synthetic AST paths are
-   confirmed not to rely on them
-6. Audit `TemplateRegistry_Lazy.cpp` and `ExpressionSubstitutor.cpp` sites that
-   check `node.is<QualifiedIdentifierNode>()` directly — these will become dead
-   branches once synthetic/substituted AST paths are also normalized
+   sites~~ ✅ — all converted to stack-local construction, including the last
+   one in `Parser_Expr_PostfixCalls.cpp`.
+3. ~~Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)~~ ✅
+   — confirmed no direct `IdentifierNode` parser returns existed; all parser
+   expression paths were already wrapping in `ExpressionNode`.
+4. ~~Continue re-auditing downstream consumers (Step 4), replacing open-coded
+   wrapped-vs-direct identifier handling with centralized helpers~~ ✅ — done
+   across `ConstExprEvaluator_Core.cpp`, `ConstExprEvaluator_Members.cpp`,
+   `CodeGen_Lambdas.cpp`, `CodeGen_MemberAccess.cpp`,
+   `Parser_Expr_QualLookup.cpp`, and `TemplateRegistry_Lazy.cpp`.
+5. ~~Only remove compatibility branches once non-parser/synthetic AST paths are
+   confirmed not to rely on them~~ ✅ — compatibility branches retained in
+   `tryGetIdentifier()` and `tryGetQualifiedIdentifier()` helpers; all other
+   open-coded duplicates removed.
+6. ~~Audit `TemplateRegistry_Lazy.cpp` and `ExpressionSubstitutor.cpp` sites that
+   check `node.is<QualifiedIdentifierNode>()` directly~~ ✅ — `TemplateRegistry_Lazy.cpp`
+   updated to use `tryGetQualifiedIdentifier()`; `ExpressionSubstitutor.cpp`
+   dispatches via `std::visit` on `ExpressionNode` variants, which is already
+   the correct normalized form (no change needed).
+
+**Status: COMPLETE**. The plan document is now fully executed. The only
+remaining "both-form" code is in the `tryGetIdentifier` / `tryGetQualifiedIdentifier`
+helpers in `AstNodeTypes.h`, which are intentionally tolerant and serve as the
+stable backward-compatible API for any future consumer.

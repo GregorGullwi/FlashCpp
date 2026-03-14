@@ -1441,10 +1441,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					FLASH_LOG(Parser, Debug, "Unary + lambda decay (expr variant) to function pointer");
 					return *fp_type;
 				}
-			} else if (operand_node.is<IdentifierNode>() || (operand_node.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>()))) {
-				const IdentifierNode& ident = operand_node.is<IdentifierNode>()
-					? operand_node.as<IdentifierNode>()
-					: std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
+			} else if (const IdentifierNode* ident_ptr = tryGetIdentifier(operand_node)) {
+				const IdentifierNode& ident = *ident_ptr;
 				auto symbol = lookup_symbol(ident.nameHandle());
 				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl = symbol->as<DeclarationNode>();
