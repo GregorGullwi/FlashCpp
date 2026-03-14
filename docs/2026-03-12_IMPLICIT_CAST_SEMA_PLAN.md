@@ -43,8 +43,9 @@ So the right first milestone is **semantic normalization**, not an immediate Cla
 
 ### Pipeline
 
-- `main.cpp` does `parser->parse();` and then constructs `AstToIr` with no semantic pass in between.
-- There is currently no `runSemanticAnalysis(...)` seam in the pipeline.
+- ~~`main.cpp` does `parser->parse();` and then constructs `AstToIr` with no semantic pass in between.~~
+- ~~There is currently no `runSemanticAnalysis(...)` seam in the pipeline.~~
+- **Updated (PR #917):** `FlashCppMain.cpp` now runs `SemanticAnalysis::run()` between `gLazyMemberResolver.clearCache()` and `AstToIr` construction. The pass is timed separately and stats are emitted under `--perf-stats`. Phase 1 is a no-op traversal that validates the pipeline seam.
 
 ### Semantic decisions currently split across layers
 
@@ -725,7 +726,7 @@ The right split is:
 
 ## Phased implementation plan
 
-### Phase 1: establish the seam
+### Phase 1: establish the seam ✅ COMPLETED (PR #917)
 
 Goal:
 
@@ -744,6 +745,46 @@ Exit criteria:
 - clean build
 - pass is measurable
 - no test regressions
+
+#### Implementation notes (PR #917)
+
+New files added:
+
+- `src/SemanticTypes.h` — all vocabulary types: `SemanticSlot` (8 bytes, `static_assert`'d), `CanonicalTypeId`, `CastInfoIndex`, `StandardConversionKind`, `ImplicitCastInfo`, `CanonicalTypeDesc`, `TypeContext`, `SemanticContext`, `ConversionPlanFlags`, `ConversionStep`, `SemanticPassStats`
+- `src/SemanticAnalysis.h` / `src/SemanticAnalysis.cpp` — the traversal pass
+- `tests/test_semantic_pass_ret0.cpp` — end-to-end test covering structs, namespaces, recursion, all control-flow statement types, ternary, array subscript, member function calls, and fold expressions
+
+Pipeline integration in `src/FlashCppMain.cpp`:
+
+- pass runs between `gLazyMemberResolver.clearCache()` and `AstToIr` construction
+- timed via `PhaseTimer`, stats emitted under `--perf-stats`
+- APIs take `const ASTNode&` to avoid unnecessary `std::any` copies
+
+What Phase 1 does:
+
+- walks all top-level nodes: functions, structs (member function bodies), namespaces, constructors, destructors, top-level variables
+- recurses into all statement types: block, return, variable decl, if, for, while, do-while, switch, range-for, try-catch
+- recurses into all non-leaf `ExpressionNode` variants via `std::visit`: binary/unary/ternary operators, function/constructor/member calls, member access, pointer-to-member access, subscripts, sizeof/alignof/typeid, new/delete, all four cast nodes, lambda (captures, parameters, body), fold/pack expressions, noexcept, initializer-list construction, throw expressions
+- interns canonical types for function return types via `TypeContext`
+- collects traversal statistics (roots, expressions, statements, canonical types)
+
+What Phase 1 does NOT do:
+
+- no actual semantic normalization or implicit cast insertion
+- no semantic slot filling on expression nodes
+- no `AstToIr` lowering changes for semantic annotations (deferred to Phase 2)
+- `SemanticAnalysis` object is scoped to a block and destroyed before IR conversion — its `TypeContext` and cast-info table do not survive into later phases yet
+
+Known issues to address in Phase 2:
+
+- `TypeContext::intern()` uses linear scan — acceptable at current type counts (only function return types), but needs hash map when all expressions are canonicalized
+- `CanonicalTypeDesc::operator==` for `FunctionSignature` does not compare all fields (`is_static`, `is_variadic`, `is_inline`, `calling_convention`, `namespace_name`) — these are not needed for canonical type identity but should be explicitly documented or cleaned up
+- `CastInfoIndex` uses `uint16_t` (max 65535 entries) — needs overflow guard when the cast-info table is actually populated
+- `normalizeStructDeclaration` only visits member function bodies, not member variable initializers or nested types
+- `normalizeStatement` does not walk `ThrowStatementNode` or `LabelStatementNode` children
+- `SemanticAnalysis` results need to outlive the timing scope for downstream consumption
+
+Test results: 1471 pass / 0 fail / 35 expected-fail
 
 ### Phase 2: migrate the highest-value conversion contexts
 
@@ -1422,11 +1463,14 @@ Phase 2 should preferably handle **standard conversions first**, while still all
 
 This is the most concrete change order that fits the current codebase:
 
-#### Step 1: infrastructure
+#### Step 1: infrastructure ✅ COMPLETED (PR #917)
 
-- `src/SemanticAnalysis.h`
-- `src/SemanticAnalysis.cpp`
-- `src/main.cpp`
+- `src/SemanticTypes.h` (new)
+- `src/SemanticAnalysis.h` (new)
+- `src/SemanticAnalysis.cpp` (new)
+- `src/FlashCppMain.cpp` (modified — pass seam, timing, stats)
+- `src/CompilerIncludes.h` (modified — include for modular and unity builds)
+- `tests/test_semantic_pass_ret0.cpp` (new — end-to-end test)
 
 Work:
 
