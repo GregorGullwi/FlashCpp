@@ -338,7 +338,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	}
 
 	// Function signature
-	if (type.is_function_pointer() || type.is_member_function_pointer()) {
+	if ((type.is_function_pointer() || type.is_member_function_pointer()) && type.has_function_signature()) {
 		desc.function_signature = type.function_signature();
 		desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 	}
