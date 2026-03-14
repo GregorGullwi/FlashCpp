@@ -375,16 +375,59 @@ state. `auto` deduction and implicit-conversion normalization should still move
 into a dedicated post-parse semantic pass instead of continuing to accrete in
 parser/codegen boundary code.
 
-**Layering follow-up:** after the `Type` → `IrType` migration is complete, a
-useful next cleanup would be to make the separation explicit between:
+**Layering follow-up — semantic pass is the right next step:**
+
+The `IrType` migration solves the *type representation* boundary ("what runtime
+family is this value?"), but a separate class of backend heuristics exists that
+`IrType` cannot fix: **value semantics** decisions ("does this TempVar hold an
+address or a scalar?").
+
+The clearest example is the `is_likely_pointer` heuristic in
+`IRConverter_Conv_VarDecl.h` (`handleVariableDecl`, reference-init-from-TempVar
+path). When initializing a reference from a TempVar that isn't already tracked
+in `indirect_stack_info_`, the x86 emitter must choose between:
+
+- **MOV** — load the TempVar's value (treating it as an already-computed pointer)
+- **LEA** — compute the address of the TempVar's stack slot
+
+The backend cannot know which is correct from `IrType` alone — `IrType::Integer`
+with `size_in_bits = 64` is equally ambiguous whether it holds an address or a
+64-bit integer. The old code used a hand-curated type whitelist; the current code
+uses `!isIrFloatingPointType()`. Both are heuristic guesses over a missing IR
+abstraction.
+
+This is a symptom of semantic work happening at the wrong compiler level. The
+correct fix is a **post-parse semantic pass** that runs between parsing and IR
+emission and resolves these decisions explicitly:
+
+1. **Reference binding** → lowered to an explicit `TakeAddress` IR op, so the
+   backend just sees "store this 64-bit pointer value" with no guessing
+2. **Implicit conversions** → inserted as explicit `Convert` IR ops
+3. **`auto` deduction** → resolved to concrete types before IR emission
+4. **`nullptr` contextual conversions** → lowered to typed zero constants
+5. **Enum identity preservation** → semantic pass retains identity for overload
+   resolution / mangling, then strips it for IR emission (replacing the current
+   ad-hoc `carriesSemanticTypeIndex` / `getRuntimeValueType` helpers)
+
+This would also eliminate the Phase 4 blockers (`setReferenceInfo`,
+`IndirectStorageInfo`, `TypeSpecifierNode` constructors in IRConverter) — all of
+which exist because the backend is making semantic decisions that should have
+been resolved earlier.
+
+After the `IrType` migration is complete, the separation should be made explicit
+between:
 
 1. **runtime family** (`IrType`: integer / float / struct / pointer-family)
 2. **scalar/layout metadata** (`size_in_bits`, `is_signed`, `type_index`)
-3. **semantic normalization** (implicit conversions, enum identity,
-   generic-lambda `auto`, `nullptr` contextual conversions) in a semantic pass
+3. **semantic normalization** (reference binding, implicit conversions, enum
+   identity, generic-lambda `auto`, `nullptr` contextual conversions) in a
+   dedicated semantic pass
 
 That keeps `IrType` small while moving policy decisions out of parser/codegen
-glue and into the correct compiler layer.
+glue and into the correct compiler layer. The `IrType` migration is necessary
+groundwork — it cleans up the type boundary — but the semantic pass is what
+ultimately eliminates the class of bugs where the backend infers intent from
+type metadata.
 
 **UPDATE (2026-03-14)**: A second Phase 3 slice is now in place:
 
