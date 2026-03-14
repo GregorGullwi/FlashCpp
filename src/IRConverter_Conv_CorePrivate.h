@@ -1014,7 +1014,7 @@
 		X64Register actual_source_reg = (source_reg == X64Register::Count) ? ctx.result_physical_reg : source_reg;
 
 		// Check if we're dealing with floating-point types
-		bool is_float_type = (ctx.result_value.type == Type::Float || ctx.result_value.type == Type::Double);
+		bool is_float_type = isIrFloatingPointType(ctx.result_value.effectiveIrType());
 
 		// Track whether we should release the source register after storing
 		bool should_release_source = false;
@@ -1042,7 +1042,7 @@
 				// Store the computed result from actual_source_reg to memory
 				if (is_float_type) {
 					// Use SSE movss/movsd for float/double
-					bool is_single_precision = (ctx.result_value.type == Type::Float);
+					bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 					auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
 					textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 					                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
@@ -1089,7 +1089,7 @@
 					if (res_reg != actual_source_reg) {
 						if (is_float_type) {
 							// For float types, use SSE mov instructions for register-to-register moves
-							bool is_double = (ctx.result_value.type == Type::Double);
+							bool is_double = (ctx.result_value.effectiveIrType() == IrType::Double);
 							emitFloatMovRegToReg(res_reg.value(), actual_source_reg, is_double);
 						} else {
 							auto moveFromRax = regAlloc.get_reg_reg_move_op_code(res_reg.value(), actual_source_reg, ctx.result_value.size_in_bits.value / 8);
@@ -1100,7 +1100,7 @@
 					// For floating-point types, we MUST also write to memory even when register is correct
 					// because the return handling will load from memory (XMM registers aren't fully tracked)
 					if (is_float_type) {
-						bool is_single_precision = (ctx.result_value.type == Type::Float);
+						bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
 					} else {
 						emitMovToFrameSized(
@@ -1124,7 +1124,7 @@
 					// allocator doesn't properly track XMM registers across all operations.
 					// Without this, subsequent loads from the stack location will read garbage.
 					if (is_float_type) {
-						bool is_single_precision = (ctx.result_value.type == Type::Float);
+						bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
 					} else {
 						emitMovToFrameSized(
@@ -1440,8 +1440,8 @@
 				constexpr size_t max_int_regs = 6;
 				constexpr size_t max_float_regs = 8;
 				for (const auto& arg : args) {
-					bool arg_is_float = (arg.type == Type::Float || arg.type == Type::Double) && !arg.is_reference() && !arg.pointer_depth.is_pointer();
-					bool arg_is_two_reg = arg.type == Type::Struct && arg.size_in_bits.value > 64 && arg.size_in_bits.value <= 128 &&
+					bool arg_is_float = isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference() && !arg.pointer_depth.is_pointer();
+					bool arg_is_two_reg = isIrStructType(arg.effectiveIrType()) && arg.size_in_bits.value > 64 && arg.size_in_bits.value <= 128 &&
 					                     !arg.is_reference() && !arg.pointer_depth.is_pointer();
 					size_t slots = arg_is_two_reg ? 2 : 1;
 					if (arg_is_float) {

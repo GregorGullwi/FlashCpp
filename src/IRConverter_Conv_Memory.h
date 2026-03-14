@@ -68,7 +68,7 @@
 		// Calculate member size in bytes
 		int member_size_bytes = op.result.size_in_bits.value / 8;
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
-			op.result.type == Type::UserDefined &&
+			isIrStructType(op.result.effectiveIrType()) &&
 			!op.result.type_index.is_valid());
 
 		// Flush all dirty registers to ensure values are saved before allocating
@@ -155,12 +155,12 @@
 			pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 			
 			// Load member from [temp_reg + offset]
-			bool is_float_type = (op.result.type == Type::Float || op.result.type == Type::Double);
+			bool is_float_type = isIrFloatingPointType(op.result.effectiveIrType());
 			
 			if (is_float_type) {
 				// For floating-point: load into XMM and store to stack
 				X64Register xmm_reg = X64Register::XMM0;
-				bool is_float = (op.result.type == Type::Float);
+				bool is_float = (op.result.effectiveIrType() == IrType::Float);
 				emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
 				
 				int32_t float_result_offset = allocateStackSlotForTempVar(result_var.var_number);
@@ -418,8 +418,8 @@
 				// Now store to the global struct member using RIP-relative addressing with offset
 				// For doubles: MOVSD [RIP + disp32 + offset], XMM
 				// For integers: MOV [RIP + disp32 + offset], reg
-				bool is_floating_point = (op.value.type == Type::Float || op.value.type == Type::Double);
-				bool is_float = (op.value.type == Type::Float);
+				bool is_floating_point = isIrFloatingPointType(op.value.effectiveIrType());
+				bool is_float = (op.value.effectiveIrType() == IrType::Float);
 				
 				if (is_floating_point) {
 					// Move to XMM register for floating-point stores
@@ -1082,13 +1082,13 @@
 			}
 
 			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
-			bool is_float_type = (op.pointer.type == Type::Float || op.pointer.type == Type::Double);
+			bool is_float_type = isIrFloatingPointType(op.pointer.effectiveIrType());
 			
 			if (is_float_type && op.pointer.pointer_depth.value <= 1) {
 				// Only use float instructions for final dereference
 				// Use XMM0 as the destination register for float loads
 				X64Register xmm_reg = X64Register::XMM0;
-				bool is_float = (op.pointer.type == Type::Float);
+				bool is_float = (op.pointer.effectiveIrType() == IrType::Float);
 				
 				// Load float/double from memory into XMM register
 				emitFloatMovFromMemory(xmm_reg, ptr_reg, 0, is_float);
