@@ -198,7 +198,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 	}
 	// Not a call — return the operator name as a (qualified) identifier
 	if (!namespaces.empty()) {
-		auto result = emplace_node<QualifiedIdentifierNode>(ns_handle, op_token);
+		auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, op_token));
 		return ParseResult::success(result);
 	}
 	auto result = emplace_node<ExpressionNode>(IdentifierNode(op_token));
@@ -942,8 +942,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// If namespaces is not empty, it means ::ns::identifier
 		// force_global=true because :: prefix means resolve from global namespace
 		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces, /*force_global=*/true);
-		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
+		QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 
 		// Try to look up the qualified identifier
 		// For global namespace (empty namespaces), lookup_qualified handles it correctly
@@ -1141,10 +1140,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		// current_token_ is now the token after the final identifier
 
-		// Create a QualifiedIdentifierNode
+		// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
 		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
+		QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 
 		// Check for std::forward intrinsic
 		// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
@@ -1522,8 +1520,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						advance(); // consume identifier
 					}
 					
-					// Create QualifiedIdentifierNode with the complete path
-					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_ns_handle, member_token);
+					// Create QualifiedIdentifierNode with the complete path (stack-local; copied into ExpressionNode before returning)
+					QualifiedIdentifierNode full_qual_id(full_ns_handle, member_token);
 					
 					// Look up the member in the instantiated struct's symbol table
 					auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
@@ -1620,7 +1618,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::success(*result);
 					}
 					
-					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
+					result = emplace_node<ExpressionNode>(full_qual_id);
 					return ParseResult::success(*result);
 				}
 				
@@ -2256,10 +2254,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			
-			// Create a QualifiedIdentifierNode with namespace handle
+			// Create a QualifiedIdentifierNode with namespace handle (stack-local; copied into ExpressionNode before returning)
 			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
+			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 			
 			// Look up the qualified identifier (either the template name or instantiated template)
 			if (template_args.has_value()) {
@@ -2317,7 +2314,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (peek() == "::"_tok) {
 						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
+							const auto& qualified_node2 = asQualifiedIdentifier(*qualified_result.node());
 							auto member_call_result = try_parse_member_template_function_call(
 								StringTable::getStringView(inst_struct.name()),
 								qualified_node2.name(),
@@ -2328,8 +2325,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 								return ParseResult::success(*member_call_result->node());
 							}
-							result = emplace_node<ExpressionNode>(qualified_node2);
-							return ParseResult::success(*result);
+							return ParseResult::success(*qualified_result.node());
 						}
 					}
 					
@@ -3604,11 +3600,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								return ParseResult::success(*result);
 							}
 							
-							// Create a QualifiedIdentifierNode with the instantiated type name
+							// Create a QualifiedIdentifierNode with the instantiated type name (stack-local; copied into ExpressionNode)
 							NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
-							result = emplace_node<ExpressionNode>(qualified_node);
+							result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
 							// Clear pending template args since they were used for this qualified identifier
 							pending_explicit_template_args_.reset();
 							return ParseResult::success(*result);
@@ -4386,7 +4380,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Parse qualified identifier after template
 					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+						const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 						
 						// Try to parse member template function call: Template<T>::member<U>()
 						auto func_call_result = try_parse_member_template_function_call(
@@ -4399,9 +4393,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::success(*result);
 						}
 						
-						// Not a function call - return as qualified identifier
-						result = emplace_node<ExpressionNode>(qualified_node);
-						return ParseResult::success(*result);
+						// Not a function call - return as already-wrapped qualified identifier
+						return ParseResult::success(*qualified_result.node());
 					}
 				}
 				

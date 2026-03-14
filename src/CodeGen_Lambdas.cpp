@@ -1134,26 +1134,13 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 			// Init-capture: infer type from initializer expression or closure struct member
 			// For init-capture by reference [&y = x], look up x's type
 			const ASTNode& init_node = *capture.initializer();
-			if (init_node.is<IdentifierNode>()) {
+			if (const IdentifierNode* init_id_ptr = tryGetIdentifier(init_node)) {
 				// Simple identifier like [&y = x] - look up x's type
-				const auto& init_id = init_node.as<IdentifierNode>();
-				std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
+				std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id_ptr->name());
 				if (init_symbol.has_value()) {
 					const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
 					if (init_decl) {
 						current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
-					}
-				}
-			} else if (init_node.is<ExpressionNode>()) {
-				const auto& expr_node = init_node.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr_node)) {
-					const auto& init_id = std::get<IdentifierNode>(expr_node);
-					std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
-					if (init_symbol.has_value()) {
-						const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
-						if (init_decl) {
-							current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
-						}
 					}
 				}
 			}

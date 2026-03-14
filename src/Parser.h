@@ -1023,7 +1023,6 @@ public:  // Public methods for template instantiation
         };
         ParseResult parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token);
 
-        ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
         
         // Helper to parse template brace initialization: Template<Args>{}

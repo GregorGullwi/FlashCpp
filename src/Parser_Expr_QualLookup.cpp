@@ -1,43 +1,5 @@
 #include "LambdaHelpers.h"
 
-ParseResult Parser::parse_qualified_identifier() {
-	// This method parses qualified identifiers like std::print or ns1::ns2::func
-	// It should be called when we've already seen an identifier followed by ::
-
-	std::vector<StringType<>> namespaces;
-	Token final_identifier;
-
-	// We should already be at an identifier
-	auto first_token = peek_info();
-	if (first_token.type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier in qualified name", first_token);
-	}
-
-	// Collect namespace parts
-	while (true) {
-		auto identifier_token = advance();
-		if (identifier_token.type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected identifier", identifier_token);
-		}
-
-		// Check if followed by ::
-		if (peek() == "::"_tok) {
-			// This is a namespace part
-			namespaces.emplace_back(StringType<>(identifier_token.value()));
-			advance(); // consume ::
-		} else {
-			// This is the final identifier
-			final_identifier = identifier_token;
-			break;
-		}
-	}
-
-	// Create a QualifiedIdentifierNode
-	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-	return ParseResult::success(qualified_node);
-}
-
 // Helper: Parse template brace initialization: Template<Args>{}
 // Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
 ParseResult Parser::parse_template_brace_initialization(
@@ -194,10 +156,10 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		*had_template_keyword = encountered_template_keyword;
 	}
 	
-	// Create a QualifiedIdentifierNode
+	// Create a QualifiedIdentifierNode wrapped in ExpressionNode
 	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-	return ParseResult::success(qualified_node);
+	auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+	return ParseResult::success(result);
 }
 
 // Helper to parse member template function calls: Template<T>::member<U>()
@@ -1479,10 +1441,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					FLASH_LOG(Parser, Debug, "Unary + lambda decay (expr variant) to function pointer");
 					return *fp_type;
 				}
-			} else if (operand_node.is<IdentifierNode>() || (operand_node.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(operand_node.as<ExpressionNode>()))) {
-				const IdentifierNode& ident = operand_node.is<IdentifierNode>()
-					? operand_node.as<IdentifierNode>()
-					: std::get<IdentifierNode>(operand_node.as<ExpressionNode>());
+			} else if (const IdentifierNode* ident_ptr = tryGetIdentifier(operand_node)) {
+				const IdentifierNode& ident = *ident_ptr;
 				auto symbol = lookup_symbol(ident.nameHandle());
 				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& decl = symbol->as<DeclarationNode>();

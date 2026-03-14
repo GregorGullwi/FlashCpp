@@ -1269,17 +1269,8 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 }
 
 std::optional<Evaluator::ExtractedIdentifier> Evaluator::extract_identifier_from_expression(const ASTNode& object_expr) {
-	if (object_expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_node)) {
-			return std::nullopt;
-		}
-		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-		return ExtractedIdentifier{ &id_node, id_node.name() };
-	}
-	if (object_expr.is<IdentifierNode>()) {
-		const IdentifierNode& id_node = object_expr.as<IdentifierNode>();
-		return ExtractedIdentifier{ &id_node, id_node.name() };
+	if (const IdentifierNode* id_node = tryGetIdentifier(object_expr)) {
+		return ExtractedIdentifier{ id_node, id_node->name() };
 	}
 	return std::nullopt;
 }
@@ -1671,18 +1662,6 @@ EvalResult Evaluator::evaluate_lambda_call(
 	std::vector<std::string_view> by_reference_capture_names;
 	std::vector<std::pair<std::string_view, std::string_view>> by_reference_init_capture_aliases;
 	std::vector<std::string_view> by_value_capture_names;
-	auto extract_identifier_name = [](const ASTNode& node) -> std::string_view {
-		if (node.is<IdentifierNode>()) {
-			return node.as<IdentifierNode>().name();
-		}
-		if (node.is<ExpressionNode>()) {
-			const ExpressionNode& expr = node.as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(expr)) {
-				return std::get<IdentifierNode>(expr).name();
-			}
-		}
-		return {};
-	};
 	for (const auto& capture : captures) {
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 			captures_this_by_reference = true;
@@ -1701,7 +1680,7 @@ EvalResult Evaluator::evaluate_lambda_call(
 				by_reference_capture_names.push_back(capture.identifier_name());
 				continue;
 			}
-			std::string_view aliased_name = extract_identifier_name(capture.initializer().value());
+			std::string_view aliased_name = getIdentifierNameFromAstNode(capture.initializer().value());
 			if (!aliased_name.empty()) {
 				by_reference_init_capture_aliases.emplace_back(capture.identifier_name(), aliased_name);
 			}

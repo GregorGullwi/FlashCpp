@@ -1622,7 +1622,7 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// Build fully qualified type name using instantiated template name
-					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+					const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 					// Get the qualified namespace name and append the identifier
 					std::string_view ns_qualified = gNamespaceRegistry.getQualifiedName(qualified_node.namespace_handle());
 					StringBuilder qualified_type_name_builder;

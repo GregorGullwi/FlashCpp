@@ -7,16 +7,37 @@
 #include "AstNodeTypes_Expr.h"
 #include "AstNodeTypes_Stmt.h"
 
-inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
+// Parser-produced expression results now prefer expression leaf nodes wrapped in
+// ExpressionNode, but older/synthetic ASTs may still store them directly.
+// This template centralizes tolerant extraction from both forms.
+template <typename T>
+inline const T* tryGetNode(const ASTNode& node) {
 	if (node.is<ExpressionNode>()) {
-		const ExpressionNode& expr_node = node.as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(expr_node)) {
-			return std::get<IdentifierNode>(expr_node).name();
-		}
-		return {};
+		return std::get_if<T>(&node.as<ExpressionNode>());
 	}
-	if (node.is<IdentifierNode>()) {
-		return node.as<IdentifierNode>().name();
+	if (node.is<T>()) {
+		return &node.as<T>();
+	}
+	return nullptr;
+}
+
+inline const IdentifierNode* tryGetIdentifier(const ASTNode& node) {
+	return tryGetNode<IdentifierNode>(node);
+}
+
+inline const QualifiedIdentifierNode* tryGetQualifiedIdentifier(const ASTNode& node) {
+	return tryGetNode<QualifiedIdentifierNode>(node);
+}
+
+inline std::string_view getIdentifierNameFromAstNode(const ASTNode& node) {
+	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
+		return identifier->name();
 	}
 	return {};
+}
+
+// Extract a QualifiedIdentifierNode from a normalized expression result node.
+// Parser expression paths return QualifiedIdentifierNode wrapped in ExpressionNode.
+inline const QualifiedIdentifierNode& asQualifiedIdentifier(const ASTNode& node) {
+	return std::get<QualifiedIdentifierNode>(node.as<ExpressionNode>());
 }
