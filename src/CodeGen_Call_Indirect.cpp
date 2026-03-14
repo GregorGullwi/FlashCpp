@@ -1353,7 +1353,7 @@
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.ref_qualifier = ReferenceQualifier::LValueReference,
 									.ir_type = toIrType(type_node.type())
-});
+								});
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
@@ -1365,7 +1365,7 @@
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference,
 									.ir_type = toIrType(type_node.type())
-});
+								});
 							}
 						} else {
 							// Regular pass by value
@@ -1389,7 +1389,7 @@
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.ref_qualifier = ReferenceQualifier::LValueReference,
 									.ir_type = toIrType(type_node.type())
-});
+								});
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
@@ -1401,7 +1401,7 @@
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference,
 									.ir_type = toIrType(type_node.type())
-});
+								});
 							}
 						} else {
 							// Regular pass by value
@@ -1463,7 +1463,7 @@
 								.value = IrValue(addr_var),
 								.ref_qualifier = ReferenceQualifier::LValueReference,
 								.ir_type = toIrType(literal_type)
-});
+							});
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -1479,7 +1479,7 @@
 									.value = IrValue(addr_var),
 									.ref_qualifier = ReferenceQualifier::LValueReference,
 									.ir_type = toIrType(expr_type)
-});
+								});
 							} else {
 								// Fallback - just pass through
 								call_op.args.push_back(toTypedValue(argument_result));
