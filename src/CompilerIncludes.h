@@ -42,6 +42,7 @@
 #include "NamespaceRegistry.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include "SemanticAnalysis.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -74,6 +75,7 @@
 #include "ExpressionSubstitutor.cpp"
 #include "ConstExprEvaluator_Core.cpp"
 #include "ConstExprEvaluator_Members.cpp"
+#include "SemanticAnalysis.cpp"
 #endif
 
 #if defined(UNITY_SHARD_PARSER_CORE)

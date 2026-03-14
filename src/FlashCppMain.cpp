@@ -28,6 +28,7 @@ struct PhaseTimer {
 
 // Helper function to print timing summary
 void printTimingSummary(double preprocessing_time, double lexer_setup_time, double parsing_time,
+                       double semantic_analysis_time,
                        double ir_conversion_time, double deferred_gen_time, double codegen_time,
                        std::chrono::high_resolution_clock::time_point total_start) {
     auto total_end = std::chrono::high_resolution_clock::now();
@@ -37,7 +38,7 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
     FLASH_LOG(General, Info, "\n=== Compilation Timing ===");
 
     // Calculate sum of tracked phases and other (untracked) time
-    double tracked_time = preprocessing_time + lexer_setup_time + parsing_time + ir_conversion_time + deferred_gen_time + codegen_time;
+    double tracked_time = preprocessing_time + lexer_setup_time + parsing_time + semantic_analysis_time + ir_conversion_time + deferred_gen_time + codegen_time;
     double other_time = total_ms - tracked_time;
     if (other_time < 0) other_time = 0;  // Avoid negative due to timing imprecision
 
@@ -45,6 +46,7 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
     double prep_pct = (preprocessing_time / total_ms) * 100.0;
     double lexer_pct = (lexer_setup_time / total_ms) * 100.0;
     double parse_pct = (parsing_time / total_ms) * 100.0;
+    double sema_pct = (semantic_analysis_time / total_ms) * 100.0;
     double ir_pct = (ir_conversion_time / total_ms) * 100.0;
     double deferred_pct = (deferred_gen_time / total_ms) * 100.0;
     double code_pct = (codegen_time / total_ms) * 100.0;
@@ -58,6 +60,7 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
     FLASH_LOG(General, Info, "Preprocessing    | ", std::fixed, std::setprecision(3), std::setw(10), preprocessing_time, " | ", std::setw(9), prep_pct, "%");
     FLASH_LOG(General, Info, "Lexer Setup      | ", std::fixed, std::setprecision(3), std::setw(10), lexer_setup_time, " | ", std::setw(9), lexer_pct, "%");
     FLASH_LOG(General, Info, "Parsing          | ", std::fixed, std::setprecision(3), std::setw(10), parsing_time, " | ", std::setw(9), parse_pct, "%");
+    FLASH_LOG(General, Info, "Semantic Analysis| ", std::fixed, std::setprecision(3), std::setw(10), semantic_analysis_time, " | ", std::setw(9), sema_pct, "%");
     FLASH_LOG(General, Info, "IR Conversion    | ", std::fixed, std::setprecision(3), std::setw(10), ir_conversion_time, " | ", std::setw(9), ir_pct, "%");
     FLASH_LOG(General, Info, "Deferred Gen     | ", std::fixed, std::setprecision(3), std::setw(10), deferred_gen_time, " | ", std::setw(9), deferred_pct, "%");
     FLASH_LOG(General, Info, "Code Generation  | ", std::fixed, std::setprecision(3), std::setw(10), codegen_time, " | ", std::setw(9), code_pct, "%");
@@ -329,7 +332,7 @@ int main_impl(int argc, char *argv[]) {
     #endif
 
     // Collect timing data silently
-    double preprocessing_time = 0.0, lexer_setup_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, deferred_gen_time = 0.0, codegen_time = 0.0;
+    double preprocessing_time = 0.0, lexer_setup_time = 0.0, parsing_time = 0.0, semantic_analysis_time = 0.0, ir_conversion_time = 0.0, deferred_gen_time = 0.0, codegen_time = 0.0;
 
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
@@ -437,6 +440,24 @@ int main_impl(int argc, char *argv[]) {
     // enclosing classes are still incomplete. Clear the cache before codegen so
     // stale negative member lookups do not poison later IR generation.
     FlashCpp::gLazyMemberResolver.clearCache();
+
+    // Semantic analysis pass (post-parse, pre-IR)
+    {
+        PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time);
+        SemanticAnalysis sema(*parser, context, gSymbolTable);
+        sema.run();
+
+        if (show_perf_stats) {
+            const auto& stats = sema.stats();
+            FLASH_LOG(General, Info, "Semantic analysis stats:");
+            FLASH_LOG(General, Info, "  Total roots: ", stats.total_roots);
+            FLASH_LOG(General, Info, "  Roots visited: ", stats.roots_visited);
+            FLASH_LOG(General, Info, "  Expressions visited: ", stats.expressions_visited);
+            FLASH_LOG(General, Info, "  Statements visited: ", stats.statements_visited);
+            FLASH_LOG(General, Info, "  Canonical types interned: ", stats.canonical_types_interned);
+            FLASH_LOG(General, Info, "  Unique canonical types: ", sema.typeContext().size());
+        }
+    }
 
     AstToIr converter(gSymbolTable, context, *parser);
 
@@ -608,21 +629,21 @@ int main_impl(int argc, char *argv[]) {
     } catch (const std::bad_any_cast& e) {
         FLASH_LOG(General, Error, "Code generation failed with std::bad_any_cast: ", e.what());
         FLASH_LOG(General, Error, "This indicates an IR instruction has an unexpected payload type.");
-        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
-        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     } catch (...) {
         FLASH_LOG(General, Error, "Code generation failed with unknown exception");
-        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
@@ -630,13 +651,14 @@ int main_impl(int argc, char *argv[]) {
     }
 
     // Print final timing summary
-    printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+    printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 
     // Show additional details if --time flag is used
     if (show_timing) {
         FLASH_LOG(General, Info, "Phase Details:");
         FLASH_LOG(General, Info, "  Lexer Setup: lexer and parser object construction");
         FLASH_LOG(General, Info, "  Parsing: lexing, parsing, and template instantiation");
+        FLASH_LOG(General, Info, "  Semantic Analysis: post-parse semantic normalization");
         FLASH_LOG(General, Info, "  IR Conversion: AST to IR translation");
         FLASH_LOG(General, Info, "  Deferred Gen: lambda and local struct member function generation");
         FLASH_LOG(General, Info, "  Other: setup, teardown, and miscellaneous operations");
