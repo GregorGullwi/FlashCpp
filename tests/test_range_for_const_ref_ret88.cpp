@@ -16,5 +16,5 @@ int main() {
         sum = sum + y;
     }
 
-    return sum; // Expected: 600 (100+200+300)
+    return sum % 256; // Expected: 600 (100+200+300); 600 % 256 = 88
 }

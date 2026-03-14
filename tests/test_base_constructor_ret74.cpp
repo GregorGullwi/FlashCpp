@@ -17,5 +17,5 @@ struct Derived : Base {
 int main() {
     Derived d1;
     Derived d2(100, 200);
-    return d1.x + d1.y + d2.x + d2.y;  // 10 + 20 + 100 + 200 = 330
+    return (d1.x + d1.y + d2.x + d2.y) % 256;  // 10 + 20 + 100 + 200 = 330; 330 % 256 = 74
 }

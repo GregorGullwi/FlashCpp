@@ -54,6 +54,6 @@ int main() {
     // Use all variables to prevent optimization
     int result = a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r + s + t + static_cast<int>(get_floats());
     
-    return result;  // Should return 210 + 171 =381 
+    return result % 256;  // 210 + 171 = 381; 381 % 256 = 125
 }
 

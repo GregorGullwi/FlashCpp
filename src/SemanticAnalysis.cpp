@@ -250,7 +250,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		// Record local variable type in the current scope for expression inference
 		const auto& decl = var.declaration();
 		const ASTNode vtype = decl.type_node();
-		CanonicalTypeId decl_type_id;
+		CanonicalTypeId decl_type_id{};  // default: invalid (value==0)
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 			decl_type_id = canonicalizeType(vtype.as<TypeSpecifierNode>());
 			const StringHandle vname = decl.identifier_token().handle();
