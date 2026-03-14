@@ -78,10 +78,8 @@ for expression results at parser boundaries.
 This is the initial list to audit before changing behavior:
 
 1. **Qualified identifier parse helpers**
-   - ✅ `parse_qualified_identifier()` — was direct `QualifiedIdentifierNode`
-     at `src\Parser_Expr_QualLookup.cpp:35-38`, now wrapped at line 37
-     ⚠️ **Note**: This function appears to have zero call sites (declared at
-     `Parser.h:758` but never called). Consider removing it as dead code.
+   - ✅ `parse_qualified_identifier()` — removed as dead code (zero call sites).
+     Was at `src\Parser_Expr_QualLookup.cpp:3-38`, declared at `Parser.h:758`.
    - ✅ `parse_qualified_identifier_after_template()` — was direct
      `QualifiedIdentifierNode` at `src\Parser_Expr_QualLookup.cpp:197-200`,
      now wrapped at line 199
@@ -91,17 +89,17 @@ This is the initial list to audit before changing behavior:
 2. **Primary-expression leaf paths**
    - identifier paths already often wrap in `ExpressionNode`
    - qualified identifier paths appear mixed and need full audit
-   - 5 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
+   - 4 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
      outside the three helper functions (not yet normalized):
-     - `Parser_Expr_PrimaryExpr.cpp:945`  — `::identifier` global-scope path
-     - `Parser_Expr_PrimaryExpr.cpp:1146` — `identifier::identifier` early path
-     - `Parser_Expr_PrimaryExpr.cpp:1526` — `Template<T>::member` nested path
-     - `Parser_Expr_PrimaryExpr.cpp:2261` — `identifier::identifier` late path
-     - `Parser_Expr_PrimaryExpr.cpp:3608` — `Template<T>::member` inline path
-     Note: all 5 are consumed locally (`.as<QualifiedIdentifierNode>()` on the
-     next line) and then re-wrapped in `ExpressionNode` before returning, so
-     the final returned shape is already normalized — only the intermediate
-     bare node allocation is not.
+     - `Parser_Expr_PrimaryExpr.cpp:1145` — `identifier::identifier` early path
+     - `Parser_Expr_PrimaryExpr.cpp:1525` — `Template<T>::member` nested path
+     - `Parser_Expr_PrimaryExpr.cpp:2260` — `identifier::identifier` late path
+     - `Parser_Expr_PrimaryExpr.cpp:3607` — `Template<T>::member` inline path
+     Note: the `::identifier` global-scope path (line 945) was already converted
+     to a stack-local `QualifiedIdentifierNode` in this PR. All 4 remaining sites
+     are consumed locally (`.as<QualifiedIdentifierNode>()` on the next line) and
+     then re-wrapped in `ExpressionNode` before returning, so the final returned
+     shape is already normalized — only the intermediate bare node allocation is not.
 
 3. **Special expression constructors**
    - constructor-call paths already wrap and should remain the model
@@ -152,9 +150,11 @@ that used `.as<QualifiedIdentifierNode>()` were updated to use the new
 `asQualifiedIdentifier()` helper, and redundant re-wrapping was removed.
 
 **Remaining**: Other direct identifier-like leaves have not been normalized yet.
-5 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
+4 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
 helper functions create bare intermediate nodes but already re-wrap before
-returning (see Inconsistency Inventory §2 for exact locations).
+returning (see Inconsistency Inventory §2 for exact locations). The 5th site
+(`::identifier` global-scope path at line 945) was already converted to a
+stack-local construction in this PR.
 
 ### Step 3: Add a tiny parser-side helper if repetition appears ✅
 
@@ -253,10 +253,9 @@ For each slice:
 
 **Current next steps** (post PR #909):
 
-1. Evaluate removing `parse_qualified_identifier()` — it appears to be dead code
-   (zero call sites). If removed, one of the three normalized producer sites goes
-   away entirely.
-2. Simplify the 5 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
+1. ~~Evaluate removing `parse_qualified_identifier()`~~ ✅ — removed as dead code
+   in this PR.
+2. Simplify the 4 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
    sites in `parse_primary_expression()` to construct directly into
    `ExpressionNode` (eliminating the intermediate bare node + re-wrap pattern).
 3. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
