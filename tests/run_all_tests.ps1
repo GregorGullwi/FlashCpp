@@ -31,39 +31,24 @@ Write-Host "Date: $(Get-Date)"
 Write-Host ""
 
 # Find the FlashCpp compiler executable
-# Prefer CI-prebuilt sharded outputs, then fall back to the historical Debug locations.
+# On GitHub Actions, MSBuild builds FlashCppMSVC.exe
+# Locally, build_flashcpp.bat builds FlashCpp.exe
 $flashCppPath = ""
-$candidateFlashCppPaths = @(
-	"x64\Sharded\FlashCppMSVC.exe",
-	"x64\Sharded\FlashCpp.exe",
-	"x64\Debug\FlashCppMSVC.exe",
-	"x64\Debug\FlashCpp.exe"
-)
-
-foreach ($candidatePath in $candidateFlashCppPaths) {
-	if (Test-Path $candidatePath) {
-		$flashCppPath = $candidatePath
-		break
-	}
-}
-
-if (-not $flashCppPath) {
+if (Test-Path "x64\Debug\FlashCpp.exe") {
+	$flashCppPath = "x64\Debug\FlashCpp.exe"
+} elseif (Test-Path "x64\Debug\FlashCppMSVC.exe") {
+	$flashCppPath = "x64\Debug\FlashCppMSVC.exe"
+} else {
 	Write-Host "FlashCpp not found, building..."
 	& .\build_flashcpp.bat
 	if ($LASTEXITCODE -ne 0) {
 		Write-Host "ERROR: Failed to build FlashCpp" -ForegroundColor Red
 		exit 1
 	}
-
-	foreach ($candidatePath in $candidateFlashCppPaths) {
-		if (Test-Path $candidatePath) {
-			$flashCppPath = $candidatePath
-			break
-		}
-	}
-
-	if (-not $flashCppPath) {
-		Write-Host "ERROR: FlashCpp was not found after build in any known output path" -ForegroundColor Red
+	if (Test-Path "x64\Debug\FlashCpp.exe") {
+		$flashCppPath = "x64\Debug\FlashCpp.exe"
+	} else {
+		Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
 		exit 1
 	}
 }

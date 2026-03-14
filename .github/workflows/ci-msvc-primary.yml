@@ -9,7 +9,7 @@ on:
 
 jobs:
   windows-debug:
-    name: Windows - MSVC - Sharded
+    name: Windows - MSVC - Debug
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -18,11 +18,11 @@ jobs:
       - name: Setup MSBuild (Visual Studio)
         uses: microsoft/setup-msbuild@v1
 
-      - name: Build FlashCppMSVC project (Sharded)
+      - name: Build FlashCppMSVC project (Debug)
         shell: powershell
         run: |
-          # Build only the FlashCppMSVC project with MSBuild (Sharded) - uses MSVC toolset
-          msbuild FlashCppMSVC.vcxproj /p:Configuration=Sharded /p:Platform=x64 /m
+          # Build only the FlashCppMSVC project with MSBuild (Debug) - uses MSVC toolset
+          msbuild FlashCppMSVC.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
 
       - name: Test Reference Files (Compile & Link)
         shell: pwsh
