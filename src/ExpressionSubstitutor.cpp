@@ -42,6 +42,9 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteSizeofExpr");
 				return substitutor.substituteSizeofExpr(node);
+			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteStaticCast");
+				return substitutor.substituteStaticCast(node);
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode> ||
 			                     std::is_same_v<T, BoolLiteralNode> || 
 			                     std::is_same_v<T, StringLiteralNode>) {
@@ -75,6 +78,9 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	}
 	else if (expr.is<SizeofExprNode>()) {
 		return substituteSizeofExpr(expr.as<SizeofExprNode>());
+	}
+	else if (expr.is<StaticCastNode>()) {
+		return substituteStaticCast(expr.as<StaticCastNode>());
 	}
 	else if (expr.is<NumericLiteralNode>()) {
 		// Literals don't need substitution
@@ -952,6 +958,31 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof_ref);
 		return ASTNode(&new_expr);
 	}
+}
+
+ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_node) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing static_cast/functional cast expression");
+	
+	// Recursively substitute in the inner expression
+	ASTNode substituted_expr = substitute(cast_node.expr());
+	
+	// The target type typically doesn't need substitution for built-in functional casts
+	// like bool(x), int(x), but handle it for completeness
+	ASTNode target_type = cast_node.target_type();
+	if (target_type.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = target_type.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_type = substituteInType(type_spec);
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
+		target_type = ASTNode(&new_type);
+	}
+	
+	// Create new StaticCastNode with substituted expression
+	StaticCastNode& new_cast = gChunkedAnyStorage.emplace_back<StaticCastNode>(
+		target_type, substituted_expr, cast_node.cast_token());
+	
+	// Wrap in ExpressionNode
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_cast);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
