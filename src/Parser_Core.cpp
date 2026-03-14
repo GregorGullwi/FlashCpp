@@ -36,6 +36,13 @@ ChunkedStringAllocator gChunkedStringAllocator;
 // Global registries
 TemplateRegistry gTemplateRegistry;
 ConceptRegistry gConceptRegistry;
+const std::unordered_set<std::string_view> type_keywords = {
+	"int", "float", "double", "char", "bool", "void",
+	"short", "long", "signed", "unsigned", "const", "volatile", "alignas",
+	"auto", "wchar_t", "char8_t", "char16_t", "char32_t", "decltype",
+	"__int8", "__int16", "__int32", "__int64"
+};
+
 MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
 	MemberSizeAndAlignment result;
 	
