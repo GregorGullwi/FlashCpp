@@ -1,263 +1,1703 @@
-# Implicit Cast / Semantic Analysis Plan
+# Semantic-analysis separation plan
 
-**Date**: 2026-03-12
-**Status**: Proposed
-**Related**: `docs/KNOWN_ISSUES.md`, `tests/template_parsing_test_ret0.cpp`
+## Problem statement
 
-## Short answer
+FlashCpp currently goes from `Parser::parse()` almost directly into `AstToIr`, with semantic decisions split between:
 
-Yes: this should be a separate semantic-analysis pass, not parser-inline logic.
+- parser-time heuristics and partial type deduction
+- syntax-level type comparisons in `TypeSpecifierNode` / `SymbolTable`
+- codegen-local conversion logic in `AstToIr`
 
-The parser should stay focused on syntax and source-faithful AST construction.
-Implicit conversions are semantic decisions that depend on resolved types,
-overload selection, value category, reference binding, and context
-(`if` condition vs return statement vs function argument). Putting that logic in
-the parser would make parsing context-sensitive in the wrong direction and would
-either duplicate later type logic or force premature type resolution.
+There is already a repo proposal to introduce a separate semantic-analysis stage. After reviewing the current codebase, the proposal is directionally correct from a C++20 perspective, but it should be narrowed and staged more carefully for both implementation risk and compile-time performance.
 
-## Why a separate pass is the right shape
+## Recommendation summary
 
-Today FlashCpp applies implicit conversions ad-hoc in codegen (`generateBinaryOperatorIr`,
-return lowering, direct function-call argument lowering). That fixes individual
-sites but leaves the compiler with no single place that answers:
+### Recommended direction
 
-- what type an expression has after contextual conversion
-- whether a conversion is standard vs user-defined
-- whether an lvalue must bind directly or first materialize a temporary
-- whether overload resolution should see the original expression or a converted one
+Introduce a **post-parse semantic-normalization pass**, not a full “move all semantics out of the parser” rewrite.
 
-A dedicated semantic pass gives one canonical normalization point before IR
-generation, so codegen can lower what the program *means* instead of repeating
-type-law decisions per site.
+That means:
+
+1. Keep the parser responsible for syntax construction, symbol-table population, template-instantiation triggers, and the existing deferred-body/template machinery for now.
+2. Add a focused semantic stage between parse and IR lowering that:
+	- canonicalizes expression meaning where C++20 requires semantic context
+	- fills preallocated semantic slots / annotations on existing AST nodes for the common standard-conversion cases
+	- reserves structural semantic nodes only for later cases that cannot be represented compactly
+	- removes ad-hoc conversion policy from `AstToIr`
+3. Delay any larger “full semantic model / separate type system” effort until the normalization pass is proven and measured.
+
+### Why this is the right reading of the existing docs
+
+The existing docs are right that implicit conversions, value-category changes, contextual `bool`, and canonical type identity are semantic concerns and do not belong in parser-inline logic.
+
+However, if “separate semantics” is interpreted as “stop doing semantic work during parsing,” that is too large and too risky for the current architecture because:
+
+- template instantiation already happens during parsing
+- parser-owned state already feeds symbol/type formation
+- delayed function bodies and template substitution are deeply integrated with parser machinery
+- some semantic-ish metadata is already stored on syntax nodes (`BinaryOperatorNode` overload resolution state, `IdentifierNode` bindings, `TypeSpecifierNode` type indices)
+
+So the right first milestone is **semantic normalization**, not an immediate Clang-style full Sema subsystem.
+
+## Current-state findings
+
+### Pipeline
+
+- `main.cpp` does `parser->parse();` and then constructs `AstToIr` with no semantic pass in between.
+- There is currently no `runSemanticAnalysis(...)` seam in the pipeline.
+
+### Semantic decisions currently split across layers
+
+- `CodeGen_Call_Direct.cpp` applies implicit argument conversions with `generateTypeConversion(...)`.
+- `CodeGen_Expr_Operators.cpp` applies assignment conversion and usual arithmetic conversions inline.
+- `CodeGen_Visitors_Namespace.cpp` applies return conversions inline.
+- `Parser_Statements.cpp` already deduces some `auto` declarations during parsing.
+- `CodeGen_Expr_Primitives.cpp` still has a transitional `Type::Auto && size_bits == 0 -> int/32-bit` fallback.
+
+### Syntax-level nodes currently carrying semantic load
+
+- `TypeSpecifierNode::matches_signature(...)` performs function-signature equivalence on syntax metadata.
+- `SymbolTable::lookup_function(...)` still has a simplified two-phase selection path in addition to `OverloadResolution.h`.
+- `BinaryOperatorNode` already stores semantic operator-resolution results.
+
+### Existing architecture that helps the plan
+
+- AST nodes live in stable chunk storage (`gChunkedAnyStorage`).
+- `ASTNode` mostly passes around pointers into that storage.
+- `ExpressionSubstitutor` already performs subtree transformation by cloning only touched nodes into the same arena.
+
+This means the plan does **not** need expensive whole-AST mutation or rebuilding. The low-cost path is:
+
+- parser-built nodes start with empty semantic slots (`no cast`, `no adjustment`, etc.)
+- semantic pass fills those slots in place where compact metadata is enough
+- only allocate replacement / structural nodes for later cases that cannot be encoded as annotation
+
+## Evaluation from a C++20 standards perspective
+
+## What is correct about a semantic pass
+
+A separate post-parse semantic stage is the right architectural home for:
+
+- standard implicit conversions (`[conv]`)
+- usual arithmetic conversions (`[expr]`, `[conv.arith]`)
+- contextual conversion to `bool`
+- reference binding and temporary materialization
+- return conversion
+- initialization conversion
+- canonical type identity for overload/signature comparison
+
+These are semantic questions because they depend on resolved types, value categories, overload ranking, and surrounding context. They are not purely syntactic.
+
+## What should stay out of the first pass
+
+The first pass should **not** try to re-own all of:
+
+- unqualified and qualified lookup
+- template instantiation strategy
+- parser-driven deferred-body mechanics
+- every aspect of type formation
+
+Those can evolve later, but trying to do all of them now would turn a good architectural cleanup into a major compiler rewrite.
+
+## Standards-risk areas the plan should explicitly cover
+
+The implementation plan should include explicit handling for:
+
+- lvalue-to-rvalue conversion
+- array-to-pointer / function-to-pointer decay
+- promotions vs conversions
+- enum behavior (preserve enum identity where required; convert only in the contexts permitted by the standard)
+- qualification adjustments
+- reference binding rules
+- temporary materialization
+- contextual `bool`
+- overload ranking data that distinguishes exact match / promotion / conversion / user-defined conversion
+
+## Other strong candidates for later semantic phases
+
+Beyond the items already called out, these also fit naturally in a semantic-analysis layer:
+
+- conditional-operator (`?:`) common-type and value-category resolution
+	- today `get_expression_type(...)` in `Parser_Expr_QualLookup.cpp` still uses a simplified “larger bit width wins” rule for arithmetic branches and a fallback-to-true-branch rule for mixed cases
+- copy-init vs direct-init vs list-init semantic distinctions
+	- especially list-initialization narrowing checks and “is an explicit constructor/conversion viable in this context?” decisions
+- deleted / explicit / defaulted function and constructor viability
+	- this is part of semantic overload viability, not a parser concern
+- `noexcept` / exception-spec semantics
+	- classification of `noexcept(expr)`, consistency of exception-spec metadata, and any later overload/function-type rules that depend on it
+- constant-expression-required contexts
+	- array bounds, case labels, enumerator initializers, `if constexpr`, `noexcept`, and similar “must be a constant expression here” rules
+- constructor/member/base initializer semantic validation
+	- delegating-constructor rules, base/member initializer legality, duplicate initialization diagnostics, and related checks
+- concept / constraint / requires-expression satisfaction
+	- if concepts support grows, semantic analysis is the right layer for post-substitution constraint checking
+- copy-elision / lifetime-extension policy
+	- broader than temporary materialization alone; this becomes the right home once the compiler wants more faithful C++ object-lifetime semantics
+
+These are all good fits, but most are **later-semantic-layer work**, not phase-1 normalization work.
+
+## Evaluation from a performance perspective
+
+## Main conclusion
+
+Your concern is valid **if** the design assumes whole-tree in-place rewriting or repeated re-analysis of the same subtrees.
+
+That is **not** the design I recommend.
+
+## Recommended performance shape
+
+Use an **annotation-first semantic normalization** on top of the current AST:
+
+- parser-created expression nodes carry empty semantic slots by default
+- semantic pass fills those slots in place for standard conversions and value-category normalization
+- rebuild only the minimal owning subtree when a later semantic feature truly requires structural change
+- reuse untouched `ASTNode` pointers everywhere else
+
+This is compatible with the current `gChunkedAnyStorage` model, and it answers the performance concern better than universal wrapper-node insertion.
+
+## Performance rules for the implementation
+
+1. Do not copy the full translation unit AST.
+2. Do not eagerly canonicalize every node into a second full semantic tree.
+3. Prefer preallocated semantic slots / annotations over wrapper nodes for the common implicit-conversion cases.
+4. The per-expression semantic slot should be **heavily packed** (target: about 8 bytes, certainly not “store CanonicalType by value in every node”).
+5. Use type interning so AST nodes carry compact `CanonicalTypeId` / handles rather than full canonical-type payloads.
+6. Use side data or structural semantic nodes only when compact in-node metadata is not enough.
+7. Time the new pass separately in `main.cpp`.
+8. Track pass-time deltas and how often semantics fit in slots versus requiring structural nodes.
+
+### Memory-layout requirement
+
+This is the single most important refinement to the annotation-first design.
+
+Adding something like:
+
+- `std::optional<ImplicitCastInfo>`
+- where `ImplicitCastInfo` embeds two `CanonicalType` values
+
+directly into every expression node would likely destroy cache locality and inflate AST memory dramatically.
+
+So the plan should explicitly forbid that shape.
+
+The semantic slot stored on AST nodes should instead be a **compact handle layer**, for example:
+
+```cpp
+struct CanonicalTypeId {
+	uint32_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+};
+
+struct CastInfoIndex {
+	uint16_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+};
+
+enum class SemanticSlotFlags : uint8_t {
+	None = 0,
+	IsDependent = 1 << 0,
+	IsConstantEvaluated = 1 << 1,
+	IsOverloadSet = 1 << 2,
+};
+
+struct SemanticSlot {
+	CanonicalTypeId type_id{};                // Interned canonical type
+	CastInfoIndex cast_info_index{}; // Invalid = no cast
+	ValueCategory value_category = ValueCategory::PRValue; // Reuse existing enum in IRTypes_Registers.h
+	SemanticSlotFlags flags = SemanticSlotFlags::None;
+};
+```
+
+Here `ValueCategory` should be treated as an existing shared enum, not a new semantic-analysis-local type. For slot packing, the shared enum should use a narrow underlying type (`enum class ValueCategory : uint8_t`).
+
+If a slot cannot be kept compact enough, the fallback should be:
+
+- a side table keyed by `ASTNode` identity, or
+- a tiny per-node handle into side storage
+
+but **not** a large by-value semantic payload embedded into all expression nodes.
 
 ## Recommended architecture
 
-### 1. Add explicit semantic AST nodes
+### 1. Add a narrow semantic-normalization layer
 
-Introduce at least:
-
-- `ImplicitCastNode`
-	- wraps one `ExpressionNode`
-	- stores source type, target type
-	- stores cast kind / conversion category
-	- preserves value category if relevant
-- optionally later:
-	- `MaterializeTemporaryNode`
-	- `BoundTemporaryNode`
-	- `ImplicitObjectAdjustmentNode` for base/derived `this` or member access adjustments
-
-Suggested cast kinds for the first slice:
-
-- lvalue-to-rvalue
-- array-to-pointer decay
-- function-to-pointer decay
-- integral promotion
-- floating-point promotion
-- integral conversion
-- floating-integral conversion
-- boolean conversion
-- qualification adjustment
-- derived-to-base pointer/reference adjustment
-- user-defined conversion
-
-### 2. Add a post-parse, pre-codegen `SemanticAnalysis` pass
-
-Pipeline shape:
-
-1. Parse → syntax AST
-2. Name/type resolution already performed today during parsing / deferred lookups
-3. **SemanticAnalysis pass** walks expressions/statements and inserts semantic wrapper nodes
-4. AstToIr lowers the normalized AST
-
-The pass should mutate/replace expression children in place or rebuild the
-subtree with wrapped nodes. The important part is that *all* contexts use the
-same conversion insertion logic.
-
-## What should live in this pass
-
-This pass can do more than implicit casts. Once it exists, it becomes the right
-home for other semantic normalizations that codegen should not own:
-
-- contextual conversion to `bool` for `if`, `while`, `for`, `do`, `?:`, `!`, `&&`, `||`
-- usual arithmetic conversions for binary arithmetic/comparisons
-- function call argument conversions after overload resolution chooses a callee
-- return-statement conversion to function return type
-- initialization conversion for locals, globals, members, and temporaries
-- reference binding checks and temporary materialization
-- array/function decay where required
-- derived-to-base adjustments for object arguments and return paths
-- enum promotion / underlying-type normalization where the standard requires it
-- generic lambda parameter normalization after deduction / instantiation so the
-  lambda body sees concrete parameter types instead of late codegen-time
-  fallbacks or synthetic declarations
-- diagnostics for narrowing or disallowed implicit conversions
-- a single place to classify value category (`lvalue` / `xvalue` / `prvalue`) after wrapping
-- function signature equivalence (`TypeSpecifierNode::matches_signature`) — currently
-  a heuristic on a syntax-level AST node that reaches into `gTypeInfo` via
-  `resolve_type_alias` to approximate semantic type identity; should be replaced
-  by a proper semantic type comparison once canonical types are available (see
-  note below)
-
-Longer-term, the same framework could also host:
-
-- constant-expression marking / early constexpr folding hooks
-- unreachable semantic diagnostics after overload resolution
-- standard conversion ranking data reused by overload resolution explanations
-
-### `matches_signature` — semantic decision on a syntax node
-
-`TypeSpecifierNode::matches_signature` (in `src/AstNodeTypes_DeclNodes.h`) is
-called from `SymbolTable::insert()` during parsing to decide whether a new
-function declaration is a redeclaration of an existing overload or a distinct
-overload. This is a semantic decision (function signature equivalence per
-C++20 [over.load]), but it lives on a syntax-level AST node that only has
-access to raw parser metadata (`type_`, `size_`, `pointer_levels_`).
-
-**History:** the old implementation used a size-and-indirection heuristic
-(`same_size && same_indirection`) that allowed `Type::Enum` (32-bit) to match
-`Type::Int` (32-bit), incorrectly merging `f(Color)` and `f(int)` as the same
-signature. PR #907 replaced this with `resolve_type_alias` comparison, which
-preserves enum identity but drops the old `size_ != 0` safety guard for
-incomplete types.
-
-**Why this belongs in the semantic pass:**
-
-- Signature equivalence depends on canonical type identity, not raw parser
-  metadata. A semantic pass that canonicalizes types (resolving typedefs,
-  preserving enum/struct identity) would make this comparison trivial and
-  correct by construction.
-- The current `resolve_type_alias` call from a syntax node method reaches into
-  the global `gTypeInfo` table — a layering violation that would disappear if
-  the comparison operated on already-canonicalized semantic types.
-- The dropped size check is only a concern for malformed/incomplete AST nodes,
-  which would not exist after a semantic pass validates type completeness.
-
-**Migration path:** once the semantic pass canonicalizes parameter types,
-`matches_signature` can be replaced by direct comparison of canonical type
-identities, eliminating both the alias-resolution heuristic and any residual
-size-based workarounds.
-
-## What should stay out of the parser
-
-Do **not** insert implicit cast nodes while parsing tokens.
-
-Reasons:
-
-- parsing should not need complete type information for every subexpression
-- overload resolution often decides which conversion is needed only after the full call shape is known
-- parser-inline conversions would entangle syntax recovery with semantic failure
-- the same expression may appear in different semantic contexts later (initializer, condition, return, call argument)
-
-The parser can still attach enough source/token info for a later semantic pass,
-but it should not decide implicit conversion semantics itself.
-
-## Minimal implementation plan
-
-### Phase A: infrastructure
-
-1. Add `ImplicitCastNode` to the expression AST variants
-2. Add helpers:
-	- `wrapImplicitCast(expr, target_type, cast_kind)`
-	- `applyStandardConversion(expr, target_type, context)`
-	- `applyContextualBoolConversion(expr, context)`
-3. Teach AST printers/debug dumps to display implicit cast nodes
-4. Teach `visitExpressionNode` to lower `ImplicitCastNode`
-
-### Phase B: first semantic pass slice
-
-Implement a small `SemanticAnalysis` walker for only these contexts:
-
-- direct function-call arguments
-- return statements
-- binary arithmetic/comparison operators
-
-That immediately replaces the current ad-hoc conversion insertion at the sites
-most likely to produce ABI-visible wrong code.
-
-### Phase C: initializer/reference slice
-
-Extend the pass to:
-
-- local/global/member initialization
-- reference binding
-- temporary materialization
-- conditional expressions
-- generic lambda body normalization:
-	- replace instantiated `auto` parameter declarations with their deduced types
-	- preserve cv/ref qualifiers and `TypeIndex` for struct/enum cases
-	- ensure all identifier/body lookups see the normalized declaration, not the
-	  original unresolved syntax-only parameter node
-
-### Phase D: remove codegen-local semantic rules
-
-As coverage grows, delete the ad-hoc conversion calls from codegen:
-
-- `generateBinaryOperatorIr`
-- return lowering
-- direct function-call argument lowering
-- any initializer-specific fallback conversion paths
-- `TypeSpecifierNode::matches_signature` heuristic — replace with canonical
-  type comparison once the semantic pass provides resolved type identities
-
-The end state is:
-
-- semantic pass inserts conversions
-- codegen trusts the AST
-- `generateTypeConversion` becomes a lowering helper for `ImplicitCastNode`, not a
-  policy decision point
-
-## Practical migration strategy for FlashCpp
-
-To keep risk low, the pass can be introduced incrementally behind a small entry point:
+New entry point:
 
 ```cpp
-runSemanticAnalysis(*translation_unit, context);
+runSemanticAnalysis(*parser, context);
 ```
 
-called once after parsing succeeds and before `AstToIr` starts.
+Pipeline target:
 
-That gives a clean seam without rewriting the parser. Early slices can process
-only a subset of expression kinds and leave the rest untouched.
+1. parse
+2. clear parser-side lazy caches as today
+3. run semantic normalization
+4. lower normalized AST in `AstToIr`
 
-For generic lambdas specifically, the pass should run after call-site deduction
-metadata is available for an instantiation but before AstToIr lowers the chosen
-instantiated body. The pass can then normalize the parameter declarations
-themselves instead of forcing codegen to synthesize replacement declarations in
-the function symbol table.
+### 2. Add semantic slots / annotations first; reserve structural nodes for later
 
-## Why not “just do it inline in AstToIr”?
+#### Target first-step data model
 
-That is better than parser-inline logic, but still inferior to a separate pass.
+```cpp
+enum class StandardConversionKind : uint8_t {
+	LValueToRValue,
+	ArrayToPointer,
+	FunctionToPointer,
+	IntegralPromotion,
+	FloatingPromotion,
+	IntegralConversion,
+	FloatingConversion,
+	FloatingIntegralConversion,
+	BooleanConversion,
+	QualificationAdjustment,
+	DerivedToBase,
+	UserDefined,
+	TemporaryMaterialization
+};
 
-An inline AstToIr transform would:
+struct CanonicalTypeId {
+	uint32_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(CanonicalTypeId, CanonicalTypeId) = default;
+};
 
-- keep semantic policy mixed with lowering
-- make it harder to debug/print the normalized tree
-- leave later consumers unable to reuse semantic information
-- continue the pattern of fixing one codegen context at a time
+struct CastInfoIndex {
+	uint16_t value = 0;
+	explicit constexpr operator bool() const { return value != 0; }
+	friend constexpr bool operator==(CastInfoIndex, CastInfoIndex) = default;
+};
 
-If a full pass feels too large for the first patch, a reasonable stepping stone is:
+enum class SemanticSlotFlags : uint8_t {
+	None = 0,
+	IsDependent = 1 << 0,
+	IsConstantEvaluated = 1 << 1,
+	IsOverloadSet = 1 << 2,
+};
 
-1. add `ImplicitCastNode`
-2. add a tiny semantic walker that only rewrites call arguments / returns / binary ops
-3. lower that node in AstToIr
-4. add a tiny generic-lambda normalization hook that rewrites instantiated
-   parameter declarations from deduced metadata before body lowering
+enum class CanonicalTypeFlags : uint8_t {
+	None = 0,
+	IsPackExpansion = 1 << 0,
+	IsFunctionType = 1 << 1,
+};
 
-That still preserves the right architecture and avoids parser entanglement.
+struct CanonicalTypeDesc {
+	Type base_type;
+	TypeIndex type_index;
+	CVQualifier base_cv = CVQualifier::None;
+	ReferenceQualifier ref_qualifier;
+	InlineVector<PointerLevel, 4> pointer_levels;
+	InlineVector<size_t, 4> array_dimensions;
+	CanonicalTypeFlags flags = CanonicalTypeFlags::None;
+	std::optional<FunctionSignature> function_signature;
+};
 
-## Immediate recommendation
+class TypeContext {
+public:
+	CanonicalTypeId intern(const CanonicalTypeDesc& desc);
+	const CanonicalTypeDesc& get(CanonicalTypeId id) const;
+};
 
-Implement a separate `SemanticAnalysis` pass.
+struct ImplicitCastInfo {
+	CanonicalTypeId source_type_id;
+	CanonicalTypeId target_type_id;
+	StandardConversionKind cast_kind;
+	ValueCategory value_category_after = ValueCategory::PRValue; // Reuse existing enum
+};
 
-Start with `ImplicitCastNode` plus three contexts:
+struct SemanticSlot {
+	CanonicalTypeId type_id{};
+	CastInfoIndex cast_info_index{};
+	ValueCategory value_category = ValueCategory::PRValue;
+	SemanticSlotFlags flags = SemanticSlotFlags::None;
+};
 
-- call arguments
-- returns
-- usual arithmetic conversions
+enum class RewriteDisposition : uint8_t {
+	Unchanged,
+	StructurallyChanged,
+};
 
-Then migrate initializers, reference binding, and contextual-bool conversions.
+struct SemanticRewriteResult {
+	ASTNode node;
+	CanonicalTypeId type_id{};
+	ValueCategory value_category;
+	RewriteDisposition disposition = RewriteDisposition::Unchanged;
+};
+```
 
-This gives FlashCpp one canonical place for standard conversions and prevents
-future regressions like `template_parsing_test_ret0.cpp` from depending on
-which codegen path happened to remember to call `generateTypeConversion(...)`.
+`SemanticSlot` should stay compact, but there is no strong reason to fold `ValueCategory` into `SemanticSlotFlags`.
+
+Recommendation:
+
+- keep `value_category` as its own field
+- keep `flags` for orthogonal yes/no semantic facts
+
+Why:
+
+- `ValueCategory` is not a flag set; it is a mutually exclusive state
+- keeping it separate is clearer and more type-safe
+- with a shared `: uint8_t` underlying type, it is already compact enough that folding it into generic flags adds complexity with little or no meaningful memory win
+
+Interned canonical types are important because the long-term bug class here is “syntax metadata pretending to be semantic type identity.”
+
+#### Implementation note for the current AST
+
+The current AST does not have a shared expression-node base class, so the plan should target one of these implementation shapes:
+
+1. preferred target: add a **small packed semantic-slot member** to each expression node class
+2. acceptable transition: keep a side table keyed by `ASTNode` identity while converging on in-node packed slots
+
+Before changing many node layouts, measure:
+
+- `sizeof` the main expression node alternatives before and after
+- total AST memory on representative translation units
+
+If adding a slot to every expression node materially harms memory locality, use the side-table approach longer.
+
+Type-safety rule:
+
+- do not use raw `uint32_t` / `uint16_t` aliases for semantic handles if the codebase can accidentally mix them
+- prefer small wrapper structs with explicit construction and no arithmetic
+- prefer `enum class` or typed policy enums over free booleans for semantic control flow
+
+What should **not** be the default first step is inserting a dedicated `NullImplicitCastNode` wrapper around every expression.
+
+#### Structural nodes to reserve for later
+
+Only introduce explicit structural semantic nodes if a compact slot cannot faithfully encode the semantic effect:
+
+- `MaterializeTemporaryNode`
+- `BoundTemporaryNode`
+- `ImplicitObjectAdjustmentNode`
+
+### 3. Add a dedicated semantic pass class
+
+Recommended new files:
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+
+Recommended class shape:
+
+```cpp
+class SemanticAnalysis {
+public:
+	SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols);
+
+	void run();
+
+private:
+	ASTNode normalizeTopLevelSemantics(ASTNode node);
+	ASTNode normalizeStatementSemantics(ASTNode node, const SemanticContext& ctx);
+	SemanticRewriteResult normalizeExpressionSemantics(ASTNode node, const SemanticContext& ctx);
+
+	SemanticRewriteResult applyImplicitConversion(
+		const SemanticRewriteResult& expr,
+		CanonicalTypeId target_type_id,
+		ConversionContext context);
+
+	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type) const;
+	CanonicalTypeId getExpressionType(const ASTNode& node, const SemanticContext& ctx) const;
+};
+```
+
+### Naming guidance
+
+The earlier `rewriteTopLevel` / `rewriteStatement` / `rewriteExpression` names describe the mechanism, but not the purpose.
+
+For this pass, prefer intent-revealing names such as:
+
+- `normalizeTopLevelSemantics(...)`
+- `normalizeStatementSemantics(...)`
+- `normalizeExpressionSemantics(...)`
+
+`rewrite*` is still reasonable as a local helper name, but it should not be the main API vocabulary for a semantic-normalization pass.
+
+### 4. Prefer selective subtree replacement over in-place mutation
+
+Because many AST nodes expose getters but not setters (`ReturnStatementNode`, `IfStatementNode`, `BinaryOperatorNode`, `UnaryOperatorNode`, `TernaryOperatorNode`, etc.), the implementation should use a mixed strategy:
+
+- prefer in-place semantic-slot updates when only expression semantics changed
+- rewrite children recursively when a child subtree changes structurally
+- if no child changed structurally, keep the original node
+- only allocate a replacement node in `gChunkedAnyStorage` when the tree shape truly has to change
+
+This avoids both a large mutability refactor and the cost of universal wrapper-node insertion.
+
+## Classes and files likely involved
+
+### New or newly central classes
+
+- `SemanticAnalysis`
+- `StandardConversionKind`
+- `ValueCategory`
+- `CanonicalTypeDesc`
+- `TypeContext`
+- `CanonicalTypeId`
+- `ImplicitCastInfo`
+- `SemanticSlot`
+- `SemanticRewriteResult`
+- `SemanticContext`
+
+### Existing classes that the pass must integrate with
+
+- `Parser`
+- `SymbolTable`
+- `OverloadResolution`
+- `TypeSpecifierNode`
+- `DeclarationNode`
+- `FunctionCallNode`
+- `ConstructorCallNode`
+- `BinaryOperatorNode`
+- `UnaryOperatorNode`
+- `TernaryOperatorNode`
+- `ReturnStatementNode`
+- `IfStatementNode`
+- `ForStatementNode`
+- `WhileStatementNode`
+- `DoWhileStatementNode`
+- `InitializerListNode`
+- `LambdaInfo`
+- `AstToIr`
+- `ExpressionSubstitutor`
+
+### Files to modify in the first serious implementation slice
+
+- `src/main.cpp`
+	- insert and time the semantic pass
+- `src/AstNodeTypes_Expr.h`
+	- add semantic-slot storage for expression nodes
+	- add `ImplicitCastInfo` / related semantic metadata types
+- `src/AstNodeTypes.cpp`
+	- AST string/debug printer support
+- `src/AstToIr.h`
+	- add lowering hooks for semantic annotations
+- `src/CodeGen_Expr_Conversions.cpp`
+	- make conversion lowering serve semantic annotations instead of owning policy
+- `src/CodeGen_Call_Direct.cpp`
+	- delete direct argument-conversion policy once pass covers it
+- `src/CodeGen_Expr_Operators.cpp`
+	- delete arithmetic/assignment conversion policy once pass covers it
+- `src/CodeGen_Visitors_Namespace.cpp`
+	- delete return-conversion policy once pass covers it
+
+### Files for later semantic cleanups
+
+- `src/OverloadResolution.h`
+	- reuse / refine ranking and conversion classification
+- `src/SymbolTable.h`
+	- gradually stop relying on syntax-level signature heuristics
+- `src/AstNodeTypes_DeclNodes.h`
+	- reduce `TypeSpecifierNode::matches_signature(...)` responsibilities
+- `src/Parser_Statements.cpp`
+	- move `auto` declaration normalization out over time
+- `src/CodeGen_Expr_Primitives.cpp`
+	- remove transitional `Type::Auto` fallback
+- `src/CodeGen_Lambdas.cpp`
+	- remove synthetic declaration workaround once generic-lambda normalization moves earlier
+
+## Detailed data transformations to plan for
+
+### A. Function-call arguments
+
+Current state:
+
+- parse builds `FunctionCallNode`
+- overload resolution chooses a callee
+- codegen converts arguments inline
+
+Target state:
+
+1. rewrite each argument expression
+2. compute canonical parameter type
+3. fill `ImplicitCastInfo` on the argument expression if the chosen overload requires conversion
+4. build a replacement `FunctionCallNode` only if an argument subtree changed structurally
+5. `AstToIr` lowers already-normalized arguments
+
+### B. Binary arithmetic and comparisons
+
+Current state:
+
+- `CodeGen_Expr_Operators.cpp` computes common type and emits conversions inline
+
+Target state:
+
+1. rewrite `lhs`
+2. rewrite `rhs`
+3. preserve any already-recorded operator-overload resolution metadata
+4. if builtin arithmetic path applies, compute common canonical type
+5. annotate one or both operands with implicit-cast metadata
+6. lower directly from normalized operands
+
+### C. Assignment
+
+Current state:
+
+- assignment converts RHS to LHS type in codegen
+
+Target state:
+
+1. rewrite `lhs` and `rhs`
+2. compute target type from `lhs`
+3. annotate `rhs` with the needed standard conversion metadata; reserve structural nodes for later user-defined / lifetime-sensitive cases
+4. leave IR lowering as a straightforward assignment
+
+### D. Return statements
+
+Current state:
+
+- return conversion is applied in `CodeGen_Visitors_Namespace.cpp`
+
+Target state:
+
+1. semantic pass tracks the current function return type
+2. return expression is rewritten
+3. conversion metadata is attached at the expression boundary; only later lifetime-sensitive cases should require structural nodes
+4. `AstToIr` trusts the rewritten return expression
+
+### E. Contextual `bool`
+
+Affected nodes:
+
+- `IfStatementNode`
+- `WhileStatementNode`
+- `ForStatementNode`
+- `DoWhileStatementNode`
+- `TernaryOperatorNode`
+- logical operators if represented on the builtin path
+
+Target transformation:
+
+- rewrite condition expression
+- attach implicit-bool conversion metadata when contextual conversion applies
+
+### F. Initializers and declarations
+
+Current state:
+
+- parser and codegen split responsibility
+
+Target state:
+
+1. declaration type is canonicalized
+2. initializer expression is rewritten
+3. semantic pass inserts conversion/reference-binding/temporary materialization nodes
+4. codegen stops guessing the policy from local context
+
+### G. `auto` and generic lambda normalization
+
+This should be treated as a **follow-up phase**, not phase 1.
+
+Reason:
+
+- some `auto` deduction already happens during parsing
+- generic lambdas currently rely on `LambdaInfo` deduced types and codegen-local fixes
+- instantiated bodies may need a semantic hook after instantiation, not only once per translation unit
+
+Recommended target:
+
+- translation-unit semantic pass for ordinary declarations and expressions
+- per-instantiation semantic hook for instantiated generic lambda / template bodies before `AstToIr`
+
+#### 1. Ordinary `auto` variable declarations
+
+Current state:
+
+- parser already deduces `auto` from the initializer in `Parser_Statements.cpp`
+- it preserves cv/ref qualifiers and some special cases such as captureless-lambda-to-function-pointer deduction
+
+Architectural fit:
+
+- in the **near term**, this is one of the few semantic operations that can reasonably stay parser-side, because later parsing and symbol-table lookup in the same scope may depend on the deduced declared type
+- the semantic pass should still **validate and canonicalize** the parser-produced type, and it should own any initializer-conversion annotations that apply after deduction
+
+Recommendation:
+
+- do **not** force ordinary `auto` variable deduction out of the parser in the first semantic-pass rollout
+- instead, treat parser deduction as the producer of a provisional concrete `TypeSpecifierNode`
+- let the semantic pass normalize the initializer semantics around that type
+
+Longer term:
+
+- only move ordinary `auto` variable deduction fully into semantic analysis if the parser no longer needs the final type for same-scope lookup / expression typing during parse
+
+#### 2. Generic lambda `auto` parameters
+
+Current state:
+
+- call-site deduction is stored through `LambdaInfo::setDeducedType(...)`
+- codegen re-reads deduced types in multiple places
+- codegen also synthesizes replacement parameter declarations so lambda bodies do not see unresolved `Type::Auto`
+- there is still a backend fallback from unresolved `Type::Auto` + size 0 to `int`/32-bit
+
+Architectural fit:
+
+- this does **not** belong in the translation-unit semantic pass
+- it belongs in an **instantiation-time semantic normalization hook** that runs:
+	1. after call-site deduction succeeded
+	2. after the instantiated lambda body exists
+	3. before `AstToIr` lowers `operator()` / `__invoke`
+
+Recommendation:
+
+- keep parser ownership of generic-lambda syntax
+- keep call-site deduction ownership near overload/call resolution initially
+- move the *body/signature normalization* out of codegen and into a dedicated instantiation-time semantic step
+
+That semantic step should:
+
+- rewrite parameter declarations from placeholder `Type::Auto` to the deduced concrete `TypeSpecifierNode`
+- update the lambda body’s symbol table view so identifier lookup sees the concrete parameter declarations
+- update mangling/signature generation inputs to use normalized types
+- eliminate the need for synthetic deduced declarations in `CodeGen_Lambdas.cpp`
+- eliminate the fallback-to-`int` behavior in `CodeGen_Expr_Primitives.cpp`
+
+#### 3. Non-generic lambda `auto` return type
+
+Current state:
+
+- parser already scans lambda bodies and deduces / validates the return type in `Parser_Expr_ControlFlowStmt.cpp`
+
+Architectural fit:
+
+- for non-generic lambdas, this can remain parser-side in the near term
+- by the time the translation-unit semantic pass runs, the lambda usually already has a concrete return type
+
+Recommendation:
+
+- keep parser-side deduction initially
+- semantic pass should consume the deduced type as canonical input and handle any later conversion normalization in the lambda body
+
+#### 4. Ordinary function `auto` return type
+
+Current state:
+
+- parser has `deduce_and_update_auto_return_type(...)` in `Parser_Expr_QualLookup.cpp`
+- codegen still has a fallback path in `CodeGen_Visitors_Namespace.cpp` that deduces from return expressions if `current_function_return_type_` is still `Type::Auto`
+
+Architectural fit:
+
+- with the current architecture, parser-side deduction is still useful because function signatures may be queried during later parsing
+- however, codegen should not remain the place that “finishes” the language rule
+
+Recommendation:
+
+- near term: keep parser-side function return deduction as the primary producer
+- semantic pass should validate/canonicalize the final function return type before lowering
+- remove the codegen fallback once the parser + semantic pass together guarantee that supported functions reach codegen with concrete return types
+
+Longer term:
+
+- full migration of function `auto` return deduction into semantic analysis is possible, but only after the parser no longer depends on the finalized return type to answer later semantic-ish queries
+
+#### 5. `decltype(auto)`
+
+Current state:
+
+- parser currently uses `Type::Auto` as a placeholder for `decltype(auto)` as well
+- this collapses two semantically different forms into one temporary representation
+
+Architectural fit:
+
+- `decltype(auto)` is more naturally a semantic-analysis feature than plain `auto`, because it depends on the final expression type **and value category**
+- it should not be treated as “just another auto case”
+
+Recommendation:
+
+- keep `decltype(auto)` as a later dedicated subphase
+- introduce explicit metadata distinguishing plain `auto` from `decltype(auto)` even if both temporarily use `Type::Auto`
+- resolve `decltype(auto)` only when the expression’s canonical type and value category are known
+
+#### Bottom-line fit
+
+The right split is:
+
+- **parser-adjacent for now**:
+	- ordinary `auto` variable deduction
+	- non-generic lambda `auto` return deduction
+	- primary function `auto` return deduction
+- **translation-unit semantic pass**:
+	- validation/canonicalization of parser-produced `auto` results
+	- initializer/return conversion semantics around those deduced types
+- **instantiation-time semantic hook**:
+	- generic lambda parameter normalization
+	- any generic-lambda return normalization that depends on deduced parameter types
+- **later dedicated semantic phase**:
+	- `decltype(auto)` cleanup
+
+## Phased implementation plan
+
+### Phase 1: establish the seam
+
+Goal:
+
+- introduce the semantic pass without changing behavior broadly
+
+Work:
+
+- add `SemanticAnalysis` files
+- add timing hook in `main.cpp`
+- add semantic-slot data structures and debug-print support
+- add lowering support in `AstToIr` for semantic annotations
+- keep the pass effectively no-op at first except for tracing / validation hooks
+
+Exit criteria:
+
+- clean build
+- pass is measurable
+- no test regressions
+
+### Phase 2: migrate the highest-value conversion contexts
+
+Goal:
+
+- move the most error-prone standard conversions out of codegen-local logic
+
+Work:
+
+- function-call arguments
+- return statements
+- builtin binary arithmetic / comparison operands
+- establish semantic-pass diagnostics ownership for these migrated contexts so codegen no longer reports them late
+
+Exit criteria:
+
+- delete corresponding ad-hoc conversion policy from:
+	- `CodeGen_Call_Direct.cpp`
+	- `CodeGen_Expr_Operators.cpp`
+	- `CodeGen_Visitors_Namespace.cpp`
+- add regression tests for each migrated context
+
+### Phase 3: initializer and reference-binding coverage
+
+Goal:
+
+- cover the remaining correctness-critical conversion contexts
+
+Work:
+
+- declaration initializers
+- member initialization
+- constructor-argument normalization
+- assignment
+- reference binding
+- temporary materialization
+- conditional-expression conversions
+- contextual `bool`
+- integrate semantic-orchestrated constant evaluation for the first must-have contexts (`array bounds`, `enumerators`, `case`, `if constexpr`, `noexcept(expr)`)
+
+Exit criteria:
+
+- no remaining policy-style `generateTypeConversion(...)` calls for these contexts
+
+### Phase 4: canonical type identity cleanup
+
+Goal:
+
+- stop using syntax-node heuristics where semantic canonical type identity is required
+
+Work:
+
+- add `TypeContext` / interned canonical type identity
+- add canonical type comparison helpers
+- reduce reliance on `TypeSpecifierNode::matches_signature(...)`
+- move overload/signature comparisons toward canonical semantic types
+- reconcile `SymbolTable::lookup_function(...)` and `OverloadResolution.h` responsibilities
+- begin constraint-aware overload viability plumbing
+
+Exit criteria:
+
+- signature equivalence and overload ranking depend on canonical type IDs, not size/type fallbacks
+
+### Phase 5: `auto` / generic lambda cleanup
+
+Goal:
+
+- remove transitional backend fallbacks and synthetic declaration hacks
+
+Work:
+
+- keep ordinary parser-side `auto` deduction where the parser still depends on it, but add semantic-pass validation/canonicalization around it
+- move generic lambda parameter normalization out of `CodeGen_Lambdas.cpp` into an instantiation-time semantic hook
+- remove synthetic lambda parameter declarations once that hook exists
+- remove `Type::Auto` runtime fallbacks in codegen
+- remove codegen-side fallback deduction of ordinary function `auto` return type
+- add distinct handling for `decltype(auto)` so it no longer piggybacks ambiguously on plain `Type::Auto`
+- extend the semantic layer to own constraint / requires diagnostics on instantiated generic code as support grows
+
+Exit criteria:
+
+- generic lambda bodies and signatures no longer depend on codegen-local synthetic declarations
+- `Type::Auto` no longer reaches backend arithmetic/lvalue lowering on supported paths
+- ordinary supported functions no longer depend on codegen to finalize `auto` return type
+- `decltype(auto)` has an explicit semantic-resolution path instead of reusing plain `auto` heuristics
+
+### Parallel rollout guidance
+
+This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
+
+#### Good parallel work
+
+These are relatively safe to do in parallel because they mainly add seams, storage, and observability:
+
+- `main.cpp` pass seam and timing hooks
+- `SemanticAnalysis.*` scaffolding with no-op traversal
+- packed semantic-slot layout and side-storage helpers
+- `CanonicalTypeId` / `TypeContext` interning infrastructure
+- debug-printing, counters, and performance instrumentation
+- tests and docs for expected semantic-pass behavior
+
+These tasks should still avoid unnecessary overlap in the exact same files, but they are much less likely to create semantic-policy conflicts.
+
+#### Bad parallel overlap
+
+These areas should not be edited independently by multiple streams at the same time, because they encode the actual C++20 language-policy decisions:
+
+- overload resolution ranking/viability
+- parser-side `auto` / lambda deduction paths
+- `SymbolTable` signature lookup behavior
+- function-call conversion policy in `CodeGen_Call_Direct.cpp`
+- arithmetic/comparison conversion policy in `CodeGen_Expr_Operators.cpp`
+- return-conversion policy in `CodeGen_Visitors_Namespace.cpp`
+- any shared logic that decides canonical type identity or constraint satisfaction
+
+If two streams change these areas concurrently, the likely failure mode is not just merge pain; it is semantic drift where ranking, rewriting, diagnostics, and lowering stop agreeing with each other.
+
+#### Practical coordination rule
+
+Recommended split:
+
+- run **Phase 1** and the infrastructure-heavy part of **Phase 2** in parallel with fleet work
+- serialize the policy-heavy part of **Phase 2** onward behind a clear owner or short-lived branch window
+
+In practice that means:
+
+- safe parallel target:
+	- semantic seam
+	- slot/interner infrastructure
+	- timing/metrics
+	- no-op validation hooks
+- coordinated/serialized target:
+	- overload viability
+	- conversion ranking
+	- parser deduction policy
+	- codegen policy removal in migrated contexts
+	- canonical signature/constraint behavior
+
+#### Operational safeguard
+
+If this is developed in parallel, keep the new semantic path behind a feature flag or tightly scoped rollout switch until a whole migrated context is owned end-to-end.
+
+That avoids the most dangerous transitional state: semantic analysis annotates one policy, while parser/codegen still enforce a different one for the same source construct.
+
+## Testing and validation plan
+
+### Existing behavior to re-verify
+
+- implicit argument conversions
+- return conversions
+- arithmetic promotions/conversions
+- enum conversions and enum identity
+- generic lambda tests already mentioned in repo docs
+- ordinary `auto` variable deduction
+- function `auto` return deduction
+- lambda `auto` return deduction
+- generic lambda parameter deduction
+- `decltype(auto)` once added to the semantic cleanup path
+
+### New tests to budget
+
+- contextual bool conversions
+- assignment conversion
+- initializer conversion
+- reference binding / temporary materialization
+- ambiguous / no-match overload diagnostics after canonical type comparison cleanup
+- `auto&` / `const auto&` / `auto&&` variable deduction
+- ordinary function `auto` return with multiple return paths
+- non-generic lambda `auto` return consistency
+- generic lambda parameter deduction preserving signedness / width / refs
+- `decltype(auto)` preserving reference and value category
+
+### Performance validation
+
+Measure at minimum:
+
+- parse time
+- semantic-analysis time
+- IR generation time
+- AST node count before and after semantic rewriting
+- number of expressions carrying non-empty semantic slots
+- number of structural semantic nodes allocated (should stay near zero in the first slice)
+
+Reject designs that cause translation-unit-wide AST cloning when only a small fraction of expressions need normalization.
+
+## Important design decisions to carry into implementation
+
+1. **Do build a semantic pass.**
+2. **Do not start with a full standalone semantic subsystem.**
+3. **Do not mutate the whole AST in place.**
+4. **Do reuse `ExpressionSubstitutor`-style selective cloning in the chunk arena.**
+5. **Do move codegen policy into semantic normalization incrementally.**
+6. **Do treat `auto`/generic-lambda cleanup as a later dedicated phase.**
+
+## Notes
+
+- The existing `docs/2026-03-12_IMPLICIT_CAST_SEMA_PLAN.md` is directionally good, but the implementation plan should explicitly recommend a smaller first milestone: semantic normalization over the existing parser/type system, not a broad parser/semantic split rewrite.
+- If the project later wants a fuller semantic layer, Phase 4 will provide the first stable foundation for that by introducing canonical type identity and reducing syntax-node semantic heuristics.
+
+## Expanded design appendix
+
+### A. Recommended ownership model for rewritten roots
+
+There are two practical ways to thread rewritten AST roots into the pipeline:
+
+#### Option 1: mutate parser-owned top-level roots
+
+- add `Parser::mutable_nodes()`
+- semantic pass rewrites `parser.ast_nodes_` entries directly
+- `main.cpp` keeps reading from `parser->get_nodes()`
+
+Pros:
+
+- smallest pipeline diff in `main.cpp`
+
+Cons:
+
+- increases coupling between `SemanticAnalysis` and `Parser`
+- encourages later semantic passes to reach into parser internals
+
+#### Option 2: semantic pass owns normalized roots
+
+- parser remains the owner of syntax AST
+- `SemanticAnalysis` produces `std::vector<ASTNode> normalized_roots_`
+- `main.cpp` iterates normalized roots instead of raw parser roots
+- `AstToIr` still receives `Parser&` for all existing parser services
+
+Pros:
+
+- cleaner separation between syntax and normalized AST
+- avoids adding mutable parser internals just for this phase
+- makes it easier later to compare raw vs normalized roots during debugging
+
+Cons:
+
+- one additional top-level root vector
+
+### Recommendation
+
+For the **annotation-first first slice**, prefer **Option 1**:
+
+- parser-owned roots stay in place
+- semantic pass mutates semantic slots in place
+- `main.cpp` can remain almost unchanged
+
+Revisit **Option 2** only once structural semantic rewrites become common enough that a distinct normalized-root view provides real value.
+
+### A1. Parser-inserted null-cast node vs empty semantic slot
+
+Your suggestion maps to two different implementation shapes:
+
+#### Option A: parser inserts a dedicated `NullImplicitCastNode` wrapper
+
+- parser wraps every expression in a semantic placeholder node
+- semantic pass later fills in cast kind / target type
+
+Why this is **not** the preferred first step:
+
+- it still adds an extra node layer to every expression
+- every AST walk pays an extra branch / variant alternative cost
+- the parser starts manufacturing semantic scaffolding into what should remain a source-faithful syntax tree
+- it increases memory footprint even if later “replacement” avoids a second allocation
+
+#### Option B: parser creates ordinary expression nodes with an empty semantic slot
+
+- no extra wrapper node
+- no extra tree depth
+- semantic pass later fills `implicit_cast = nullopt -> Some(...)`
+
+This is the better interpretation of the original doc’s performance argument.
+
+### Recommendation
+
+Adjust the plan to prefer **Option B**:
+
+- parser should initialize semantic slots to “empty / no cast”
+- semantic pass should fill those slots
+- structural semantic nodes should be reserved for semantics that cannot be encoded compactly
+
+### B. Semantic data model in more detail
+
+The first pass needs three levels of semantic data:
+
+#### 1. Canonical type identity
+
+This should answer:
+
+- what semantic type an expression has
+- whether two types are the same type for overload/signature purposes
+- what cv/ref/pointer/array/function metadata belongs to that type
+
+Recommended actual implementation shape:
+
+- use repo-friendly compact storage (`InlineVector`) inside the type descriptor
+- intern canonical types into a `TypeContext` and compare them by `CanonicalTypeId`
+- prefer normalizing from existing `TypeSpecifierNode` data instead of inventing a heavyweight separate type graph in phase 1
+
+Suggested real storage shape:
+
+```cpp
+enum class CanonicalTypeFlags : uint8_t {
+	None = 0,
+	IsPackExpansion = 1 << 0,
+	IsFunctionType = 1 << 1,
+};
+
+struct CanonicalTypeDesc {
+	Type base_type = Type::Invalid;
+	TypeIndex type_index{};
+	CVQualifier base_cv = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+	InlineVector<PointerLevel, 4> pointer_levels;
+	InlineVector<size_t, 4> array_dimensions;
+	CanonicalTypeFlags flags = CanonicalTypeFlags::None;
+	std::optional<FunctionSignature> function_signature;
+};
+```
+
+This is not just a memory optimization; it also gives:
+
+- O(1) canonical type equality via `type_id_a == type_id_b`
+- cheaper overload/signature comparisons
+- a stable compact type handle for semantic slots, cast tables, and diagnostics
+
+#### 2. Expression semantic result
+
+This is the value returned from expression rewriting and local semantic classification:
+
+```cpp
+enum class SemanticExprFlags : uint8_t {
+	None = 0,
+	IsDependent = 1 << 0,
+	IsConstantEvaluated = 1 << 1,
+	IsOverloadSet = 1 << 2,
+};
+
+struct SemanticExprInfo {
+	CanonicalTypeId type_id{};
+	ValueCategory value_category = ValueCategory::PRValue;
+	SemanticExprFlags flags = SemanticExprFlags::None;
+	CastInfoIndex cast_info_index{};
+};
+
+struct SemanticRewriteResult {
+	ASTNode node;
+	SemanticExprInfo info;
+};
+```
+
+#### 3. Conversion plan
+
+Current overload helpers mostly return rank. The semantic pass needs more than rank: it needs the **actual sequence of semantic operations** required.
+
+Suggested design:
+
+```cpp
+enum class ConversionPlanFlags : uint8_t {
+	None = 0,
+	IsValid = 1 << 0,
+	IsUserDefined = 1 << 1,
+	BindsReferenceDirectly = 1 << 2,
+	MaterializesTemporary = 1 << 3,
+};
+
+struct ConversionStep {
+	StandardConversionKind kind;
+	CanonicalTypeId target_type_id{};
+};
+
+struct ConversionPlan {
+	ConversionRank rank = ConversionRank::NoMatch;
+	ConversionPlanFlags flags = ConversionPlanFlags::None;
+	InlineVector<ConversionStep, 3> steps;
+	const FunctionDeclarationNode* conversion_function = nullptr;
+	const ConstructorDeclarationNode* converting_constructor = nullptr;
+};
+```
+
+Recommendation:
+
+- use typed flag enums for compact sets of orthogonal booleans
+- do not use bitmasks for mutually exclusive concepts such as `ValueCategory`, `ConversionContext`, or `StandardConversionKind`
+- prefer explicit mask helpers over C++ bitfields if deterministic layout and easy debugging matter
+
+### Recommendation
+
+Extend `OverloadResolution` with a helper like `buildConversionPlan(from, to)` rather than letting `SemanticAnalysis` reverse-engineer a sequence from `can_convert_type(...)`.
+
+That gives one canonical source for:
+
+- conversion ranking
+- ambiguity comparison
+- rewrite-time cast insertion
+
+### Constant evaluation as a semantic service
+
+This should be explicit in the plan, not treated as optional decoration.
+
+For C++20, semantic analysis must own or orchestrate evaluation in contexts that require constant expressions, including:
+
+- array bounds
+- enumerator initializers
+- case labels
+- `if constexpr`
+- `noexcept(expr)`
+- non-type template arguments
+- `consteval` / required-immediate contexts as support grows
+
+Codegen should not be the place that decides whether an expression is a valid constant expression. It should only consume:
+
+- the already-resolved type information
+- already-evaluated constant results where required
+
+Practical recommendation:
+
+- keep `ConstExpr::Evaluator` as the evaluator service
+- make `SemanticAnalysis` the orchestrator that invokes it in required semantic contexts
+- store compact handles/results in semantic metadata rather than forcing repeated ad-hoc re-evaluation in unrelated layers
+
+### Constraints and concepts
+
+The plan should explicitly reserve semantic ownership for:
+
+- `requires`-expression checking
+- constraint satisfaction after substitution
+- constraint-aware overload viability and tie-breaking
+- later subsumption rules as concepts support matures
+
+This likely lands after the first conversion-focused phases, but it belongs to semantic analysis, not parser recovery and not backend lowering.
+
+### Diagnostics ownership
+
+The plan should state this explicitly: semantic analysis should become the primary owner of source-language diagnostics for:
+
+- invalid implicit conversions
+- overload no-match / ambiguity
+- narrowing and invalid initialization forms
+- invalid constant-expression-required contexts
+- later constraint-satisfaction failures
+
+Parser diagnostics should stay focused on syntax and parse-time recovery.
+
+Codegen diagnostics should stay focused on lowering/backend invariants, not on discovering basic C++ type-law violations late.
+
+### C. Semantic context stack
+
+The pass should carry a small explicit context rather than relying on global state.
+
+Suggested fields:
+
+```cpp
+enum class ConversionContext : uint8_t {
+	None,
+	FunctionArgument,
+	Return,
+	Initialization,
+	Assignment,
+	Condition,
+	BinaryArithmetic,
+	Comparison,
+	Ternary,
+	ReferenceBinding
+};
+
+enum class UserDefinedConversionPolicy : uint8_t {
+	Disallow,
+	Allow,
+};
+
+enum class SemanticContextFlags : uint8_t {
+	None = 0,
+	InConstantEvaluatedContext = 1 << 0,
+	InsideTemplateDefinition = 1 << 1,
+	InsideInstantiatedTemplate = 1 << 2,
+};
+
+struct SemanticContext {
+	std::optional<CanonicalTypeId> expected_type_id;
+	std::optional<CanonicalTypeId> current_function_return_type_id;
+	ConversionContext conversion_context = ConversionContext::None;
+	SemanticContextFlags flags = SemanticContextFlags::None;
+	UserDefinedConversionPolicy user_defined_conversion_policy = UserDefinedConversionPolicy::Allow;
+};
+```
+
+This keeps the pass deterministic and makes it much easier to reason about when:
+
+- contextual `bool` applies
+- user-defined conversion should be considered
+- dependent expressions must be left untouched
+
+It is also the right place to thread:
+
+- constant-evaluation-required state
+- constraints-satisfaction context
+- whether diagnostics should be deferred or emitted immediately
+
+Type-safety recommendation:
+
+- `CanonicalTypeId`, `CastInfoIndex`, and similar handles should be non-arithmetic wrapper types
+- use `enum class` for semantic policy switches and state machines
+- avoid broad integer aliases that can silently mix unrelated IDs
+- keep conversions explicit at API boundaries
+
+### D. Detailed rewrite mechanics by node category
+
+The pass should use a strict rule for every node kind:
+
+#### Pure leaf nodes
+
+Examples:
+
+- `IdentifierNode`
+- `NumericLiteralNode`
+- `BoolLiteralNode`
+- `StringLiteralNode`
+
+Rule:
+
+- usually return original `ASTNode`
+- compute semantic info only
+- allocate nothing unless dependent/template substitution forces a replacement
+
+#### Unary / binary / ternary expression nodes
+
+Rule:
+
+1. rewrite children
+2. compute builtin/operator-overload semantic path
+3. if children unchanged structurally and only annotation updates are needed, keep the original node and fill semantic slots
+4. otherwise allocate a replacement expression node
+5. preserve any semantic overload metadata already attached to the old node
+
+Note:
+
+`BinaryOperatorNode` already has `copy_semantic_operator_resolution_from(...)`, which should be reused when cloning rewritten nodes.
+
+#### Call nodes
+
+Rule:
+
+1. keep overload selection logic authoritative
+2. after a callee is selected, rewrite each argument under parameter expectations
+3. annotate each converted argument explicitly
+4. rebuild the call only if at least one argument changed structurally
+
+#### Statement nodes
+
+Rule:
+
+- rewrite child expressions/statements recursively
+- because many statement classes have getters but no setters, rebuild the statement node when any child changes
+
+This applies especially to:
+
+- `ReturnStatementNode`
+- `IfStatementNode`
+- `ForStatementNode`
+- `WhileStatementNode`
+- `DoWhileStatementNode`
+
+#### Block / function / namespace containers
+
+Rule:
+
+- rewrite children in order
+- preserve original order and AST identity for unchanged children
+- allocate a new container only when at least one child differs
+
+### E. Root traversal strategy
+
+A practical first traversal order:
+
+1. top-level declarations
+2. function definitions
+3. statement trees inside functions
+4. expressions inside statements
+
+Do **not** attempt a generic “rewrite any `ASTNode` of any kind everywhere” entry point first. The current AST is heterogeneous enough that a declaration/statement/expression split will be easier to keep correct.
+
+### F. Interaction with templates and dependent code
+
+This is one of the most important scope boundaries.
+
+#### Recommended rule
+
+Do semantic normalization only when the subtree is semantically concrete enough.
+
+That means:
+
+- normalize ordinary non-template code after parse
+- normalize instantiated template bodies after substitution/instantiation
+- do not force full semantic normalization of dependent template bodies at definition time
+
+#### Why
+
+The parser currently performs template instantiation and delayed body handling during parsing. A pass that insists on fully resolving dependent expressions too early would either:
+
+- duplicate parser/template logic, or
+- reject code that should stay dependent until instantiation
+
+#### Practical implementation shape
+
+Use two entry points:
+
+```cpp
+std::vector<ASTNode> runTranslationUnitSemanticAnalysis(...);
+ASTNode runInstantiatedBodySemanticAnalysis(ASTNode body, ...);
+```
+
+The second entry point is especially relevant for:
+
+- generic lambda instantiated bodies
+- template member function bodies
+- deferred default arguments after template substitution
+
+### G. Interaction with `auto` and generic lambdas
+
+The plan should distinguish three cases:
+
+#### 1. Ordinary `auto` variable declarations
+
+These are the easiest migration target.
+
+Recommended migration:
+
+- parser may still recognize `Type::Auto`
+- semantic pass finalizes the concrete `TypeSpecifierNode`
+- declaration rewriting replaces the `type_node` only when deduction succeeded
+
+#### 2. Generic lambda parameters
+
+These are harder because the concrete types are tied to call-site deduction and instantiated bodies.
+
+Recommended migration:
+
+- keep parser and `LambdaInfo` deduction ownership initially
+- add an instantiation-time semantic normalization hook that rewrites the instantiated body using the deduced parameter `TypeSpecifierNode`s
+- only then remove codegen synthetic declaration fallbacks
+
+#### 3. `auto` return types / `decltype(auto)`
+
+These should be explicitly deferred until after the pass seam is working and ordinary `auto` variables are stabilized.
+
+### H. What to move out of codegen first vs later
+
+The plan should be more explicit here.
+
+#### Move first
+
+- standard numeric promotions/conversions in builtin binary expressions
+- standard conversions in call arguments after overload selection
+- standard return conversions
+- contextual conversion to `bool` in control-flow statements
+
+These are high-value and structurally straightforward, and they fit the annotation/slot model well.
+
+#### Move later
+
+- user-defined conversion materialization
+- converting constructors in all initialization forms
+- reference binding edge cases
+- temporary lifetime extension
+- full canonical signature comparison
+- full constraint-aware overload viability/subsumption
+- richer `noexcept` and exception-spec semantics
+- constant-expression-required contexts beyond the initial must-have set
+
+These have more interaction with overload resolution, lifetimes, and template instantiation state.
+
+### Recommendation
+
+Phase 2 should preferably handle **standard conversions first**, while still allowing existing user-defined conversion lowering to remain in place until the standard-conversion path is proven.
+
+### I. File-by-file implementation sequence
+
+This is the most concrete change order that fits the current codebase:
+
+#### Step 1: infrastructure
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+- `src/main.cpp`
+
+Work:
+
+- add pass construction and timing
+- keep pass no-op
+- keep `main.cpp` consuming parser-owned roots for the first annotation-only slice
+
+#### Step 2: AST node support
+
+- `src/AstNodeTypes_Expr.h`
+- `src/AstNodeTypes.cpp`
+- `src/AstToIr.h`
+- `src/CodeGen_Expressions.cpp` or the relevant expression-dispatch file
+- `src/CodeGen_Expr_Conversions.cpp`
+
+Work:
+
+- add semantic-slot data structures
+- teach debug printing
+- teach expression dispatch and lowering from annotations
+
+#### Step 3: conversion-plan support
+
+- `src/OverloadResolution.h`
+
+Work:
+
+- add `ConversionPlan` helpers
+- add `TypeContext` / type interning support
+- reuse existing rank rules
+- keep behavior matching existing overload ranking first
+
+#### Step 3b: semantic constant-evaluation integration
+
+- `src/ConstExprEvaluator*.cpp`
+- `src/SemanticAnalysis.cpp`
+
+Work:
+
+- make semantic analysis invoke constexpr evaluation in required contexts
+- centralize “must be a constant expression here” checks in semantic analysis
+- stop spreading those checks ad hoc across parser/codegen paths
+
+#### Step 4: migrate function-call arguments
+
+- `src/SemanticAnalysis.cpp`
+- `src/CodeGen_Call_Direct.cpp`
+
+Work:
+
+- semantic pass annotates argument nodes with conversion metadata
+- codegen stops injecting standard conversions at this callsite
+
+#### Step 5: migrate return conversions
+
+- `src/SemanticAnalysis.cpp`
+- `src/CodeGen_Visitors_Namespace.cpp`
+
+#### Step 6: migrate builtin binary arithmetic/comparison conversions
+
+- `src/SemanticAnalysis.cpp`
+- `src/CodeGen_Expr_Operators.cpp`
+
+#### Step 7: migrate control-flow conditions
+
+- `src/SemanticAnalysis.cpp`
+- statement node rebuild helpers as needed
+
+#### Step 8: initializers and references
+
+- `src/SemanticAnalysis.cpp`
+- declaration/codegen sites currently doing local binding or conversion policy
+
+#### Step 9: canonical signature cleanup
+
+- `src/AstNodeTypes_DeclNodes.h`
+- `src/SymbolTable.h`
+- `src/OverloadResolution.h`
+
+#### Step 9b: diagnostics ownership cleanup
+
+- `src/SemanticAnalysis.cpp`
+- current type-mismatch / overload-error sites in parser/codegen
+
+Work:
+
+- make semantic analysis the primary owner of:
+	- type-conversion diagnostics
+	- overload viability / ambiguity diagnostics
+	- narrowing / invalid-initialization diagnostics
+	- constant-expression-required diagnostics
+
+Goal:
+
+- reduce late codegen errors for semantic/type-law problems
+- keep source locations and semantic context attached to the right diagnostic layer
+
+#### Step 10: `auto` / generic lambda cleanup
+
+- `src/Parser_Statements.cpp`
+- `src/CodeGen_Expr_Primitives.cpp`
+- `src/CodeGen_Lambdas.cpp`
+- template/generic-lambda instantiation paths
+
+### J. Additional helper APIs likely worth adding
+
+To make the pass practical without brittle code, the plan should budget a few utility helpers:
+
+#### `ASTNode` identity helper
+
+Something like:
+
+```cpp
+struct ASTNodeIdentity {
+	const void* pointer = nullptr;
+	std::type_index type = typeid(void);
+};
+```
+
+Purpose:
+
+- memoization inside a single semantic pass
+- node-identity comparisons for “did anything change?”
+- optional side-table caches later
+
+This may require adding a small helper on `ASTNode` instead of repeatedly poking at `std::any`.
+
+#### Statement / expression rebuild helpers
+
+Examples:
+
+- `cloneExpressionWithNewChildren(...)`
+- `cloneStatementWithNewChildren(...)`
+- `attachImplicitCast(ASTNode expr, const SemanticExprInfo& from, CanonicalTypeId to, StandardConversionKind kind)`
+
+These are not just convenience helpers; they reduce copy-paste bugs and keep semantic rewriting consistent. In the annotation-first design, “attach” should be the common path and “wrap” should be rare.
+
+#### Packed slot / side-storage helpers
+
+Examples:
+
+- `CanonicalTypeId internCanonicalType(const TypeSpecifierNode&)`
+- `uint16_t allocateImplicitCastInfo(CanonicalTypeId from, CanonicalTypeId to, StandardConversionKind kind, ValueCategory after)`
+- `SemanticSlot& getSemanticSlot(ASTNode node)`
+
+These helpers are important because they enforce the memory-layout rule: AST nodes keep tiny handles, while rich semantic payloads live in interning tables or chunked side storage.
+
+### K. Performance guardrails and concrete budgets
+
+The plan should define success conditions, not just “measure it.”
+
+Recommended guardrails:
+
+- semantic-pass time should be reported separately in perf logs
+- unchanged translation units should not show large AST-node growth
+- structural-node count should stay small relative to conversion-site count
+- no phase should require a second full AST walk just to lower already-annotated casts
+
+Recommended first measurements:
+
+- total root count
+- rewritten root count
+- total new AST node allocations performed by `SemanticAnalysis`
+- count of expressions carrying non-empty semantic slots
+- count of structurally-created semantic nodes (should be near zero in the first slice)
+- size of major expression node types before/after slot addition
+- type-interner hit rate / unique canonical-type count
+- pass time as a percentage of total frontend time
+
+### L. Major risks and mitigations
+
+#### Risk 1: semantic pass duplicates parser type logic
+
+Mitigation:
+
+- canonicalize from existing parser-produced `TypeSpecifierNode`
+- do not invent a second type-construction system in phase 1
+
+#### Risk 2: dependent template code gets normalized too early
+
+Mitigation:
+
+- allow dependent expressions/types to pass through unchanged
+- run a second semantic entry point on instantiated bodies only
+
+#### Risk 3: overload ranking and cast insertion diverge
+
+Mitigation:
+
+- share a `ConversionPlan` source between `OverloadResolution` and `SemanticAnalysis`
+
+#### Risk 3b: semantic slots bloat the AST
+
+Mitigation:
+
+- keep slot representation handle-based and tightly packed
+- intern canonical types and store `CanonicalTypeId`, not full type descriptors
+- fall back to side tables if per-node slot growth is too costly
+
+#### Risk 3c: constant evaluation stays fragmented
+
+Mitigation:
+
+- make semantic analysis the orchestrator for required constant-evaluation contexts early
+- use one evaluator service rather than duplicating constant-folding decisions across layers
+
+#### Risk 3d: weakly typed semantic handles leak implicit conversions across the codebase
+
+Mitigation:
+
+- use explicit wrapper types for semantic IDs and indexes
+- use typed flag enums or policy enums instead of raw booleans where meaning matters
+- keep arithmetic on handles impossible unless a helper intentionally exposes it
+
+#### Risk 4: excessive AST churn hurts compile time
+
+Mitigation:
+
+- structural sharing by default
+- append-only arena allocation
+- per-node “changed?” checks before cloning
+
+#### Risk 5: codegen and semantic pass both apply conversions during migration
+
+Mitigation:
+
+- phase each migrated context fully
+- once a context is rewritten semantically, remove its codegen-local standard-conversion policy instead of leaving duplicate fallback paths
+
+#### Risk 6: diagnostics remain split across parser / sema / codegen
+
+Mitigation:
+
+- explicitly migrate type-law and overload-law diagnostics into semantic analysis
+- keep backend errors focused on lowering/backend invariants rather than source-language semantic validity
+
+### M. Explicit anti-goals
+
+These should be written down so the project does not drift into a larger rewrite accidentally.
+
+Do **not** make the first semantic pass:
+
+- a full replacement for parser-time type formation
+- a full replacement for template instantiation
+- a global semantic graph builder for every declaration in the program
+- a second monolithic AST with duplicated ownership of every node
+- a broad “add setters everywhere” AST mutability project
+
+### N. Document shape recommendation
+
+The document is long, but the problem is also genuinely cross-cutting. So the right move is not to throw detail away; it is to separate:
+
+- a short decision-oriented summary near the top
+- the detailed design and migration notes below as a technical appendix
+
+Recommendation:
+
+- keep this detailed plan as the engineering reference
+- trim repetition where the same idea is restated
+- if needed later, add a short companion overview doc rather than deleting the useful detail here
+
+### O. Final recommendation
+
+The strongest long-term design remains: **add a semantic layer**.
+
+But the strongest *practical* plan for FlashCpp is:
+
+1. create a real post-parse semantic seam
+2. normalize only the contexts where the standard most clearly requires semantic context
+3. use empty semantic slots / annotations as the default representation, not universal wrapper nodes
+4. unify conversion planning with overload ranking
+5. only after that, expand into canonical type identity and `auto` / generic-lambda cleanup
+
+That gives the project a better compiler architecture without sacrificing the “high speed compiler” goal that motivated your concern.

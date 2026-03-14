@@ -176,7 +176,7 @@ struct TempVar
 // - Proper reference binding
 // ============================================================================
 
-enum class ValueCategory {
+enum class ValueCategory : uint8_t {
 	// lvalue - has identity and cannot be moved from
 	// Examples: variables, array elements, struct members, dereferenced pointers
 	LValue,
