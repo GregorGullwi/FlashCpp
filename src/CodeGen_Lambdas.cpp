@@ -1,5 +1,16 @@
 #include "CodeGen.h"
 
+namespace {
+// Build a replacement declaration node for an instantiated generic-lambda
+// parameter. The original syntax AST still stores `auto`, but body identifier
+// lookup should see the concrete deduced type while preserving the original
+// identifier token/name.
+ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_type, const Token& identifier_token) {
+	ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
+	return ASTNode::emplace_node<DeclarationNode>(deduced_type_node, identifier_token);
+}
+}
+
 	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
 		LambdaInfo info;
 		info.lambda_id = lambda.lambda_id();
@@ -690,13 +701,25 @@
 		// Set lambda context for captured variable access
 		pushLambdaContext(lambda_info);
 
-		// Add lambda parameters to symbol table as function parameters (operator() context)
-		// This ensures they're recognized as local parameters, not external symbols
+		// Add lambda parameters to symbol table as function parameters (operator() context).
+		// For instantiated generic lambdas, register synthetic declarations carrying the
+		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
+		// concrete parameter type instead of the original unresolved `auto`.
+		size_t body_param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				ASTNode symbol_param_node = param_node;
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(body_param_idx);
+					if (deduced.has_value()) {
+						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
+					}
+				}
+				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 			}
+			body_param_idx++;
 		}
 
 		// Add captured variables to symbol table
@@ -847,13 +870,25 @@
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
-		// Add lambda parameters to symbol table as function parameters (__invoke context)
-		// This ensures they're recognized as local parameters, not external symbols
+		// Add lambda parameters to symbol table as function parameters (__invoke context).
+		// For instantiated generic lambdas, register synthetic declarations carrying the
+		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
+		// concrete parameter type instead of the original unresolved `auto`.
+		size_t invoke_param_idx = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
+				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				ASTNode symbol_param_node = param_node;
+				if (param_type.type() == Type::Auto) {
+					auto deduced = lambda_info.getDeducedType(invoke_param_idx);
+					if (deduced.has_value()) {
+						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
+					}
+				}
+				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 			}
+			invoke_param_idx++;
 		}
 
 		// Add captured variables to symbol table

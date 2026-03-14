@@ -42,12 +42,13 @@ compiler currently calls `f(int)` instead of `f(Color)`.  Per C++20
 standard conversions (see above) — enum identity is not preserved through the
 overload resolution ranking step.  Test: `test_enum_overload_resolution_ret0.cpp`.
 
-## Generic lambda `auto` parameters lose narrow integer identity in codegen
+## Generic lambda `auto` parameter normalization still lives in codegen
 
-Generic lambdas still lower unresolved local `auto` parameters through a
-transitional `int`/32-bit fallback in identifier codegen. This fixes broken
-signed comparisons like `[](auto x) { return x < 0; }(-1)`, but it does not yet
-preserve narrower deduced integer types such as `signed char` all the way into
-the lambda body. A proper fix likely needs the actual deduced parameter type to
-be threaded into lambda body codegen rather than recovered ad hoc at identifier
-load time.
+Generic lambda bodies now receive synthetic parameter declarations carrying the
+deduced `TypeSpecifierNode`, which fixes narrow signed integer regressions such
+as `signed char` in `test_generic_lambda_auto_narrow_signed_char_ret0.cpp`.
+However, the overall normalization still happens in codegen instead of a
+dedicated semantic pass. The long-term architectural fix is still to move this
+kind of deduced-parameter and implicit-conversion normalization into a
+post-parse semantic analysis stage rather than keep growing codegen-local
+fallbacks and synthetic declarations.

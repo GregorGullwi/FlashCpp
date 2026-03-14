@@ -87,6 +87,9 @@ home for other semantic normalizations that codegen should not own:
 - array/function decay where required
 - derived-to-base adjustments for object arguments and return paths
 - enum promotion / underlying-type normalization where the standard requires it
+- generic lambda parameter normalization after deduction / instantiation so the
+  lambda body sees concrete parameter types instead of late codegen-time
+  fallbacks or synthetic declarations
 - diagnostics for narrowing or disallowed implicit conversions
 - a single place to classify value category (`lvalue` / `xvalue` / `prvalue`) after wrapping
 
@@ -141,6 +144,11 @@ Extend the pass to:
 - reference binding
 - temporary materialization
 - conditional expressions
+- generic lambda body normalization:
+	- replace instantiated `auto` parameter declarations with their deduced types
+	- preserve cv/ref qualifiers and `TypeIndex` for struct/enum cases
+	- ensure all identifier/body lookups see the normalized declaration, not the
+	  original unresolved syntax-only parameter node
 
 ### Phase D: remove codegen-local semantic rules
 
@@ -171,6 +179,12 @@ called once after parsing succeeds and before `AstToIr` starts.
 That gives a clean seam without rewriting the parser. Early slices can process
 only a subset of expression kinds and leave the rest untouched.
 
+For generic lambdas specifically, the pass should run after call-site deduction
+metadata is available for an instantiation but before AstToIr lowers the chosen
+instantiated body. The pass can then normalize the parameter declarations
+themselves instead of forcing codegen to synthesize replacement declarations in
+the function symbol table.
+
 ## Why not “just do it inline in AstToIr”?
 
 That is better than parser-inline logic, but still inferior to a separate pass.
@@ -187,6 +201,8 @@ If a full pass feels too large for the first patch, a reasonable stepping stone 
 1. add `ImplicitCastNode`
 2. add a tiny semantic walker that only rewrites call arguments / returns / binary ops
 3. lower that node in AstToIr
+4. add a tiny generic-lambda normalization hook that rewrites instantiated
+   parameter declarations from deduced metadata before body lowering
 
 That still preserves the right architecture and avoids parser entanglement.
 

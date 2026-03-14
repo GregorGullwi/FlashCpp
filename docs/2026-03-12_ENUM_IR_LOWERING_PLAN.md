@@ -328,6 +328,16 @@ type traits) continue to use `Type` from the AST — they never touch `TypedValu
 - generic-lambda identifier lowering now falls back from unresolved local
   `Type::Auto` + `size_bits == 0` to `int`/32-bit, matching the existing
   transitional mangling/reference fallback and avoiding broken signed compares
+- instantiated generic lambdas now register synthetic parameter declarations in
+  their body symbol tables using the deduced `TypeSpecifierNode`, so identifier
+  loads inside the body preserve narrow signed integer behavior instead of
+  re-reading the original unresolved `auto` declaration
+
+**Architecture note:** this codegen-side synthetic-declaration fix is the
+smallest correct local repair for the current PR, but it is not the desired end
+state. `auto` deduction and implicit-conversion normalization should still move
+into a dedicated post-parse semantic pass instead of continuing to accrete in
+parser/codegen boundary code.
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
 

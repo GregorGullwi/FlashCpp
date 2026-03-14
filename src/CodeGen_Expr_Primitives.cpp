@@ -1181,8 +1181,6 @@
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 				Type result_type = type_node.type();
 				TypeIndex result_type_index = type_node.type_index();
-				Type result_type = type_node.type();
-				TypeIndex result_type_index = type_node.type_index();
 				{
 					int probe_size = static_cast<int>(type_node.size_in_bits());
 					if (applyTransitionalAutoRuntimeFallback(result_type, probe_size)) {
