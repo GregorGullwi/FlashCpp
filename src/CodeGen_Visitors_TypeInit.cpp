@@ -1479,7 +1479,7 @@ const Token& token)
 			member.type,
 			element_size_bits,
 			base_object,
-			TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
+			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1505,12 +1505,12 @@ const Token& token)
 			emitRecursiveZeroFill(*gTypeInfo[member.type_index.value].struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			TypedValue zero_value{member.type, SizeInBits{element_size_bits}, 0ULL};
+			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
 				member.type,
 				element_size_bits,
 				base_object,
-				TypedValue{Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)},
+				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,

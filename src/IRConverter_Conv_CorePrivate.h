@@ -413,7 +413,7 @@
 		
 		// Create context with correct result type
 		ArithmeticOperationContext ctx = {
-			.result_value = TypedValue{result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result},
+			.result_value = makeTypedValue(result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result),
 			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX,
 			.operand_type = operand_type,
