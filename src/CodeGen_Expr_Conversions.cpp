@@ -414,6 +414,7 @@
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
 		op.result.type = Type::FunctionPointer;
+		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
@@ -533,6 +534,7 @@
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp load_op;
 					load_op.result.type = type_node->type();
+					load_op.result.ir_type = toIrType(type_node->type());
 					load_op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					load_op.result.value = result_temp;
 					load_op.global_name = binding_info.store_name;

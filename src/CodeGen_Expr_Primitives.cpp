@@ -30,13 +30,13 @@
 				return generateMemberAccessIr(expr, context);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.type == Type::Void ? generateSizeofIr(expr) : const_result;
+				return const_result.effectiveIrType() == IrType::Void ? generateSizeofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, SizeofPackNode>) {
 				FLASH_LOG(Codegen, Error, "sizeof... operator found during code generation - should have been substituted during template instantiation");
 				return ExprResult{};
 			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				auto const_result = tryEvaluateAsConstExpr(expr);
-				return const_result.type == Type::Void ? generateAlignofIr(expr) : const_result;
+				return const_result.effectiveIrType() == IrType::Void ? generateAlignofIr(expr) : const_result;
 			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				return generateNoexceptExprIr(expr);
 			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
@@ -145,13 +145,13 @@
 
 	ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode) {
 		ExprResult object_result = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
-		if (object_result.type == Type::Void && !object_result.size_in_bits.is_set()) {
+		if (object_result.effectiveIrType() == IrType::Void && !object_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
 		
 		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
-		if (ptr_result.type == Type::Void && !ptr_result.size_in_bits.is_set()) {
+		if (ptr_result.effectiveIrType() == IrType::Void && !ptr_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
@@ -448,6 +448,7 @@
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
 			op.result.type = info.type;
+			op.result.ir_type = toIrType(info.type);
 			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
@@ -489,6 +490,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
+						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
@@ -514,6 +516,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = type_n.type();
+						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
 						op.global_name = effective_name;
@@ -801,6 +804,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
+						op.result.ir_type = toIrType(static_member->type);
 						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
@@ -866,6 +870,7 @@
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
@@ -1059,6 +1064,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				
@@ -1222,6 +1228,7 @@
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
+			op.result.ir_type = IrType::FunctionPointer;
 			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;
 			op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
@@ -1474,6 +1481,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
+						op.result.ir_type = toIrType(static_member->type);
 						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
@@ -1535,6 +1543,7 @@
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
 				op.result.type = type_node.type();
+				op.result.ir_type = toIrType(type_node.type());
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
 				// Use fully qualified name (ns::value) to match the global variable symbol
@@ -1573,6 +1582,7 @@
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
 			op.result.type = type_node.type();
+			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
 			// Use fully qualified name (ns::value) to match the global variable symbol

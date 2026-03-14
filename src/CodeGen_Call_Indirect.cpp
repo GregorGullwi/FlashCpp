@@ -414,6 +414,7 @@
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
 									member_load.result.type = Type::FunctionPointer;
+									member_load.result.ir_type = IrType::FunctionPointer;
 									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;
 									member_load.member_name = func_name_handle;

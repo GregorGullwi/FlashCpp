@@ -201,6 +201,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
 	TypedValue result;
 	result.type = Type::Struct;
+	result.ir_type = IrType::Struct;
 	result.size_in_bits = SizeInBits{static_cast<int>(actual_size_bits)};
 	result.value = IrValue(temp);
 	result.type_index = type_idx;
@@ -209,6 +210,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node) {
 	value.type = type_node.type();
+	value.ir_type = toIrType(type_node.type());
 	if (type_node.pointer_depth() > 0
 		|| type_node.is_reference()
 		|| type_node.is_rvalue_reference()
@@ -1636,6 +1638,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// For member functions, the this pointer is passed by name or temp var
 							TypedValue lhs_arg;
 							lhs_arg.type = lhsType;
+							lhs_arg.ir_type = toIrType(lhsType);
 							lhs_arg.size_in_bits = SizeInBits{lhsSize};
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
 							if (std::holds_alternative<StringHandle>(lhs_value)) {
@@ -2080,8 +2083,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& opcode) {
 			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
 				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.ir_type = IrType::Integer;
 				bin_op.lhs.size_in_bits = SizeInBits{64};
 				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.ir_type = IrType::Integer;
 				bin_op.rhs.size_in_bits = SizeInBits{64};
 
 				// For ordered comparisons, ensure we use unsigned comparison for pointers
@@ -3811,6 +3816,7 @@ std::string_view op) {
 		// Create the binary operation
 		BinaryOp bin_op;
 		bin_op.lhs.type = lvalue_type;
+		bin_op.lhs.ir_type = toIrType(lvalue_type);
 		bin_op.lhs.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
@@ -3883,6 +3889,7 @@ std::string_view op) {
 		// Create the binary operation
 		BinaryOp bin_op;
 		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = current_value_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
@@ -3893,6 +3900,7 @@ std::string_view op) {
 		// Finally, store the result back to the array element
 		TypedValue result_tv;
 		result_tv.type = lhs_operands.type;
+		result_tv.ir_type = lhs_operands.effectiveIrType();
 		result_tv.size_in_bits = lhs_operands.size_in_bits;
 		result_tv.value = result_temp;
 
@@ -3924,6 +3932,7 @@ std::string_view op) {
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
 		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = lhs_temp;
 		bin_op.rhs = toTypedValue(rhs_operands);
@@ -4003,6 +4012,7 @@ std::string_view op) {
 	// Create the binary operation (size_in_bits is already SizeInBits — direct assignment)
 	BinaryOp bin_op;
 	bin_op.lhs.type = lhs_operands.type;
+	bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 	bin_op.lhs.value = current_value_temp;
 	bin_op.rhs = toTypedValue(rhs_operands);
@@ -4013,6 +4023,7 @@ std::string_view op) {
 	// Finally, store the result back to the lvalue
 	TypedValue result_tv;
 	result_tv.type = lhs_operands.type;
+	result_tv.ir_type = lhs_operands.effectiveIrType();
 	result_tv.size_in_bits = lhs_operands.size_in_bits;
 	result_tv.value = result_temp;
 	CVReferenceQualifier member_ref_qualifier = member_is_rvalue_reference

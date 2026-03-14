@@ -1044,6 +1044,7 @@
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.ir_type = IrType::Struct;
 							load_copy_this.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_size_bits)};
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
@@ -1072,6 +1073,7 @@
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
 							load_this.result.type = Type::Void;
+							load_this.result.ir_type = IrType::Void;
 							load_this.result.size_in_bits = SizeInBits{64};
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");

@@ -224,10 +224,8 @@
 						// For __range_begin_ and similar, which are int64 pointers
 						// Also check for struct types that returned as pointers (reference returns)
 						// And function pointers which are always 64-bit addresses
-						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} && 
-						                          (init.type == Type::Long || init.type == Type::Int || 
-						                           init.type == Type::UnsignedLong || init.type == Type::LongLong ||
-						                           init.type == Type::Struct || init.type == Type::FunctionPointer));  // Struct references and function references return 64-bit pointers
+						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} &&
+						                          !isIrFloatingPointType(init.effectiveIrType()));  // Struct references and function references return 64-bit pointers
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value
@@ -1668,7 +1666,7 @@
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && !param.pointer_depth.is_pointer() && !param.is_reference();
+				bool is_float_param = isIrFloatingPointType(toIrType(param.type)) && !param.pointer_depth.is_pointer() && !param.is_reference();
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -1717,7 +1715,7 @@
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				bool is_passed_by_reference = param.is_reference() ||
-				                              (!is_two_reg_struct && param.type == Type::Struct && param.size_in_bits.value > 64);
+				                              (!is_two_reg_struct && isIrStructType(toIrType(param.type)) && param.size_in_bits.value > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 				}

@@ -1328,7 +1328,7 @@
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
 	bool shouldPassStructByAddress(const TypedValue& arg, bool is_two_register_struct = false) const {
-		if (arg.type != Type::Struct || arg.is_reference()) return false;
+		if (!isIrStructType(arg.effectiveIrType()) || arg.is_reference()) return false;
 		// SysV AMD64 two-register structs (9-16 bytes) must pass their bytes in
 		// registers, NOT a pointer.
 		if (is_two_register_struct) return false;
