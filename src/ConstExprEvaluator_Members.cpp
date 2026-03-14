@@ -303,7 +303,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 		if (object_expr.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr_node)) {
-				return &*lambda_expression;
+				return lambda_expression;
 			}
 		}
 		return nullptr;
@@ -2427,7 +2427,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 
 		const ExpressionNode& element_expr = element.as<ExpressionNode>();
 		if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&element_expr)) {
-			return &*constructor_call;
+			return constructor_call;
 		}
 		return nullptr;
 	};
@@ -2552,7 +2552,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	if (array_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
 		if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
-			array_identifier = &*identifier_ptr;
+			array_identifier = identifier_ptr;
 		}
 	} else if (array_expr.is<IdentifierNode>()) {
 		array_identifier = &array_expr.as<IdentifierNode>();
@@ -2702,7 +2702,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			if (object_expr.is<ExpressionNode>()) {
 				const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 				if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr_node)) {
-					return &*lambda_expression;
+					return lambda_expression;
 				}
 			}
 			return nullptr;

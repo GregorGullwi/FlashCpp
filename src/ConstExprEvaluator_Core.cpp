@@ -1252,7 +1252,7 @@ const LambdaExpressionNode* Evaluator::extract_lambda_from_initializer(const std
 	if (initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = initializer->as<ExpressionNode>();
 		if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
-			return &*lambda_expression;
+			return lambda_expression;
 		}
 	}
 	
@@ -2788,7 +2788,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				} else if (init_expr.is<ExpressionNode>()) {
 					const ExpressionNode& expr = init_expr.as<ExpressionNode>();
 					if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
-						ctor_call = &*constructor_call;
+						ctor_call = constructor_call;
 					}
 				}
 

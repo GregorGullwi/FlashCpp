@@ -23,7 +23,7 @@
 			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&object_expr)) {
 				// Lambda wrapped in ExpressionNode
-				lambda_ptr = &*lambda_expression;
+				lambda_ptr = lambda_expression;
 			}
 		}
 

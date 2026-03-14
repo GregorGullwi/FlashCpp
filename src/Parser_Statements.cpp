@@ -932,7 +932,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				} else if (operand_node.is<ExpressionNode>()) {
 					const ExpressionNode& op_expr = operand_node.as<ExpressionNode>();
 					if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&op_expr)) {
-						lambda_ptr = &*lambda_expression;
+						lambda_ptr = lambda_expression;
 					}
 				}
 				if (!lambda_ptr || !lambda_ptr->captures().empty()) {

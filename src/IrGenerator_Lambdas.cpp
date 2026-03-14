@@ -1241,7 +1241,7 @@ const LambdaExpressionNode* AstToIr::extractLambdaFromInitializer(const ASTNode&
 	if (init.is<ExpressionNode>()) {
 		const ExpressionNode& expr = init.as<ExpressionNode>();
 		if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
-			return &*lambda_expression;
+			return lambda_expression;
 		}
 	}
 	return nullptr;
