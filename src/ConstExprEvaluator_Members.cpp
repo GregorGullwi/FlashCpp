@@ -2184,9 +2184,10 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 	base_identifier = tryGetIdentifier(base_obj_expr);
 	if (!base_identifier) {
-		return EvalResult::error(base_obj_expr.is<ExpressionNode>()
-			? "Complex base expression in nested member access not supported"
-			: "Invalid base expression in nested member access");
+		if (base_obj_expr.is<ExpressionNode>()) {
+			return EvalResult::error("Complex base expression in nested member access not supported");
+		}
+		return EvalResult::error("Invalid base expression in nested member access");
 	}
 	base_var_name = base_identifier->name();
 
@@ -3428,7 +3429,7 @@ EvalResult Evaluator::evaluate_member_array_subscript(
 		object_identifier = identifier;
 		var_name = identifier->name();
 	} else {
-		return EvalResult::error("Unsupported object expression in array member access");
+		return EvalResult::error("Invalid object expression in array member access");
 	}
 
 	auto evaluate_array_member_element_from_initializer =
