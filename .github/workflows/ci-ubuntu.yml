@@ -24,7 +24,9 @@ jobs:
 
       - name: Build FlashCpp with Make
         run: |
-          make main CXX=clang++
+          make sharded -j$(nproc) CXX=clang++
+          mkdir -p x64/Debug
+          ln -sf ../Sharded/FlashCpp x64/Debug/FlashCpp
 
       - name: Run All Tests
         run: |
