@@ -119,7 +119,7 @@ public:
 	size_t size() const { return types_.size(); }
 
 private:
-	std::vector<CanonicalTypeDesc> types_;  // Index 0 is unused (invalid)
+	std::vector<CanonicalTypeDesc> types_;  // 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel
 };
 
 // --- Semantic expression info (returned from expression normalization) ---
