@@ -574,8 +574,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		};
 		
 		// Handle SizeofPackNode
-		if (std::holds_alternative<SizeofPackNode>(expr)) {
-			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+		if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
+			const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 			if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 				substituted_initializer = make_pack_size_literal(*pack_size);
 			}

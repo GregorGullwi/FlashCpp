@@ -197,14 +197,14 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 		}
-		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-			const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr);
+		if (const auto* binary_operator = std::get_if<BinaryOperatorNode>(&expr)) {
+			const BinaryOperatorNode& bin_op = *binary_operator;
 			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
 			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
 			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
 			return emplace_node<ExpressionNode>(substituted_binop);
-		} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-			const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(expr);
+		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
+			const UnaryOperatorNode& unary_op = *unary_operator;
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
 		} else if (std::holds_alternative<FunctionCallNode>(expr)) {
@@ -217,9 +217,9 @@ ASTNode Parser::substituteTemplateParameters(
 				bool expanded = false;
 				if (arg.is<ExpressionNode>()) {
 					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (std::holds_alternative<PackExpansionExprNode>(arg_expr)) {
+					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
 						expanded = expandPackExpansionArgs(
-							std::get<PackExpansionExprNode>(arg_expr), template_params, template_args, substituted_args);
+							*pack_expansion_expr, template_params, template_args, substituted_args);
 					}
 				}
 				if (!expanded) {
@@ -301,8 +301,8 @@ ASTNode Parser::substituteTemplateParameters(
 				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()),
 				func_call, template_params, template_args);
 			return new_func_call;
-		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
+		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
+			const MemberAccessNode& member_access = *member_access_ptr;
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
 			return emplace_node<ExpressionNode>(MemberAccessNode(substituted_object, member_access.member_token()));
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
@@ -313,8 +313,8 @@ ASTNode Parser::substituteTemplateParameters(
 				substituted_args.push_back(substituteTemplateParameters(constructor_call.arguments()[i], template_params, template_args));
 			}
 			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
-		} else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-			const ArraySubscriptNode& array_sub = std::get<ArraySubscriptNode>(expr);
+		} else if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+			const ArraySubscriptNode& array_sub = *array_subscript;
 			ASTNode substituted_array = substituteTemplateParameters(array_sub.array_expr(), template_params, template_args);
 			ASTNode substituted_index = substituteTemplateParameters(array_sub.index_expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ArraySubscriptNode(substituted_array, substituted_index, array_sub.bracket_token()));
@@ -753,24 +753,24 @@ ASTNode Parser::substituteTemplateParameters(
 				                  Type::Int, TypeQualifier::None, 32));
 			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
 			return result;
-		} else if (std::holds_alternative<StaticCastNode>(expr)) {
+		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
-			const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+			const StaticCastNode& cast_node = *static_cast_node;
 			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(StaticCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
-		} else if (std::holds_alternative<DynamicCastNode>(expr)) {
-			const DynamicCastNode& cast_node = std::get<DynamicCastNode>(expr);
+		} else if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
+			const DynamicCastNode& cast_node = *dynamic_cast_node;
 			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(DynamicCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
-		} else if (std::holds_alternative<ConstCastNode>(expr)) {
-			const ConstCastNode& cast_node = std::get<ConstCastNode>(expr);
+		} else if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+			const ConstCastNode& cast_node = *const_cast_node;
 			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ConstCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
-		} else if (std::holds_alternative<ReinterpretCastNode>(expr)) {
-			const ReinterpretCastNode& cast_node = std::get<ReinterpretCastNode>(expr);
+		} else if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
+			const ReinterpretCastNode& cast_node = *reinterpret_cast_node;
 			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
@@ -844,9 +844,9 @@ ASTNode Parser::substituteTemplateParameters(
 			bool expanded = false;
 			if (arg.is<ExpressionNode>()) {
 				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-				if (std::holds_alternative<PackExpansionExprNode>(arg_expr)) {
+				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
 					expanded = expandPackExpansionArgs(
-						std::get<PackExpansionExprNode>(arg_expr), template_params, template_args, substituted_args);
+						*pack_expansion_expr, template_params, template_args, substituted_args);
 				}
 			}
 			if (!expanded) {
@@ -1291,16 +1291,16 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return new_call;
 		}
 
-		if (std::holds_alternative<BinaryOperatorNode>(expr_variant)) {
-			const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);
+		if (const auto* binary_operator = std::get_if<BinaryOperatorNode>(&expr_variant)) {
+			const BinaryOperatorNode& binop = *binary_operator;
 			ASTNode new_lhs = replacePackIdentifierInExpr(binop.get_lhs(), pack_name, element_index);
 			ASTNode new_rhs = replacePackIdentifierInExpr(binop.get_rhs(), pack_name, element_index);
 			BinaryOperatorNode rebound_binop(binop.get_token(), new_lhs, new_rhs);
 			return emplace_node<ExpressionNode>(rebound_binop);
 		}
 
-		if (std::holds_alternative<UnaryOperatorNode>(expr_variant)) {
-			const UnaryOperatorNode& unop = std::get<UnaryOperatorNode>(expr_variant);
+		if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr_variant)) {
+			const UnaryOperatorNode& unop = *unary_operator;
 			ASTNode new_operand = replacePackIdentifierInExpr(unop.get_operand(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(unop.get_token(), new_operand, unop.is_prefix()));
 		}
@@ -1314,46 +1314,46 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(ConstructorCallNode(ctor.type_node(), std::move(new_args), ctor.called_from()));
 		}
 
-		if (std::holds_alternative<StaticCastNode>(expr_variant)) {
-			const StaticCastNode& cast = std::get<StaticCastNode>(expr_variant);
+		if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr_variant)) {
+			const StaticCastNode& cast = *static_cast_node;
 			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(StaticCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
-		if (std::holds_alternative<DynamicCastNode>(expr_variant)) {
-			const DynamicCastNode& cast = std::get<DynamicCastNode>(expr_variant);
+		if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr_variant)) {
+			const DynamicCastNode& cast = *dynamic_cast_node;
 			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(DynamicCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
-		if (std::holds_alternative<ConstCastNode>(expr_variant)) {
-			const ConstCastNode& cast = std::get<ConstCastNode>(expr_variant);
+		if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr_variant)) {
+			const ConstCastNode& cast = *const_cast_node;
 			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(ConstCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
-		if (std::holds_alternative<ReinterpretCastNode>(expr_variant)) {
-			const ReinterpretCastNode& cast = std::get<ReinterpretCastNode>(expr_variant);
+		if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr_variant)) {
+			const ReinterpretCastNode& cast = *reinterpret_cast_node;
 			ASTNode new_expr = replacePackIdentifierInExpr(cast.expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(cast.target_type(), new_expr, cast.cast_token()));
 		}
 
-		if (std::holds_alternative<TernaryOperatorNode>(expr_variant)) {
-			const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr_variant);
+		if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr_variant)) {
+			const TernaryOperatorNode& ternary = *ternary_operator;
 			ASTNode new_cond = replacePackIdentifierInExpr(ternary.condition(), pack_name, element_index);
 			ASTNode new_true = replacePackIdentifierInExpr(ternary.true_expr(), pack_name, element_index);
 			ASTNode new_false = replacePackIdentifierInExpr(ternary.false_expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(TernaryOperatorNode(new_cond, new_true, new_false, ternary.get_token()));
 		}
 
-		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
-			const MemberAccessNode& ma = std::get<MemberAccessNode>(expr_variant);
+		if (const auto* member_access = std::get_if<MemberAccessNode>(&expr_variant)) {
+			const MemberAccessNode& ma = *member_access;
 			ASTNode new_object = replacePackIdentifierInExpr(ma.object(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(MemberAccessNode(new_object, ma.member_token(), ma.is_arrow()));
 		}
 
-		if (std::holds_alternative<ArraySubscriptNode>(expr_variant)) {
-			const ArraySubscriptNode& sub = std::get<ArraySubscriptNode>(expr_variant);
+		if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_variant)) {
+			const ArraySubscriptNode& sub = *array_subscript;
 			ASTNode new_array = replacePackIdentifierInExpr(sub.array_expr(), pack_name, element_index);
 			ASTNode new_index = replacePackIdentifierInExpr(sub.index_expr(), pack_name, element_index);
 			return emplace_node<ExpressionNode>(ArraySubscriptNode(new_array, new_index, sub.bracket_token()));

@@ -931,8 +931,8 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 					lambda_ptr = &operand_node.as<LambdaExpressionNode>();
 				} else if (operand_node.is<ExpressionNode>()) {
 					const ExpressionNode& op_expr = operand_node.as<ExpressionNode>();
-					if (std::holds_alternative<LambdaExpressionNode>(op_expr)) {
-						lambda_ptr = &std::get<LambdaExpressionNode>(op_expr);
+					if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&op_expr)) {
+						lambda_ptr = lambda_expression;
 					}
 				}
 				if (!lambda_ptr || !lambda_ptr->captures().empty()) {
@@ -946,8 +946,8 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			if (initializer->is<ExpressionNode>()) {
 				const ExpressionNode& expr = initializer->as<ExpressionNode>();
 				FLASH_LOG(Parser, Debug, "Initializer holds UnaryOperatorNode=", std::holds_alternative<UnaryOperatorNode>(expr));
-				if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-					FLASH_LOG(Parser, Debug, "Unary op token=", std::get<UnaryOperatorNode>(expr).op());
+				if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
+					FLASH_LOG(Parser, Debug, "Unary op token=", unary_operator->op());
 				}
 			}
 

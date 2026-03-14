@@ -431,20 +431,20 @@
 				return false;
 			}
 
-			if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-				out_value = std::get<unsigned long long>(eval_result.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+				out_value = *ull_val;
 				return true;
 			}
-			if (std::holds_alternative<long long>(eval_result.value)) {
-				out_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+			if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+				out_value = static_cast<unsigned long long>(*ll_val);
 				return true;
 			}
-			if (std::holds_alternative<bool>(eval_result.value)) {
-				out_value = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+			if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+				out_value = *b_val ? 1ULL : 0ULL;
 				return true;
 			}
-			if (std::holds_alternative<double>(eval_result.value)) {
-				double d = std::get<double>(eval_result.value);
+			if (const auto* d_val = std::get_if<double>(&eval_result.value)) {
+				double d = *d_val;
 				out_value = static_cast<unsigned long long>(d);
 				return true;
 			}
@@ -648,8 +648,8 @@
 															// Try identifier lookup in param_values first
 															if (mem_init.initializer_expr.is<ExpressionNode>()) {
 																const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
-																if (std::holds_alternative<IdentifierNode>(init_e)) {
-																	auto it = param_values.find(std::get<IdentifierNode>(init_e).name());
+																if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&init_e)) {
+																	auto it = param_values.find(identifier_ptr->name());
 																	if (it != param_values.end()) member_val = it->second;
 																}
 															}
@@ -698,11 +698,11 @@
 						// Convert to raw bytes
 						{
 							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-								value = std::get<unsigned long long>(init_operands.value);
+							if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
+								value = *ull_val_ptr;
 								FLASH_LOG(Codegen, Debug, "  Extracted uint64 value: ", value);
-							} else if (std::holds_alternative<double>(init_operands.value)) {
-								double d = std::get<double>(init_operands.value);
+							} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+								double d = *d_val;
 								std::memcpy(&value, &d, sizeof(double));
 								FLASH_LOG(Codegen, Debug, "  Extracted double value: ", d);
 							}
@@ -719,10 +719,10 @@
 						ExprResult init_operands = visitExpressionNode(init_expr);
 						{
 							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-								value = std::get<unsigned long long>(init_operands.value);
-							} else if (std::holds_alternative<double>(init_operands.value)) {
-								double d = std::get<double>(init_operands.value);
+							if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+								value = *ull_val;
+							} else if (const auto* d_val_ptr = std::get_if<double>(&init_operands.value)) {
+								double d = *d_val_ptr;
 								std::memcpy(&value, &d, sizeof(double));
 							}
 							size_t byte_count = op.size_in_bits.value / 8;
@@ -750,10 +750,10 @@
 							ExprResult init_operands = visitExpressionNode(init_expr);
 							{
 								unsigned long long value = 0;
-								if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-									value = std::get<unsigned long long>(init_operands.value);
-								} else if (std::holds_alternative<double>(init_operands.value)) {
-									double d = std::get<double>(init_operands.value);
+								if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+									value = *ull_val;
+								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+									double d = *d_val;
 									std::memcpy(&value, &d, sizeof(double));
 								}
 								size_t byte_count = op.size_in_bits.value / 8;
@@ -939,19 +939,18 @@
 							static_member_ptr->initializer->is<ExpressionNode>()) {
 								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
 
-								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-									const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
-									inferred_value = bool_lit.value() ? 1ULL : 0ULL;
+								if (const auto* bool_lit = std::get_if<BoolLiteralNode>(&init_expr)) {
+									inferred_value = bool_lit->value() ? 1ULL : 0ULL;
 									found_base_value = true;
-									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit.value());
+									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit->value());
 								} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 									ExprResult init_operands = visitExpressionNode(init_expr);
-									if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-										inferred_value = std::get<unsigned long long>(init_operands.value);
+									if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										inferred_value = *ull_val;
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found numeric literal value: ", inferred_value);
-									} else if (std::holds_alternative<double>(init_operands.value)) {
-										double d = std::get<double>(init_operands.value);
+									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+										double d = *d_val;
 										inferred_value = static_cast<unsigned long long>(d);
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
@@ -1109,12 +1108,12 @@
 							ConstExpr::EvaluationContext ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 							if (eval_result.success()) {
-								if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-									val = std::get<unsigned long long>(eval_result.value);
-								} else if (std::holds_alternative<long long>(eval_result.value)) {
-									val = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
-								} else if (std::holds_alternative<bool>(eval_result.value)) {
-									val = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+								if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+									val = *ull_val;
+								} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+									val = static_cast<unsigned long long>(*ll_val);
+								} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+									val = *b_val ? 1ULL : 0ULL;
 								}
 							}
 							size_t width = *member.bitfield_width;
@@ -1157,14 +1156,14 @@
 							// Verify we have at least 3 elements before accessing
 
 							IrValue member_value;
-							if (std::holds_alternative<TempVar>(init_operands.value)) {
-								member_value = std::get<TempVar>(init_operands.value);
-							} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-								member_value = std::get<unsigned long long>(init_operands.value);
-							} else if (std::holds_alternative<double>(init_operands.value)) {
-								member_value = std::get<double>(init_operands.value);
-							} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
-								member_value = std::get<StringHandle>(init_operands.value);
+							if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+								member_value = *temp_var;
+							} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+								member_value = *ull_val;
+							} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+								member_value = *d_val;
+							} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+								member_value = *string;
 							} else {
 								member_value = 0ULL;  // fallback
 							}
@@ -1596,14 +1595,14 @@ const Token& token)
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
-					if (std::holds_alternative<TempVar>(init_operands.value)) {
-						member_value = std::get<TempVar>(init_operands.value);
-					} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-						member_value = std::get<unsigned long long>(init_operands.value);
-					} else if (std::holds_alternative<double>(init_operands.value)) {
-						member_value = std::get<double>(init_operands.value);
-					} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
-						member_value = std::get<StringHandle>(init_operands.value);
+					if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+						member_value = *temp_var;
+					} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+						member_value = *ull_val;
+					} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+						member_value = *d_val;
+					} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+						member_value = *string;
 					}
 
 				MemberStoreOp member_store;
@@ -1633,14 +1632,14 @@ const Token& token)
 			// Direct expression initializer
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
-				if (std::holds_alternative<TempVar>(init_operands.value)) {
-					member_value = std::get<TempVar>(init_operands.value);
-				} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-					member_value = std::get<unsigned long long>(init_operands.value);
-				} else if (std::holds_alternative<double>(init_operands.value)) {
-					member_value = std::get<double>(init_operands.value);
-				} else if (std::holds_alternative<StringHandle>(init_operands.value)) {
-					member_value = std::get<StringHandle>(init_operands.value);
+				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+					member_value = *temp_var;
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+					member_value = *ull_val;
+				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+					member_value = *d_val;
+				} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+					member_value = *string;
 				}
 
 			MemberStoreOp member_store;

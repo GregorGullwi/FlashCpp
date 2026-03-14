@@ -675,8 +675,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				std::string_view namespace_name;
 				if (result->is<ExpressionNode>()) {
 					const ExpressionNode& expr = result->as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						namespace_name = std::get<IdentifierNode>(expr).name();
+					if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+						namespace_name = identifier_ptr->name();
 					} else {
 						return ParseResult::error("Invalid left operand for '::'" , current_token_);
 					}
@@ -698,8 +698,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			std::string_view namespace_name;
 			if (result->is<ExpressionNode>()) {
 				const ExpressionNode& expr = result->as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr)) {
-					namespace_name = std::get<IdentifierNode>(expr).name();
+				if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+					namespace_name = identifier_ptr->name();
 				} else {
 					return ParseResult::error("Invalid left operand for '::'", current_token_);
 				}

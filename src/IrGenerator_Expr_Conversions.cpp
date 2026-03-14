@@ -49,14 +49,14 @@
 			}
 
 			// For same-domain literal conversions, keep the value immediate.
-			if (std::holds_alternative<unsigned long long>(operands.value)) {
-				unsigned long long value = std::get<unsigned long long>(operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
+				unsigned long long value = *ull_val;
 				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{value});
-			} else if (std::holds_alternative<int>(operands.value)) {
-				int value = std::get<int>(operands.value);
+			} else if (const auto* int_val = std::get_if<int>(&operands.value)) {
+				int value = *int_val;
 				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{static_cast<unsigned long long>(value)});
-			} else if (std::holds_alternative<double>(operands.value)) {
-				double value = std::get<double>(operands.value);
+			} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
+				double value = *d_val;
 				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{value});
 			}
 		}
@@ -369,12 +369,12 @@
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
-			if (std::holds_alternative<unsigned long long>(index_operands.value)) {
-				arr_idx.index = std::get<unsigned long long>(index_operands.value);
-			} else if (std::holds_alternative<TempVar>(index_operands.value)) {
-				arr_idx.index = std::get<TempVar>(index_operands.value);
-			} else if (std::holds_alternative<StringHandle>(index_operands.value)) {
-				arr_idx.index = std::get<StringHandle>(index_operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&index_operands.value)) {
+				arr_idx.index = *ull_val;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&index_operands.value)) {
+				arr_idx.index = *temp_var;
+			} else if (const auto* string = std::get_if<StringHandle>(&index_operands.value)) {
+				arr_idx.index = *string;
 			} else {
 				return std::nullopt;
 			}
@@ -692,10 +692,10 @@
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
-									if (std::holds_alternative<StringHandle>(array_operands.value)) {
-										elem_addr_payload.array = std::get<StringHandle>(array_operands.value);
-									} else if (std::holds_alternative<TempVar>(array_operands.value)) {
-										elem_addr_payload.array = std::get<TempVar>(array_operands.value);
+									if (const auto* string = std::get_if<StringHandle>(&array_operands.value)) {
+										elem_addr_payload.array = *string;
+									} else if (const auto* temp_var = std::get_if<TempVar>(&array_operands.value)) {
+										elem_addr_payload.array = *temp_var;
 									}
 
 									// Set index as TypedValue
@@ -951,10 +951,10 @@
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)
-				if (std::holds_alternative<StringHandle>(array_operands.value)) {
-					payload.array = std::get<StringHandle>(array_operands.value);
-				} else if (std::holds_alternative<TempVar>(array_operands.value)) {
-					payload.array = std::get<TempVar>(array_operands.value);
+				if (const auto* string = std::get_if<StringHandle>(&array_operands.value)) {
+					payload.array = *string;
+				} else if (const auto* temp_var = std::get_if<TempVar>(&array_operands.value)) {
+					payload.array = *temp_var;
 				}
 
 				// Set index as TypedValue
@@ -1126,8 +1126,8 @@
 		// rather than generating a load that would lose the variable identity
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--" || unaryOperatorNode.op() == "&") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+			if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&operandExpr)) {
+				const IdentifierNode& identifier = *identifier_ptr;
 				operandHandledAsIdentifier = tryBuildIdentifierOperand(identifier, operandIrOperands);
 			}
 		}
@@ -1139,8 +1139,8 @@
 			const LambdaExpressionNode* lambda_ptr = nullptr;
 			const StructTypeInfo* lambda_struct_info = nullptr;
 
-			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
-				lambda_ptr = &std::get<LambdaExpressionNode>(operandExpr);
+			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&operandExpr)) {
+				lambda_ptr = lambda_expression;
 			} else if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				auto symbol = lookupSymbol(ident.nameHandle());
@@ -1238,8 +1238,8 @@
 			size_t struct_type_index = operandIrOperands.type_index.value;
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(op_expr)) {
-					auto sym = lookupSymbol(std::get<IdentifierNode>(op_expr).nameHandle());
+				if (const auto* identifier = std::get_if<IdentifierNode>(&op_expr)) {
+					auto sym = lookupSymbol(identifier->nameHandle());
 					if (sym.has_value() && sym->is<DeclarationNode>()) {
 						struct_type_index = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>().type_index().value;
 					}
@@ -1330,10 +1330,10 @@
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 
 			// Get the operand value - it's at index 2 in operandIrOperands
-			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-				op.operand.value = std::get<StringHandle>(operandIrOperands.value);
-			} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
-				op.operand.value = std::get<TempVar>(operandIrOperands.value);
+			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+				op.operand.value = *string;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+				op.operand.value = *temp_var;
 			} else {
 				throw InternalError("AddressOf operand must be StringHandle or TempVar");
 			}
@@ -1391,10 +1391,10 @@
 
 				// Extract the pointer base (StringHandle or TempVar)
 				std::variant<StringHandle, TempVar> base;
-				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-					base = std::get<StringHandle>(operandIrOperands.value);
-				} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
-					base = std::get<TempVar>(operandIrOperands.value);
+				if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+					base = *string;
+				} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&operandIrOperands.value)) {
+					base = *temp_var_ptr;
 				} else {
 					// Fall back to old behavior if we can't extract base
 					// This can happen with complex expressions that don't have a simple base
@@ -1407,12 +1407,12 @@
 				// The reference init code reads the TempVar's stack value; without this
 				// assignment the slot would be uninitialized.
 				IrValue rhs_value;
-				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-					rhs_value = std::get<StringHandle>(operandIrOperands.value);
-				} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
-					rhs_value = std::get<TempVar>(operandIrOperands.value);
-				} else if (std::holds_alternative<unsigned long long>(operandIrOperands.value)) {
-					rhs_value = std::get<unsigned long long>(operandIrOperands.value);
+				if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+					rhs_value = *string;
+				} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+					rhs_value = *temp_var;
+				} else if (const auto* ull_val = std::get_if<unsigned long long>(&operandIrOperands.value)) {
+					rhs_value = *ull_val;
 				} else {
 					rhs_value = 0ULL;
 				}
@@ -1498,10 +1498,10 @@
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};
 
 			// Get the pointer value - it's at index 2 in operandIrOperands
-			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-				op.pointer.value = std::get<StringHandle>(operandIrOperands.value);
-			} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
-				op.pointer.value = std::get<TempVar>(operandIrOperands.value);
+			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+				op.pointer.value = *string;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
+				op.pointer.value = *temp_var;
 			} else {
 				throw InternalError("Dereference pointer must be StringHandle or TempVar");
 			}
@@ -1512,10 +1512,10 @@
 			// *ptr is an lvalue - it designates the dereferenced object
 			// Extract StringHandle or TempVar from pointer.value (IrValue)
 			std::variant<StringHandle, TempVar> base;
-			if (std::holds_alternative<StringHandle>(op.pointer.value)) {
-				base = std::get<StringHandle>(op.pointer.value);
-			} else if (std::holds_alternative<TempVar>(op.pointer.value)) {
-				base = std::get<TempVar>(op.pointer.value);
+			if (const auto* string = std::get_if<StringHandle>(&op.pointer.value)) {
+				base = *string;
+			} else if (const auto* temp_var = std::get_if<TempVar>(&op.pointer.value)) {
+				base = *temp_var;
 			}
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
@@ -1777,8 +1777,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			const UnaryOperatorNode& deref_expr = std::get<UnaryOperatorNode>(operandExpr);
 			if (deref_expr.op() == "*" && deref_expr.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& inner_expr = deref_expr.get_operand().as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(inner_expr)) {
-					tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(inner_expr), 1);
+				if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&inner_expr)) {
+					tryApplyPointerInfoFromIdentifier(*identifier_ptr, 1);
 				}
 			}
 		}
@@ -1852,8 +1852,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		GlobalStaticBindingInfo gsi;
 		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-				gsi = resolveGlobalOrStaticBinding(std::get<IdentifierNode>(operandExpr));
+			if (const auto* identifier = std::get_if<IdentifierNode>(&operandExpr)) {
+				gsi = resolveGlobalOrStaticBinding(*identifier);
 			}
 		}
 
@@ -1958,10 +1958,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return true;
 	}
 
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unop = std::get<UnaryOperatorNode>(expr);
-		if (unop.get_operand().is<ExpressionNode>()) {
-			return isExpressionNoexcept(unop.get_operand().as<ExpressionNode>());
+	if (const auto* unop = std::get_if<UnaryOperatorNode>(&expr)) {
+		if (unop->get_operand().is<ExpressionNode>()) {
+			return isExpressionNoexcept(unop->get_operand().as<ExpressionNode>());
 		}
 		return true;
 	}
@@ -2003,9 +2002,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	}
 
 	// Member function calls: check if method is declared noexcept
-	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		const FunctionDeclarationNode& func_decl = member_call.function_declaration();
+	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
+		const FunctionDeclarationNode& func_decl = member_call->function_declaration();
 		return isFunctionDeclNoexcept(func_decl);
 	}
 
@@ -2017,10 +2015,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	}
 
 	// Array subscript: noexcept if index expression is noexcept
-	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-		const auto& subscript = std::get<ArraySubscriptNode>(expr);
-		if (subscript.index_expr().is<ExpressionNode>()) {
-			return isExpressionNoexcept(subscript.index_expr().as<ExpressionNode>());
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		if (subscript->index_expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(subscript->index_expr().as<ExpressionNode>());
 		}
 		return true;
 	}
@@ -2050,10 +2047,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	}
 
 	// Cast expressions: check the operand
-	if (std::holds_alternative<StaticCastNode>(expr)) {
-		const auto& cast = std::get<StaticCastNode>(expr);
-		if (cast.expr().is<ExpressionNode>()) {
-			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+		if (cast->expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast->expr().as<ExpressionNode>());
 		}
 		return true;
 	}
@@ -2061,17 +2057,15 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// dynamic_cast can throw std::bad_cast
 		return false;
 	}
-	if (std::holds_alternative<ConstCastNode>(expr)) {
-		const auto& cast = std::get<ConstCastNode>(expr);
-		if (cast.expr().is<ExpressionNode>()) {
-			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		if (cast->expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast->expr().as<ExpressionNode>());
 		}
 		return true;
 	}
-	if (std::holds_alternative<ReinterpretCastNode>(expr)) {
-		const auto& cast = std::get<ReinterpretCastNode>(expr);
-		if (cast.expr().is<ExpressionNode>()) {
-			return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		if (cast->expr().is<ExpressionNode>()) {
+			return isExpressionNoexcept(cast->expr().as<ExpressionNode>());
 		}
 		return true;
 	}

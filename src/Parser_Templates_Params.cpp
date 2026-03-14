@@ -620,12 +620,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				const auto& val = lit.value();
 				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
-				if (std::holds_alternative<unsigned long long>(val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
+				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
-				} else if (std::holds_alternative<double>(val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<double>(val)), literal_type);
+				} else if (const auto* d_val = std::get_if<double>(&val)) {
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*d_val), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else {
@@ -991,12 +991,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						bool finished_parsing = false;  // Track if we consumed '>' and should break
 						std::string_view param_name_to_check;
 						
-						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-							param_name_to_check = StringTable::getStringView(tparam_ref.param_name());
-						} else if (std::holds_alternative<IdentifierNode>(expr)) {
-							const auto& id = std::get<IdentifierNode>(expr);
-							param_name_to_check = id.name();
+						if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+							param_name_to_check = StringTable::getStringView(tparam_ref->param_name());
+						} else if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
+							param_name_to_check = id->name();
 						}
 						
 						if (!param_name_to_check.empty()) {

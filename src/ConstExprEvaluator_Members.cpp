@@ -302,8 +302,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 		}
 		if (object_expr.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-			if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
-				return &std::get<LambdaExpressionNode>(expr_node);
+			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr_node)) {
+				return lambda_expression;
 			}
 		}
 		return nullptr;
@@ -842,8 +842,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 
-	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context, &bindings);
+	if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
+		return materialize_lambda_value(*lambda_expression, context, &bindings);
 	}
 	
 	// Check if it's an identifier that matches a parameter
@@ -895,8 +895,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				//   2. this->member access:  this->x = ...
 				std::string_view var_name;
 					bool assign_to_member_binding = false;
-				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
-					var_name = std::get<IdentifierNode>(lhs_expr).name();
+				if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&lhs_expr)) {
+					var_name = identifier_ptr->name();
 				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 					const auto& ma = std::get<MemberAccessNode>(lhs_expr);
 					const ASTNode& obj = ma.object();
@@ -1038,9 +1038,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	}
 	
 	// For function calls (for recursion)
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		return evaluate_function_call_with_outer_bindings(func_call, bindings, context, &bindings);
+	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
+		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, &bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
@@ -1082,8 +1081,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 
-	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
-		return materialize_lambda_value(std::get<LambdaExpressionNode>(expr), context, &bindings);
+	if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr)) {
+		return materialize_lambda_value(*lambda_expression, context, &bindings);
 	}
 	
 	// Check if it's an identifier that matches a parameter
@@ -1126,11 +1125,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	}
 	
 	// For unary operators
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unary_op = std::get<UnaryOperatorNode>(expr);
-		auto operand_result = recursive_eval(unary_op.get_operand(), bindings, context);
+	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
+		auto operand_result = recursive_eval(unary_op->get_operand(), bindings, context);
 		if (!operand_result.success()) return operand_result;
-		return apply_unary_op(operand_result, unary_op.op());
+		return apply_unary_op(operand_result, unary_op->op());
 	}
 	
 	// For ternary operators
@@ -1148,9 +1146,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	}
 	
 	// For function calls (for recursion)
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		return evaluate_function_call_with_outer_bindings(func_call, bindings, context, mutable_bindings);
+	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
+		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, mutable_bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
@@ -1808,9 +1805,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// Check if this is a nested member access (e.g., obj.inner.value)
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-		if (std::holds_alternative<MemberAccessNode>(expr_node)) {
+		if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr_node)) {
 			// Nested member access - first get the intermediate struct initializer
-			const MemberAccessNode& inner_access = std::get<MemberAccessNode>(expr_node);
+			const MemberAccessNode& inner_access = *member_access_ptr;
 			return evaluate_nested_member_access(inner_access, member_name, context);
 		}
 	}
@@ -1828,13 +1825,13 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		if (object_expr.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 			// Check for ArraySubscriptNode
-			if (std::holds_alternative<ArraySubscriptNode>(expr_node)) {
+			if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_node)) {
 				// Array subscript on struct - evaluate array element then access member
-				return evaluate_array_subscript_member_access(std::get<ArraySubscriptNode>(expr_node), member_name, context);
+				return evaluate_array_subscript_member_access(*array_subscript, member_name, context);
 			}
 			// Check for FunctionCallNode - evaluate the return type and access static member
-			if (std::holds_alternative<FunctionCallNode>(expr_node)) {
-				const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr_node);
+			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
+				const FunctionCallNode& func_call = *function_call;
 				return evaluate_function_call_member_access(func_call, member_name, context);
 			}
 		}
@@ -2429,8 +2426,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		}
 
 		const ExpressionNode& element_expr = element.as<ExpressionNode>();
-		if (std::holds_alternative<ConstructorCallNode>(element_expr)) {
-			return &std::get<ConstructorCallNode>(element_expr);
+		if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&element_expr)) {
+			return constructor_call;
 		}
 		return nullptr;
 	};
@@ -2554,8 +2551,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 	const IdentifierNode* array_identifier = nullptr;
 	if (array_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			array_identifier = &std::get<IdentifierNode>(expr);
+		if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+			array_identifier = identifier_ptr;
 		}
 	} else if (array_expr.is<IdentifierNode>()) {
 		array_identifier = &array_expr.as<IdentifierNode>();
@@ -2704,8 +2701,8 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			}
 			if (object_expr.is<ExpressionNode>()) {
 				const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-				if (std::holds_alternative<LambdaExpressionNode>(expr_node)) {
-					return &std::get<LambdaExpressionNode>(expr_node);
+				if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&expr_node)) {
+					return lambda_expression;
 				}
 			}
 			return nullptr;
@@ -3399,11 +3396,11 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 	// Check if it's a member access (e.g., obj.data[0])
 	if (array_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
-		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			return evaluate_member_array_subscript(std::get<MemberAccessNode>(expr), static_cast<size_t>(index), context);
+		if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
+			return evaluate_member_array_subscript(*member_access_ptr, static_cast<size_t>(index), context);
 		}
-		if (std::holds_alternative<IdentifierNode>(expr)) {
-			return evaluate_variable_array_subscript(std::get<IdentifierNode>(expr), static_cast<size_t>(index), context);
+		if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+			return evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
 		}
 	}
 	if (array_expr.is<IdentifierNode>()) {

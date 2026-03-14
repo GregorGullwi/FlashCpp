@@ -400,8 +400,8 @@
 
 			// Extract IrValue from operands.value
 			IrValue return_value;
-			if (std::holds_alternative<unsigned long long>(operands.value)) {
-				return_value = std::get<unsigned long long>(operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
+				return_value = *ull_val;
 			} else if (std::holds_alternative<TempVar>(operands.value)) {
 				TempVar return_temp = std::get<TempVar>(operands.value);
 				return_value = return_temp;
@@ -416,10 +416,10 @@
 
 				// Mark the temp as a return value for potential NRVO analysis
 				markTempVarAsReturnValue(return_temp);
-			} else if (std::holds_alternative<StringHandle>(operands.value)) {
-				return_value = std::get<StringHandle>(operands.value);
-			} else if (std::holds_alternative<double>(operands.value)) {
-				return_value = std::get<double>(operands.value);
+			} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
+				return_value = *string;
+			} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
+				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
 			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
