@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
@@ -799,8 +800,29 @@
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
 
+				// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
+				bool sema_applied_arg_conversion = false;
+				if (sema_ && argument.is<ExpressionNode>()) {
+					const void* key = &argument.as<ExpressionNode>();
+					const auto slot = sema_->getSlot(key);
+					if (slot.has_value() && slot->has_cast()) {
+						const ImplicitCastInfo& cast_info =
+							sema_->castInfoTable()[slot->cast_info_index.value - 1];
+						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						if (from_type != Type::Struct && to_type != Type::Struct) {
+							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
+							arg_type = argumentIrOperands.type;
+							arg_size = argumentIrOperands.size_in_bits.value;
+							arg_type_index = argumentIrOperands.type_index;
+							sema_applied_arg_conversion = true;
+						}
+					}
+				}
+
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				bool should_apply_standard_conversion =
+					!sema_applied_arg_conversion &&
 					param_ref_qualifier == CVReferenceQualifier::None &&
 					param_type->pointer_depth() == 0 &&
 					arg_type != param_base_type &&

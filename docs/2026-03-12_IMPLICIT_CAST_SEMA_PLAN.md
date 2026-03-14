@@ -789,7 +789,7 @@ Known issues still to address:
 - `normalizeStatement` does not walk `ThrowStatementNode` or `LabelStatementNode` children
 - `inferExpressionType` does not handle `BinaryOperatorNode` or `FunctionCallNode` — complex expressions return unknown type and fall back to codegen policy
 
-### Phase 2: migrate the highest-value conversion contexts 🚧 IN PROGRESS (partial, return statements done)
+### Phase 2: migrate the highest-value conversion contexts ✅ COMPLETED (return, call args, binary ops)
 
 Goal:
 
@@ -798,41 +798,63 @@ Goal:
 Work:
 
 - ✅ return statements (standard primitive conversions)
-- function-call arguments
-- builtin binary arithmetic / comparison operands
+- ✅ function-call arguments (simple non-overloaded functions)
+- ✅ builtin binary arithmetic / comparison operands
 - establish semantic-pass diagnostics ownership for these migrated contexts so codegen no longer reports them late
 
 Exit criteria:
 
 - delete corresponding ad-hoc conversion policy from:
-	- `IrGenerator_Call_Direct.cpp`
-	- `IrGenerator_Expr_Operators.cpp`
-	- `IrGenerator_Visitors_Namespace.cpp` (standard primitive conversions in return — partially done, dual-path kept for struct/user-defined cases)
-- add regression tests for each migrated context
+	- `IrGenerator_Call_Direct.cpp` — dual-path added; original policy preserved as fallback for overloaded/variadic/struct cases
+	- `IrGenerator_Expr_Operators.cpp` — dual-path added; original policy preserved as fallback for struct/user-defined operands
+	- `IrGenerator_Visitors_Namespace.cpp` — dual-path added; original policy preserved as fallback for struct/user-defined conversions
+- add regression tests for each migrated context ✅
 
-#### Implementation notes (Phase 2 — return statements, partial)
+#### Implementation notes (Phase 2 — all three contexts)
 
 **Pre-requisites addressed:**
 
 1. **`SemanticAnalysis` lifetime** — moved outside the block scope in `FlashCppMain.cpp` so the object (and its `TypeContext` + `cast_info_table_`) survives into `AstToIr` conversion. `converter.setSemanticData(&sema)` wires up the connection.
 
-2. **SemanticSlot side table** — added `semantic_slots_: unordered_map<const void*, SemanticSlot>` to `SemanticAnalysis` (keyed by raw `ExpressionNode*` pointer from stable `gChunkedAnyStorage`). Added `getSlot(const void*)`, `setSlot(...)`, `allocateCastInfo(...)` helpers. Adding `SemanticSlot` to every ExpressionNode variant type would have been too invasive; the side-table approach is used instead (see plan §2).
+2. **SemanticSlot side table** — added `semantic_slots_: unordered_map<const void*, SemanticSlot>` to `SemanticAnalysis` (keyed by raw `ExpressionNode*` pointer from stable `gChunkedAnyStorage`). Added `getSlot(const void*)`, `setSlot(...)`, `allocateCastInfo(...)` helpers.
 
-3. **AstToIr reads annotations** — added `sema_: const SemanticAnalysis*` member and `setSemanticData()` to `AstToIr`. The return-statement handler in `IrGenerator_Visitors_Namespace.cpp` now checks `sema_->getSlot(key)` before the local `generateTypeConversion` fallback. Dual-path: when the slot has cast info, use it; otherwise fall through to the unchanged codegen policy.
+3. **AstToIr reads annotations** — added `sema_: const SemanticAnalysis*` member and `setSemanticData()` to `AstToIr`. All three IR lowering contexts check `sema_->getSlot(key)` before the local `generateTypeConversion` fallback.
 
-**New infrastructure in SemanticAnalysis:**
+**Core annotation infrastructure in SemanticAnalysis:**
 
-- `inferExpressionType(node)` — infers `CanonicalTypeId` for `NumericLiteralNode`, `BoolLiteralNode`, and `IdentifierNode` (via a scope stack of `string_view → CanonicalTypeId` maps). Returns invalid when inference is not possible.
-- `tryAnnotateReturnConversion(expr_node, ctx)` — if `inferExpressionType` succeeds and `can_convert_type` confirms a standard (non-user-defined) conversion is needed, allocates an `ImplicitCastInfo` and fills the expression's slot.
-- Scope stack — `normalizeBlock` now calls `pushScope()`/`popScope()`, and `normalizeStatement` for `VariableDeclarationNode` registers the local's type. `normalizeFunctionDeclaration` registers function parameters.
-- `determineConversionKind(from, to)` — maps a `(Type, Type)` pair to the right `StandardConversionKind` (IntegralPromotion, IntegralConversion, FloatingPromotion, FloatingConversion, FloatingIntegralConversion, BooleanConversion).
-- Stats: `slots_filled` and `cast_infos_allocated` are now tracked and reported under `--perf-stats`.
+- `inferExpressionType(node)` — infers `CanonicalTypeId` for `NumericLiteralNode`, `BoolLiteralNode`, and `IdentifierNode` (via a scope stack of `StringHandle → CanonicalTypeId` maps). Returns invalid when inference is not possible.
+- `tryAnnotateConversion(expr_node, target_type_id)` — shared helper: if `inferExpressionType` succeeds and a standard (non-struct, non-enum, non-auto, non-pointer) conversion is needed, allocates an `ImplicitCastInfo` and fills the expression's slot. Returns `true` when annotation was written.
+- `tryAnnotateReturnConversion(expr_node, ctx)` — delegates to `tryAnnotateConversion` with `ctx.current_function_return_type_id` as target.
+- `tryAnnotateBinaryOperandConversions(bin_op)` — infers LHS/RHS types, computes common type with `get_common_type`, and calls `tryAnnotateConversion` on each operand that needs conversion.
+- `tryAnnotateCallArgConversions(call_node)` — looks up the function by name in `symbols_`; if a single non-variadic match is found, annotates each argument with its parameter type.
+- `determineConversionKind(from, to)` — maps `(Type, Type)` to `StandardConversionKind`; uses `get_integer_rank()` for C++20-correct promotion vs conversion classification.
+- Scope stack — `normalizeBlock` now calls `pushScope()`/`popScope()`; `VariableDeclarationNode` registers the local; `normalizeFunctionDeclaration` registers parameters.
+- Stats: `slots_filled` and `cast_infos_allocated` now tracked and reported under `--perf-stats`.
+
+**Fixes applied after review (Devin + Gemini):**
+
+- `Type::Auto` guard added to `tryAnnotateConversion` — prevents bogus 0-bit truncation for `auto` return functions
+- `determineConversionKind`: int→long is now `IntegralConversion` (not `IntegralPromotion`); uses `get_integer_rank()` per C++20 [conv.prom]
+- Parameter and local variable type registration uses `canonicalizeType()` instead of inline struct construction — handles pointer/array types correctly
+- Unary +/- type inference applies integral promotion (result of `+short` is `int`)
 
 **New tests:**
 
 - `tests/test_ret_implicit_cast_int_to_long_ret0.cpp` — int→long return from literal, local variable, and function parameter
-- `tests/test_ret_implicit_cast_float_to_int_ret0.cpp` — float→int and double→int return from local variable (literal float returns trigger a pre-existing handleFloatToInt limitation)
+- `tests/test_ret_implicit_cast_float_to_int_ret0.cpp` — float→int and double→int return from local variable
 - `tests/test_ret_implicit_cast_unsigned_ret0.cpp` — int→unsigned, int→long long, int→unsigned long return conversions
+- `tests/test_call_implicit_cast_arg_ret0.cpp` — int→long and int→double function argument conversions
+- `tests/test_binop_implicit_cast_ret0.cpp` — int+long→long (LHS promoted), int*unsigned→unsigned (LHS converted)
+
+Test results: 1476 pass / 0 fail / 35 expected-fail (5 new tests added)
+
+**Remaining work (Phase 3+):**
+
+- Function call argument annotation only handles the simple single-overload lookup case; overloaded functions still use the codegen fallback
+- `inferExpressionType` doesn't handle `BinaryOperatorNode` results, so nested binary sub-expressions fall back to codegen
+- Assignment RHS conversion is not yet annotated (Phase 3: initializer and reference-binding coverage)
+
+
 
 Test results: 1474 pass / 0 fail / 35 expected-fail
 

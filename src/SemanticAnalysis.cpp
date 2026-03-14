@@ -339,6 +339,17 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 		std::visit([&](const auto& e) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				const std::string_view op = e.op();
+				const bool is_arithmetic =
+					op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+				const bool is_comparison =
+					op == "<" || op == ">" || op == "<=" || op == ">=" ||
+					op == "==" || op == "!=";
+				if ((is_arithmetic || is_comparison) &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					tryAnnotateBinaryOperandConversions(e);
+				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
 			}
@@ -351,6 +362,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.false_expr(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				tryAnnotateCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
@@ -611,43 +623,43 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	return {};
 }
 
-// --- Return conversion annotation ---
+// --- Core conversion annotation helper ---
 
-void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
-	if (!ctx.current_function_return_type_id) return;
-	if (!expr_node.is<ExpressionNode>()) return;
+bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id) {
+	if (!target_type_id) return false;
+	if (!expr_node.is<ExpressionNode>()) return false;
 
 	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
-	if (!expr_type_id) return;
-	if (expr_type_id == *ctx.current_function_return_type_id) return;  // exact match, no cast needed
+	if (!expr_type_id) return false;
+	if (expr_type_id == target_type_id) return false;  // exact match, no cast needed
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
-	const CanonicalTypeDesc& to_desc   = type_context_.get(*ctx.current_function_return_type_id);
+	const CanonicalTypeDesc& to_desc   = type_context_.get(target_type_id);
 
 	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums, no auto)
-	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return;
-	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return;
-	if (from_desc.base_type == Type::Enum  || to_desc.base_type == Type::Enum)   return;
-	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return;
-	if (from_desc.base_type == Type::Auto   || to_desc.base_type == Type::Auto)   return;
-	if (from_desc.ref_qualifier != ReferenceQualifier::None) return;
+	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
+	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
+	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return false;
+	if (from_desc.base_type == Type::Enum   || to_desc.base_type == Type::Enum)   return false;
+	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return false;
+	if (from_desc.base_type == Type::Auto    || to_desc.base_type == Type::Auto)    return false;
+	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
-	if (!conv.is_valid || conv.rank == ConversionRank::UserDefined) return;
+	if (!conv.is_valid || conv.rank == ConversionRank::UserDefined) return false;
 
 	const StandardConversionKind kind = determineConversionKind(from_desc.base_type, to_desc.base_type);
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
-	cast_info.target_type_id = *ctx.current_function_return_type_id;
+	cast_info.target_type_id = target_type_id;
 	cast_info.cast_kind = kind;
 	cast_info.value_category_after = ValueCategory::PRValue;
 
 	const CastInfoIndex idx = allocateCastInfo(cast_info);
 
 	SemanticSlot slot;
-	slot.type_id = *ctx.current_function_return_type_id;
+	slot.type_id = target_type_id;
 	slot.cast_info_index = idx;
 	slot.value_category = ValueCategory::PRValue;
 
@@ -655,8 +667,80 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 	setSlot(key, slot);
 	stats_.slots_filled++;
 
-	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated return conversion ",
+	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated conversion ",
 		static_cast<int>(from_desc.base_type), " → ",
 		static_cast<int>(to_desc.base_type),
 		" (kind=", static_cast<int>(kind), ")");
+	return true;
+}
+
+// --- Return conversion annotation ---
+
+void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
+	if (!ctx.current_function_return_type_id) return;
+	tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
+}
+
+// --- Binary operand conversion annotation ---
+
+void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op) {
+	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id) return;
+
+	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	// Only handle plain primitive types (no pointers, no arrays, no structs, no enums)
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
+	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
+	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
+	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (lhs_desc.base_type == Type::Auto    || rhs_desc.base_type == Type::Auto)    return;
+
+	const Type common = get_common_type(lhs_desc.base_type, rhs_desc.base_type);
+	if (common == Type::Invalid) return;
+
+	// Intern the common type
+	CanonicalTypeDesc common_desc;
+	common_desc.base_type = common;
+	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
+
+	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
+	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Function call argument conversion annotation ---
+
+void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
+	const auto& decl = call_node.function_declaration();
+	const std::string_view name = call_node.has_qualified_name()
+		? call_node.qualified_name()
+		: decl.identifier_token().value();
+
+	// Look up the function in the symbol table to get parameter types
+	const auto maybe_func = symbols_.lookup(name);
+	if (!maybe_func.has_value() || !maybe_func->is<FunctionDeclarationNode>()) return;
+	const auto& func_decl = maybe_func->as<FunctionDeclarationNode>();
+	if (func_decl.is_variadic()) return;  // can't annotate variadic calls
+
+	const auto& param_nodes = func_decl.parameter_nodes();
+	const auto& arguments   = call_node.arguments();
+
+	// Only annotate when argument count matches parameter count (no default args or packs)
+	if (arguments.size() != param_nodes.size()) return;
+
+	for (size_t i = 0; i < arguments.size(); ++i) {
+		const ASTNode& arg = arguments[i];
+		if (!arg.is<ExpressionNode>()) continue;
+
+		const ASTNode& param_node = param_nodes[i];
+		if (!param_node.is<DeclarationNode>()) continue;
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+		tryAnnotateConversion(arg, param_type_id);
+	}
 }

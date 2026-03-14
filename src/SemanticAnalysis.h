@@ -13,6 +13,8 @@ class StructDeclarationNode;
 class FunctionDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
+class BinaryOperatorNode;
+class FunctionCallNode;
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization. Phase 1 established the pipeline seam.
@@ -68,9 +70,21 @@ private:
 	// Store a semantic slot for the given expression node pointer.
 	void setSlot(const void* key, const SemanticSlot& slot);
 
+	// Core annotation helper: if the inferred type of expr_node differs from target_type_id
+	// and a standard (non-user-defined) primitive conversion applies, allocate an
+	// ImplicitCastInfo and fill the expression's SemanticSlot.
+	// Returns true when a slot was filled.
+	bool tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id);
+
 	// Try to annotate a return expression with implicit cast info when the
 	// expression type differs from the declared function return type.
 	void tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx);
+
+	// Annotate binary arithmetic/comparison operands with their common-type conversions.
+	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op);
+
+	// Annotate function-call arguments with their parameter-type conversions.
+	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).
