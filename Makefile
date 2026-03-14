@@ -52,7 +52,8 @@ MODULAR_DIR := $(BINDIR)/Modular
 
 # All source files in the src directory (for dependency tracking with unity builds)
 # Using wildcard ensures any header or source change triggers a rebuild
-UNITY_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*.cpp) $(wildcard $(SRCDIR)/*/*.h) $(wildcard $(SRCDIR)/*/*.hpp)
+HEADER_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*/*.h) $(wildcard $(SRCDIR)/*/*.hpp)
+UNITY_SOURCES := $(HEADER_SOURCES) $(wildcard $(SRCDIR)/*.cpp)
 
 # Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
 TEST_SOURCES :=
@@ -120,16 +121,17 @@ $(RELEASE_TARGET): $(MAIN_SOURCES) $(UNITY_SOURCES)
 $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(UNITY_SOURCES)
 	@echo "Building test executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(TEST_DIR) 2>nul || $(MKDIR) $(TEST_DIR) || true
-	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
+	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -Wno-shadow -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-but-set-variable -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	@echo "Built: $@"
 
-$(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(UNITY_SOURCES)
-	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
+$(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(HEADER_SOURCES) | $(MODULAR_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -c $< -o $@
 
-$(MODULAR_TARGET): $(MODULAR_OBJS)
-	@echo "Building modular executable for $(PLATFORM) with $(CXX)..."
+$(MODULAR_DIR):
 	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
+
+$(MODULAR_TARGET): $(MODULAR_OBJS) | $(MODULAR_DIR)
+	@echo "Building modular executable for $(PLATFORM) with $(CXX)..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MODULAR_OBJS)
 	@echo "Built: $@"
 

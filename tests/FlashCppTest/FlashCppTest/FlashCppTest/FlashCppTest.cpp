@@ -1,3 +1,5 @@
+// Required to include implementation (.cpp) files in unity build mode for the test TU.
+#define UNITY_BUILD
 #include "CompilerIncludes.h"
 
 #include "CompileContext.h"
@@ -3409,12 +3411,12 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	REQUIRE(!parse_result.is_error());
 
 	auto findTypeIndexByName = [](std::string_view wanted) -> TypeIndex {
-		for (TypeIndex i = 0; i < gTypeInfo.size(); ++i) {
-			if (StringTable::getStringView(gTypeInfo[i].name()) == wanted) {
+		for (TypeIndex i{0}; i.value < gTypeInfo.size(); ++i) {
+			if (StringTable::getStringView(gTypeInfo[i.value].name()) == wanted) {
 				return i;
 			}
 		}
-		return 0;
+		return TypeIndex{};
 	};
 
 	TypeIndex assign_receiver_idx = findTypeIndexByName("AssignReceiver");
@@ -3422,16 +3424,16 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	TypeIndex wrap_int_idx = findTypeIndexByName("UDWrap<int>");
 	TypeIndex wrap_double_idx = findTypeIndexByName("UDWrap<double>");
 
-	REQUIRE(assign_receiver_idx != 0);
-	REQUIRE(free_receiver_idx != 0);
-	REQUIRE(wrap_int_idx != 0);
-	REQUIRE(wrap_double_idx != 0);
+	REQUIRE(assign_receiver_idx.is_valid());
+	REQUIRE(free_receiver_idx.is_valid());
+	REQUIRE(wrap_int_idx.is_valid());
+	REQUIRE(wrap_double_idx.is_valid());
 
 	auto assign_result = findBinaryOperatorOverload(assign_receiver_idx, wrap_double_idx, OverloadableOperator::Assign, Type::UserDefined);
 	REQUIRE(assign_result.has_match);
 	CHECK(!assign_result.is_ambiguous);
 	REQUIRE(assign_result.member_overload != nullptr);
-	const auto& assign_param = assign_result.member_overload->decl_node().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+	const auto& assign_param = assign_result.member_overload->function_decl.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(assign_param.type_index() == wrap_double_idx);
 
 	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, Type::UserDefined);

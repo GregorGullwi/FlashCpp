@@ -2,7 +2,7 @@
 
 [← Index](../NON_STANDARD_BEHAVIOR.md)
 
-Covers `src/IrGenerator_MemberAccess.cpp`, `src/CodeGen_Expr_*.cpp`,
+Covers `src/IrGenerator_MemberAccess.cpp`, `src/IrGenerator_Expr_*.cpp`,
 `src/IrGenerator_Visitors_Decl.cpp`, `src/IrGenerator_NewDeleteCast.cpp`,
 `src/IrGenerator_Call_Direct.cpp`, `src/IrGenerator_Stmt_Decl.cpp`.
 
