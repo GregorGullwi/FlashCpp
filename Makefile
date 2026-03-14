@@ -61,7 +61,8 @@ TEST_SOURCES :=
 
 # Main sources (unity build - only main.cpp wrapper is compiled)
 MAIN_SOURCES := $(SRCDIR)/main.cpp
-MODULAR_SOURCES := $(filter-out $(SRCDIR)/main.cpp,$(wildcard $(SRCDIR)/*.cpp))
+UNITY_WRAPPER_SOURCES := $(SRCDIR)/UnitySupport.cpp $(SRCDIR)/UnityParser.cpp $(SRCDIR)/UnityParserTemplates.cpp $(SRCDIR)/UnityBackend.cpp
+MODULAR_SOURCES := $(filter-out $(SRCDIR)/main.cpp $(UNITY_WRAPPER_SOURCES),$(wildcard $(SRCDIR)/*.cpp))
 MODULAR_OBJS := $(patsubst $(SRCDIR)/%.cpp,$(MODULAR_DIR)/%.o,$(MODULAR_SOURCES))
 SHARDED_SOURCES := $(SRCDIR)/FlashCppMain.cpp $(SRCDIR)/UnitySupport.cpp $(SRCDIR)/UnityParser.cpp $(SRCDIR)/UnityParserTemplates.cpp $(SRCDIR)/UnityBackend.cpp
 SHARDED_OBJS := $(patsubst $(SRCDIR)/%.cpp,$(SHARDED_DIR)/%.o,$(SHARDED_SOURCES))
