@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-4 largely complete through 2026-03-14, Phase 5 ExprResult already done)  
+**Status**: In Progress (Phase 0-5 complete through 2026-03-14; Phase 6 audit found remaining semantic/transitional Type uses)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -579,6 +579,34 @@ Remaining work for this phase:
   - diagnostics / error messages
 - remove any remaining `Type::Enum` / `Type::UserDefined` branches in
   `CodeGen_*.cpp`, `IROperandHelpers.h`, `IRConverter*.h`
+
+**Audit result (2026-03-14): not clean yet — keep this document**
+
+- `IROperandHelpers.h` is clean: no remaining `Type::Enum` / `Type::UserDefined` references.
+- `IRConverter*.h` runtime dispatch is clean, but there is still one transitional runtime/diagnostic
+  check in `IRConverter_Conv_Memory.h` (`op.result.type != Type::Struct`) used to distinguish
+  unresolved `Type::UserDefined` metadata from a genuine zero-sized-struct bug. The other
+  `IRConverter*.h` matches are comments describing the migration.
+- Remaining `CodeGen_*.cpp` references are concentrated in semantic or template-driven logic:
+  - `CodeGen_NewDeleteCast.cpp` — semantic identity checks and enum↔int cast rules.
+  - `CodeGen_Expr_Operators.cpp` — overload applicability / user-defined-operator detection.
+  - `CodeGen_MemberAccess.cpp` — semantic scalar classification, `__underlying_type`,
+    conversion-operator alias resolution, and enum fallback suppression.
+  - `CodeGen_Call_Direct.cpp` — unresolved dependent template return types still represented as
+    `Type::UserDefined`.
+  - `CodeGen_Helpers.cpp` / `CodeGen_Expr_Primitives.cpp` — enum underlying-type recovery and
+    enumerator/type-index preservation helpers that still start from semantic `Type`.
+  - `CodeGen_Visitors_Namespace.cpp` / `CodeGen_Visitors_TypeInit.cpp` — AST/type-node
+    construction paths, not IR runtime dispatch.
+
+So the Phase 6 cleanup criterion:
+
+> `Type::Enum` and `Type::UserDefined` do not appear in `CodeGen_*.cpp`, `IROperandHelpers.h`,
+> or `IRConverter*.h`
+
+is **not yet satisfied**. The plan document should remain until those semantic and transitional
+sites are either migrated to a dedicated semantic-analysis layer or explicitly carved out as
+intentional long-term exceptions.
 
 ---
 
