@@ -1,16 +1,17 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	void AstToIr::visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 		// Namespace declarations themselves don't generate IR - they just provide scope
 		// Track the current namespace for proper name mangling
 		// For anonymous namespaces, push empty string which will be handled specially by mangling
 		current_namespace_stack_.push_back(std::string(node.name()));
-		
+
 		// Visit all declarations within the namespace
 		for (const auto& decl : node.declarations()) {
 			visit(decl);
 		}
-		
+
 		// Pop the namespace from the stack
 		current_namespace_stack_.pop_back();
 	}
@@ -37,33 +38,33 @@
 		// C++20 using enum - brings all enumerators of a scoped enum into the current scope
 		// Look up the enum type and add all enumerators to the local symbol table
 		StringHandle enum_name = node.enum_type_name();
-		
+
 		auto type_it = gTypesByName.find(enum_name);
 		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
 			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 			TypeIndex enum_type_index = type_it->second->type_index_;
-			
+
 			// Add each enumerator to the local symbol table
 			for (const auto& enumerator : enum_info->enumerators) {
 				// Create a type node for the enum type
-				Token enum_type_token(Token::Type::Identifier, 
+				Token enum_type_token(Token::Type::Identifier,
 					StringTable::getStringView(enum_name), 0, 0, 0);
 				auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 					Type::Enum, enum_type_index, enum_info->underlying_size, enum_type_token);
-				
+
 				// Create a declaration node for the enumerator
-				Token enumerator_token(Token::Type::Identifier, 
+				Token enumerator_token(Token::Type::Identifier,
 					StringTable::getStringView(enumerator.getName()), 0, 0, 0);
 				auto enumerator_decl = ASTNode::emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
-				
+
 				// Insert into local symbol table
 				symbol_table.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
 			}
-			
-			FLASH_LOG(Codegen, Debug, "Using enum '", StringTable::getStringView(enum_name), 
+
+			FLASH_LOG(Codegen, Debug, "Using enum '", StringTable::getStringView(enum_name),
 				"' - added ", enum_info->enumerators.size(), " enumerators to local scope");
 		} else {
-			FLASH_LOG(General, Error, "Enum type '", StringTable::getStringView(enum_name), 
+			FLASH_LOG(General, Error, "Enum type '", StringTable::getStringView(enum_name),
 				"' not found for 'using enum' declaration");
 		}
 	}
@@ -77,27 +78,27 @@
 	void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
 			const auto& expr_opt = node.expression();
-			
+
 			// Handle InitializerListNode for braced initializers in return statements
 			if (expr_opt->is<InitializerListNode>()) {
 				// Create a temporary variable to hold the initialized struct
 				TempVar temp_var = var_counter.next();
-				
+
 				// Generate initialization code similar to variable declarations
 				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
-				
+
 				// Get struct type information
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
-				
+
 				if (return_type != Type::Struct) {
 					FLASH_LOG(Codegen, Error, "InitializerListNode in return statement for non-struct type");
 					return;
 				}
-				
+
 				// Find the struct info
 				const StructTypeInfo* struct_info = nullptr;
-				
+
 				// Look up the struct by return type index or name
 				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 					if (gTypeInfo[i].struct_info_ &&
@@ -106,17 +107,17 @@
 						break;
 					}
 				}
-				
+
 				if (!struct_info) {
 					FLASH_LOG(Codegen, Error, "Could not find struct type info for return type");
 					return;
 				}
-				
+
 				// Process initializer list to generate member stores
 				const auto& initializers = init_list.initializers();
 				std::unordered_map<StringHandle, const ASTNode*> member_values;
 				size_t positional_index = 0;
-				
+
 				for (size_t i = 0; i < initializers.size(); ++i) {
 					if (init_list.is_designated(i)) {
 						// Designated initializer - use member name
@@ -131,12 +132,12 @@
 						}
 					}
 				}
-				
+
 				// Generate member stores for each initialized member
 				for (const StructMember& member : struct_info->members) {
 					StringHandle member_name_handle = member.getName();
 					auto it = member_values.find(member_name_handle);
-					
+
 					if (it != member_values.end()) {
 						// Evaluate the initializer expression
 						const ASTNode* init_expr = it->second;
@@ -154,7 +155,7 @@
 						}
 					}
 				}
-				
+
 				// Call any enclosing __finally funclets before returning
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 
@@ -162,15 +163,15 @@
 				emitReturn(temp_var, return_type, return_size, node.return_token());
 				return;
 			}
-			
+
 			// Original handling for ExpressionNode
 			assert(expr_opt->is<ExpressionNode>());
-			
+
 			// Set flag if we should use RVO (returning struct by value with hidden return param)
 			if (current_function_has_hidden_return_param_) {
 				in_return_statement_with_rvo_ = true;
 			}
-			
+
 			// Fast path: reference return of '*this' can directly return the this pointer
 			if (current_function_returns_reference_ && expr_opt->is<ExpressionNode>()) {
 				const auto& ret_expr = expr_opt->as<ExpressionNode>();
@@ -194,18 +195,18 @@
 
 			// For reference return types, use LValueAddress context to get the address instead of the value
 			// This ensures "return *this" returns the address (this pointer), not the dereferenced value
-			ExpressionContext return_context = current_function_returns_reference_ 
-				? ExpressionContext::LValueAddress 
+			ExpressionContext return_context = current_function_returns_reference_
+				? ExpressionContext::LValueAddress
 				: ExpressionContext::Load;
 			ExprResult operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
-			
+
 			// Clear the RVO flag after evaluation
 			in_return_statement_with_rvo_ = false;
-			
+
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			{
 				Type expr_type = operands.type;
-				
+
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
@@ -214,41 +215,41 @@
 					return;
 				}
 			}
-			
+
 			// If the current function has auto return type, deduce it from the return expression
 			if (current_function_return_type_ == Type::Auto) {
 				Type expr_type = operands.type;
 				int expr_size = operands.size_in_bits.value;
-				
+
 				// Build a TypeSpecifierNode for the deduced type
 				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
-				
+
 				// If we have type_index information (for structs), include it
 				if (operands.type_index.is_valid()) {
 					deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
 					deduced_type.set_type_index(operands.type_index);
 				}
-				
+
 				// Store the deduced type for this function
 				if (current_function_name_.isValid()) {
 					deduced_auto_return_types_[std::string(StringTable::getStringView(current_function_name_))] = deduced_type;
 				}
-				
+
 				// Update current function return type for subsequent return statements
 				current_function_return_type_ = expr_type;
 				current_function_return_size_ = expr_size;
 			}
-			
+
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
 				Type expr_type = operands.type;
 				int expr_size = operands.size_in_bits.value;
-		
+
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
-		
+
 				// For reference returns we already evaluated the expression in LValueAddress
 				// context, so the operand now represents the address-producing glvalue.
 				// Do not run ordinary value conversion against the ABI-sized return slot.
@@ -257,23 +258,23 @@
 					// If expr is a struct type with a conversion operator to return_type, call it
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
-						
+
 						if (expr_type_index.is_valid() && expr_type_index.value < gTypeInfo.size()) {
 							const TypeInfo& source_type_info = gTypeInfo[expr_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							
+
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
 								source_struct_info, return_type, TypeIndex{});
-							
+
 							if (conv_op) {
-								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ", 
-									StringTable::getStringView(source_type_info.name()), 
+								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
+									StringTable::getStringView(source_type_info.name()),
 									" to return type");
-								
+
 								// Generate call to the conversion operator
 								TempVar result_var = var_counter.next();
-								
+
 								// Get the source variable value
 								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
@@ -284,11 +285,11 @@
 										return 0ULL;
 									}
 								}, operands.value);
-								
+
 								// Build the mangled name for the conversion operator
 								StringHandle struct_name_handle = source_type_info.name();
 								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-								
+
 								// Generate the call using CallOp (member function call)
 								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
 									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
@@ -306,7 +307,7 @@
 										}
 										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 									}
-									
+
 									CallOp call_op;
 									call_op.result = result_var;
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
@@ -315,7 +316,7 @@
 									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
-									
+
 									// For member function calls, first argument is 'this' pointer
 									if (std::holds_alternative<StringHandle>(source_value)) {
 										// It's a variable - take its address
@@ -327,7 +328,7 @@
 										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-										
+
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = expr_type;
@@ -346,9 +347,9 @@
 										this_arg.type_index = TypeIndex{expr_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									}
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
-									
+
 									// Replace operands with the result of the conversion
 									operands = makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var});
 								}
@@ -366,7 +367,7 @@
 					}
 				}
 			}
-			
+
 			// For reference returns, prefer materializing the referred-to address in IR when we
 			// have direct member lvalue metadata. This avoids relying on backend reconstruction
 			// from a loaded member temp.
@@ -404,7 +405,7 @@
 			} else if (std::holds_alternative<TempVar>(operands.value)) {
 				TempVar return_temp = std::get<TempVar>(operands.value);
 				return_value = return_temp;
-				
+
 				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
 				// being returned - prvalues used to initialize objects of the same type must have copies elided
 				if (isTempVarRVOEligible(return_temp)) {
@@ -412,7 +413,7 @@
 						"RVO opportunity detected: returning prvalue {} (constructor call result)",
 						return_temp.name());
 				}
-				
+
 				// Mark the temp as a return value for potential NRVO analysis
 				markTempVarAsReturnValue(return_temp);
 			} else if (std::holds_alternative<StringHandle>(operands.value)) {

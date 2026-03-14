@@ -1,5 +1,0 @@
-#include "Parser_Decl_TopLevel.cpp"
-#include "Parser_Decl_DeclaratorCore.cpp"
-#include "Parser_Decl_FunctionOrVar.cpp"
-#include "Parser_Decl_TypedefUsing.cpp"
-#include "Parser_Decl_StructEnum.cpp"

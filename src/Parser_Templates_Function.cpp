@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_template_function_declaration_body(
 	InlineVector<ASTNode, 4>& template_params,
 	std::optional<ASTNode> requires_clause,

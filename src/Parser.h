@@ -26,6 +26,7 @@
 #include "ParserTypes.h"       // Unified parsing types (Phase 1)
 #include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
 #include "LazyMemberResolver.h" // For gLazyMemberResolver used in createBoundIdentifier
+#include "ParserInternal.h"
 
 #ifndef WITH_DEBUG_INFO
 #define WITH_DEBUG_INFO 0
@@ -33,7 +34,6 @@
 
 using namespace std::literals::string_view_literals;
 
-// Forward declarations
 namespace ConstExpr {
 	class Evaluator;
 }

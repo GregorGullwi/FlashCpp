@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
@@ -15,7 +16,7 @@
 		std::string_view lookup_name_view = functionCallNode.has_qualified_name()
 			? functionCallNode.qualified_name()
 			: func_name_view;
-		
+
 		FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
 		// Check for compiler intrinsics and handle them specially
@@ -29,12 +30,12 @@
 		// Look up the function to check its inline_always flag
 		extern SymbolTable gSymbolTable;
 		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
-		
+
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-				
+
 				// Check if this is the matching overload
 				if (overload_decl == &decl_node) {
 					// Found the matching function - check if it should be inlined
@@ -42,25 +43,25 @@
 						// Check if function returns a reference - if so, we need special handling
 						const TypeSpecifierNode& return_type_spec = overload_decl->type_node().as<TypeSpecifierNode>();
 						bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
-						
+
 						auto arg_node = functionCallNode.arguments()[0];
 						if (arg_node.is<ExpressionNode>()) {
 							FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
-							
+
 							if (returns_reference) {
 								// For functions returning references (like std::move, std::forward),
 								// we need to generate an addressof the argument, not just return it
 								const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
-								
+
 								// Check if the argument is an identifier (common case for move(x))
 								if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 									const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
-									
+
 									// Generate addressof for the identifier
 									TempVar result_var = var_counter.next();
 									AddressOfOp op;
 									op.result = result_var;
-									
+
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
 									Type operand_type = Type::Int;  // Default
@@ -71,14 +72,14 @@
 										operand_size = static_cast<int>(type.size_in_bits());
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
-									
+
 									op.operand.type = operand_type;
 									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-									
+
 									// Return pointer type (64-bit address) with pointer depth 1
 									return makeExprResult(
 										operand_type,
@@ -106,7 +107,7 @@
 		// Look up the identifier in both local and global symbol tables
 		const std::optional<ASTNode> func_symbol = lookupSymbol(func_name_view);
 		const DeclarationNode* func_ptr_decl = nullptr;
-		
+
 		// Check for DeclarationNode directly
 		if (func_symbol.has_value() && func_symbol->is<DeclarationNode>()) {
 			func_ptr_decl = &func_symbol->as<DeclarationNode>();
@@ -115,7 +116,7 @@
 		else if (func_symbol.has_value() && func_symbol->is<VariableDeclarationNode>()) {
 			func_ptr_decl = &func_symbol->as<VariableDeclarationNode>().declaration();
 		}
-		
+
 		if (func_ptr_decl) {
 			const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
 
@@ -125,10 +126,10 @@
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 				TempVar ret_var = var_counter.next();
-				
+
 				// Mark function return value as prvalue (Option 2: Value Category Tracking)
 				setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
-				
+
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
@@ -165,47 +166,47 @@
 					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
-			
+
 			// Handle auto-typed callable (e.g., recursive lambda pattern: self(self, n-1))
 			// When an auto&& parameter is called like a function, it's a callable object
 			// We need to generate a member function call to its operator()
 			if (func_type.type() == Type::Auto) {
 				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
 				// We need to find the lambda's closure type and call its operator()
-				
+
 				// Look up the deduced type for this auto parameter
 				// First, check if we're inside a lambda context
 				if (current_lambda_context_.isActive()) {
 					// We're inside a lambda - this could be a recursive call through an auto&& parameter
 					// The pattern is: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
-					
+
 					// Get the current lambda's closure type name to construct the operator() call
 					std::string_view closure_type_name = StringTable::getStringView(current_lambda_context_.closure_type);
-					
+
 					// Generate a member function call to operator()
 					TempVar ret_var = var_counter.next();
 					setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
-					
+
 					// Build the call operands
 					CallOp call_op;
 					call_op.result = ret_var;
 					call_op.return_type = Type::Int;  // Default, will be refined
 					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
-					
+
 					// Add the object (self) as the first argument (this pointer)
 					call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
-					
+
 					// Generate IR for the remaining arguments and collect types for mangling
 					std::vector<TypeSpecifierNode> arg_types;
-					
+
 					// Look up the closure type to get the proper type_index
 					TypeIndex closure_type_index {};
 					auto it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (it != gTypesByName.end()) {
 						closure_type_index = it->second->type_index_;
 					}
-					
+
 					functionCallNode.arguments().visit([&](ASTNode argument) {
 						// Check if this argument is the same as the callee (recursive lambda pattern)
 						// In that case, we should pass the reference directly without dereferencing
@@ -217,12 +218,12 @@
 								is_self_arg = true;
 							}
 						}
-						
+
 						if (is_self_arg) {
 							// For the self argument in recursive lambda calls, pass the reference directly
 							// Don't call visitExpressionNode which would dereference it
 							call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
-							
+
 							// Type for mangling is rvalue reference to closure type
 							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
 							self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
@@ -242,13 +243,13 @@
 								}
 							}, argumentIrOperands.value);
 							call_op.args.push_back(makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value));
-							
+
 							// Type for mangling
 							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
 							arg_types.push_back(type_node);
 						}
 					});
-					
+
 					// Generate mangled name for operator() call
 					TypeSpecifierNode return_type_node(Type::Int, TypeIndex{}, 32, Token());
 					std::string_view mangled_name = generateMangledNameForCall(
@@ -259,9 +260,9 @@
 						closure_type_name
 					);
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
-					
+
 					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
 			}
@@ -269,16 +270,16 @@
 
 		// Get the function declaration to extract parameter types for mangling
 		std::string_view function_name = func_name_view;
-		
+
 		// Remap compiler builtins to their libc equivalents
 		// __builtin_strlen -> strlen (libc function)
 		if (func_name_view == "__builtin_strlen") {
 			function_name = "strlen";
 		}
-		
+
 		bool has_precomputed_mangled = functionCallNode.has_mangled_name();
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
-		
+
 		// Helper: resolve mangled name from a matched function declaration
 		auto resolveMangledName = [&](const FunctionDeclarationNode* func_decl, std::string_view struct_name = "") {
 			if (!has_precomputed_mangled) {
@@ -366,7 +367,7 @@
 		// Find the matching overload by comparing the DeclarationNode address
 		// This works because the FunctionCallNode holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
-		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
+		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}",
 			lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
 		for (const auto& overload : scoped_overloads) {
 			const FunctionDeclarationNode* overload_func_decl = nullptr;
@@ -378,7 +379,7 @@
 
 			if (overload_func_decl) {
 				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
+				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}",
 					(void*)overload_decl, (void*)&decl_node);
 				if (overload_decl == &decl_node ||
 					(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
@@ -408,7 +409,7 @@
 				}
 			}
 		}
-	
+
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
 		if (!matched_func_decl && !has_precomputed_mangled && scoped_overloads.size() == 1 &&
@@ -416,7 +417,7 @@
 			matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
 				? &scoped_overloads[0].as<FunctionDeclarationNode>()
 				: &scoped_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
-	
+
 			resolveMangledName(matched_func_decl);
 		}
 
@@ -426,7 +427,7 @@
 			matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
 				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
 				: &gSymbolTable_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
-	
+
 			resolveMangledName(matched_func_decl);
 		}
 
@@ -448,7 +449,7 @@
 						}
 					}
 				}
-			
+
 				// If not found in current struct, check base classes
 				if (!matched_func_decl && struct_info) {
 					// Search through base classes recursively
@@ -493,7 +494,7 @@
 		if (!matched_func_decl && !has_precomputed_mangled && !functionCallNode.has_qualified_name()) {
 			size_t expected_param_count = 0;
 			functionCallNode.arguments().visit([&](ASTNode) { ++expected_param_count; });
-			
+
 			for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
 				if (!type_info_ptr->isStruct()) continue;
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
@@ -511,7 +512,7 @@
 						continue;
 					}
 				}
-				
+
 				std::string_view struct_type_name = StringTable::getStringView(name_handle);
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -527,7 +528,7 @@
 							}
 							resolveMangledName(matched_func_decl, parent_for_mangling);
 							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved static member function via struct search: {} -> {}", func_name_view, function_name);
-							
+
 							// Queue all member functions of this struct for deferred generation
 							// since the matched function may call other members (e.g., lowest() calls min()).
 							// Derive namespace from the matched function's parent struct first (authoritative),
@@ -565,7 +566,7 @@
 								deferred_info.namespace_stack = ns_stack;
 								deferred_member_functions_.push_back(std::move(deferred_info));
 							}
-							
+
 							break;
 						}
 					}
@@ -640,9 +641,9 @@
 			}
 			if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = lookup_name_view.substr(scope_pos + 2);
-				
+
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
-				
+
 				// Search current struct's base classes for a matching template instantiation
 				if (current_struct_name_.isValid()) {
 					auto type_it = gTypesByName.find(current_struct_name_);
@@ -652,7 +653,7 @@
 							for (const auto& base_spec : curr_struct->base_classes) {
 								if (base_spec.type_index.value < gTypeInfo.size()) {
 									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
-									if (base_type_info.isTemplateInstantiation() && 
+									if (base_type_info.isTemplateInstantiation() &&
 									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
 									base_type_info.isStruct()) {
 										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -678,15 +679,15 @@
 				}
 			}
 		}
-	
+
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
-		
+
 		// Mark function return value as prvalue (Option 2: Value Category Tracking)
 		// Function returns (by value) produce temporaries with no persistent identity
 		setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
-		
+
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
 
@@ -704,7 +705,7 @@
 		// Process arguments - match them with parameter types
 		size_t arg_index = 0;
 		const auto& func_decl_node = functionCallNode.function_declaration();
-		
+
 		// Get parameters from the function declaration
 		std::vector<ASTNode> param_nodes;
 		if (matched_func_decl) {
@@ -718,7 +719,7 @@
 				param_nodes = resolved_func_decl.parameter_nodes();
 			}
 		}
-		
+
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			// Get the parameter type for this argument (if it exists)
 			const TypeSpecifierNode* param_type = nullptr;
@@ -732,7 +733,7 @@
 				}
 			}
 			if (param_decl) param_type = &param_decl->type_node().as<TypeSpecifierNode>();
-			
+
 			const CachedParamInfo* cached_param = nullptr;
 			if (cached_param_list && !cached_param_list->empty()) {
 				if (arg_index < cached_param_list->size()) {
@@ -752,7 +753,7 @@
 				param_ref_qualifier = cached_param->ref_qualifier;
 				param_is_pack = cached_param->is_parameter_pack;
 			}
-			
+
 			// Special case: if argument is a reference identifier being passed to a reference parameter,
 			// handle it directly without visiting the expression. This prevents the Load context from
 			// generating a Dereference operation (which would give us the value, not the address).
@@ -776,20 +777,20 @@
 					}
 				}
 			}
-			
+
 			// Determine expression context for the argument
 			// Default to Load context, which reads values
 			ExpressionContext arg_context = ExpressionContext::Load;
-			
+
 			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
 			// This is needed for non-reference arguments being passed to reference parameters
 			if (param_ref_qualifier != CVReferenceQualifier::None) {
 				arg_context = ExpressionContext::LValueAddress;
 			}
-			
+
 			ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
-			
+
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type) {
@@ -817,11 +818,11 @@
 				// This handles implicit conversions via converting constructors
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
-					
+
 					if (param_type_index.is_valid() && param_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& target_type_info = gTypeInfo[param_type_index.value];
 						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
-						
+
 						// Look for a converting constructor that takes the argument type
 						if (target_struct_info) {
 							bool found_matching_ctor = false;
@@ -830,13 +831,13 @@
 								if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 									const auto& params = ctor_node.parameter_nodes();
-									
+
 									// Check for single-parameter constructor (or multi-parameter with defaults)
 									if (params.size() >= 1) {
 										if (params[0].is<DeclarationNode>()) {
 											const auto& ctor_param_decl = params[0].as<DeclarationNode>();
 											const auto& ctor_param_type = ctor_param_decl.type_node().as<TypeSpecifierNode>();
-											
+
 											// Match if types are compatible
 											bool param_matches = false;
 											if (ctor_param_type.type() == arg_type) {
@@ -848,18 +849,18 @@
 													param_matches = false;
 												}
 											}
-											
+
 											if (param_matches) {
 												// Check if remaining parameters have defaults
 												bool all_have_defaults = true;
 												for (size_t i = 1; i < params.size(); ++i) {
-													if (!params[i].is<DeclarationNode>() || 
+													if (!params[i].is<DeclarationNode>() ||
 													!params[i].as<DeclarationNode>().has_default_value()) {
 														all_have_defaults = false;
 														break;
 													}
 												}
-												
+
 												if (all_have_defaults) {
 													found_matching_ctor = true;
 													if (!ctor_node.is_explicit()) {
@@ -872,38 +873,38 @@
 									}
 								}
 							}
-							
+
 							// Emit error only when every matching converting constructor is explicit.
 							if (found_matching_ctor && !found_non_explicit_ctor) {
 								FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
 									StringTable::getStringView(target_type_info.name()), "'");
 								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
-								FLASH_LOG(General, Error, "  Use explicit construction: ", 
+								FLASH_LOG(General, Error, "  Use explicit construction: ",
 									StringTable::getStringView(target_type_info.name()), "(value)");
 								throw CompileError("Cannot use implicit conversion with explicit constructor in function argument");
 							}
 						}
 					}
 				}
-				
+
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
 						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-						
+
 						// Look for a conversion operator to the parameter type
 						const StructMemberFunction* conv_op = findConversionOperator(
 							source_struct_info, param_base_type, param_type->type_index());
-						
+
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
 								StringTable::getStringView(source_type_info.name()),
 								" to parameter type");
-							
+
 							// Generate call to the conversion operator
 							TempVar result_var = var_counter.next();
-							
+
 							// Get the source value
 							IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
@@ -914,7 +915,7 @@
 									return 0ULL;
 								}
 							}, argumentIrOperands.value);
-							
+
 							// Generate the call to conversion operator
 							if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
 								const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
@@ -933,7 +934,7 @@
 									}
 									mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 								}
-								
+
 								CallOp call_op;
 								call_op.result = result_var;
 								call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
@@ -942,12 +943,12 @@
 								call_op.return_type_index = param_type->type_index();
 								call_op.is_member_function = true;
 								call_op.is_variadic = false;
-								
+
 								// For member function calls, first argument is 'this' pointer
 								if (std::holds_alternative<StringHandle>(source_value)) {
 									// It's a variable - take its address
 									TempVar this_ptr = emitAddressOf(arg_type, arg_size, IrValue(std::get<StringHandle>(source_value)));
-									
+
 									// Add 'this' as first argument
 									TypedValue this_arg;
 									this_arg.type = arg_type;
@@ -966,9 +967,9 @@
 									this_arg.type_index = arg_type_index;
 									call_op.args.push_back(std::move(this_arg));
 								}
-								
+
 								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-								
+
 								// Replace argumentIrOperands with the result of the conversion
 								argumentIrOperands = makeExprResult(param_base_type,
 									SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())},
@@ -978,11 +979,11 @@
 					}
 				}
 			}
-			
+
 			// Check if visitExpressionNode returned a TempVar - this means the value was computed
 			// (e.g., global load, expression result, etc.) and we should use the TempVar directly
 			bool use_computed_result = std::holds_alternative<TempVar>(argumentIrOperands.value);
-			
+
 			// For identifiers that returned local variable references (string_view), handle specially
 			if (!use_computed_result && std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
@@ -1043,7 +1044,7 @@
 					// Argument is a reference but parameter expects a value - dereference
 					TempVar deref_var = emitDereference(type_node.type(), 64, 1,
 						StringTable::getOrInternStringHandle(identifier.name()));
-					
+
 					// Pass the dereferenced value
 					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
@@ -1062,23 +1063,23 @@
 				if (param_ref_qualifier != CVReferenceQualifier::None) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
-					
+
 					// Check if this is a literal value (has unsigned long long or double in value)
 					bool is_literal = (std::holds_alternative<unsigned long long>(argumentIrOperands.value) ||
 					std::holds_alternative<double>(argumentIrOperands.value));
-					
+
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
 						Type literal_type = argumentIrOperands.type;
 						int literal_size = argumentIrOperands.size_in_bits.value;
-						
+
 						// Create a temporary variable to hold the literal value
 						TempVar temp_var = var_counter.next();
-						
+
 						// Generate an assignment IR to store the literal using typed payload
 						AssignmentOp assign_op;
 						assign_op.result = temp_var;  // unused but required
-						
+
 						// Convert IrOperand to IrValue for the literal
 						IrValue rhs_value;
 						if (std::holds_alternative<unsigned long long>(argumentIrOperands.value)) {
@@ -1086,16 +1087,16 @@
 						} else if (std::holds_alternative<double>(argumentIrOperands.value)) {
 							rhs_value = std::get<double>(argumentIrOperands.value);
 						}
-						
+
 						// Create TypedValue for lhs and rhs
 						assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
 						assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
-						
+
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-						
+
 						// Now take the address of the temporary
 						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
-						
+
 						// Pass the address
 						irOperands.emplace_back(literal_type);
 						irOperands.emplace_back(64);  // Pointer size
@@ -1106,14 +1107,14 @@
 							Type expr_type = argumentIrOperands.type;
 							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
-							
+
 							// Check if the TempVar already holds an address
 							// This can happen when:
 							// 1. It's the result of a cast to reference (xvalue/lvalue)
 							// 2. It's a 64-bit struct (pointer to struct)
 							// 3. It has lvalue/xvalue metadata indicating it's already an address
 							bool is_already_address = false;
-							
+
 							// Check for xvalue/lvalue metadata (from reference casts)
 							auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
 							if (metadata_storage.hasMetadata(expr_var)) {
@@ -1123,19 +1124,19 @@
 									is_already_address = true;
 								}
 							}
-							
+
 							// Fallback heuristic: 64-bit struct type likely holds an address
 							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
 								is_already_address = true;
 							}
-							
+
 							if (is_already_address) {
 								// Already an address - pass through directly
 								appendArgumentIrResult(argumentIrOperands);
 							} else {
 								// Need to take address of the value
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-								
+
 								irOperands.emplace_back(expr_type);
 								irOperands.emplace_back(64);  // Pointer size
 								irOperands.emplace_back(addr_var);
@@ -1156,10 +1157,10 @@
 		CallOp call_op;
 		call_op.result = ret_var;
 		call_op.function_name = StringTable::getOrInternStringHandle(function_name);
-		
+
 		// Check if this is an indirect call (function pointer/reference)
 		call_op.is_indirect_call = functionCallNode.is_indirect_call();
-		
+
 		// Get return type information
 		// Prefer the matched function declaration's return type over the original call's,
 		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
@@ -1179,7 +1180,7 @@
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-			? 64 
+			? 64
 			: static_cast<int>(return_type.size_in_bits())};
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
@@ -1199,14 +1200,14 @@
 			}
 			call_op.args.push_back(makeTypedValue(this_type, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this")), this_type_index));
 		}
-		
+
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
 		bool returns_struct = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
 		bool needs_hidden_ret = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
 		if (needs_hidden_ret) {
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
-			
+
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 				function_name, return_type.size_in_bits(), ret_var.var_number);
@@ -1215,12 +1216,12 @@
 				"Function call {} returns small struct by value (size={} bits) - will return in RAX",
 				function_name, return_type.size_in_bits());
 		}
-		
+
 		// Set is_variadic based on function declaration (if available)
 		if (matched_func_decl) {
 			call_op.is_variadic = matched_func_decl->is_variadic();
 		}
-		
+
 		// Convert operands to TypedValue arguments (skip first 2: result and function_name)
 		// Operands come in fixed groups of 3: [type, size, value].
 		size_t arg_idx = 0;
@@ -1264,7 +1265,7 @@
 					arg.ref_qualifier = ReferenceQualifier::None;
 				}
 			}
-			
+
 			call_op.args.push_back(arg);
 			arg_idx++;
 		}

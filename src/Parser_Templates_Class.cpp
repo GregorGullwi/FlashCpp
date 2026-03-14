@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();

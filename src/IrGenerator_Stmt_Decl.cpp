@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
@@ -64,7 +65,7 @@
 							break;
 						}
 					}
-					
+
 					// For variables in anonymous namespaces with Itanium mangling,
 					// we need to generate a unique mangled name
 					if (in_anonymous_ns && NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
@@ -116,7 +117,7 @@
 			}
 			op.var_name = var_name;  // Phase 3: Now using StringHandle
 			op.element_count = 1;  // Default for scalars
-			
+
 			// Helper to append a value as raw bytes in little-endian format
 			auto appendValueAsBytes = [](std::vector<char>& data, unsigned long long value, size_t byte_count) {
 				for (size_t i = 0; i < byte_count; ++i) {
@@ -139,18 +140,18 @@
 				ctx.parser = parser_;
 				return ctx;
 			};
-			
+
 			// Helper to evaluate a constexpr and get the raw value
 			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
 				auto ctx = makeStaticStorageEvalContext();
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
-				
+
 				if (!eval_result.success()) {
-					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '", 
+					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
 					decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
 					return 0;
 				}
-				
+
 				if (target_type == Type::Float) {
 					float f = static_cast<float>(eval_result.as_double());
 					uint32_t f_bits;
@@ -172,7 +173,7 @@
 				}
 				return 0;
 			};
-			
+
 			// Check if this is an array and get element count (product of all dimensions for multidimensional)
 			if (decl.is_array() || type_node.is_array()) {
 				const auto& dims = decl.array_dimensions();
@@ -209,12 +210,12 @@
 						return;
 					}
 				}
-				
+
 				// Handle struct/array initialization with InitializerListNode
 				if (init_node.is<InitializerListNode>()) {
 					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 					const auto& initializers = init_list.initializers();
-					
+
 					op.is_initialized = true;
 
 					// Recursive helper to fill init_data from a struct + InitializerListNode.
@@ -534,24 +535,24 @@
 								break;
 							}
 						}
-						
+
 						if (has_default_inits) {
 							// Build initial data from default member initializers
 							op.is_initialized = true;
 							op.init_data.resize(struct_info->total_size, 0);  // Start with zeros
-							
+
 							for (const auto& member : struct_info->members) {
 								if (member.default_initializer.has_value()) {
 									// Evaluate the default initializer
 									unsigned long long value = evalToValue(*member.default_initializer, member.type);
-									
+
 									if (member.bitfield_width.has_value()) {
 										// Bitfield: use bit-level OR to pack value into the storage unit
 										size_t width = *member.bitfield_width;
 										size_t bit_offset = member.bitfield_bit_offset;
 										unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
 										value &= mask;
-										
+
 										// Read existing bytes at this offset, OR in the bitfield value, write back
 										unsigned long long existing = 0;
 										size_t member_size = member.size;
@@ -616,7 +617,7 @@
 		// For constexpr, we try to evaluate at compile-time
 		if (node.is_constexpr() && node.initializer().has_value()) {
 			const ASTNode& init_node = *node.initializer();
-			
+
 			// Check if initializer is a function call (including callable object invocation)
 			// Lambda calls come through as MemberFunctionCallNode (operator() calls)
 			bool is_function_call = false;
@@ -625,15 +626,15 @@
 				is_function_call = std::holds_alternative<FunctionCallNode>(expr) ||
 				std::holds_alternative<MemberFunctionCallNode>(expr);
 			}
-			
+
 			if (is_function_call) {
 				// Try to evaluate the function call at compile time
 				ConstExpr::EvaluationContext ctx(symbol_table);
 				auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-				
+
 				if (eval_result.success()) {
 					ensure_symbol_registered();
-					
+
 					// Generate variable declaration with compile-time value
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
@@ -642,7 +643,7 @@
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
-					
+
 					// Set the compile-time evaluated initializer
 					if (std::holds_alternative<long long>(eval_result.value)) {
 						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(std::get<long long>(eval_result.value)));
@@ -661,7 +662,7 @@
 							decl_op.initializer = makeTypedValue(Type::Double, SizeInBits{64}, bits);
 						}
 					}
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 					return;  // Done - constexpr variable initialized at compile time
 				}
@@ -700,7 +701,7 @@
 				for (const auto& dim_expr : dims) {
 					ConstExpr::EvaluationContext ctx(symbol_table);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-					
+
 					if (eval_result.success()) {
 						long long dim_size = eval_result.as_int();
 						if (dim_size > 0) {
@@ -714,7 +715,7 @@
 						break;
 					}
 				}
-				
+
 				// Add element type, size, and count as operands
 				operands.emplace_back(type_node.type());  // element type
 				operands.emplace_back(size_in_bits);      // element size
@@ -740,20 +741,20 @@
 				// Check if this is a brace initializer (InitializerListNode)
 			if (init_node.is<InitializerListNode>()) {
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
-				
-				// For scalar types with direct initialization like int v(10), 
+
+				// For scalar types with direct initialization like int v(10),
 				// the InitializerListNode will have a single element. Handle this case.
 				if (type_node.type() != Type::Struct && init_list.initializers().size() == 1) {
 					// Direct initialization of scalar type: int v(10) or int v{10}
 					// Extract the single initializer and treat it as a regular expression initializer
 					const ASTNode& single_init = init_list.initializers()[0];
-					
+
 					// Visit the initializer expression to get its IR
 					ExprResult init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
-					
+
 					// Append the initializer operands
 					appendExprResultToOperands(init_operands);
-					
+
 					ensure_symbol_registered();
 
 					// Generate VariableDecl with initializer
@@ -772,7 +773,7 @@
 					return;  // Done with scalar direct initialization
 				} else {
 					// Handle brace initialization for structs or multi-element initializers
-					
+
 					ensure_symbol_registered();
 
 					// Add the variable declaration without initializer
@@ -804,7 +805,7 @@
 								// Check if this is a designated initializer list or aggregate initialization
 								// Designated initializers always use direct member initialization
 								bool use_direct_member_init = init_list.has_any_designated();
-								
+
 								// Check if there's a constructor that matches the number of initializers
 								// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
 								// If no matching constructor exists, use direct member initialization
@@ -823,7 +824,7 @@
 								}
 
 								if (!has_matching_constructor && !use_direct_member_init && struct_info.hasAnyConstructor()) {
-								
+
 								// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
 								// This ensures copy constructors are preferred over converting constructors
 								if (num_initializers == 1) {
@@ -837,7 +838,7 @@
 												if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
 													const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
 													// Check if initializer is of the same struct type
-													if (init_type.type() == Type::Struct && 
+													if (init_type.type() == Type::Struct &&
 														init_type.type_index() == type_index) {
 														// Try to find copy constructor
 														const StructMemberFunction* copy_ctor = struct_info.findCopyConstructor();
@@ -852,7 +853,7 @@
 										}
 									}
 								}
-								
+
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
 								for (const auto& func : struct_info.member_functions) {
@@ -869,13 +870,13 @@
 											const auto& ctor_decl = func.function_decl.as<ConstructorDeclarationNode>();
 											const auto& params = ctor_decl.parameter_nodes();
 											size_t param_count = params.size();
-											
+
 											// Skip copy constructor and move constructor for brace initialization
 											// Copy/move constructors should only be used when the initializer is of the same struct type
 											if (param_count == 1 && params.size() == 1 && params[0].is<DeclarationNode>()) {
 												const auto& param_decl = params[0].as<DeclarationNode>();
 												const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-												
+
 												// Skip if this is a copy constructor (reference to same struct type)
 												if (param_type.is_reference() && param_type.type() == Type::Struct) {
 													// Check if the initializer is actually of this struct type
@@ -891,7 +892,7 @@
 																if (init_symbol.has_value()) {
 																	if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
 																		const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-																		if (init_type.type() == Type::Struct && 
+																		if (init_type.type() == Type::Struct &&
 																			init_type.type_index() == param_type.type_index()) {
 																			init_is_struct_of_same_type = true;
 																		}
@@ -905,7 +906,7 @@
 														continue;
 													}
 												}
-												
+
 												// Skip if this is a move constructor (rvalue reference to same struct type)
 												if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
 													// Check if the initializer is actually of this struct type
@@ -928,14 +929,14 @@
 													}
 												}
 											}
-											
+
 											// Exact match
 											if (param_count == num_initializers) {
 												has_matching_constructor = true;
 												matching_ctor = &ctor_decl;
 												break;
 											}
-											
+
 											// Check if constructor has default arguments that cover the gap
 											if (param_count > num_initializers) {
 												// Check if parameters from num_initializers onwards all have defaults
@@ -973,7 +974,7 @@
 
 								// Get constructor parameter types for reference handling
 								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
-								
+
 								// Add each initializer as a constructor parameter
 								size_t arg_index = 0;
 								for (const ASTNode& init_expr : initializers) {
@@ -983,29 +984,29 @@
 										if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
 											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										}
-										
+
 										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										{
 											TypedValue tv;
-											
+
 											// Check if parameter expects a reference and argument is an identifier
 											bool is_ident = std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>());
 											bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
-											
+
 											if (param_is_ref && is_ident) {
 												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
 												std::optional<ASTNode> arg_symbol = symbol_table.lookup(identifier.name());
-												
+
 												const DeclarationNode* arg_decl = nullptr;
 												if (arg_symbol.has_value() && arg_symbol->is<DeclarationNode>()) {
 													arg_decl = &arg_symbol->as<DeclarationNode>();
 												} else if (arg_symbol.has_value() && arg_symbol->is<VariableDeclarationNode>()) {
 													arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
 												}
-												
+
 												if (arg_decl) {
 													const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-													
+
 													if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 														// Argument is already a reference - just pass it through
 														tv = toTypedValue(init_operands);
@@ -1020,7 +1021,7 @@
 														addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-														
+
 														// Create TypedValue with the address
 														tv.type = arg_type.type();
 														tv.ir_type = toIrType(arg_type.type());
@@ -1037,7 +1038,7 @@
 												// Not a reference parameter or not an identifier - use as-is
 												tv = toTypedValue(init_operands);
 											}
-											
+
 											ctor_op.arguments.push_back(std::move(tv));
 										}
 									} else {
@@ -1045,11 +1046,11 @@
 									}
 									arg_index++;
 								}
-								
+
 								if (matching_ctor) {
 									fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 								}
-								
+
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							} else {
 								// No constructor - use direct member initialization
@@ -1088,7 +1089,7 @@
 									StringHandle member_name_handle = member.getName();
 									if (member_values.count(member_name_handle)) {
 										const ASTNode& init_expr = *member_values[member_name_handle];
-										
+
 										// Check if this is a nested braced initializer (InitializerListNode)
 										if (init_expr.is<InitializerListNode>()) {
 											// Nested braced initializer - handle it recursively using the helper function
@@ -1097,12 +1098,12 @@
 											if (tryEmitArrayMemberStores(member, nested_init_list, decl.identifier_token().handle(), 0, decl.identifier_token())) {
 												continue;
 											}
-											
+
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
 											if (nested_member_type_index.value < gTypeInfo.size()) {
 												const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
-												
+
 												// If this is a struct type, use the recursive helper
 												if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
 													generateNestedMemberStores(
@@ -1195,7 +1196,7 @@
 				// Pass the target variable name so captures are stored in the right variable
 				std::string_view var_name = decl.identifier_token().value();
 				generateLambdaExpressionIr(lambda, var_name);
-				
+
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
@@ -1206,14 +1207,14 @@
 				// Lambda expression already emitted VariableDecl, so return early
 				ensure_symbol_registered();
 				return;
-			} else if (init_node.is<ExpressionNode>() && 
+			} else if (init_node.is<ExpressionNode>() &&
 			std::holds_alternative<LambdaExpressionNode>(init_node.as<ExpressionNode>())) {
 				// Lambda expression wrapped in ExpressionNode
 				const auto& lambda = std::get<LambdaExpressionNode>(init_node.as<ExpressionNode>());
 				// Pass the target variable name so captures are stored in the right variable
 				std::string_view var_name = decl.identifier_token().value();
 				generateLambdaExpressionIr(lambda, var_name);
-				
+
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
@@ -1237,7 +1238,7 @@
 						is_struct_with_constructor = true;
 					}
 				}
-				
+
 				// References don't use copy constructors - they bind to the address of the initializer
 				bool is_copy_init_for_struct = (type_node.type() == Type::Struct &&
 				type_node.pointer_depth() == 0 &&
@@ -1257,40 +1258,40 @@
 						? ExpressionContext::LValueAddress
 						: ExpressionContext::Load;
 					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
-					
+
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
 						Type init_type = init_operands.type;
 						int init_size = init_operands.size_in_bits.value;
 						TypeIndex init_type_index {};  // Will be set below if type_index is available
-						
+
 						// Extract type_index if available (4th element in init_operands)
 						if (init_operands.type_index.is_valid()) {
 							init_type_index = init_operands.type_index;
 						}
-						
+
 						// Check if source and target types differ and source is a struct
-						bool need_conversion = (init_type != type_node.type()) || 
+						bool need_conversion = (init_type != type_node.type()) ||
 						(init_type == Type::Struct && init_type_index != type_node.type_index());
-						
+
 						if (need_conversion && init_type == Type::Struct && init_type_index.value < gTypeInfo.size()) {
 							const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							
+
 							// Look for a conversion operator to the target type
 							const StructMemberFunction* conv_op = findConversionOperator(
 								source_struct_info, type_node.type(), type_node.type_index());
-							
+
 							if (conv_op) {
-								FLASH_LOG(Codegen, Debug, "Found conversion operator from ", 
-									StringTable::getStringView(source_type_info.name()), 
+								FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
+									StringTable::getStringView(source_type_info.name()),
 									" to target type");
-								
+
 								// Generate call to the conversion operator
 								// The conversion operator is a const member function taking no parameters
 								TempVar result_var = var_counter.next();
-								
+
 								// Get the source variable value
 								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
@@ -1301,11 +1302,11 @@
 										return 0ULL;
 									}
 								}, init_operands.value);
-								
+
 								// Build the mangled name for the conversion operator
 								StringHandle struct_name_handle = source_type_info.name();
 								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-								
+
 								// Generate the call using CallOp (member function call)
 								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
 									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
@@ -1323,7 +1324,7 @@
 										}
 										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 									}
-									
+
 									CallOp call_op;
 									call_op.result = result_var;
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
@@ -1332,7 +1333,7 @@
 									call_op.return_type_index = type_node.type_index();
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
-									
+
 									// For member function calls, first argument is 'this' pointer
 									// We need to pass the address of the source object
 									if (std::holds_alternative<StringHandle>(source_value)) {
@@ -1346,7 +1347,7 @@
 										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 										addr_op.operand.value = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-										
+
 										// Add 'this' as first argument
 										TypedValue this_arg;
 										this_arg.type = init_type;
@@ -1369,16 +1370,16 @@
 										this_arg.type_index = TypeIndex{init_type_index};
 										call_op.args.push_back(std::move(this_arg));
 									}
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), decl.identifier_token()));
-									
+
 									// Replace init_operands with the result of the conversion
 									init_operands = makeExprResult(type_node.type(), SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())}, IrOperand{result_var});
 								}
 							}
 						}
 					}
-					
+
 					appendExprResultToOperands(init_operands);
 				} else {
 					// For struct with constructor, check if this is copy elision case first
@@ -1390,7 +1391,7 @@
 						// Don't evaluate it as an expression - let it fall through to direct constructor handling below
 						is_copy_elision_candidate = true;
 					}
-					
+
 					if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
 						ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
@@ -1431,35 +1432,35 @@
 			std::holds_alternative<TempVar>(operands[9])) {
 				TempVar init_temp = std::get<TempVar>(operands[9]);
 				auto lvalue_info_opt = getTempVarLValueInfo(init_temp);
-				
-				if (lvalue_info_opt.has_value() && 
+
+				if (lvalue_info_opt.has_value() &&
 				lvalue_info_opt->kind == LValueInfo::Kind::ArrayElement &&
 				lvalue_info_opt->array_index.has_value()) {
 					// Need to compute the address of the array element
 					const LValueInfo& lv_info = lvalue_info_opt.value();
-					
+
 					// Create a new temp var for the address result
 					TempVar addr_temp = var_counter.next();
-					
+
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
 					addr_op.element_type = std::get<Type>(operands[7]);
 					addr_op.element_size_in_bits = std::get<int>(operands[8]);
 					addr_op.array = lv_info.base;
-					
+
 					// Build TypedValue for index from metadata
 					IrValue index_value = lv_info.array_index.value();
 					addr_op.index.value = index_value;
 					addr_op.index.type = Type::Int;  // Index type (typically int)
 					addr_op.index.ir_type = IrType::Integer;
 					addr_op.index.size_in_bits = SizeInBits{32};  // Standard index size
-					
+
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
-					
+
 					// Emit the instruction
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
-					
+
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
 					tv.type = std::get<Type>(operands[7]);
@@ -1478,11 +1479,11 @@
 				decl_op.initializer = std::move(tv);
 			}
 		}
-		
+
 		// Track whether the variable was already initialized with an rvalue (function return value)
 		// Check if the VariableDecl has an initializer set BEFORE we move decl_op
 		bool has_rvalue_initializer = decl_op.initializer.has_value();
-		
+
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 		// Handle array initialization with initializer list
@@ -1491,7 +1492,7 @@
 			if (init_node.is<InitializerListNode>()) {
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 				const auto& initializers = init_list.initializers();
-				
+
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
 				if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
@@ -1516,7 +1517,7 @@
 
 					// Evaluate the initializer expression
 					ExprResult init_operands = visitExpressionNode(elem.as<ExpressionNode>());
-					
+
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
 					store_op.element_type = type_node.type();
@@ -1526,8 +1527,8 @@
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;  // Local arrays are actual arrays, not pointers
-					
-					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), 
+
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op),
 						node.declaration().identifier_token()));
 				}
 			}
@@ -1540,7 +1541,7 @@
 			TypeIndex type_index = type_node.type_index();
 			if (type_index.value < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index.value];
-				
+
 				// Skip incomplete template instantiations
 				if (type_info.is_incomplete_instantiation_) {
 					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", StringTable::getStringView(type_info.name()), "' (incomplete instantiation)");
@@ -1549,7 +1550,7 @@
 					// The variable declaration was already emitted above
 					return;
 				}
-				
+
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
@@ -1564,7 +1565,7 @@
 						bool has_copy_init = false;
 						bool has_direct_ctor_call = false;
 						const ConstructorCallNode* direct_ctor = nullptr;
-						
+
 						FLASH_LOG(Codegen, Debug, "has_rvalue_initializer=", has_rvalue_initializer, " node.initializer()=", (bool)node.initializer());
 						if (node.initializer() && !has_rvalue_initializer) {
 							const ASTNode& init_node = *node.initializer();
@@ -1591,7 +1592,7 @@
 							const ConstructorDeclarationNode* matching_ctor = nullptr;
 							size_t num_args = 0;
 							direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
-							
+
 							if (type_info.struct_info_) {
 								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
 								// This ensures copy constructors are preferred over converting constructors
@@ -1599,10 +1600,10 @@
 								if (num_args == 1) {
 									// Check if the argument is an identifier of the same struct type
 									ASTNode first_arg;
-									direct_ctor->arguments().visit([&](ASTNode arg) { 
+									direct_ctor->arguments().visit([&](ASTNode arg) {
 										if (!first_arg.has_value()) first_arg = arg;
 									});
-									
+
 									bool arg_is_same_struct_type = false;
 									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
 										const auto& expr = first_arg.as<ExpressionNode>();
@@ -1613,7 +1614,7 @@
 												if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
 													const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 													// Check if argument is of the same struct type
-													if (arg_type.type() == Type::Struct && 
+													if (arg_type.type() == Type::Struct &&
 														arg_type.type_index() == type_node.type_index()) {
 														arg_is_same_struct_type = true;
 													}
@@ -1621,7 +1622,7 @@
 											}
 										}
 									}
-									
+
 									// Only select copy constructor if argument is of the same struct type
 									if (arg_is_same_struct_type) {
 										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
@@ -1631,7 +1632,7 @@
 										}
 									}
 								}
-								
+
 								// If we didn't find a copy constructor, use general matching
 								if (!matching_ctor) {
 										if (parser_) {
@@ -1756,10 +1757,10 @@
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = decl.identifier_token().handle();
-							
+
 							// Get constructor parameter types for reference handling
 							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
-							
+
 							// Process constructor arguments with reference parameter handling
 							size_t arg_index = 0;
 							direct_ctor->arguments().visit([&](ASTNode argument) {
@@ -1768,18 +1769,18 @@
 								if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
 									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 								}
-								
+
 								ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 								// argumentIrOperands = [type, size, value]
 								{
 									TypedValue tv;
-									
+
 									// Check if parameter expects a reference and argument is an identifier
 									if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
 									std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 										const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 										std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-										
+
 										// Handle both DeclarationNode and VariableDeclarationNode
 										const DeclarationNode* arg_decl = nullptr;
 										if (symbol.has_value() && symbol->is<DeclarationNode>()) {
@@ -1787,10 +1788,10 @@
 										} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 											arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
 										}
-										
+
 										if (arg_decl) {
 											const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-											
+
 											if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 												// Argument is already a reference - just pass it through
 												tv = toTypedValue(argumentIrOperands);
@@ -1805,7 +1806,7 @@
 												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-												
+
 												// Create TypedValue with the address
 												tv.type = arg_type.type();
 												tv.ir_type = toIrType(arg_type.type());
@@ -1822,7 +1823,7 @@
 										// Not a reference parameter or not an identifier - use as-is
 										tv = toTypedValue(argumentIrOperands);
 									}
-									
+
 									// If we have parameter type information, use it to set pointer depth and CV qualifiers
 									if (param_type) {
 										tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
@@ -1843,7 +1844,7 @@
 											tv.type_index = param_type->type_index();
 										}
 									}
-									
+
 									ctor_op.arguments.push_back(std::move(tv));
 								}
 								arg_index++;
@@ -1852,7 +1853,7 @@
 							if (matching_ctor) {
 								fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 							}
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
@@ -1867,7 +1868,7 @@
 							// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();
 							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-							
+
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
 							{
@@ -1876,10 +1877,10 @@
 								if (init_operands.type_index.is_valid()) {
 									init_type_index = init_operands.type_index;
 								}
-								
+
 								// Check if types differ
 								is_converting_ctor = (init_type != Type::Struct) || (init_type_index != type_node.type_index());
-								
+
 								// For converting constructors in copy initialization, check if constructor is explicit
 								if (is_converting_ctor && type_info.struct_info_) {
 									// Find converting constructors that take the initializer type as single parameter.
@@ -1890,14 +1891,14 @@
 										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 											const auto& params = ctor_node.parameter_nodes();
-											
+
 											// Check for single-parameter constructor (or multi-parameter with defaults)
 											if (params.size() >= 1) {
 												// Check if first parameter type matches initializer type
 												if (params[0].is<DeclarationNode>()) {
 													const auto& param_decl = params[0].as<DeclarationNode>();
 													const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-													
+
 													// Match if types are compatible (exact match or implicit conversion)
 													bool param_matches = false;
 													if (param_type.type() == init_type) {
@@ -1909,18 +1910,18 @@
 															param_matches = false;
 														}
 													}
-													
+
 													if (param_matches) {
 														// Check if remaining parameters have defaults
 														bool all_have_defaults = true;
 														for (size_t i = 1; i < params.size(); ++i) {
-															if (!params[i].is<DeclarationNode>() || 
+															if (!params[i].is<DeclarationNode>() ||
 															!params[i].as<DeclarationNode>().has_default_value()) {
 																all_have_defaults = false;
 																break;
 															}
 														}
-														
+
 														if (all_have_defaults) {
 															found_matching_ctor = true;
 															if (!ctor_node.is_explicit()) {
@@ -1933,18 +1934,18 @@
 											}
 										}
 									}
-									
+
 									// Emit error only when every matching converting constructor is explicit.
 									if (found_matching_ctor && !found_non_explicit_ctor) {
-										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '", 
+										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
 											StringTable::getStringView(type_info.name()), "'");
-										FLASH_LOG(General, Error, "  Use direct initialization: ", 
+										FLASH_LOG(General, Error, "  Use direct initialization: ",
 											decl.identifier_token().value(), "(value) instead of = value");
 										throw CompileError("Cannot use copy initialization with explicit constructor");
 									}
 								}
 							}
-							
+
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = decl.identifier_token().handle();
@@ -1952,12 +1953,12 @@
 							// Add initializer as constructor parameter
 							{
 								TypedValue init_arg;
-								
+
 								// Check if initializer is an identifier (variable)
 								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
 									const auto& identifier = std::get<IdentifierNode>(init_node.as<ExpressionNode>());
 									std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-									
+
 									// Handle both DeclarationNode and VariableDeclarationNode
 									const DeclarationNode* init_decl = nullptr;
 									if (symbol.has_value() && symbol->is<DeclarationNode>()) {
@@ -1965,10 +1966,10 @@
 									} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
 										init_decl = &symbol->as<VariableDeclarationNode>().declaration();
 									}
-									
+
 									if (init_decl) {
 										const auto& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-										
+
 										if (init_type.is_reference() || init_type.is_rvalue_reference()) {
 											// Initializer is already a reference - just pass it through
 											init_arg = toTypedValue(init_operands);
@@ -1983,7 +1984,7 @@
 											addr_op.operand.pointer_depth = PointerDepth{};
 											addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-											
+
 											// Create TypedValue with the address
 											init_arg.type = init_type.type();
 											init_arg.ir_type = toIrType(init_type.type());
@@ -2000,7 +2001,7 @@
 									// Not an identifier (e.g., temporary, expression result) - use as-is
 									init_arg = toTypedValue(init_operands);
 								}
-								
+
 								ctor_op.arguments.push_back(std::move(init_arg));
 							}
 
@@ -2060,7 +2061,7 @@
 											ctor_array_count = static_cast<size_t>(eval_result.as_int());
 										}
 									}
-									
+
 									// Generate constructor call for each array element
 									for (size_t i = 0; i < ctor_array_count; i++) {
 										ConstructorCallOp ctor_op;
@@ -2068,12 +2069,12 @@
 										// For arrays, we need to specify the element to construct
 										ctor_op.object = decl.identifier_token().handle();
 										ctor_op.array_index = i;  // Mark this as an array element constructor call
-										
+
 										// If the constructor has parameters with default values, generate the default arguments
 										if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 											const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 											const auto& params = ctor_node.parameter_nodes();
-											
+
 											for (const auto& param : params) {
 												if (param.is<DeclarationNode>()) {
 													const auto& param_decl = param.as<DeclarationNode>();
@@ -2089,7 +2090,7 @@
 												}
 											}
 										}
-										
+
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 									}
 								} else {
@@ -2097,12 +2098,12 @@
 									ConstructorCallOp ctor_op;
 									ctor_op.struct_name = type_info.name();
 									ctor_op.object = decl.identifier_token().handle();
-									
+
 									// If the constructor has parameters with default values, generate the default arguments
 									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 										const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 										const auto& params = ctor_node.parameter_nodes();
-										
+
 										for (const auto& param : params) {
 											if (param.is<DeclarationNode>()) {
 												const auto& param_decl = param.as<DeclarationNode>();
@@ -2118,14 +2119,14 @@
 											}
 										}
 									}
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 								}
 							}
 						}
 					}
 				}
-				
+
 				// If this struct has a destructor, register it for automatic cleanup
 				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 					registerVariableWithDestructor(
@@ -2139,51 +2140,51 @@
 
 	void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		const StructuredBindingNode& node = ast_node.as<StructuredBindingNode>();
-		
-		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Processing structured binding with ", 
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Processing structured binding with ",
 		node.identifiers().size(), " identifiers");
-		
+
 		// Step 1: Evaluate the initializer expression and get its type
 		const ASTNode& initializer = node.initializer();
 		if (!initializer.is<ExpressionNode>()) {
 			FLASH_LOG(Codegen, Error, "Structured binding initializer is not an expression");
 			return;
 		}
-		
+
 		ExprResult init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
-		
+
 		// Extract initializer type information
 		Type init_type = init_operands.type;
 		int init_size = init_operands.size_in_bits.value;
 		TypeIndex init_type_index {};
-		
+
 		// Get type_index if available (4th element)
 		if (init_operands.type_index.is_valid()) {
 			init_type_index = init_operands.type_index;
 		}
-		
-		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type, 
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type,
 		" type_index=", init_type_index, " ref_qualifier=", (int)node.ref_qualifier());
-		
+
 		// Check if this is a reference binding (auto& or auto&&)
 		bool is_reference_binding = node.is_lvalue_reference() || node.is_rvalue_reference();
-		
+
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: is_reference_binding=", is_reference_binding,
 		" is_lvalue_ref=", node.is_lvalue_reference(), " is_rvalue_ref=", node.is_rvalue_reference());
-		
+
 		// Step 2: Determine if initializer is an array by checking the symbol table
 		bool is_array = false;
 		size_t array_size = 0;
 		Type array_element_type = init_type;
 		int array_element_size = init_size;
-		
+
 		// Check if initializer is an identifier (which could be an array variable)
 		if (initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(expr_node)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
 				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
-				
+
 				if (symbol.has_value()) {
 					// Check if it's a DeclarationNode with array information
 					if (symbol->is<DeclarationNode>()) {
@@ -2199,7 +2200,7 @@
 								const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 								array_element_type = type_spec.type();
 								array_element_size = static_cast<int>(type_spec.size_in_bits());
-								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size, 
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size,
 								" element_type=", (int)array_element_type, " element_size=", array_element_size);
 							}
 						}
@@ -2227,7 +2228,7 @@
 				}
 			}
 		}
-		
+
 		// Step 3: Create a hidden temporary variable to hold the initializer
 		// Generate unique name for the hidden variable
 		TempVar hidden_var = var_counter.next();
@@ -2235,11 +2236,11 @@
 		sb.append("__structured_binding_e_").append(static_cast<uint64_t>(hidden_var.var_number));
 		std::string_view hidden_var_name = sb.commit();
 		StringHandle hidden_var_handle = StringTable::createStringHandle(hidden_var_name);
-		
+
 		// Declare the hidden variable
 		VariableDeclOp hidden_decl_op;
 		hidden_decl_op.var_name = hidden_var_handle;
-		
+
 		// For arrays, we need to set up the array info properly
 		if (is_array) {
 			hidden_decl_op.type = array_element_type;
@@ -2257,13 +2258,13 @@
 			hidden_decl_op.ref_qualifier = node.is_rvalue_reference()
 				? CVReferenceQualifier::RValueReference
 				: CVReferenceQualifier::LValueReference;
-			
+
 			// Generate addressof for the initializer to get reference
 			if (initializer.is<ExpressionNode>()) {
 				const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(expr_node)) {
 					const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
-					
+
 					// Generate AddressOf for the identifier
 					TempVar addr_temp = var_counter.next();
 					AddressOfOp addr_op;
@@ -2274,7 +2275,7 @@
 					addr_op.operand.pointer_depth = PointerDepth{};
 					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_op, Token()));
-					
+
 					hidden_decl_op.initializer = makeTypedValue(init_type, SizeInBits{64}, addr_temp);
 				} else {
 					// For other expressions, just use the value and hope for the best
@@ -2288,18 +2289,18 @@
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 			hidden_decl_op.initializer = toTypedValue(init_operands);
 		}
-		
+
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(hidden_decl_op), Token()));
-		
+
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created hidden variable ", hidden_var_name);
-		
+
 		// For arrays, copy elements from the source array to the hidden variable
 		if (is_array && initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(expr_node)) {
 				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
 				StringHandle source_array = StringTable::getOrInternStringHandle(id_node.name());
-				
+
 				// Copy each element
 				for (size_t i = 0; i < array_size; ++i) {
 					// Load element from source array
@@ -2312,9 +2313,9 @@
 					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
 					access_op.member_offset = 0;
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(access_op), Token()));
-					
+
 					// Store element to hidden array
 					ArrayStoreOp store_op;
 					store_op.element_type = array_element_type;
@@ -2324,36 +2325,36 @@
 					store_op.value = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), Token()));
 				}
 			}
 		}
-		
+
 		// Step 4: Determine decomposition strategy
 		if (is_array) {
 			// Array decomposition
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using array decomposition strategy");
-			
+
 			// Validate identifier count matches array size
 			if (node.identifiers().size() != array_size) {
-				FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+				FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
 				") does not match array size (", array_size, ")");
 				return;
 			}
-			
+
 			// Create bindings for each array element
 			for (size_t i = 0; i < array_size; ++i) {
 				StringHandle binding_id = node.identifiers()[i];
 				std::string_view binding_name = StringTable::getStringView(binding_id);
-				
-				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name,
 				"' to array element [", i, "]");
-				
+
 				// Create a TypeSpecifierNode for this binding's type
-				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None, 
+				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None,
 				static_cast<unsigned char>(array_element_size), Token());
-				
+
 				// If this is a reference binding (auto& or auto&&), mark the type as a reference
 				if (is_reference_binding) {
 					if (node.is_lvalue_reference()) {
@@ -2363,17 +2364,17 @@
 						binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 					}
 				}
-				
+
 				// Create a synthetic declaration node for the binding
 				Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
 				ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
 					ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 					binding_token
 				);
-				
+
 				// Add to symbol table
 				symbol_table.insert(binding_name, binding_decl_node);
-				
+
 				// Generate IR for the binding
 				if (is_reference_binding) {
 					// For reference bindings, create a reference variable that points to the element
@@ -2386,9 +2387,9 @@
 					addr_op.element_type = array_element_type;
 					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), binding_token));
-					
+
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
@@ -2398,7 +2399,7 @@
 						? CVReferenceQualifier::RValueReference
 						: CVReferenceQualifier::LValueReference;
 					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{64}, element_addr);
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 				} else {
 					// For value bindings, load the element value (existing behavior)
@@ -2411,30 +2412,30 @@
 					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
 					load_op.member_offset = 0;
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), binding_token));
-					
+
 					// Now, declare the binding variable with the element value as initializer
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
 					binding_var_decl.type = array_element_type;
 					binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_val);
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 				}
-				
+
 				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
 			}
-			
+
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
 			return;  // Early return for array case
-			
+
 		} else if (init_type != Type::Struct) {
 			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
 			return;
 		}
-		
+
 		// Step 5: Check for tuple-like decomposition (C++17 protocol)
 		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
 		// Otherwise, fall back to aggregate (struct) decomposition
@@ -2442,52 +2443,52 @@
 			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.value);
 			return;
 		}
-		
+
 		const TypeInfo& type_info = gTypeInfo[init_type_index.value];
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
-		
+
 		if (!struct_info) {
 			FLASH_LOG(Codegen, Error, "Type is not a struct for structured binding");
 			return;
 		}
-		
+
 		// Step 5a: Check for tuple-like decomposition protocol (C++17)
 		// If std::tuple_size<E> is specialized for the type E, use tuple-like decomposition
 		// The protocol requires: std::tuple_size<E>, std::tuple_element<N, E>, and get<N>(e)
 		std::string_view type_name_view = StringTable::getStringView(type_info.name());
-		
+
 		// Build the expected tuple_size specialization name: "tuple_size_TypeName" or "std::tuple_size_TypeName"
 		StringBuilder tuple_size_name_builder;
 		tuple_size_name_builder.append("tuple_size_").append(type_name_view);
 		std::string_view tuple_size_name = tuple_size_name_builder.commit();
 		StringHandle tuple_size_handle = StringTable::getOrInternStringHandle(tuple_size_name);
-		
-		// Also try with std:: prefix  
+
+		// Also try with std:: prefix
 		StringBuilder std_tuple_size_name_builder;
 		std_tuple_size_name_builder.append("std::tuple_size_").append(type_name_view);
 		std::string_view std_tuple_size_name = std_tuple_size_name_builder.commit();
 		StringHandle std_tuple_size_handle = StringTable::getOrInternStringHandle(std_tuple_size_name);
-		
-		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Checking for tuple_size<", type_name_view, 
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Checking for tuple_size<", type_name_view,
 		"> as '", tuple_size_name, "' or '", std_tuple_size_name, "'");
-		
+
 		// Look up the tuple_size specialization
 		auto tuple_size_it = gTypesByName.find(tuple_size_handle);
 		if (tuple_size_it == gTypesByName.end()) {
 			tuple_size_it = gTypesByName.find(std_tuple_size_handle);
 		}
-		
+
 		// If tuple_size is specialized for this type, use tuple-like decomposition
 		if (tuple_size_it != gTypesByName.end()) {
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
-			
+
 			const TypeInfo* tuple_size_type_info = tuple_size_it->second;
 			const StructTypeInfo* tuple_size_struct = tuple_size_type_info->getStructInfo();
-			
+
 			// Get the 'value' static member from tuple_size
 			size_t tuple_size_value = 0;
 			bool found_value = false;
-			
+
 			if (tuple_size_struct) {
 				for (const auto& static_member : tuple_size_struct->static_members) {
 					// Check for 'value' member (can be constexpr or const)
@@ -2506,50 +2507,50 @@
 					}
 				}
 			}
-			
+
 			if (!found_value) {
 				FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: Could not get tuple_size::value, falling back to aggregate decomposition");
 			} else {
 				// Validate that the number of identifiers matches tuple_size::value
 				if (node.identifiers().size() != tuple_size_value) {
-					FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+					FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
 					") does not match tuple_size::value (", tuple_size_value, ")");
 					return;
 				}
-				
+
 				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
-				
+
 				// Try to find get<N>() functions for tuple-like decomposition
 				bool all_get_found = true;
 				std::vector<std::pair<StringHandle, Type>> binding_info;  // (mangled_name, return_type) for each get<N>
-				
+
 				// First, look up std::tuple_element<N, E>::type and get<N>() for each binding
 				for (size_t i = 0; i < tuple_size_value && all_get_found; ++i) {
 					// Build the tuple_element specialization name
 					StringBuilder tuple_element_name_builder;
 					tuple_element_name_builder.append("tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
 					std::string_view tuple_element_name = tuple_element_name_builder.commit();
-					
+
 					// Also try with std:: prefix
 					StringBuilder std_tuple_element_name_builder;
 					std_tuple_element_name_builder.append("std::tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
 					std::string_view std_tuple_element_name = std_tuple_element_name_builder.commit();
-					
+
 					// Look up the type alias
 					StringHandle type_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(tuple_element_name).append("::type").commit());
 					StringHandle std_type_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(std_tuple_element_name).append("::type").commit());
-					
+
 					auto type_alias_it = gTypesByName.find(type_alias_handle);
 					if (type_alias_it == gTypesByName.end()) {
 						type_alias_it = gTypesByName.find(std_type_alias_handle);
 					}
-					
+
 					Type element_type = Type::Int;  // Default
 					int element_size = 32;
 					TypeIndex element_type_index {};
-					
+
 					if (type_alias_it != gTypesByName.end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
 						element_type = type_alias_info->type_;
@@ -2560,7 +2561,7 @@
 						}
 						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_element<", i, ">::type = ", (int)element_type, ", size=", element_size);
 					}
-					
+
 					// Now look for the get<N>() function
 					// First, try template registry with exact index
 					TemplateTypeArg index_arg;
@@ -2568,99 +2569,99 @@
 					index_arg.is_value = true;
 					index_arg.value = static_cast<int64_t>(i);
 					std::vector<TemplateTypeArg> get_template_args = { index_arg };
-					
+
 					auto get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
-					
+
 					if (get_spec.has_value() && get_spec->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& get_func = get_spec->as<FunctionDeclarationNode>();
-						
+
 						// Generate mangled name with template argument
 						const DeclarationNode& decl_node = get_func.decl_node();
 						const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
-						
+
 						std::vector<TypeSpecifierNode> param_types;
 						for (const auto& param : get_func.parameter_nodes()) {
 							param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
 						}
-						
+
 						std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
 						auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-							"get", return_type, param_types, template_args, 
+							"get", return_type, param_types, template_args,
 							get_func.is_variadic(), "", current_namespace_stack_);
-						
+
 						StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 						binding_info.push_back({mangled_handle, element_type});
-						
+
 						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> with mangled name: ", mangled.view());
 					} else {
 						// Try symbol table lookup for explicit specializations
 						extern SymbolTable gSymbolTable;
 						auto get_overloads = gSymbolTable.lookup_all("get");
-						
+
 						bool found_this_get = false;
 						size_t func_index = 0;
-						
+
 						for (const auto& overload : get_overloads) {
 							if (!overload.is<FunctionDeclarationNode>()) continue;
-							
+
 							const FunctionDeclarationNode& get_func = overload.as<FunctionDeclarationNode>();
 							const DeclarationNode& decl_node = get_func.decl_node();
 							const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
-							
+
 							// Check if this overload's return type matches our element type
 							// or if it's the i-th function declaration (by order)
 							bool type_matches = (return_type.type() == element_type);
 							if (element_type == Type::Struct) {
 								type_matches = type_matches && (return_type.type_index() == element_type_index);
 							}
-							
+
 							if (type_matches || func_index == i) {
 								// Generate mangled name with template argument for this specialization
 								std::vector<TypeSpecifierNode> param_types;
 								for (const auto& param : get_func.parameter_nodes()) {
 									param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
 								}
-								
+
 								std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
 								auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 									"get", return_type, param_types, template_args,
 									get_func.is_variadic(), "", current_namespace_stack_);
-								
+
 								StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 								binding_info.push_back({mangled_handle, element_type});
-								
+
 								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> (symbol table) with mangled name: ", mangled.view());
 								found_this_get = true;
 								break;
 							}
 							func_index++;
 						}
-						
+
 						if (!found_this_get) {
 							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: get<", i, "> not found, falling back to aggregate");
 							all_get_found = false;
 						}
 					}
 				}
-				
+
 				// If we found all get<N>() functions, generate the tuple-like decomposition
 				if (all_get_found && binding_info.size() == tuple_size_value) {
 					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: All get<> functions found, using tuple-like protocol");
-					
+
 					// Generate calls to get<N>(e) for each binding
 					for (size_t i = 0; i < tuple_size_value; ++i) {
 						StringHandle binding_id = node.identifiers()[i];
 						std::string_view binding_name = StringTable::getStringView(binding_id);
-						
+
 						auto [get_mangled_name, element_type] = binding_info[i];
-						
+
 						// Look up element size from tuple_element type alias
 						int element_size = get_type_size_bits(element_type);
 						TypeIndex element_type_index {};
-						
+
 						// Generate call to get<N>(hidden_var)
 						TempVar result_temp = var_counter.next();
-						
+
 						CallOp call_op;
 						call_op.result = result_temp;
 						call_op.return_type = element_type;
@@ -2668,7 +2669,7 @@
 						call_op.return_type_index = TypeIndex{element_type_index};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
-						
+
 						// Pass the hidden variable as argument
 						TypedValue arg;
 						arg.type = init_type;
@@ -2678,10 +2679,10 @@
 						arg.type_index = TypeIndex{init_type_index};
 						arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Pass by const reference
 						call_op.args.push_back(arg);
-						
+
 						Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binding_token));
-						
+
 						// Create the binding variable
 						VariableDeclOp binding_var_decl;
 						binding_var_decl.var_name = binding_id;
@@ -2693,36 +2694,36 @@
 						init_val3.value = result_temp;
 						init_val3.type_index = TypeIndex{element_type_index};
 						binding_var_decl.initializer = init_val3;
-						
+
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
-						
+
 						// Create synthetic declaration for symbol table
 						TypeSpecifierNode binding_type(element_type, TypeQualifier::None,
 						static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token());
 						binding_type.set_type_index(element_type_index);
-						
+
 						ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
 							ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 							binding_token
 						);
 						symbol_table.insert(binding_name, binding_decl_node);
-						
-						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created tuple binding '", binding_name, 
+
+						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created tuple binding '", binding_name,
 						"' via get<", i, ">");
 					}
-					
+
 					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using tuple-like protocol");
 					return;  // Done - don't fall through to aggregate decomposition
 				}
-				
+
 				// Fall through to aggregate decomposition
 				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Falling through to aggregate decomposition");
 			}
 		}
-		
+
 		// Step 6: Aggregate (struct) decomposition
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using aggregate decomposition");
-		
+
 		// Step 6a: Validate that we have the correct number of identifiers
 		// Count non-static public members (all members in FlashCpp are non-static by default)
 		size_t public_member_count = 0;
@@ -2731,16 +2732,16 @@
 				public_member_count++;
 			}
 		}
-		
+
 		if (node.identifiers().size() != public_member_count) {
-			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(),
 			") does not match number of public members (", public_member_count, ")");
 			return;
 		}
-		
-		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ", 
+
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ",
 		public_member_count, " public members");
-		
+
 		// Step 7: Create bindings for each identifier
 		// For each binding, we create a variable that's initialized with a member access expression
 		size_t binding_idx = 0;
@@ -2748,17 +2749,17 @@
 			if (member.access != AccessSpecifier::Public) {
 				continue;  // Skip non-public members
 			}
-			
+
 			if (binding_idx >= node.identifiers().size()) {
 				break;  // Safety check
 			}
-			
+
 			StringHandle binding_id = node.identifiers()[binding_idx];
 			std::string_view binding_name = StringTable::getStringView(binding_id);
-			
-			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name,
 			"' to member '", StringTable::getStringView(member.name), "'");
-			
+
 			// Create a TypeSpecifierNode for this binding's type
 			// The binding has the same type as the struct member
 			// For size_in_bits, clamp to 255 since TypeSpecifierNode uses unsigned char
@@ -2767,7 +2768,7 @@
 			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
 			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
 			binding_type.set_type_index(member.type_index);
-			
+
 			// If this is a reference binding (auto& or auto&&), mark the type as a reference
 			if (is_reference_binding) {
 				if (node.is_lvalue_reference()) {
@@ -2779,7 +2780,7 @@
 					binding_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // false = lvalue reference
 				}
 			}
-			
+
 			// Create a synthetic declaration node for the binding
 			// This allows the binding to be looked up in the symbol table
 			Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
@@ -2787,15 +2788,15 @@
 				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 				binding_token
 			);
-			
+
 			// Add to symbol table
 			symbol_table.insert(binding_name, binding_decl_node);
-			
+
 			// Generate IR for the binding
 			if (is_reference_binding) {
 				// For reference bindings, create a reference variable that points to the member
 				// We need to get the address of the member, not load its value
-				
+
 				// Compute address of member: &(hidden_var.member)
 				TempVar member_addr = var_counter.next();
 				ComputeAddressOp addr_op;
@@ -2804,9 +2805,9 @@
 				addr_op.total_member_offset = static_cast<int>(member.offset);
 				addr_op.result_type = member.type;
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
-				
+
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
@@ -2821,7 +2822,7 @@
 				init_val.value = member_addr;
 				init_val.type_index = member.type_index;
 				binding_var_decl.initializer = init_val;
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			} else {
 				// For value bindings, load the member value (existing behavior)
@@ -2839,9 +2840,9 @@
 				load_op.struct_type_info = &type_info;
 				load_op.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				load_op.is_pointer_to_member = false;
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), binding_token));
-				
+
 				// Now, declare the binding variable with the member value as initializer
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
@@ -2853,14 +2854,14 @@
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;
 				binding_var_decl.initializer = init_val2;
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			}
-			
+
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
-			
+
 			binding_idx++;
 		}
-		
+
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", binding_idx, " bindings");
 	}

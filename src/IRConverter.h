@@ -79,5 +79,5 @@ static constexpr uint8_t REX_WR   = 0x4C;  // REX.W + REX.R
 // Free emit functions: Call/Return/Push/Pop emit helpers
 #include "IRConverter_Emit_CallReturn.h"
 
-// IrToObjConverter class (includes IRConverter_Emit_CompareBranch.h and IRConverter_Emit_EHSeh.h internally)
+// IrToObjConverter class (self-contained class definition)
 #include "IRConverter_ConvertMain.h"

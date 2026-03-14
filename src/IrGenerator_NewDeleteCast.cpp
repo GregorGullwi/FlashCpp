@@ -1,11 +1,12 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (!newExpr.type_node().is<TypeSpecifierNode>()) {
 			FLASH_LOG(Codegen, Error, "New expression type node is not a TypeSpecifierNode");
 			return ExprResult{};
 		}
-		
+
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
 		Type type = type_spec.type();
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
@@ -40,7 +41,7 @@
 				FLASH_LOG(Codegen, Error, "Array size is not an ExpressionNode");
 				return ExprResult{};
 			}
-			
+
 			ExprResult size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
 			// Check if this is placement array new
@@ -51,7 +52,7 @@
 					FLASH_LOG(Codegen, Error, "Placement address is not an ExpressionNode");
 					return ExprResult{};
 				}
-				
+
 				ExprResult address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 				// Create PlacementNewOp for array
@@ -64,7 +65,7 @@
 				op.address = toIrValue(address_operands.value);
 
 				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
-				
+
 				// Handle array initializers for placement new arrays
 				// Initialize each array element with the provided initializers
 				const auto& array_inits = newExpr.constructor_args();
@@ -77,20 +78,20 @@
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
-								
+
 								// Generate initialization for each element
 								for (size_t i = 0; i < array_inits.size(); ++i) {
 									const ASTNode& init = array_inits[i];
-									
+
 									// Skip if the initializer is not supported
 									if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
 										FLASH_LOG(Codegen, Warning, "Unsupported array initializer type, skipping element ", i);
 										continue;
 									}
-									
+
 									// Calculate offset for this element: base_pointer + i * element_size
 									TempVar element_ptr = var_counter.next();
-									
+
 									// Generate: element_ptr = result_var + (i * element_size)
 									BinaryOp offset_op{
 										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
@@ -98,18 +99,18 @@
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
-									
+
 									// Check if initializer is a brace initializer list
 									if (init.is<InitializerListNode>()) {
 										const InitializerListNode& init_list = init.as<InitializerListNode>();
-										
+
 										// If struct has a constructor, call it with initializer list elements
 										if (struct_info->hasAnyConstructor()) {
 											ConstructorCallOp ctor_op;
 											ctor_op.struct_name = type_info.name();
 											ctor_op.object = element_ptr;
 											ctor_op.is_heap_allocated = true;
-											
+
 											// Add each initializer as a constructor argument
 											for (const auto& elem_init : init_list.initializers()) {
 												// Safety check: ensure elem_init is an ExpressionNode
@@ -117,12 +118,12 @@
 													FLASH_LOG(Codegen, Warning, "Element initializer is not an ExpressionNode, skipping");
 													continue;
 												}
-												
+
 												ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 													TypedValue tv = toTypedValue(arg_operands);
 													ctor_op.arguments.push_back(std::move(tv));
 											}
-											
+
 											ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 										}
 									} else if (init.is<ExpressionNode>()) {
@@ -137,14 +138,14 @@
 					} else {
 						// For primitive types, initialize each element
 						size_t element_size = size_in_bits / 8;
-						
+
 						for (size_t i = 0; i < array_inits.size(); ++i) {
 							const ASTNode& init = array_inits[i];
-							
+
 							if (init.is<ExpressionNode>()) {
 								// Calculate offset for this element
 								TempVar element_ptr = var_counter.next();
-								
+
 								// Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
 									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
@@ -152,7 +153,7 @@
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
-								
+
 								// Evaluate the initializer expression
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
@@ -190,7 +191,7 @@
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
-				
+
 				// Handle array initializers for heap-allocated arrays
 				const auto& array_inits = newExpr.constructor_args();
 				if (array_inits.size() > 0) {
@@ -202,16 +203,16 @@
 							if (type_info.struct_info_) {
 								const StructTypeInfo* struct_info = type_info.struct_info_.get();
 								size_t element_size = struct_info->total_size;
-								
+
 								for (size_t i = 0; i < array_inits.size(); ++i) {
 									const ASTNode& init = array_inits[i];
-									
+
 									// Skip if the initializer is not supported
 									if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
 										FLASH_LOG(Codegen, Warning, "Unsupported array initializer type in heap array, skipping element ", i);
 										continue;
 									}
-									
+
 									TempVar element_ptr = var_counter.next();
 									BinaryOp offset_op{
 										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
@@ -219,26 +220,26 @@
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
-									
+
 									if (init.is<InitializerListNode>() && struct_info->hasAnyConstructor()) {
 										const InitializerListNode& init_list = init.as<InitializerListNode>();
 										ConstructorCallOp ctor_op;
 										ctor_op.struct_name = type_info.name();
 										ctor_op.object = element_ptr;
 										ctor_op.is_heap_allocated = true;
-										
+
 										for (const auto& elem_init : init_list.initializers()) {
 											// Safety check: ensure elem_init is an ExpressionNode
 											if (!elem_init.is<ExpressionNode>()) {
 												FLASH_LOG(Codegen, Warning, "Element initializer in heap array is not an ExpressionNode, skipping");
 												continue;
 											}
-											
+
 											ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
 												TypedValue tv = toTypedValue(arg_operands);
 												ctor_op.arguments.push_back(std::move(tv));
 										}
-										
+
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 									}
 								}
@@ -257,7 +258,7 @@
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
-								
+
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
 									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
@@ -370,7 +371,7 @@
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = result_var;
 							ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
-							
+
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
 							for (size_t i = 0; i < ctor_args.size(); ++i) {
@@ -378,7 +379,7 @@
 									TypedValue tv = toTypedValue(arg_operands);
 									ctor_op.arguments.push_back(std::move(tv));
 							}
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
@@ -422,7 +423,7 @@
 									TypedValue tv = toTypedValue(arg_operands);
 									ctor_op.arguments.push_back(std::move(tv));
 							}
-						
+
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
@@ -431,7 +432,7 @@
 
 			emit_scalar_new_initializer(result_var);
 		}
-		
+
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
 		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var});
@@ -592,7 +593,7 @@
 		const ExprResult& expr_operands,
 		TempVar fallback_var,
 		const char* cast_name) {
-		
+
 		std::variant<StringHandle, TempVar> base;
 		if (std::holds_alternative<StringHandle>(expr_operands.value)) {
 			base = std::get<StringHandle>(expr_operands.value);
@@ -612,10 +613,10 @@
 		int target_size,
 		bool is_rvalue_ref,
 		const char* cast_name) {
-		
+
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
-		
+
 		if (is_rvalue_ref) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
 			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
@@ -632,7 +633,7 @@
 		int target_size,
 		const Token& token,
 		const char* cast_name) {
-		
+
 		if (std::holds_alternative<StringHandle>(base)) {
 			AddressOfOp addr_op;
 			addr_op.result = result_var;
@@ -661,19 +662,19 @@
 		int target_size,
 		const Token& token,
 		const char* cast_name) {
-		
+
 		// Create a new TempVar to hold the xvalue result
 		TempVar result_var = var_counter.next();
-		
+
 		// Extract base operand and mark as xvalue
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
 		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
-		
+
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
-		
+
 		// Return the xvalue with reference semantics (64-bit pointer size)
 		return makeExprResult(target_type, SizeInBits{64}, result_var);
 	}
@@ -684,19 +685,19 @@
 		int target_size,
 		const Token& token,
 		const char* cast_name) {
-		
+
 		// Create a new TempVar to hold the lvalue result
 		TempVar result_var = var_counter.next();
-		
+
 		// Extract base operand and mark as lvalue
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference", cast_name);
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
-		
+
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
-		
+
 		// Return the lvalue with reference semantics (64-bit pointer size)
 		return makeExprResult(target_type, SizeInBits{64}, result_var);
 	}
@@ -707,14 +708,14 @@
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		size_t target_pointer_depth = target_type_node.pointer_depth();
-		
+
 		// For reference casts (both lvalue and rvalue), we need the address of the expression,
 		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
 		ExpressionContext eval_context = ExpressionContext::Load;
 		if (target_type_node.is_reference()) {
 			eval_context = ExpressionContext::LValueAddress;
 		}
-		
+
 		// Evaluate the expression to cast
 		ExprResult expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
@@ -753,7 +754,7 @@
 			// Pointer casts are bitcasts - the value stays the same, only the type changes
 			// Return the expression with the target pointer type (char64, int64, etc.)
 			// All pointers are 64-bit on x64, so size should be 64
-			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}", 
+			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
 			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value);
 		}
@@ -795,7 +796,7 @@
 					return 0ULL;
 				}
 			}, expr_operands.value);
-			
+
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
@@ -819,7 +820,7 @@
 					return 0ULL;
 				}
 			}, expr_operands.value);
-			
+
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
@@ -843,7 +844,7 @@
 					return 0ULL;
 				}
 			}, expr_operands.value);
-			
+
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
@@ -984,7 +985,7 @@
 			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();
 			StringHandle var_name_handle = std::get<StringHandle>(expr_operands.value);
-			
+
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
@@ -1028,25 +1029,25 @@
 	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
-		
+
 		// Evaluate the expression to cast
 		ExprResult expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
-		
+
 		// Get the target type from the type specifier
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
-		
+
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
 			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
-		
+
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
 			return handleLValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
 		}
-		
+
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
@@ -1056,26 +1057,26 @@
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
-		
+
 		// Evaluate the expression to cast
 		ExprResult expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
-		
+
 		// Get the target type from the type specifier
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		int target_pointer_depth = target_type_node.pointer_depth();
-		
+
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
 			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
-		
+
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
 			return handleLValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
-		
+
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged

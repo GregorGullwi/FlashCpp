@@ -918,4 +918,4 @@ inline std::string_view extractBaseTemplateName(std::string_view name) {
 // Information needed to instantiate a template member function on-demand
 
 // Lazy registries and ConceptRegistry split out for maintainability.
-#include "TemplateRegistry_Lazy.cpp"  // LazyMemberInstantiationRegistry, LazyClassInstantiationRegistry, ConceptRegistry, etc.
+#include "TemplateRegistry_Lazy.h"  // LazyMemberInstantiationRegistry, LazyClassInstantiationRegistry, ConceptRegistry, etc.

@@ -1,3 +1,12 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+#include "ExpressionSubstitutor.h"
+#include "ParserTemplateClassShared.h"
+
+
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ", 
 	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);

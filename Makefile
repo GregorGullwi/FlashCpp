@@ -48,21 +48,25 @@ TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
 DEBUG_DIR := $(BINDIR)/Debug
 RELEASE_DIR := $(BINDIR)/Release
 TEST_DIR := $(BINDIR)/Test
+MODULAR_DIR := $(BINDIR)/Modular
 
 # All source files in the src directory (for dependency tracking with unity builds)
 # Using wildcard ensures any header or source change triggers a rebuild
-UNITY_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.cpp)
+UNITY_SOURCES := $(wildcard $(SRCDIR)/*.h) $(wildcard $(SRCDIR)/*.hpp) $(wildcard $(SRCDIR)/*.cpp) $(wildcard $(SRCDIR)/*/*.h) $(wildcard $(SRCDIR)/*/*.hpp)
 
 # Source files needed for the test (unity build - only FlashCppTest.cpp is compiled)
 TEST_SOURCES :=
 
-# Main sources (unity build - only main.cpp is compiled)
+# Main sources (unity build - only main.cpp wrapper is compiled)
 MAIN_SOURCES := $(SRCDIR)/main.cpp
+MODULAR_SOURCES := $(filter-out $(SRCDIR)/main.cpp,$(wildcard $(SRCDIR)/*.cpp))
+MODULAR_OBJS := $(patsubst $(SRCDIR)/%.cpp,$(MODULAR_DIR)/%.o,$(MODULAR_SOURCES))
 
 # Target executables with proper extensions (matching MSVC structure)
 MAIN_TARGET := $(DEBUG_DIR)/FlashCpp$(EXE_EXT)
 RELEASE_TARGET := $(RELEASE_DIR)/FlashCpp$(EXE_EXT)
 TEST_TARGET := $(TEST_DIR)/test$(EXE_EXT)
+MODULAR_TARGET := $(MODULAR_DIR)/FlashCpp$(EXE_EXT)
 
 # Default target
 .DEFAULT_GOAL := main
@@ -119,14 +123,26 @@ $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.c
 	$(CXX) $(CXXFLAGS) $(TESTINCLUDES) -O1 -g -o $@ $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp
 	@echo "Built: $@"
 
+$(MODULAR_DIR)/%.o: $(SRCDIR)/%.cpp $(UNITY_SOURCES)
+	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -c $< -o $@
+
+$(MODULAR_TARGET): $(MODULAR_OBJS)
+	@echo "Building modular executable for $(PLATFORM) with $(CXX)..."
+	@$(MKDIR) $(MODULAR_DIR) 2>nul || $(MKDIR) $(MODULAR_DIR) || true
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $(MODULAR_OBJS)
+	@echo "Built: $@"
+
 # Phony targets
-.PHONY: all clean test main release help test-all asan
+.PHONY: all clean test main release modular help test-all asan
 
 # Build all targets
 all: main release test
 
 # Main target (Debug configuration)
 main: $(MAIN_TARGET)
+
+modular: $(MODULAR_TARGET)
 
 # Release target
 release: $(RELEASE_TARGET)
@@ -158,6 +174,7 @@ help:
 	@echo ""
 	@echo "Output structure (matching MSVC):"
 	@echo "  x64/Debug/FlashCpp$(EXE_EXT)      - Debug build"
+	@echo "  x64/Modular/FlashCpp$(EXE_EXT)    - Modular build"
 	@echo "  x64/Release/FlashCpp$(EXE_EXT)    - Release build"
 	@echo "  x64/Test/test$(EXE_EXT)           - Test build"
 	@echo ""
@@ -165,6 +182,7 @@ help:
 	@echo "  make              - Build main executable in Debug mode (default)"
 	@echo "  make main         - Build main executable in Debug mode"
 	@echo "  make asan         - Build main executable in Debug mode with AddressSanitizer"
+	@echo "  make modular      - Build modular executable (use make -j for parallel per-file compilation)"
 	@echo "  make release      - Build main executable in Release mode"
 	@echo "  make test         - Build test executable"
 	@echo "  make test-all     - Build compiler and run all .cpp tests (pass and _fail)"

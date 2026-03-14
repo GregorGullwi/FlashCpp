@@ -1,11 +1,12 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4);  // ret + name + this + ~4 per arg
 
 		FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
-		
+
 		// Get the object expression
 		ASTNode object_node = memberFunctionCallNode.object();
 		std::optional<StringHandle> immediate_lambda_object_name;
@@ -34,7 +35,7 @@
 			// Without this, the lambda is never added to collected_lambdas_ and
 			// its functions are never generated, causing linker errors.
 			ExprResult lambda_result = generateLambdaExpressionIr(lambda);
-			
+
 			// Check if this is a generic lambda (has auto parameters)
 			bool is_generic = false;
 			std::vector<size_t> auto_param_indices;
@@ -65,7 +66,7 @@
 				// Create CallOp structure (matching the pattern in generateFunctionCallIr)
 				CallOp call_op;
 				call_op.result = ret_var;
-				
+
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
 				TypeSpecifierNode return_type_node(Type::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
@@ -79,12 +80,12 @@
 					call_op.return_type = Type::Void;
 					call_op.return_size_in_bits = SizeInBits{0};
 				}
-				
+
 				// Build TypeSpecifierNodes for parameters (needed for mangling)
 				// For generic lambdas, we need to deduce auto parameters from arguments
 				std::vector<TypeSpecifierNode> param_types;
 				std::vector<TypeSpecifierNode> deduced_param_types;  // For generic lambdas
-				
+
 				if (is_generic) {
 					// First, collect argument types
 					std::vector<TypeSpecifierNode> arg_types;
@@ -115,7 +116,7 @@
 						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
 						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 							const auto& literal = std::get<NumericLiteralNode>(arg_expr);
-							arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 
+							arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None,
 								static_cast<unsigned char>(literal.sizeInBits())));
 						} else {
 							// For complex expressions, evaluate and get type
@@ -127,14 +128,14 @@
 							));
 						}
 					});
-					
+
 					// Now build param_types with deduced types for auto parameters
 					size_t arg_idx = 0;
 					for (const auto& param_node : lambda.parameters()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
 							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-							
+
 							if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
 								// Deduce type from argument, preserving reference flags from auto&& parameter
 								TypeSpecifierNode deduced_type = arg_types[arg_idx];
@@ -148,16 +149,16 @@
 						}
 						arg_idx++;
 					}
-					
+
 					// Build instantiation key and request instantiation
 					std::string instantiation_key = std::to_string(lambda.lambda_id());
 					for (const auto& deduced : deduced_param_types) {
-						instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) + 
+						instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) +
 						"_" + std::to_string(deduced.size_in_bits());
 					}
-					
+
 					// Check if we've already scheduled this instantiation
-					if (generated_generic_lambda_instantiations_.find(instantiation_key) == 
+					if (generated_generic_lambda_instantiations_.find(instantiation_key) ==
 					generated_generic_lambda_instantiations_.end()) {
 						// Schedule this instantiation
 						GenericLambdaInstantiation inst;
@@ -168,7 +169,7 @@
 						}
 						pending_generic_lambda_instantiations_.push_back(std::move(inst));
 						generated_generic_lambda_instantiations_.insert(instantiation_key);
-						
+
 						// Also store deduced types in the LambdaInfo for generation
 						// Find the LambdaInfo for this lambda
 						for (auto& lambda_info : collected_lambdas_) {
@@ -194,7 +195,7 @@
 						}
 					}
 				}
-				
+
 				// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
 				std::string_view mangled = generateMangledNameForCall(
 					StringTable::getStringView(invoke_name),
@@ -203,7 +204,7 @@
 					false,  // not variadic
 					""  // not a member function
 				);
-				
+
 				call_op.function_name = StringTable::getOrInternStringHandle(mangled);
 				call_op.is_member_function = false;
 				call_op.is_variadic = false;  // Lambdas cannot be variadic in C++20
@@ -292,7 +293,7 @@
 				object_decl = get_decl_from_symbol(*symbol);
 				if (object_decl) {
 					object_type = object_decl->type_node().as<TypeSpecifierNode>();
-					
+
 					// If the type is 'auto', deduce the actual closure type from lambda initializer
 					if (object_type.type() == Type::Auto) {
 						if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
@@ -379,11 +380,11 @@
 			// - object_expr is o.inner (a MemberAccessNode)
 			// - func_name (from function_declaration) is "callback"
 			// We need to resolve the type of o.inner to get Inner, then check if callback is a function pointer member
-			
+
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 			const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
 			std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
-			
+
 			// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
@@ -401,7 +402,7 @@
 								if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
 									// Found a function pointer member! Generate indirect call
 									TempVar ret_var = var_counter.next();
-									
+
 									// Generate member access chain for o.inner.callback
 									// First get o.inner
 									ExprResult base_result = visitExpressionNode(*object_expr);
@@ -409,7 +410,7 @@
 										throw InternalError("Function pointer member base expression did not produce a TempVar");
 									}
 									TempVar base_temp = std::get<TempVar>(base_result.value);
-									
+
 									// Now access the callback member from that
 									TempVar func_ptr_temp = var_counter.next();
 									MemberLoadOp member_load;
@@ -423,23 +424,23 @@
 									member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
 									member_load.is_pointer_to_member = member_access.is_arrow();
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-									
+
 									// Build arguments for the indirect call
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 										ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 										arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
 									});
-									
+
 									IndirectCallOp op{
 										.result = ret_var,
 										.function_pointer = func_ptr_temp,
 										.arguments = std::move(arguments)
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-									
+
 									// Use the function pointer's stored return type
 									if (!member.function_signature) {
 										throw InternalError("Function pointer member missing function_signature for indirect call return type");
@@ -449,7 +450,7 @@
 									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var});
 								}
 							}
-							
+
 							// Not a function pointer member - set object_type for regular member function lookup
 							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
 							resolved_member->size * 8, Token());  // size in bits
@@ -457,7 +458,7 @@
 					}
 				}
 			}
-			
+
 			// Fall back to simple base object handling for "this->member" pattern
 			const ASTNode& base_node = member_access.object();
 			if (base_node.is<ExpressionNode>()) {
@@ -465,19 +466,19 @@
 				if (std::holds_alternative<IdentifierNode>(base_expr)) {
 					const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
 					std::string_view base_name = base_ident.name();
-					
+
 					// Look up the base object (e.g., "this")
 					const std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
 					if (symbol.has_value()) {
 						const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
 						if (base_decl) {
 							TypeSpecifierNode base_type_spec = base_decl->type_node().as<TypeSpecifierNode>();
-							
+
 							// If this is a pointer (like "this"), dereference it
 							if (base_type_spec.pointer_levels().size() > 0) {
 								base_type_spec.remove_pointer_level();
 							}
-							
+
 							// Now base_type_spec should be the struct type
 							if (isIrStructType(toIrType(base_type_spec.type()))) {
 								object_type = base_type_spec;
@@ -499,7 +500,7 @@
 			// Treat it as a regular function call instead
 			return convertMemberCallToFunctionCall(memberFunctionCallNode);
 		}
-		
+
 		// Verify this is a struct type BEFORE checking other cases
 		// If object_type is not a struct, this might be a misparsed namespace-qualified function call
 		// Note: Template instantiations may be registered as Type::UserDefined but carry full struct info
@@ -626,7 +627,7 @@
 							}
 						}
 					}
-				
+
 				// If not found in the current class, search base classes
 				const StructTypeInfo* declaring_struct = struct_info;
 				if (!called_member_func && !struct_info->base_classes.empty()) {
@@ -675,11 +676,11 @@
 					};
 					searchBaseClasses(searchBaseClasses, struct_info);
 				}
-				
+
 				// Use declaring_struct instead of struct_info for mangled name generation
 				// This ensures we use the correct class name where the function is declared
 				struct_info = declaring_struct;
-				
+
 				// If not found as member function, check if it's a function pointer data member
 				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
@@ -759,7 +760,7 @@
 			qualified_name_sb.append(StringTable::getStringView(struct_info->getName())).append("::").append(func_name);
 			StringHandle qualified_template_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 			// DEBUG removed
-			
+
 			// Look up if this is a template
 			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
 			if (template_opt.has_value()) {
@@ -767,7 +768,7 @@
 				if (template_opt->is<TemplateFunctionDeclarationNode>()) {
 					// DEBUG removed
 				// This is a member function template - we need to instantiate it
-				
+
 				// Deduce template argument types from call arguments
 				std::vector<std::pair<Type, TypeIndex>> arg_types;
 				// DEBUG removed
@@ -778,11 +779,11 @@
 						return;
 					}
 					FLASH_LOG(Codegen, Trace, "Argument is an ExpressionNode");
-					
+
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-					
+
 					// DEBUG removed
-					
+
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 						arg_types.push_back({Type::Bool, TypeIndex{}});
@@ -805,30 +806,30 @@
 						// DEBUG removed
 					}
 				});
-				
+
 				// DEBUG removed
 
 				// Try to instantiate the template with deduced argument types
 				if (!arg_types.empty()) {
 					// Build instantiation key
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
-					
+
 					InlineVector<TemplateTypeArg, 4> template_args;
 					for (const auto& [arg_type, arg_type_index] : arg_types) {
 						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
 					}
-					
+
 					// Check if we already have this instantiation
 					auto inst_key = FlashCpp::makeInstantiationKey(qualified_template_name, template_args);
-					
+
 					auto existing_inst = gTemplateRegistry.getInstantiation(inst_key);
 					if (!existing_inst.has_value()) {
 						// Check requires clause constraint before instantiation
 						bool should_instantiate = true;
 						if (template_func.has_requires_clause()) {
-							const RequiresClauseNode& requires_clause = 
+							const RequiresClauseNode& requires_clause =
 								template_func.requires_clause()->as<RequiresClauseNode>();
-							
+
 							// Get template parameter names for evaluation
 							InlineVector<std::string_view, 4> eval_param_names;
 							for (const auto& tparam_node : template_func.template_parameters()) {
@@ -836,7 +837,7 @@
 									eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
 								}
 							}
-							
+
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
@@ -845,11 +846,11 @@
 								type_arg.type_index = arg_type_index;
 								type_args.push_back(type_arg);
 							}
-							
+
 							// Evaluate the constraint with the template arguments
 							auto constraint_result = evaluateConstraint(
 								requires_clause.constraint_expr(), type_args, eval_param_names);
-							
+
 							if (!constraint_result.satisfied) {
 								// Constraint not satisfied - report detailed error
 								// Build template arguments string
@@ -858,7 +859,7 @@
 									if (i > 0) args_str += ", ";
 									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].first));
 								}
-								
+
 								FLASH_LOG(Codegen, Error, "constraint not satisfied for template function '", func_name, "'");
 								FLASH_LOG(Codegen, Error, "  ", constraint_result.error_message);
 								if (!constraint_result.failed_requirement.empty()) {
@@ -868,17 +869,17 @@
 									FLASH_LOG(Codegen, Error, "  suggestion: ", constraint_result.suggestion);
 								}
 								FLASH_LOG(Codegen, Error, "  template arguments: ", args_str);
-								
+
 								// Don't create instantiation - constraint failed
 								should_instantiate = false;
 							}
 						}
-						
+
 						// Create new instantiation only if constraint was satisfied (or no constraint)
 						if (should_instantiate) {
 							gTemplateRegistry.registerInstantiation(inst_key, template_func.function_declaration());
 						}
-						
+
 						// Get template parameter names
 						InlineVector<std::string_view, 4> param_names;
 						for (const auto& tparam_node : template_func.template_parameters()) {
@@ -886,14 +887,14 @@
 								param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
 							}
 						}
-						
+
 						// Generate the mangled name
 						[[maybe_unused]] std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
-						
+
 						// Template instantiation now happens during parsing
 						// The instantiated function should already be in the AST
 						// We just use the mangled name for the call
-						
+
 						/*
 						// OLD: Collect this instantiation for deferred generation
 						const FunctionDeclarationNode& template_func_decl = template_func.function_decl_node();
@@ -908,7 +909,7 @@
 							inst_info.body_position = template_func_decl.template_body_position();
 							inst_info.template_param_names = param_names;
 							inst_info.template_node_ptr = &template_func;
-							
+
 							// Collect the instantiation - it will be generated later at the top level
 							// This ensures the FunctionDecl IR appears before any calls to it
 							collected_template_instantiations_.push_back(std::move(inst_info));
@@ -931,7 +932,7 @@
 			if (!checkMemberFunctionAccess(called_member_func, struct_info, current_context, current_function)) {
 				std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 				std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
-				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(), 
+				FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(),
 				"' of '", struct_info->getName(), "'", context_str);
 				throw CompileError("Access control violation");
 			}
@@ -944,7 +945,7 @@
 			VirtualCallOp vcall_op;
 			// Get return type from the actual member function (if found) instead of the placeholder declaration
 			// The placeholder may not have correct pointer depth information for the return type
-			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
+			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
 			vcall_op.result.type = return_type.type();
@@ -984,14 +985,14 @@
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-				
+
 				// For variables, we need to add the type and size
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 					const auto& decl_node = symbol->as<DeclarationNode>();
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					
+
 					TypedValue tv;
 					tv.type = type_node.type();
 					tv.ir_type = toIrType(type_node.type());
@@ -1011,14 +1012,14 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(vcall_op), memberFunctionCallNode.called_from()));
 		} else {
 			// Generate regular (non-virtual) member function call using CallOp typed payload
-			
+
 			// Vector to hold deduced parameter types (populated for generic lambdas)
 			std::vector<TypeSpecifierNode> param_types;
-			
+
 			// Check if this is an instantiated template function
 			std::string_view func_name = func_decl_node.identifier_token().value();
 			StringHandle function_name;
-			
+
 			// Check if this is a member function - use struct_info to determine
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
@@ -1028,18 +1029,18 @@
 					struct_name = type_it->second->name();
 				}
 				auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
-				
+
 				// Check if this is a template that has been instantiated
 				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateFunctionDeclarationNode>()) {
 					// This is a member function template - use the mangled name
-					
+
 					// Deduce template arguments from call arguments
 					InlineVector<TemplateTypeArg, 4> template_args;
 					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 						if (!argument.is<ExpressionNode>()) return;
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
-						
+
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
@@ -1056,10 +1057,10 @@
 							}
 						}
 					});
-					
+
 					// Generate the mangled name
 					std::string_view mangled_func_name = gTemplateRegistry.mangleTemplateName(func_name, template_args);
-					
+
 					// Build qualified function name with mangled template name
 					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));
 				} else {
@@ -1069,10 +1070,10 @@
 					if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
-					
+
 					// Get return type and parameter types from the function declaration
 					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
-					
+
 					// Check if this is a generic lambda call (lambda with auto parameters)
 					bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
 					if (is_generic_lambda) {
@@ -1124,27 +1125,27 @@
 						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
 							} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
 								const auto& literal = std::get<NumericLiteralNode>(arg_expr);
-								arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None, 
+								arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None,
 									static_cast<unsigned char>(literal.sizeInBits())));
 							} else {
 								// Default to int for complex expressions
 								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
 							}
 						});
-						
+
 						// Now build param_types with deduced types for auto parameters
 						size_t arg_idx = 0;
 						for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 							if (param_node.is<DeclarationNode>()) {
 								const auto& param_decl = param_node.as<DeclarationNode>();
 								const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-								
+
 								if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
 									// Deduce type from argument, preserving reference flags from auto&& parameter
 									TypeSpecifierNode deduced_type = arg_types[arg_idx];
 									deduced_type.set_reference_qualifier(param_type.reference_qualifier());
 									param_types.push_back(deduced_type);
-									
+
 									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
 									for (auto& lambda_info : collected_lambdas_) {
 										if (lambda_info.closure_type_name == struct_name) {
@@ -1168,7 +1169,7 @@
 							}
 						}
 					}
-					
+
 					// Build namespace path from the struct's declaration-site namespace
 					// so member function calls get the correct mangled name.
 					std::vector<std::string> namespace_for_mangling;
@@ -1194,12 +1195,12 @@
 				// Non-member function or fallback
 				function_name = StringTable::getOrInternStringHandle(func_name);
 			}
-			
+
 			// Create CallOp structure
 			CallOp call_op;
 			call_op.result = ret_var;
 			call_op.function_name = function_name;
-			
+
 			// Get return type information from the actual member function declaration
 			// Use called_member_func if available (has the substituted template types)
 			// Otherwise fall back to func_decl or func_decl_node
@@ -1214,7 +1215,7 @@
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
 			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
 			call_op.is_member_function = true;
-			
+
 			// Get the actual function declaration to check if it's variadic
 			const FunctionDeclarationNode* actual_func_decl_for_variadic = nullptr;
 			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
@@ -1223,19 +1224,19 @@
 				actual_func_decl_for_variadic = &func_decl;
 			}
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
-			
+
 			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
 			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
 			bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
-			
+
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
 				returns_struct_by_value, return_type.size_in_bits(), getStructReturnThreshold(context_->isLLP64()), needs_hidden_return_param);
-			
+
 			if (needs_hidden_return_param) {
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 				call_op.return_type_index = return_type.type_index();
-				
+
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
@@ -1246,7 +1247,7 @@
 					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
 					StringTable::getStringView(function_name), return_type.size_in_bits());
 			}
-			
+
 			// Add the object as the first argument (this pointer)
 			// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
 			// This is critical for empty structs (size 0) which still need a valid address
@@ -1260,7 +1261,7 @@
 					throw InternalError("Member function call on expression: did not produce a TempVar");
 				}
 				TempVar obj_temp = std::get<TempVar>(obj_result.value);
-				
+
 				if (object_is_pointer_like) {
 					// Temporary is already a pointer/reference - pass through directly
 					this_arg_value = IrValue(obj_temp);
@@ -1297,7 +1298,7 @@
 
 			// Generate IR for function arguments and add to CallOp
 			size_t arg_index = 0;
-		
+
 			// Get the actual function declaration with parameters from struct_info if available
 			const FunctionDeclarationNode* actual_func_decl = nullptr;
 			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
@@ -1305,7 +1306,7 @@
 			} else {
 				actual_func_decl = &func_decl;
 			}
-		
+
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 				// Get the parameter type from the function declaration to check if it's a reference
 				// For generic lambdas, use the deduced types from param_types instead of the original auto types
@@ -1326,13 +1327,13 @@
 						param_type = &param_decl.type_node().as<TypeSpecifierNode>();
 					}
 				}
-			
+
 				// For variables (identifiers), handle specially to avoid unnecessary dereferences
 				// when passing reference arguments to reference parameters
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-					
+
 					// Check if this is a function being passed as a function pointer argument
 					if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 						// Function being passed as function pointer - just pass its name
@@ -1340,7 +1341,7 @@
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-				
+
 						// Check if parameter expects a reference
 						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
@@ -1352,7 +1353,7 @@
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-						
+
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
 									IrValue(addr_var), ReferenceQualifier::LValueReference));
@@ -1366,7 +1367,7 @@
 						const auto& var_decl = symbol->as<VariableDeclarationNode>();
 						const auto& decl_node = var_decl.declaration();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-				
+
 						// Check if parameter expects a reference
 						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
@@ -1378,7 +1379,7 @@
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
-						
+
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
 									IrValue(addr_var), ReferenceQualifier::LValueReference));
@@ -1396,29 +1397,29 @@
 				else {
 					// Not an identifier - call visitExpressionNode to get the value
 					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-					
+
 					// Check if parameter expects a reference and argument is a literal
 					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference, but argument is not an identifier
 						// We need to materialize the value into a temporary and pass its address
-						
+
 						// Check if this is a literal value
 						bool is_literal =
 							std::holds_alternative<unsigned long long>(argument_result.value) ||
 							std::holds_alternative<double>(argument_result.value);
-						
+
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
 							Type literal_type = argument_result.type;
 							int literal_size = argument_result.size_in_bits.value;
-							
+
 							// Create a temporary variable to hold the literal value
 							TempVar temp_var = var_counter.next();
-							
+
 							// Generate an assignment IR to store the literal using typed payload
 							AssignmentOp assign_op;
 							assign_op.result = temp_var;  // unused but required
-							
+
 							// Convert IrOperand to IrValue for the literal
 							IrValue rhs_value;
 							if (std::holds_alternative<unsigned long long>(argument_result.value)) {
@@ -1426,16 +1427,16 @@
 							} else if (std::holds_alternative<double>(argument_result.value)) {
 								rhs_value = std::get<double>(argument_result.value);
 							}
-							
+
 							// Create TypedValue for lhs and rhs
 							assign_op.lhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, temp_var);
 							assign_op.rhs = makeTypedValue(literal_type, SizeInBits{static_cast<int>(literal_size)}, rhs_value);
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-							
+
 							// Now take the address of the temporary
 							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
-							
+
 							// Pass the address
 							call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
 								IrValue(addr_var), ReferenceQualifier::LValueReference));
@@ -1445,9 +1446,9 @@
 								Type expr_type = argument_result.type;
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
-								
+
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-								
+
 								call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
 									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							} else {
@@ -1460,7 +1461,7 @@
 						call_op.args.push_back(toTypedValue(argument_result));
 					}
 				}
-			
+
 				arg_index++;
 			});
 
@@ -1468,7 +1469,7 @@
 			if (actual_func_decl) {
 				fillInDefaultArguments(call_op, actual_func_decl->parameter_nodes(), arg_index);
 			}
-			
+
 			// Add the function call instruction with typed payload
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 		}
@@ -1476,7 +1477,7 @@
 		// Return the result variable with its type and size
 		// If we found the actual member function from the struct, use its return type
 		// Otherwise fall back to the placeholder function declaration
-		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
+		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 			: func_decl_node.type_node().as<TypeSpecifierNode>();
 		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
@@ -1488,13 +1489,13 @@
 				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
 			}
 		}
-		
+
 		// For pointer/reference return types, use 64 bits (pointer size on x64)
 		// Otherwise, use the type's natural size
 		int return_size_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
-		
+
 		TypeIndex ret_type_index = isIrStructType(toIrType(return_type.type()))
 			? return_type.type_index()
 			: TypeIndex{};
@@ -1514,13 +1515,13 @@
 ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
-	
+
 	// Copy the arguments using the visit method
 	ChunkedVector<ASTNode> args_copy;
 	memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
 		args_copy.push_back(arg);
 	});
-	
+
 	FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
 	return generateFunctionCallIr(function_call);
 }

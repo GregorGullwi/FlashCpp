@@ -1,5 +1,5 @@
 #include "AstNodeTypes.h"
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
 #include <sstream>

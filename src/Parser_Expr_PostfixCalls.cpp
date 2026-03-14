@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 
 // Helper: resolve object type from expression and try to instantiate member function template.
 // Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).

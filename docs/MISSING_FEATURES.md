@@ -417,7 +417,7 @@ When implementing a missing feature:
 **Parser Code**: `src/Parser.cpp` - Main parsing logic
 **Parser Types**: `src/ParserTypes.h` - Shared parsing structures
 **AST Definitions**: `src/AstNodeTypes.h` - AST node types
-**Code Generator**: `src/CodeGen.h` - AST to IR translation
+**Code Generator**: `src/IrGenerator.h` - AST to IR translation
 **IR Converter**: `src/IRConverter.h` - IR to assembly conversion
 **ELF Writer**: `src/ElfFileWriter.h` - ELF object file generation (exception tables, DWARF)
 **LSDA Generator**: `src/LSDAGenerator.h` - Language-Specific Data Area for exceptions

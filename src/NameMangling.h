@@ -2,7 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "TemplateRegistry.h"
 #include "CompileError.h"
 

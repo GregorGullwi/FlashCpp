@@ -1,6 +1,7 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
-	ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode, 
+	ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 	ExpressionContext context) {
 		return std::visit([this, context](const auto& expr) -> ExprResult {
 			using T = std::decay_t<decltype(expr)>;
@@ -93,16 +94,16 @@
 	}
 
 	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
-		std::string_view type_name = dtor.has_qualified_name() 
+		std::string_view type_name = dtor.has_qualified_name()
 			? dtor.qualified_type_name().view()
 			: dtor.type_name();
 		FLASH_LOG(Codegen, Debug, "Generating explicit destructor call for type: ", type_name);
-		
+
 		ASTNode object_node = dtor.object();
 		std::string_view object_name;
 		const DeclarationNode* object_decl = nullptr;
 		TypeSpecifierNode object_type(Type::Void, TypeQualifier::None, 0);
-		
+
 		if (object_node.is<ExpressionNode>()) {
 			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(object_expr)) {
@@ -120,14 +121,14 @@
 				}
 			}
 		}
-		
+
 		if (is_struct_type(object_type.type())) {
 			size_t struct_type_index = object_type.type_index().value;
 			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[struct_type_index];
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
-					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
+					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ",
 					StringTable::getStringView(struct_info->getName()));
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = struct_info->getName();
@@ -149,13 +150,13 @@
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
 			return ExprResult{};
 		}
-		
+
 		ExprResult ptr_result = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
 		if (ptr_result.effectiveIrType() == IrType::Void && !ptr_result.size_in_bits.is_set()) {
 			FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
 			return ExprResult{};
 		}
-		
+
 		TempVar object_addr = var_counter.next();
 		if (ptmNode.is_arrow()) {
 			if (std::holds_alternative<StringHandle>(object_result.value)) {
@@ -191,18 +192,18 @@
 				return ExprResult{};
 			}
 		}
-		
+
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
 		add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
 		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
-		
+
 		Type member_type = ptr_result.type;
 		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
-		
+
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(
 			member_type,
@@ -230,7 +231,7 @@
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
-		
+
 		if (is_array_type || type_node.pointer_depth() > 0) {
 			// For arrays and pointers, the identifier itself is a pointer (64 bits on x64)
 			// The element/pointee size is stored separately and used for pointer arithmetic
@@ -244,17 +245,17 @@
 			if (size_bits == 0) {
 				Type fallback_type = type_node.type();
 				if (!applyTransitionalAutoRuntimeFallback(fallback_type, size_bits)) {
-					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
+					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
 					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
 					size_bits = get_type_size_bits(type_node.type());
 				}
 			}
 		}
-		
+
 		return size_bits;
 	}
 
-	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode, 
+	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	ExpressionContext context) {
 		auto makeIdentifierResult = [](
 			Type type,
@@ -346,7 +347,7 @@
 
 							// Generate Dereference to load the value
 							TempVar result_temp = emitDereference(orig_type.type(), 64, 0, ptr_temp);
-							
+
 							// Mark as lvalue with Indirect metadata for unified assignment handler
 							// This represents dereferencing a pointer: *ptr
 							LValueInfo lvalue_info(
@@ -376,7 +377,7 @@
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						
+
 						// For mutable lambdas, set LValue metadata so assignments write back to the member
 						if (current_lambda_context_.is_mutable) {
 							// Use 'this' as the base object (StringHandle version)
@@ -390,7 +391,7 @@
 							lvalue_info.is_pointer_to_member = true;  // 'this' is a pointer, need to dereference
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 						}
-						
+
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
@@ -415,7 +416,7 @@
 					member_load.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-					
+
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Member,
 						*copy_this_temp,
@@ -423,7 +424,7 @@
 					);
 					lvalue_info.member_name = member->getName();
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-					
+
 					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 					return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 				}
@@ -617,7 +618,7 @@
 		std::optional<ASTNode> symbol;
 		bool is_global = false;
 		std::optional<StringHandle> resolved_qualified_name;  // Track the qualified name from using declaration
-		
+
 		if (global_symbol_table_) {
 			auto using_declarations = symbol_table.get_current_using_declaration_handles();
 			for (const auto& [local_name, target_info] : using_declarations) {
@@ -627,7 +628,7 @@
 					resolved_qualified_name = namespace_handle.isGlobal()
 						? original_handle
 						: gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, original_handle);
-					
+
 					// Resolve using the global symbol table
 					symbol = global_symbol_table_->lookup_qualified(namespace_handle, original_handle);
 					if (symbol.has_value()) {
@@ -637,7 +638,7 @@
 				}
 			}
 		}
-		
+
 		// If not resolved via using declaration, try local symbol table (for local variables, parameters, etc.)
 		// This ensures constructor parameters shadow member variables in initializer expressions
 		if (!symbol.has_value()) {
@@ -648,7 +649,7 @@
 		if (!symbol.has_value() && global_symbol_table_) {
 			symbol = global_symbol_table_->lookup(identifierNode.name());
 			is_global = symbol.has_value();  // If found in global table, it's a global
-			
+
 			// If still not found, check using directives from local scope in the global symbol table
 			// This handles cases like: using namespace X; int y = X_var;
 			// where X_var is defined in namespace X
@@ -736,7 +737,7 @@
 		// This gives priority to parameters and local variables over member variables
 		// Skip this for [*this] lambdas - they need to access through __copy_this instead
 		// Also check that we're not in a lambda context where this would be an enclosing struct member
-		if (!symbol.has_value() && current_struct_name_.isValid() && 
+		if (!symbol.has_value() && current_struct_name_.isValid() &&
 		!isInCopyThisLambda() && !current_lambda_context_.isActive()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
@@ -761,7 +762,7 @@
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						
+
 						// Mark as lvalue with member metadata for unified assignment handler
 						LValueInfo lvalue_info(
 							LValueInfo::Kind::Member,
@@ -779,11 +780,11 @@
 							);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						
+
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->type, static_cast<int>(member->size * 8), result_temp, type_index);
 					}
-					
+
 					// Check if this identifier is a static member
 					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
 					if (static_member) {
@@ -791,7 +792,7 @@
 						// Static members are stored as globals with qualified names
 						// Note: Namespaces are already included in current_struct_name_ via mangling
 						auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(current_struct_name_).append("::"sv).append(var_name_str));
-						
+
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
 						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
@@ -800,7 +801,7 @@
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
 							}
 						}
-						
+
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
@@ -809,7 +810,7 @@
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
-						
+
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
 						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
 					}
@@ -873,7 +874,7 @@
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
-				
+
 				// If we resolved this via a using declaration, use the resolved qualified name
 				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
 				if (resolved_qualified_name.has_value()) {
@@ -888,7 +889,7 @@
 						op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
 					}
 				}
-				
+
 				op.is_array = is_array_type;  // Arrays need LEA to get address
 					StringHandle saved_global_name = op.global_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
@@ -918,7 +919,7 @@
 				// Local reference variables are stored on the stack and hold a pointer value
 				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
 				// For now, we'll treat all references as parameters unless they fail the parameter test
-				
+
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -926,7 +927,7 @@
 					// Return the array reference as a 64-bit pointer
 					return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 				}
-				
+
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
 				// For compound assignments, we need to return a TempVar with lvalue metadata
 				// For simple assignments and function calls, we can return the reference directly
@@ -938,15 +939,15 @@
 						pointee_type = Type::Int;
 						pointee_size = 32;
 					}
-					
+
 					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
-					
+
 					// Create a TempVar with Indirect lvalue metadata for compound assignments
 					// This allows handleLValueCompoundAssignment to work with reference variables
 					TempVar lvalue_temp = var_counter.next();
-					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Creating TempVar {} for reference '{}'", 
+					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Creating TempVar {} for reference '{}'",
 						lvalue_temp.var_number, identifierNode.name());
-					
+
 					// Generate Assignment to copy the pointer value from the reference parameter to the temp
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					AssignmentOp assign_op;
@@ -956,7 +957,7 @@
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-					
+
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Indirect,
 						lvalue_temp,  // Use the temp var holding the address, not the parameter name
@@ -964,14 +965,14 @@
 					);
 					setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
 					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Set metadata on TempVar {}", lvalue_temp.var_number);
-					
+
 					// Return with TempVar that has lvalue metadata
 					// The type/size are for the pointee (what the reference refers to)
 					return makeIdentifierResult(pointee_type, pointee_size, lvalue_temp, type_index);
 				}
-				
+
 				// For non-array references in Load context, we need to dereference to get the value
-				
+
 				// For auto types, default to int (32 bits) since the mangling also defaults to int
 				// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 				Type pointee_type = type_node.type();
@@ -980,7 +981,7 @@
 					pointee_type = Type::Int;
 					pointee_size = 32;
 				}
-				
+
 				Type semantic_pointee_type = pointee_type;
 
 				// For enum references, lower the dereferenced value to its runtime
@@ -988,11 +989,11 @@
 				// underlying integer type.
 				pointee_type = getRuntimeValueType(semantic_pointee_type, type_node.type_index(), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
-				
+
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 					StringTable::getOrInternStringHandle(identifierNode.name()));
-				
+
 				// Mark as lvalue with Indirect metadata for unified assignment handler
 				// This allows compound assignments (like x *= 2) to work on dereferenced references
 				LValueInfo lvalue_info(
@@ -1005,11 +1006,11 @@
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
 				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 			}
-			
+
 			// Regular local variable
 			// Use helper function to calculate size_bits with proper fallback handling
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
-			
+
 			// Lower non-pointer variables to their runtime representation. For enums
 			// this produces the underlying integer type/size while preserving
 			// semantic type metadata separately via type_index below.
@@ -1025,8 +1026,8 @@
 				type_node.type_index(),
 				size_bits,
 				identifier_pointer_depth);
-			
-			// For the 4th element: 
+
+			// For the 4th element:
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For enum types, return type_index to preserve type information
 			// - For non-struct/enum pointer types, return pointer_depth
@@ -1069,7 +1070,7 @@
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
-				
+
 				// If we resolved this via a using declaration, use the resolved qualified name
 				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
 				if (resolved_qualified_name.has_value()) {
@@ -1084,7 +1085,7 @@
 						op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
 					}
 				}
-				
+
 				op.is_array = is_array_type;  // Arrays need LEA to get address
 				StringHandle saved_global_name = op.global_name;  // save before move
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
@@ -1101,14 +1102,14 @@
 				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
 			} else {
 				// This is a local variable
-				
+
 				// Check if this is a reference variable - if so, we need to dereference it
 				// Reference variables (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
 				if (type_node.is_reference()) {
-					FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': context={}", 
+					FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': context={}",
 						identifierNode.name(), context == ExpressionContext::LValueAddress ? "LValueAddress" : "Load");
-					
+
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
 					// Just return it as a pointer (64 bits on x64 architecture).
@@ -1116,7 +1117,7 @@
 						// Return the array reference as a 64-bit pointer
 						return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())});
 					}
-					
+
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
 					// as an indirect lvalue (pointer that needs dereferencing for stores)
 					if (context == ExpressionContext::LValueAddress) {
@@ -1128,12 +1129,12 @@
 							pointee_type = Type::Int;
 							pointee_size = 32;
 						}
-						
+
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
 						TempVar addr_temp = var_counter.next();
 						StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-						
+
 						// Use AssignmentOp to copy the pointer value to a temp
 						AssignmentOp assign_op;
 						assign_op.result = addr_temp;
@@ -1142,7 +1143,7 @@
 						assign_op.is_pointer_store = false;
 						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-						
+
 						// Mark the temp with Indirect LValue metadata
 						// This tells the assignment handler to use DereferenceStore
 						LValueInfo lvalue_info(
@@ -1151,13 +1152,13 @@
 							0  // offset is 0 for dereference
 						);
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
-						
+
 						TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 						return makeIdentifierResult(pointee_type, pointee_size, addr_temp, type_index);
 					}
-					
+
 					// For Load context (reading the value), dereference to get the value
-					
+
 					// For auto types, default to int (32 bits) since the mangling also defaults to int
 					// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 					Type pointee_type = type_node.type();
@@ -1166,11 +1167,11 @@
 						pointee_type = Type::Int;
 						pointee_size = 32;
 					}
-					
+
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 						StringTable::getOrInternStringHandle(identifierNode.name()));
-					
+
 					// Mark as lvalue with Indirect metadata for unified assignment handler
 					// This allows compound assignments (like x *= 2) to work on dereferenced references
 					LValueInfo lvalue_info(
@@ -1183,7 +1184,7 @@
 					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
 					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 				}
-				
+
 				// Regular local variable (not a reference) - return variable name.
 				// Generic lambda auto parameters still reach this path during the
 				// transition; keep the existing int fallback used by mangling and
@@ -1199,8 +1200,8 @@
 					}
 				}
 
-				
-				// For the 4th element: 
+
+				// For the 4th element:
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
 				// - Otherwise return 0
@@ -1216,17 +1217,17 @@
 						: static_cast<int>(type_node.pointer_depth())});
 			}
 		}
-		
+
 		// Check if it's a FunctionDeclarationNode (function name used as value)
 		if (symbol->is<FunctionDeclarationNode>()) {
 			// This is a function name being used as a value (e.g., fp = add)
 			// Generate FunctionAddress IR instruction
 			const auto& func_decl = symbol->as<FunctionDeclarationNode>();
-			
+
 			// Compute mangled name from the function declaration, respecting linkage
 			// (extern "C" functions must not be mangled)
 			std::string_view mangled = generateMangledNameForCall(func_decl);
-			
+
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
 			op.result.type = Type::FunctionPointer;
@@ -1261,7 +1262,7 @@
 		if (!ns_handle.isGlobal()) {
 			// The struct/enum name is the last namespace component (the name of the namespace handle)
 			std::string_view struct_or_enum_name = gNamespaceRegistry.getName(ns_handle);
-			
+
 			// Could be EnumName::EnumeratorName
 			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
@@ -1279,11 +1280,11 @@
 			// For nested types (depth > 1), try fully qualified name FIRST to avoid ambiguity
 			// This handles member template specializations like MakeUnsigned::List_int_char
 			auto struct_type_it = gTypesByName.end();
-			
+
 			if (gNamespaceRegistry.getDepth(ns_handle) > 1) {
 				StringHandle ns_qualified_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 				std::string_view full_qualified_name = StringTable::getStringView(ns_qualified_handle);
-				
+
 				// First try with the namespace handle directly
 				struct_type_it = gTypesByName.find(ns_qualified_handle);
 				if (struct_type_it != gTypesByName.end()) {
@@ -1306,13 +1307,13 @@
 					}
 				}
 			}
-			
+
 			// If not found with fully qualified name, try simple name
 			if (struct_type_it == gTypesByName.end()) {
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			}
-			
+
 			// If not found directly, search for template instantiation using TypeInfo metadata
 			// This handles cases like has_type<T>::value where T has a default = void argument
 			// Uses TypeInfo::baseTemplateName() for deterministic lookup instead of prefix scanning
@@ -1330,7 +1331,7 @@
 							if (it->second->type_index_ < best_type_index) {
 								best_type_index = it->second->type_index_;
 								struct_type_it = it;
-								FLASH_LOG(Codegen, Debug, "Found struct via TypeInfo metadata: baseTemplate=", 
+								FLASH_LOG(Codegen, Debug, "Found struct via TypeInfo metadata: baseTemplate=",
 									struct_or_enum_name, " -> ", StringTable::getStringView(it->first),
 									" (type_index=", it->second->type_index_, ")");
 							}
@@ -1338,7 +1339,7 @@
 					}
 				}
 			}
-			
+
 			// Fallback: try old-style _void suffix for backward compatibility with legacy code
 			if (struct_type_it == gTypesByName.end()) {
 				std::string_view struct_name_with_void = StringBuilder().append(struct_or_enum_name).append("_void"sv).commit();
@@ -1347,7 +1348,7 @@
 					FLASH_LOG(Codegen, Debug, "Found struct with _void suffix: ", struct_name_with_void);
 				}
 			}
-			
+
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
@@ -1367,18 +1368,18 @@
 						auto owner_type_it = gTypesByName.find(owner_struct->getName());
 						if (owner_type_it != gTypesByName.end() && owner_type_it->second->is_incomplete_instantiation_) {
 							std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
-							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(), 
+							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(),
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
 							return makeExprResult(Type::Bool, SizeInBits{8}, 0ULL);
 						}
-						
+
 						// Determine the correct qualified name to use
 						// If we accessed through a type alias (struct_type_it->second) that resolves to
 						// a different struct than the owner, we should use the resolved struct name
 						StringHandle qualified_struct_name = owner_struct->getName();
-						
+
 						// Check if we're accessing through a type alias by comparing names
 						if (struct_type_it->second->name() != owner_struct->getName()) {
 							// Accessing through type alias or derived class
@@ -1399,12 +1400,12 @@
 									}
 								}
 							}
-							
+
 							// Skip type alias resolution for inheritance - use owner_struct's name directly
 							if (!is_inheritance) {
 								// Try to resolve to the actual instantiated type
 								const TypeInfo* resolved_type = struct_type_it->second;
-								
+
 								// Special handling for true_type and false_type
 								// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
 								// but the template system doesn't instantiate them properly
@@ -1416,21 +1417,21 @@
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
 									return makeExprResult(Type::Bool, SizeInBits{8}, static_cast<unsigned long long>(value));
 								}
-								
+
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
-								while (resolved_type && 
-								resolved_type->type_index_.value < gTypeInfo.size() && 
+								while (resolved_type &&
+								resolved_type->type_index_.value < gTypeInfo.size() &&
 								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
 									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_.value];
-									
+
 									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 										// Use the target struct's name
 										qualified_struct_name = target_type->name();
 										FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
-										
+
 										// If target is also an alias, continue following
 										if (target_type->type_index_.is_valid() && target_type->type_index_ != resolved_type->type_index_) {
 											resolved_type = target_type;
@@ -1441,14 +1442,14 @@
 										break;
 									}
 								}
-								
+
 								// If still resolving to a primary template (no template args in name),
 								// try to find a properly instantiated version by checking emitted static members
 								std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
-								bool looks_like_primary_template = 
-									(owner_name_str.find('_') == std::string_view::npos || 
+								bool looks_like_primary_template =
+									(owner_name_str.find('_') == std::string_view::npos ||
 									owner_name_str == StringTable::getStringView(owner_struct->getName()));
-								
+
 								if (looks_like_primary_template) {
 									// Search for an instantiated version that has this static member
 									std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
@@ -1469,7 +1470,7 @@
 								}
 							}
 						}
-						
+
 						// This is a static member access - generate GlobalLoad
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);

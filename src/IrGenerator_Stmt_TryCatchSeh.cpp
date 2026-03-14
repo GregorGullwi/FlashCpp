@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 	active_try_statement_depth_ += 1;
@@ -13,12 +14,12 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		// Generate unique labels for exception handling using StringBuilder
 		static size_t try_counter = 0;
 		size_t current_try_id = try_counter++;
-		
+
 		// Create and commit each label separately to avoid StringBuilder overlap
 		StringBuilder handlers_sb;
 		handlers_sb.append("__try_handlers_").append(current_try_id);
 		std::string_view handlers_label = handlers_sb.commit();
-		
+
 		StringBuilder end_sb;
 		end_sb.append("__try_end_").append(current_try_id);
 		std::string_view end_label = end_sb.commit();
@@ -79,7 +80,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		for (size_t catch_index = 0; catch_index < node.catch_clauses().size(); ++catch_index) {
 			const auto& catch_clause_node = node.catch_clauses()[catch_index];
 			const auto& catch_clause = catch_clause_node.as<CatchClauseNode>();
-			
+
 			// Generate unique label for this catch handler end using StringBuilder
 			StringBuilder catch_end_sb;
 			catch_end_sb.append("__catch_end_").append(current_try_id).append("_").append(catch_index);
@@ -93,10 +94,10 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 				// Get type information
 				TypeIndex type_index = type_node.type_index();
-				
+
 				// Allocate a temporary for the caught exception
 				TempVar exception_temp = var_counter.next();
-				
+
 				// Emit CatchBegin marker with exception type and qualifiers
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
@@ -115,7 +116,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 				// Add the exception variable to the symbol table for the catch block scope
 				symbol_table.enter_scope(ScopeType::Block);
-				
+
 				// Register the exception parameter in the symbol table
 				std::string_view exception_var_name = decl.identifier_token().value();
 				if (!exception_var_name.empty()) {
@@ -124,7 +125,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
-					
+
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
 					init_value.type = type_node.type();
@@ -140,13 +141,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					decl_op.use_copy_constructor = !type_node.is_reference() &&
 					                               type_node.type() == Type::Struct &&
 					                               type_index.is_valid();
-					
+
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = false;
 					decl_op.custom_alignment = 0;
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), decl.identifier_token()));
-					
+
 					// Add to symbol table
 					symbol_table.insert(exception_var_name, exception_decl);
 				}
@@ -215,7 +216,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		} else {
 			// throw expression;
 			const auto& expr = *node.expression();
-			
+
 			// Generate code for the expression to throw
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 

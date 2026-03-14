@@ -1,10 +1,11 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 #include "LambdaHelpers.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
-		
+
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
 		if (is_struct_type(toType)) {
@@ -13,7 +14,7 @@
 		} else {
 			toSize = get_type_size_bits(toType);
 		}
-		
+
 		if (fromType == toType && fromSize == toSize) {
 			return operands; // No conversion needed
 		}
@@ -120,14 +121,14 @@
 				.to_size = toSize,
 				.result = resultVar
 			};
-		
+
 			// Determine whether to use sign extension or zero extension
 			bool use_sign_extend = false;
-			
+
 			// For literals, check if the value fits in the signed range
 			if (std::holds_alternative<unsigned long long>(operands.value)) {
 				unsigned long long lit_value = std::get<unsigned long long>(operands.value);
-				
+
 				// Determine the signed max value for the source size
 				unsigned long long signed_max = 0;
 				if (fromSize == 8) {
@@ -139,7 +140,7 @@
 				} else if (fromSize == 64) {
 					signed_max = std::numeric_limits<int64_t>::max();
 				}
-				
+
 				// If the value exceeds the signed max, it should be treated as unsigned (zero-extend)
 				// Otherwise, use the type's signedness
 				if (lit_value <= signed_max) {
@@ -153,7 +154,7 @@
 				// For non-literal values (variables, TempVars), use the type's signedness
 				use_sign_extend = is_signed_integer_type(fromType);
 			}
-			
+
 			if (use_sign_extend) {
 				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conv_op), source_token));
 			} else {
@@ -192,8 +193,8 @@
 	}
 
 	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
-		const ExpressionNode& expr, 
-		int accumulated_offset) 
+		const ExpressionNode& expr,
+		int accumulated_offset)
 	{
 		// Handle Identifier (base case)
 		if (std::holds_alternative<IdentifierNode>(expr)) {
@@ -215,16 +216,16 @@
 					return result;
 				}
 			}
-			
+
 			// Look up the identifier
 			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
 			if (!decl) {
 				return std::nullopt;  // Can't find identifier
 			}
-			
+
 			// Get type info
 			const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
-			
+
 			AddressComponents result;
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
@@ -239,77 +240,77 @@
 			result.pointer_depth = PointerDepth{static_cast<int>(type_node->pointer_depth())};
 			return result;
 		}
-		
+
 		// Handle MemberAccess (obj.member)
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(expr);
 			const ASTNode& object_node = memberAccess.object();
-			
+
 			if (!object_node.is<ExpressionNode>()) {
 				return std::nullopt;
 			}
-			
+
 			const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
-			
+
 			// Get object type to lookup member
 			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
-			
+
 			Type object_type = object_operands.type;
 			TypeIndex type_index {};
 			if (object_operands.type_index.is_valid()) {
 				type_index = object_operands.type_index;
 			}
-			
+
 			// Look up member information
 			if (!type_index.is_valid() || type_index.value >= gTypeInfo.size() || object_type != Type::Struct) {
 				return std::nullopt;
 			}
-			
+
 			std::string_view member_name = memberAccess.member_name();
 			StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 			auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
-			
+
 			if (!result) {
 				return std::nullopt;
 			}
-			
+
 			// Recurse with accumulated offset
 			int new_offset = accumulated_offset + static_cast<int>(result.adjusted_offset);
 			auto base_components = analyzeAddressExpression(obj_expr, new_offset);
-			
+
 			if (!base_components.has_value()) {
 				return std::nullopt;
 			}
-			
+
 			// Update type to member type
 			base_components->final_type = result.member->type;
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
-			
+
 			return base_components;
 		}
-		
+
 		// Handle ArraySubscript (arr[index])
 		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 			const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(expr);
-			
+
 			// For multidimensional arrays (nested ArraySubscriptNode), return nullopt
 			// to let the specialized handling in generateUnaryOperatorIr compute the flat index correctly
 			const ExpressionNode& array_expr_inner = arraySubscript.array_expr().as<ExpressionNode>();
 			if (std::holds_alternative<ArraySubscriptNode>(array_expr_inner)) {
 				return std::nullopt;  // Fall through to multidimensional array handling
 			}
-			
+
 			// Get the array and index operands
 			ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 			ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
-			
-			
+
+
 			Type element_type = array_operands.type;
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
-			
+
 			// Calculate actual element size from array declaration
 			if (std::holds_alternative<StringHandle>(array_operands.value)) {
 				StringHandle array_name = std::get<StringHandle>(array_operands.value);
@@ -351,22 +352,22 @@
 					element_pointer_depth = array_operands.pointer_depth.value;
 				}
 			}
-			
+
 			// Recurse on the array expression (could be nested: arr[i][j])
 			auto base_components = analyzeAddressExpression(arraySubscript.array_expr().as<ExpressionNode>(), accumulated_offset);
-			
+
 			if (!base_components.has_value()) {
 				return std::nullopt;
 			}
-			
+
 			// Add this array index
 			ComputeAddressOp::ArrayIndex arr_idx;
 			arr_idx.element_size_bits = SizeInBits{element_size_bits};
-			
+
 			// Capture index type information for proper sign extension
 			arr_idx.index_type = index_operands.type;
 			arr_idx.index_size_bits = index_operands.size_in_bits;
-			
+
 			// Set index value
 			if (std::holds_alternative<unsigned long long>(index_operands.value)) {
 				arr_idx.index = std::get<unsigned long long>(index_operands.value);
@@ -377,15 +378,15 @@
 			} else {
 				return std::nullopt;
 			}
-			
+
 			base_components->array_indices.push_back(arr_idx);
 			base_components->final_type = element_type;
 			base_components->final_size_bits = SizeInBits{element_size_bits};
 			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
-			
+
 			return base_components;
 		}
-		
+
 		// Unsupported expression type
 		return std::nullopt;
 	}
@@ -423,43 +424,43 @@
 		return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var});
 	}
 
-	ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
+	ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 	ExpressionContext context) {
 		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
-		if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&" && 
+		if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&" &&
 		unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-			
+
 			// For now, only handle simple identifiers
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
-				
+
 				const DeclarationNode* decl = lookupDeclaration(identifier_handle);
-				
+
 				if (decl) {
 					const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
-					
+
 					if (type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
 						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
-						
+
 						if (overload_result.has_match) {
 							// Found an overload! Generate a member function call instead of built-in address-of
-							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}", 
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}",
 							type_node->type_index());
-							
+
 							const StructMemberFunction& member_func = *overload_result.member_overload;
 							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							
+
 							// Get struct name for mangling
 							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index().value].name());
-							
+
 							// Get the return type from the function declaration
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							
+
 							// Generate mangled name using the proper mangling infrastructure
 							// This handles both Itanium (Linux) and MSVC (Windows) name mangling
 							std::string_view operator_func_name = "operator&";
@@ -474,10 +475,10 @@
 								empty_namespace,
 								Linkage::CPlusPlus
 							);
-							
+
 							// Generate the call
 							TempVar ret_var = var_counter.next();
-							
+
 							// Create CallOp
 							CallOp call_op;
 							call_op.result = ret_var;
@@ -494,15 +495,15 @@
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
 							call_op.is_member_function = true;  // This is a member function call
-							
+
 							// Add 'this' pointer as first argument
 							call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
-							
+
 							// Capture return metadata before the move invalidates call_op.
 							SizeInBits ret_size_in_bits = call_op.return_size_in_bits;
 							// Add the function call instruction
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
-							
+
 							// Return the result
 							return makeExprResult(
 								return_type.type(),
@@ -573,7 +574,7 @@
 				return false;
 			}
 
-			// For the 4th element: 
+			// For the 4th element:
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
@@ -590,13 +591,13 @@
 		// Special handling for &arr[index] - generate address directly without loading value
 		if (unaryOperatorNode.op() == "&" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-			
+
 			// Try new one-pass address analysis first
 			auto addr_components = analyzeAddressExpression(operandExpr);
 			if (addr_components.has_value()) {
 				// Successfully analyzed - generate ComputeAddress IR
 				TempVar result_var = var_counter.next();
-				
+
 				ComputeAddressOp compute_addr_op;
 				compute_addr_op.result = result_var;
 				compute_addr_op.base = addr_components->base;
@@ -604,9 +605,9 @@
 				compute_addr_op.total_member_offset = addr_components->total_member_offset;
 				compute_addr_op.result_type = addr_components->final_type;
 				compute_addr_op.result_size_bits = addr_components->final_size_bits;
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
-				
+
 				// Return pointer to result (64-bit pointer)
 				ExprResult result = makeExprResult(
 					addr_components->final_type,
@@ -616,29 +617,29 @@
 					PointerDepth{addr_components->pointer_depth.value + 1});
 				return result;
 			}
-			
+
 			// Fall back to legacy implementation if analysis failed
-			
+
 			// Handle &arr[index].member (member access on array element)
 			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
 				const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(operandExpr);
 				const ASTNode& object_node = memberAccess.object();
-				
+
 				// Check if the object is an array subscript
 				if (object_node.is<ExpressionNode>()) {
 					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 					if (std::holds_alternative<ArraySubscriptNode>(obj_expr)) {
 						const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(obj_expr);
-						
+
 						// Get the array and index operands
 						ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 						ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
-						
+
 						// Check that we have valid operands
 						{
 							Type element_type = array_operands.type;
 							int element_size_bits = array_operands.size_in_bits.value;
-							
+
 							// For arrays, array_operands[1] is the pointer size (64), not element size
 							// We need to calculate the actual element size from the array declaration
 							if (std::holds_alternative<StringHandle>(array_operands.value)) {
@@ -669,19 +670,19 @@
 									}
 								}
 							}
-							
+
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
 							TypeIndex type_index {};
 							if (array_operands.type_index.is_valid()) {
 								type_index = array_operands.type_index;
 							}
-							
+
 							// Look up member information
 							if (type_index.is_valid() && type_index.value < gTypeInfo.size() && element_type == Type::Struct) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
-								
+
 								if (member_result) {
 									// First, get the address of the array element
 									TempVar elem_addr_var = var_counter.next();
@@ -689,19 +690,19 @@
 									elem_addr_payload.result = elem_addr_var;
 									elem_addr_payload.element_type = element_type;
 									elem_addr_payload.element_size_in_bits = element_size_bits;
-									
+
 									// Set array (either variable name or temp)
 									if (std::holds_alternative<StringHandle>(array_operands.value)) {
 										elem_addr_payload.array = std::get<StringHandle>(array_operands.value);
 									} else if (std::holds_alternative<TempVar>(array_operands.value)) {
 										elem_addr_payload.array = std::get<TempVar>(array_operands.value);
 									}
-									
+
 									// Set index as TypedValue
 									elem_addr_payload.index = toTypedValue(index_operands);
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr_payload), arraySubscript.bracket_token()));
-									
+
 									// Now compute the member address by adding the member offset
 									// We need to add the offset to the pointer value
 									// Treat the pointer as a 64-bit integer for arithmetic purposes
@@ -710,9 +711,9 @@
 									add_offset.lhs = { Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, elem_addr_var };  // pointer treated as integer
 									add_offset.rhs = { Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, static_cast<unsigned long long>(member_result.adjusted_offset) };
 									add_offset.result = member_addr_var;
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
-									
+
 									// Return pointer to member (64-bit pointer, 0 for no additional type info)
 									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var});
 								}
@@ -720,48 +721,48 @@
 						}
 					}
 				}
-				
+
 				// Handle general case: &obj.member (where obj is NOT an array subscript)
 				// This generates the member address directly without loading the value
-				if (!object_node.is<ExpressionNode>() || 
+				if (!object_node.is<ExpressionNode>() ||
 				(object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
-					
+
 					// Get the object expression (identifier, pointer dereference, etc.)
 					ExprResult object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
-					
+
 					{
 						Type object_type = object_operands.type;
-						
+
 						// Get the struct type index
 						TypeIndex type_index {};
 						if (object_operands.type_index.is_valid()) {
 							type_index = object_operands.type_index;
 						}
-						
+
 						// Look up member information
 						if (type_index.is_valid() && type_index.value < gTypeInfo.size() && object_type == Type::Struct) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
-							
+
 							if (member_result) {
 								TempVar result_var = var_counter.next();
-								
+
 								// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
 								// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
 								// But mark the intermediate as NOT a reference to avoid dereferencing
-								
+
 								if (std::holds_alternative<StringHandle>(object_operands.value)) {
 									StringHandle obj_name = std::get<StringHandle>(object_operands.value);
-									
+
 									// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
 									// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
 									// Actually, let's just emit the calculation inline without using intermediate temps
-									
+
 									// Generate IR to compute the member address
 									// We need a MemberAddressOp or similar
 									// For now, let's use the existing approach but avoid marking as reference
-									
+
 									// Option: Generate AddressOfMemberOp
 									AddressOfMemberOp addr_member_op;
 									addr_member_op.result = result_var;
@@ -769,9 +770,9 @@
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
 									addr_member_op.member_type = member_result.member->type;
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
-									
+
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
-									
+
 									// Return pointer to member
 									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var});
 								}
@@ -780,23 +781,23 @@
 					}
 				}
 			}
-			
+
 			// Handle &arr[index] (without member access) - includes multidimensional arrays
 			if (std::holds_alternative<ArraySubscriptNode>(operandExpr)) {
 				const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(operandExpr);
-				
+
 				// Check if this is a multidimensional array access (nested ArraySubscriptNode)
 				const ExpressionNode& array_expr = arraySubscript.array_expr().as<ExpressionNode>();
 				if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
 					// This is a multidimensional array access like &arr[i][j]
 					auto multi_dim = collectMultiDimArrayIndices(arraySubscript);
-					
+
 					if (multi_dim.is_valid && multi_dim.base_decl) {
 						// Compute flat index using the same logic as generateArraySubscriptIr
 						const auto& dims = multi_dim.base_decl->array_dimensions();
 						std::vector<size_t> strides;
 						strides.reserve(dims.size());
-						
+
 						// Calculate strides (same as in generateArraySubscriptIr)
 						bool valid_dimensions = true;
 						for (size_t i = 0; i < dims.size(); ++i) {
@@ -815,12 +816,12 @@
 							if (!valid_dimensions) break;
 							strides.push_back(stride);
 						}
-						
+
 						if (!valid_dimensions) {
 							// Fall through to single-dimensional array handling
 							goto single_dim_handling;
 						}
-						
+
 						// Get element type and size
 						const TypeSpecifierNode& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 						Type element_type = type_node.type();
@@ -829,14 +830,14 @@
 							element_size_bits = get_type_size_bits(element_type);
 						}
 						TypeIndex element_type_index = type_node.type_index();
-						
+
 						// Compute flat index: for arr[i][j] on arr[M][N], index = i*N + j
 						TempVar flat_index = var_counter.next();
 						bool first_term = true;
-						
+
 						for (size_t k = 0; k < multi_dim.indices.size(); ++k) {
 							auto idx_operands = visitExpressionNode(multi_dim.indices[k].as<ExpressionNode>());
-							
+
 							if (strides[k] == 1) {
 								if (first_term) {
 									// flat_index = indices[k]
@@ -864,7 +865,7 @@
 								mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 								mul_op.result = IrValue{temp_prod};
 								ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
-								
+
 								if (first_term) {
 									flat_index = temp_prod;
 									first_term = false;
@@ -880,7 +881,7 @@
 								}
 							}
 						}
-						
+
 						// Now generate ArrayElementAddress with the flat index
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
@@ -893,22 +894,22 @@
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
 						payload.is_pointer_to_array = false;  // Multidimensional arrays are actual arrays, not pointers
-						
+
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
-						
+
 						return makeExprResult(element_type, SizeInBits{64}, addr_var, element_type_index);
 					}
 				}
-				
+
 				// Fall through to single-dimensional array handling
 				single_dim_handling:
 				// Get the array and index operands
 				ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
-				
+
 				Type element_type = array_operands.type;
 				int element_size_bits = array_operands.size_in_bits.value;
-				
+
 				// For arrays, array_operands[1] is the pointer size (64), not element size
 				// We need to calculate the actual element size from the array declaration
 				if (std::holds_alternative<StringHandle>(array_operands.value)) {
@@ -939,43 +940,43 @@
 						}
 					}
 				}
-				
+
 				// Create temporary for the address
 				TempVar addr_var = var_counter.next();
-				
+
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
 				payload.element_type = element_type;
 				payload.element_size_in_bits = element_size_bits;
-				
+
 				// Set array (either variable name or temp)
 				if (std::holds_alternative<StringHandle>(array_operands.value)) {
 					payload.array = std::get<StringHandle>(array_operands.value);
 				} else if (std::holds_alternative<TempVar>(array_operands.value)) {
 					payload.array = std::get<TempVar>(array_operands.value);
 				}
-				
+
 				// Set index as TypedValue
-				payload.index = toTypedValue(index_operands); 
-				
+				payload.index = toTypedValue(index_operands);
+
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
-				
+
 				// Return pointer to element (64-bit pointer)
 				return makeExprResult(element_type, SizeInBits{64}, IrOperand{addr_var});
 			}
 		}
-		
+
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
 		// adjusted_offset must be provided (from LazyMemberResolver result)
-		auto generateMemberIncDec = [&](StringHandle object_name, 
+		auto generateMemberIncDec = [&](StringHandle object_name,
 		const StructMember* member, bool is_reference_capture,
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
-			
+
 			if (is_reference_capture) {
 				// By-reference: load pointer, dereference, inc/dec, store back through pointer
 				TempVar ptr_temp = var_counter.next();
@@ -989,10 +990,10 @@
 				member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
-				
+
 				// Load current value through pointer
 				TempVar current_val = emitDereference(member->type, 64, 1, ptr_temp, token);
-				
+
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
@@ -1000,9 +1001,9 @@
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
-					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract, 
+					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract,
 					std::move(add_op), token));
-				
+
 				// Store back through pointer
 				DereferenceStoreOp store_op;
 				store_op.pointer.type = member->type;
@@ -1011,7 +1012,7 @@
 				store_op.pointer.value = ptr_temp;
 				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
-				
+
 				TempVar return_val = is_prefix ? result_var : current_val;
 				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val});
 			} else {
@@ -1027,7 +1028,7 @@
 				member_load.ref_qualifier = CVReferenceQualifier::None;
 				member_load.struct_type_info = nullptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
-				
+
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
@@ -1035,9 +1036,9 @@
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
-					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract, 
+					unaryOperatorNode.op() == "++" ? IrOpcode::Add : IrOpcode::Subtract,
 					std::move(add_op), token));
-				
+
 				// Store back to member
 				MemberStoreOp store_op;
 				store_op.object = object_name;
@@ -1046,20 +1047,20 @@
 				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
 				store_op.ref_qualifier = CVReferenceQualifier::None;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
-				
+
 				TempVar return_val = is_prefix ? result_var : current_val;
 				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val});
 			}
 		};
-		
+
 		// Check if this is an increment/decrement on a captured variable in a lambda
-		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && 
+		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") &&
 		current_lambda_context_.isActive() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
 				StringHandle var_name_str = StringTable::getOrInternStringHandle(identifier.name());
-				
+
 				// Check if this is a captured variable
 				if (current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 					// Look up the closure struct type
@@ -1071,21 +1072,21 @@
 							auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
 							kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member_result.member, is_reference, 
+							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member_result.member, is_reference,
 							unaryOperatorNode.get_token(), member_result.adjusted_offset);
 						}
 					}
 				}
 			}
 		}
-		
+
 		// Check if this is an increment/decrement on a struct member (e.g., ++inst.v)
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(operandExpr);
 				auto member_name = StringTable::getOrInternStringHandle(member_access.member_name());
-				
+
 				// Get the object being accessed
 				ASTNode object_node = member_access.object();
 				if (object_node.is<ExpressionNode>()) {
@@ -1093,10 +1094,10 @@
 					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 						const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
 						auto object_name = StringTable::getOrInternStringHandle(object_ident.name());
-						
+
 						// Look up the struct in symbol table
 						std::optional<ASTNode> symbol = lookupSymbol(object_name);
-						
+
 						if (symbol.has_value()) {
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 							if (object_decl) {
@@ -1117,7 +1118,7 @@
 				}
 			}
 		}
-		
+
 		ExprResult operandIrOperands;
 		bool operandHandledAsIdentifier = false;
 		// For ++, --, and & operators on identifiers, use tryBuildIdentifierOperand
@@ -1184,18 +1185,18 @@
 
 		// Special handling for address-of non-static member: &Class::member
 		// This should produce a pointer-to-member constant (member offset)
-		if (!operandHandledAsIdentifier && unaryOperatorNode.op() == "&" && 
+		if (!operandHandledAsIdentifier && unaryOperatorNode.op() == "&" &&
 		unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operand_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<QualifiedIdentifierNode>(operand_expr)) {
 				const QualifiedIdentifierNode& qualIdNode = std::get<QualifiedIdentifierNode>(operand_expr);
 				NamespaceHandle ns_handle = qualIdNode.namespace_handle();
-				
+
 				// Check if this is Class::member pattern (non-global namespace)
 				if (!ns_handle.isGlobal()) {
 					std::string_view class_name = gNamespaceRegistry.getName(ns_handle);
 					std::string_view member_name = qualIdNode.name();
-					
+
 					// Look up the class type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -1204,12 +1205,12 @@
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 							struct_type_index,
 							StringTable::getOrInternStringHandle(member_name));
-						
+
 						if (member_result) {
 							// This is a pointer-to-member: return the member offset as a constant
-							FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
+							FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name,
 							"' - returning offset ", member_result.adjusted_offset, " as pointer-to-member constant");
-							
+
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
 							return makeExprResult(
@@ -1299,7 +1300,7 @@
 			if (inc_result.has_value()) {
 				return *inc_result;
 			}
-			
+
 			return generateBuiltinIncDec(true, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operand_result, operandType, result_var);
 		}
 		else if (unaryOperatorNode.op() == "--") {
@@ -1311,23 +1312,23 @@
 			if (dec_result.has_value()) {
 				return *dec_result;
 			}
-			
+
 			return generateBuiltinIncDec(false, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operand_result, operandType, result_var);
 		}
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
 			// Get the current pointer depth from operandIrOperands
 			unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
-			
+
 			// Create typed payload with TypedValue
 			AddressOfOp op;
 			op.result = result_var;
-			
+
 			// Populate TypedValue with full type information
 			op.operand.type = operandType;
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
-			
+
 			// Get the operand value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
 				op.operand.value = std::get<StringHandle>(operandIrOperands.value);
@@ -1336,7 +1337,7 @@
 			} else {
 				throw InternalError("AddressOf operand must be StringHandle or TempVar");
 			}
-			
+
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 			// Return 64-bit pointer with incremented pointer depth
 			return makeExprResult(
@@ -1352,7 +1353,7 @@
 			// When dereferencing a pointer, the result size depends on the pointer depth:
 			// - For single pointer (int*), result is the base type size (e.g., 32 for int)
 			// - For multi-level pointer (int**), result is still a pointer (64 bits)
-			
+
 			// For LValueAddress context (e.g., assignment LHS like *ptr = value),
 			// we need to return operands with lvalue metadata so handleLValueAssignment
 			// can detect this is a dereference store.
@@ -1360,7 +1361,7 @@
 				// Get the element size (what we're storing to)
 				int element_size = 64; // Default to pointer size
 				int pointer_depth = 0;
-				
+
 				// Get pointer depth
 				if (operandIrOperands.pointer_depth.is_pointer()) {
 					pointer_depth = operandIrOperands.pointer_depth.value;
@@ -1375,7 +1376,7 @@
 						}
 					}
 				}
-				
+
 				// Calculate element size after dereference
 				if (pointer_depth <= 1) {
 					element_size = get_type_size_bits(operandType);
@@ -1383,11 +1384,11 @@
 						element_size = 64;  // Default to pointer size for unknown types
 					}
 				}
-				
+
 				// Create a TempVar with Indirect lvalue metadata
 				// This allows handleLValueAssignment to recognize this as a dereference store
 				TempVar lvalue_temp = var_counter.next();
-				
+
 				// Extract the pointer base (StringHandle or TempVar)
 				std::variant<StringHandle, TempVar> base;
 				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
@@ -1400,7 +1401,7 @@
 					FLASH_LOG(Codegen, Debug, "Dereference LValueAddress fallback: operand is not StringHandle or TempVar");
 					return operandIrOperands;
 				}
-				
+
 				// Emit assignment to copy the pointer value into lvalue_temp.
 				// This is needed for reference initialization from *ptr (e.g., int& x = *__begin;).
 				// The reference init code reads the TempVar's stack value; without this
@@ -1430,7 +1431,7 @@
 					0  // offset is 0 for simple dereference
 				);
 				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
-				
+
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
@@ -1442,10 +1443,10 @@
 					PointerDepth{static_cast<int>(result_ptr_depth)}
 				);
 			}
-			
+
 			int element_size = 64; // Default to pointer size
 			int pointer_depth = 0;
-			
+
 			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
 			pointer_depth = operandIrOperands.pointer_depth.value;
 			// If pointer_depth is still 0, look up the pointer operand in the symbol table.
@@ -1467,7 +1468,7 @@
 					}
 				}
 			}
-			
+
 			// After dereferencing, pointer_depth decreases by 1
 			// If still > 0, result is a pointer (64 bits)
 			// If == 0, result is the base type
@@ -1485,17 +1486,17 @@
 				}
 			}
 			// else: multi-level pointer, element_size stays 64 (pointer)
-		
+
 			// Create typed payload with TypedValue
 			DereferenceOp op;
 			op.result = result_var;
-			
+
 			// Populate TypedValue with full type information
 			op.pointer.type = operandType;
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};
-			
+
 			// Get the pointer value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
 				op.pointer.value = std::get<StringHandle>(operandIrOperands.value);
@@ -1504,9 +1505,9 @@
 			} else {
 				throw InternalError("Dereference pointer must be StringHandle or TempVar");
 			}
-		
+
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
-			
+
 			// Mark dereference result as lvalue (Option 2: Value Category Tracking)
 			// *ptr is an lvalue - it designates the dereferenced object
 			// Extract StringHandle or TempVar from pointer.value (IrValue)
@@ -1522,7 +1523,7 @@
 				0  // offset is 0 for simple dereference
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
-		
+
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
 			return makeExprResult(
@@ -1782,19 +1783,19 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 		}
 	}
-	
+
 	UnaryOp unary_op{
 		.value = toTypedValue(operandIrResult),
 		.result = result_var
 	};
-	
+
 	IrOpcode arith_opcode = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
-	
+
 	if (is_pointer) {
 		// For pointers, use a BinaryOp to add/subtract element_size
 		// Extract the pointer operand value once (used in multiple BinaryOp/AssignmentOp below)
 		IrValue ptr_operand = toIrValue(operandIrResult.value);
-		
+
 		if (is_prefix) {
 			BinaryOp bin_op{
 				.lhs = { Type::UnsignedLongLong, SizeInBits{64}, ptr_operand },
@@ -1899,7 +1900,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, unaryOperatorNode.get_token()));
 		}
 	}
-	
+
 	return makeExprResult(operandType, operandIrResult.size_in_bits, IrOperand{result_var});
 }
 
@@ -1933,18 +1934,18 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	std::holds_alternative<StringLiteralNode>(expr)) {
 		return true;
 	}
-	
+
 	// Identifiers (variable references) are noexcept
 	if (std::holds_alternative<IdentifierNode>(expr) ||
 	std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 		return true;
 	}
-	
+
 	// Template parameter references are noexcept
 	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 		return true;
 	}
-	
+
 	// Built-in operators on primitives are noexcept
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binop = std::get<BinaryOperatorNode>(expr);
@@ -1956,7 +1957,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// If operands are not expressions, assume noexcept for built-ins
 		return true;
 	}
-	
+
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		const auto& unop = std::get<UnaryOperatorNode>(expr);
 		if (unop.get_operand().is<ExpressionNode>()) {
@@ -1964,7 +1965,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 		return true;
 	}
-	
+
 	// Ternary operator: check all three sub-expressions
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
@@ -1980,7 +1981,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 		return cond_noexcept && then_noexcept && else_noexcept;
 	}
-	
+
 	// Function calls: check if function is declared noexcept
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& func_call = std::get<FunctionCallNode>(expr);
@@ -1989,7 +1990,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// We need to look up the FunctionDeclarationNode to check noexcept
 		const DeclarationNode& decl = func_call.function_declaration();
 		std::string_view func_name = decl.identifier_token().value();
-		
+
 		// Look up the function in the symbol table
 		extern SymbolTable gSymbolTable;
 		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
@@ -2000,21 +2001,21 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// If we can't determine, conservatively assume it may throw
 		return false;
 	}
-	
+
 	// Member function calls: check if method is declared noexcept
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
 		const FunctionDeclarationNode& func_decl = member_call.function_declaration();
 		return isFunctionDeclNoexcept(func_decl);
 	}
-	
+
 	// Constructor calls: check if constructor is noexcept
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For now, conservatively assume constructors may throw
 		// A complete implementation would check the constructor declaration
 		return false;
 	}
-	
+
 	// Array subscript: noexcept if index expression is noexcept
 	if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 		const auto& subscript = std::get<ArraySubscriptNode>(expr);
@@ -2023,12 +2024,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 		return true;
 	}
-	
+
 	// Member access is noexcept
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		return true;
 	}
-	
+
 	// sizeof, alignof, offsetof are always noexcept
 	if (std::holds_alternative<SizeofExprNode>(expr) ||
 	std::holds_alternative<SizeofPackNode>(expr) ||
@@ -2036,18 +2037,18 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	std::holds_alternative<OffsetofExprNode>(expr)) {
 		return true;
 	}
-	
+
 	// Type traits are noexcept
 	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 		return true;
 	}
-	
+
 	// new/delete can throw (unless using nothrow variant)
 	if (std::holds_alternative<NewExpressionNode>(expr) ||
 	std::holds_alternative<DeleteExpressionNode>(expr)) {
 		return false;
 	}
-	
+
 	// Cast expressions: check the operand
 	if (std::holds_alternative<StaticCastNode>(expr)) {
 		const auto& cast = std::get<StaticCastNode>(expr);
@@ -2074,34 +2075,34 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 		return true;
 	}
-	
+
 	// typeid can throw for dereferencing null polymorphic pointers
 	if (std::holds_alternative<TypeidNode>(expr)) {
 		return false;
 	}
-	
+
 	// Lambda expressions themselves are noexcept (creating the closure)
 	if (std::holds_alternative<LambdaExpressionNode>(expr)) {
 		return true;
 	}
-	
+
 	// Fold expressions: would need to check all sub-expressions
 	if (std::holds_alternative<FoldExpressionNode>(expr)) {
 		// Conservatively assume may throw
 		return false;
 	}
-	
+
 	// Pseudo-destructor calls are noexcept
 	if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		return true;
 	}
-	
+
 	// Nested noexcept expression
 	if (std::holds_alternative<NoexceptExprNode>(expr)) {
 		// noexcept(noexcept(x)) - the outer noexcept doesn't evaluate its operand
 		return true;
 	}
-	
+
 	// Default: conservatively assume may throw
 	return false;
 }

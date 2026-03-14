@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
@@ -45,9 +46,9 @@
 			// Evaluate the condition at compile time
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
-			
+
 			if (!result.success()) {
-				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ", 
+				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ",
 				result.error_message);
 				return;
 			}
@@ -72,16 +73,16 @@
 		// Generate unique labels for this if statement
 		static size_t if_counter = 0;
 		size_t current_if = if_counter++;
-	
+
 		// Use a single StringBuilder and commit each label before starting the next
 		// to avoid buffer overwrites in the shared allocator
 		StringBuilder label_sb;
 		label_sb.append("if_then_").append(current_if);
 		std::string_view then_label = label_sb.commit();
-	
+
 		label_sb.append("if_else_").append(current_if);
 		std::string_view else_label = label_sb.commit();
-	
+
 		label_sb.append("if_end_").append(current_if);
 		std::string_view end_label = label_sb.commit();
 
@@ -149,11 +150,11 @@
 		// Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
 		symbol_table.enter_scope(ScopeType::Block);
 		enterScope();
-		
+
 		// Generate unique labels for this for loop
 		static size_t for_counter = 0;
 		size_t current_for = for_counter++;
-		
+
 		// Use a single StringBuilder and commit each label before starting the next
 		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("for_start_").append(current_for));
 		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("for_body_").append(current_for));
@@ -226,12 +227,12 @@
 		// Generate unique labels for this while loop
 		static size_t while_counter = 0;
 		size_t current_while = while_counter++;
-		
+
 		// Use a single StringBuilder and commit each label before starting the next
 		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("while_start_").append(current_while));
 		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("while_body_").append(current_while));
 		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("while_end_").append(current_while));
-		
+
 		// Mark loop begin for break/continue support
 		// For while loops, continue jumps to loop_start (re-evaluate condition)
 		pushLoopSehDepth();
@@ -281,12 +282,12 @@
 		// Generate unique labels for this do-while loop
 		static size_t do_while_counter = 0;
 		size_t current_do_while = do_while_counter++;
-		
+
 		// Use a single StringBuilder and commit each label before starting the next
 		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("do_while_start_").append(current_do_while));
 		auto loop_condition_label = StringTable::createStringHandle(StringBuilder().append("do_while_condition_").append(current_do_while));
 		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("do_while_end_").append(current_do_while));
-		
+
 		// Mark loop begin for break/continue support
 		// For do-while loops, continue jumps to condition check (not body start)
 		pushLoopSehDepth();
@@ -331,7 +332,7 @@
 		StringHandle default_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_default_").append(switch_counter));
 		StringHandle switch_end_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_end_").append(switch_counter));
 		switch_counter++;
-		
+
 		// Evaluate the switch condition
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
@@ -379,7 +380,7 @@
 
 			// Compare condition with case value using Equal opcode
 			TempVar cmp_result = var_counter.next();
-			
+
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
 				.lhs = makeTypedValue(condition_type, SizeInBits{static_cast<int>(condition_size)}, toIrValue(condition_result.value)),
@@ -494,9 +495,9 @@
 		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_body_").append(ranged_for_counter));
 		auto loop_increment_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_increment_").append(ranged_for_counter));
 		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_end_").append(ranged_for_counter));
-		
+
 		ranged_for_counter++;
-		
+
 		// Get the loop variable declaration and range expression
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
@@ -504,7 +505,7 @@
 		// C++11+ standard: The range expression is bound to a reference for lifetime extension
 		// This ensures temporary objects live for the entire loop duration
 		// For now, we only support simple identifiers (not temporaries), so lifetime is already correct
-		
+
 		// Check what kind of range expression we have
 		if (!range_expr.is<ExpressionNode>()) {
 			FLASH_LOG(Codegen, Error, "Range expression must be an expression");
@@ -551,7 +552,7 @@
 		// Check if it's an array
 		if (range_decl.is_array()) {
 			// Array-based range-for loop
-			visitRangedForArray(node, range_name, range_decl, loop_start_label, loop_body_label, 
+			visitRangedForArray(node, range_name, range_decl, loop_start_label, loop_body_label,
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
@@ -615,7 +616,7 @@
 
 		// Get the array element type to create pointer type
 		const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
-		
+
 		// Calculate the actual element size for pointer arithmetic
 		int element_size_bits;
 		if (array_type.pointer_depth() > 0) {
@@ -642,7 +643,7 @@
 				element_size_bits = get_type_size_bits(array_type.type());
 			}
 		}
-		
+
 		// Create pointer type for begin/end (element_type*)
 		// The size_in_bits should be the element size for correct pointer arithmetic
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
@@ -719,7 +720,7 @@
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the pointer value directly
 		// For non-references (T x), we need the dereferenced value (*__begin)
-		
+
 		// Check if the loop variable is a reference
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
 			FLASH_LOG(Codegen, Error, "loop_var_decl is not a VariableDeclarationNode!");
@@ -727,7 +728,7 @@
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
-		
+
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
 		// For `int& c : arr`, this becomes `int& c = *__begin;`
@@ -736,7 +737,7 @@
 		ASTNode init_expr = ASTNode::emplace_node<ExpressionNode>(
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
 		);
-		
+
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
@@ -815,7 +816,7 @@
 		//   auto __begin = range.begin();
 		//   auto __end = range.end();
 		//   for (; __begin != __end; ++__begin) { decl = *__begin; body; }
-		
+
 		Token begin_token(Token::Type::Identifier, begin_var_name, 0, 0, 0);
 		Token end_token(Token::Type::Identifier, end_var_name, 0, 0, 0);
 
@@ -836,14 +837,14 @@
 		auto range_expr_for_begin = ASTNode::emplace_node<ExpressionNode>(
 			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
 		);
-		
+
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_expr_for_begin, 
+			MemberFunctionCallNode(range_expr_for_begin,
 			begin_func_decl,
 			std::move(empty_args), Token())
 		);
-		
+
 		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
 		visit(begin_var_decl_node);
 
@@ -852,14 +853,14 @@
 		auto range_expr_for_end = ASTNode::emplace_node<ExpressionNode>(
 			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
 		);
-		
+
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
 			MemberFunctionCallNode(range_expr_for_end,
 			end_func_decl,
 			std::move(empty_args2), Token())
 		);
-		
+
 		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);
 		visit(end_var_decl_node);
 
@@ -895,7 +896,7 @@
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the iterator value directly
 		// For non-references (T x), we need the dereferenced value (*__begin)
-		
+
 		// Create the loop variable declaration with initialization
 		if (!loop_var_decl.is<VariableDeclarationNode>()) {
 			throw InternalError("loop_var_decl must be a VariableDeclarationNode");
@@ -905,7 +906,7 @@
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
-		
+
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
 		// For struct iterators, reinterpret as pointer to element type, then dereference.
@@ -925,7 +926,7 @@
 				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true)
 			);
 		}
-		
+
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration

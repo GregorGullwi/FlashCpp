@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const InlineVector<ASTNode, 4>& template_params,
@@ -1116,7 +1123,7 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 	return {};  // Not found
 }
 // Helper: resolve a type name within the current namespace context (including using directives)
-static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
+const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	// Walk current namespace chain outward first (e.g., physics::Vector, ::Vector)
 	// This must come before the unqualified lookup so that namespace-local types
 	// are preferred over short aliases registered by other namespaces.

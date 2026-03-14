@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_type_and_name() {
     // Add parsing depth check to prevent infinite loops
     if (++parsing_depth_ > MAX_PARSING_DEPTH) {

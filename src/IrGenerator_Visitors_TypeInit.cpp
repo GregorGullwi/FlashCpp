@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 		: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
@@ -185,7 +186,7 @@
 		// Example: auto maker = []() { return [](int x) { return x; }; };
 		//          When generating maker's body, the inner lambda is collected
 		//          and will be processed in the next iteration.
-		
+
 		// Process until no new lambdas are added
 		size_t processed_count = 0;
 		while (processed_count < collected_lambdas_.size()) {
@@ -213,10 +214,10 @@
 			StringHandle saved_function = current_function_name_;
 			current_struct_name_ = member_info.struct_name;
 			current_function_name_ = member_info.enclosing_function_name;
-			
+
 			// Visit the member function
 			visit(member_info.member_function_node);
-			
+
 			// Restore
 			current_function_name_ = saved_function;
 		}
@@ -251,7 +252,7 @@
 			current_struct_name_ = info.struct_name;
 			current_function_name_ = StringHandle();
 			current_namespace_stack_ = info.namespace_stack;
-			
+
 			try {
 			if (info.function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func = info.function_node.as<FunctionDeclarationNode>();
@@ -294,7 +295,7 @@
 				FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
 				++error_count;
 			}
-			
+
 			current_function_name_ = saved_function;
 			current_namespace_stack_ = saved_namespace;
 		}
@@ -314,7 +315,7 @@
 				target.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 			}
 		};
-		
+
 		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
@@ -357,7 +358,7 @@
 					}
 				}
 			}
-			
+
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success()) {
 				if (struct_info && expr_node.is<ExpressionNode>()) {
@@ -429,7 +430,7 @@
 			if (!eval_result.success()) {
 				return false;
 			}
-			
+
 			if (std::holds_alternative<unsigned long long>(eval_result.value)) {
 				out_value = std::get<unsigned long long>(eval_result.value);
 				return true;
@@ -447,10 +448,10 @@
 				out_value = static_cast<unsigned long long>(d);
 				return true;
 			}
-			
+
 			return false;
 		};
-		
+
 		for (const auto& [type_name, type_info] : gTypesByName) {
 			if (!type_info->isStruct()) {
 				continue;
@@ -459,25 +460,25 @@
 			if (gTemplateRegistry.isPatternStructName(type_name)) {
 				continue;
 			}
-			
+
 			// Skip structs with incomplete instantiation - they have unresolved template params
 			if (type_info->is_incomplete_instantiation_) {
 				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
-			
+
 			// Skip if we've already processed this TypeInfo pointer
 			// (same struct can be registered under multiple keys in gTypesByName)
 			if (processed_type_infos_.count(type_info) > 0) {
 				continue;
 			}
 			processed_type_infos_.insert(type_info);
-			
+
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (!struct_info) {
 				continue;
 			}
-			
+
 			// Generate static members that this struct directly owns
 			if (!struct_info->static_members.empty()) {
 				for (const auto& static_member : struct_info->static_members) {
@@ -488,7 +489,7 @@
 						const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 						if (std::holds_alternative<SizeofPackNode>(expr)) {
 							// This is an uninstantiated template - skip
-							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
 							"' with unsubstituted sizeof... in type '", type_name, "'");
 							continue;
 						}
@@ -496,8 +497,8 @@
 							// Template parameter not substituted - this is a template pattern, not an instantiation
 							// Skip it (instantiated versions will have NumericLiteralNode instead)
 							const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
-							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-							"' with unsubstituted template parameter '", tparam.param_name(), 
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+							"' with unsubstituted template parameter '", tparam.param_name(),
 							"' in type '", type_name, "'");
 							continue;
 						}
@@ -511,8 +512,8 @@
 							auto symbol = global_symbol_table_->lookup(id.name());
 							if (!symbol.has_value()) {
 								// Not found in global symbol table - likely a template parameter
-								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-								"' with identifier initializer '", id.name(), 
+								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+								"' with identifier initializer '", id.name(),
 								"' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
 								unresolved_identifier_initializer = true;
 							}
@@ -527,7 +528,7 @@
 					qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(static_member.getName());
 					std::string_view qualified_name = qualified_name_sb.commit();
 					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
-					
+
 					// Skip if already emitted
 					if (emitted_static_members_.count(name_handle) > 0) {
 						continue;
@@ -563,7 +564,7 @@
 								zero_initialize();
 							} else {
 							const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
-					
+
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 					if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
 						const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);
@@ -672,7 +673,7 @@
 							}
 						}
 						if (!evaluated_ctor) {
-							FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '", 
+							FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '",
 							qualified_name, "' - initializing to zero");
 							size_t byte_count = op.size_in_bits.value / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
@@ -681,7 +682,7 @@
 						}
 					} else if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 						const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
-						FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '", 
+						FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '",
 						qualified_name, "' value=", bool_lit.value() ? "true" : "false");
 						unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
 						size_t byte_count = op.size_in_bits.value / 8;
@@ -690,7 +691,7 @@
 						}
 						FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
 					} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '", 
+						FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '",
 						qualified_name, "'");
 						// Evaluate the initializer expression
 						ExprResult init_operands = visitExpressionNode(init_expr);
@@ -712,7 +713,7 @@
 							FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
 						}
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
-						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '", 
+						FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '",
 						qualified_name, "' - should have been substituted!");
 						// Try to evaluate anyway
 						ExprResult init_operands = visitExpressionNode(init_expr);
@@ -731,7 +732,7 @@
 						}
 						} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
 							const auto& id = std::get<IdentifierNode>(init_expr);
-							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
+							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '",
 							qualified_name, "'");
 							// For reference members, the initializer is an identifier whose address
 							// should be stored via a data relocation (like &x for int& ref = x)
@@ -794,7 +795,7 @@
 						} else {
 							unsigned long long evaluated_value = 0;
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
-								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
+								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '",
 								qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
@@ -815,7 +816,7 @@
 									}
 								}
 								if (!resolved_via_lazy) {
-									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
+									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '",
 									qualified_name, "' - skipping evaluation");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
@@ -828,7 +829,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 			}
 		}
-			
+
 			// Also check if this struct inherits static members from base classes
 			// and generate alias definitions if needed (Phase 3: Generate ALL inherited static members)
 			if (!struct_info->base_classes.empty()) {
@@ -836,19 +837,19 @@
 					if (base.type_index.value >= gTypeInfo.size()) {
 						continue;
 					}
-					
+
 					const TypeInfo& base_type = gTypeInfo[base.type_index.value];
 					const StructTypeInfo* base_info = base_type.getStructInfo();
-					
+
 					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
 					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
 					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_.value < gTypeInfo.size()) {
 						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_.value];
 						base_info = resolved_type.getStructInfo();
-						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_), 
+						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_),
 						"' to struct '", StringTable::getStringView(resolved_type.name_), "'");
 					}
-					
+
 					// Special handling for type aliases like "bool_constant_true::type"
 					// The StructTypeInfo for the type alias may have static members with unsubstituted initializers
 					// In this case, we need to find the actual underlying struct and use its static members instead
@@ -861,36 +862,36 @@
 							if (actual_struct_it != gTypesByName.end()) {
 								const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
 								if (actual_info) {
-									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name, 
+									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name,
 									"' instead of type alias '", base.name, "' for static members");
 									base_info = actual_info;
 								}
 							}
 						}
 					}
-					
+
 					// Iterate through ALL static members in the base class hierarchy (Phase 3 fix)
 					if (base_info) {
 						// Collect all static members recursively from this base and its bases
 						std::vector<std::pair<const StructStaticMember*, const StructTypeInfo*>> all_static_members;
-						
+
 						// Use a queue to traverse the inheritance hierarchy
 						std::queue<const StructTypeInfo*> to_visit;
 						std::unordered_set<const StructTypeInfo*> visited;
 						to_visit.push(base_info);
-						
+
 						while (!to_visit.empty()) {
 							const StructTypeInfo* current = to_visit.front();
 							to_visit.pop();
-							
+
 							if (visited.count(current)) continue;
 							visited.insert(current);
-							
+
 							// Add all static members from current struct
 							for (const auto& static_member : current->static_members) {
 								all_static_members.emplace_back(&static_member, current);
 							}
-							
+
 							// Add base classes to queue
 							for (const auto& base_spec : current->base_classes) {
 								if (base_spec.type_index.value < gTypeInfo.size()) {
@@ -901,43 +902,43 @@
 								}
 							}
 						}
-						
+
 						// Generate inherited static member definitions for each one found
 						for (const auto& [static_member_ptr, owner_struct] : all_static_members) {
 							std::string_view member_name = StringTable::getStringView(static_member_ptr->name);
-							
+
 							// Generate definition for this derived class
 							StringBuilder derived_qualified_name_sb;
 							derived_qualified_name_sb.append(type_name).append("::").append(member_name);
 							std::string_view derived_qualified_name = derived_qualified_name_sb.commit();
 							StringHandle derived_name_handle = StringTable::getOrInternStringHandle(derived_qualified_name);
-							
+
 							// Skip if already emitted
 							if (emitted_static_members_.count(derived_name_handle) > 0) {
 								continue;
 							}
 							emitted_static_members_.insert(derived_name_handle);
-							
+
 							// Use the original base class name from the BaseClassSpecifier, not the resolved type
 							std::string_view base_name_str = base.name;
-							
-							FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name, 
+
+							FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name,
 							"' for ", type_name, " from base ", base_name_str);
-							
+
 							GlobalVariableDeclOp alias_op;
 							alias_op.type = static_member_ptr->type;
 							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
-							
+
 							// Evaluate the initializer to get the value
 							bool found_base_value = false;
 							unsigned long long inferred_value = 0;
-							
-							if (static_member_ptr->initializer.has_value() && 
+
+							if (static_member_ptr->initializer.has_value() &&
 							static_member_ptr->initializer->is<ExpressionNode>()) {
 								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
-								
+
 								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 									const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
 									inferred_value = bool_lit.value() ? 1ULL : 0ULL;
@@ -960,14 +961,14 @@
 									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "'");
 								}
 							}
-							
+
 							// Write the value to init_data
 							append_bytes(inferred_value, alias_op.size_in_bits.value, alias_op.init_data);
-							
+
 							if (!found_base_value) {
 								FLASH_LOG(Codegen, Debug, "Using default zero value (no initializer found)");
 							}
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(alias_op), Token()));
 						}
 					}
@@ -978,41 +979,41 @@
 
 	void AstToIr::generateTrivialDefaultConstructors() {
 		std::unordered_set<const TypeInfo*> processed;
-		
+
 		for (const auto& [type_name, type_info] : gTypesByName) {
 			if (!type_info->isStruct()) {
 				continue;
 			}
-			
+
 			// Skip pattern structs
 			if (gTemplateRegistry.isPatternStructName(type_name)) {
 				continue;
 			}
-			
+
 			// Skip structs with incomplete instantiation - they have unresolved template params
 			if (type_info->is_incomplete_instantiation_) {
 				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", StringTable::getStringView(type_name), "' (incomplete instantiation)");
 				continue;
 			}
-			
+
 			// Skip if already processed
 			if (processed.count(type_info) > 0) {
 				continue;
 			}
 			processed.insert(type_info);
-			
+
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (!struct_info) {
 				continue;
 			}
-			
+
 			// Only generate trivial constructor if explicitly marked as needing one
 			// The needs_default_constructor flag is set during template instantiation
 			// when a struct has no constructors but needs a default one
 			if (!struct_info->needs_default_constructor) {
 				continue;
 			}
-			
+
 			// Check if there are already constructors defined
 			bool has_constructor = false;
 			for (const auto& mem_func : struct_info->member_functions) {
@@ -1021,7 +1022,7 @@
 					break;
 				}
 			}
-			
+
 			// Generate trivial default constructor if no constructor exists and it's not deleted
 			if (!has_constructor && !struct_info->isDefaultConstructorDeleted()) {
 				FLASH_LOG(Codegen, Debug, "Generating trivial constructor for ", type_name);
@@ -1074,7 +1075,7 @@
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
-				
+
 				// Call base class constructors if any
 				for (const auto& base : struct_info->base_classes) {
 					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
@@ -1095,7 +1096,7 @@
 						}
 					}
 				}
-				
+
 				// Combine bitfield default initializers into single per-unit stores
 				// (all default values are compile-time constants, so we can pre-combine them)
 				{
@@ -1154,7 +1155,7 @@
 							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// Extract just the value (third element of init_operands)
 							// Verify we have at least 3 elements before accessing
-							
+
 							IrValue member_value;
 							if (std::holds_alternative<TempVar>(init_operands.value)) {
 								member_value = std::get<TempVar>(init_operands.value);
@@ -1167,7 +1168,7 @@
 							} else {
 								member_value = 0ULL;  // fallback
 							}
-							
+
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -1179,12 +1180,12 @@
 							member_store.struct_type_info = nullptr;
 							member_store.bitfield_width = member.bitfield_width;
 							member_store.bitfield_bit_offset = member.bitfield_bit_offset;
-							
+
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), Token()));
 						}
 					}
 				}
-				
+
 				// Emit return
 				emitVoidReturn(Token());
 			}
@@ -1194,7 +1195,7 @@
 
 
 
-// ── inline private helpers (CodeGen_Visitors_TypeInit.cpp) ──
+// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 // Helper: resolve self-referential struct types in template instantiations.
 // When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 // the type_index may point to the unfinalized template base. This resolves it to the
@@ -1212,7 +1213,7 @@ void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex encl
 				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
 				auto unfinalized_name = StringTable::getStringView(ti.name());
 				auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index.value].name());
-				
+
 				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
 				// Template hash: "Name$hash" -> "Name"
 				// Nested class: "Outer::Inner" -> "Inner"
@@ -1225,7 +1226,7 @@ void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex encl
 				if (dollar_pos != std::string_view::npos) {
 					base_name = base_name.substr(0, dollar_pos);
 				}
-				
+
 				if (unfinalized_name == base_name) {
 					type.set_type_index(enclosing_type_index);
 				}
@@ -1248,16 +1249,16 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 	if (underscore_pos == std::string_view::npos || underscore_pos + 1 >= struct_name.size()) {
 		return 0;
 	}
-	
+
 	std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
-	
+
 	// Strip CV qualifier prefixes ('C' for const, 'V' for volatile)
 	// TemplateTypeArg::toString() adds CV qualifiers as prefixes (e.g., "Cint" for const int)
 	// sizeof(const T) and sizeof(volatile T) return the same size as sizeof(T)
 	while (!type_suffix.empty() && (type_suffix.front() == 'C' || type_suffix.front() == 'V')) {
 		type_suffix = type_suffix.substr(1);
 	}
-	
+
 	// Check for reference types (suffix ends with 'R' or 'RR')
 	// TemplateTypeArg::toString() appends "R" for lvalue reference, "RR" for rvalue reference
 	// sizeof(T&) and sizeof(T&&) return the size of T, not the size of the reference itself
@@ -1268,7 +1269,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 		// Lvalue reference - strip "R" and get base type size
 		type_suffix = type_suffix.substr(0, type_suffix.size() - 1);
 	}
-	
+
 	// Check for pointer types (suffix ends with 'P')
 	// TemplateTypeArg::toString() appends 'P' for each pointer level
 	// e.g., "intP" for int*, "intPP" for int**, etc.
@@ -1276,7 +1277,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 		// All pointers are 8 bytes on x64
 		return 8;
 	}
-	
+
 	// Check for array types (suffix contains 'A')
 	// Arrays are like "intA[10]" - sizeof(array) = element_size * element_count
 	size_t array_pos = type_suffix.find('A');
@@ -1284,12 +1285,12 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 		// Extract base type and array dimensions
 		std::string_view base_type = type_suffix.substr(0, array_pos);
 		std::string_view array_part = type_suffix.substr(array_pos + 1); // Skip 'A'
-		
+
 		// Strip CV qualifiers from base_type (already stripped from type_suffix earlier, but double-check)
 		while (!base_type.empty() && (base_type.front() == 'C' || base_type.front() == 'V')) {
 			base_type = base_type.substr(1);
 		}
-		
+
 		// Parse array dimensions like "[10]" or "[]"
 		if (array_part.starts_with('[') && array_part.ends_with(']')) {
 			std::string_view dimensions = array_part.substr(1, array_part.size() - 2);
@@ -1300,7 +1301,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 				if (result.ec == std::errc{} && array_count > 0) {
 					// Get base type size
 					size_t base_size = 0;
-					
+
 					// Check if base_type is a pointer (ends with 'P')
 					// e.g., "intP" for int*, "charPP" for char**, etc.
 					if (!base_type.empty() && base_type.back() == 'P') {
@@ -1322,7 +1323,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 						else if (base_type == "ulonglong") base_size = 8;
 						else if (base_type == "longlong") base_size = 8;
 					}
-					
+
 					if (base_size > 0) {
 						return base_size * array_count;
 					}
@@ -1331,7 +1332,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 		}
 		return 0;  // Failed to parse array dimensions
 	}
-	
+
 	// Map common type suffixes to their sizes
 	// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
 	if (type_suffix == "int") return 4;
@@ -1347,7 +1348,7 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 	else if (type_suffix == "ulong") return get_long_size_bits() / 8;
 	else if (type_suffix == "ulonglong") return 8;
 	else if (type_suffix == "longlong") return 8;
-	
+
 	return 0;  // Unknown type
 }
 
@@ -1679,17 +1680,17 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Generate function declaration IR using typed payload
 	FunctionDeclOp func_decl_op;
-	
+
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
 	func_decl_op.return_type = return_type.type();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
-	
+
 	// Add function name and struct name
 	func_decl_op.function_name = full_func_name;
 	func_decl_op.struct_name = struct_name;
-	
+
 	// Add linkage (C++)
 	func_decl_op.linkage = Linkage::None;
 
@@ -1720,7 +1721,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}
-			
+
 			// Handle empty parameter names
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
@@ -1729,7 +1730,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			} else {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
-			
+
 			func_param.ref_qualifier = CVReferenceQualifier::None;
 			func_param.cv_qualifier = CVQualifier::None;
 			func_decl_op.parameters.push_back(func_param);
@@ -1781,7 +1782,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	// First, generate the FunctionDecl IR for the template instantiation
 	// This must be done at the top level, BEFORE any function bodies that might call it
 	generateTemplateFunctionDecl(inst_info);
-	
+
 	// Get the template function declaration
 	const FunctionDeclarationNode& template_func_decl = inst_info.template_node_ptr->function_decl_node();
 	const DeclarationNode& template_decl = template_func_decl.decl_node();
@@ -1817,17 +1818,17 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			64,  // Pointer size in bits
 			template_decl.identifier_token()
 		);
-		
+
 		// Set pointer depth to 1 (this is a pointer)
 		this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
-		
+
 		// Create 'this' declaration
-		Token this_token(Token::Type::Identifier, "this"sv, 
+		Token this_token(Token::Type::Identifier, "this"sv,
 			template_decl.identifier_token().line(),
 			template_decl.identifier_token().column(),
 			template_decl.identifier_token().file_index());
 		auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
-		
+
 		// Add 'this' to symbol table
 		symbol_table.insert("this"sv, this_decl);
 	}
@@ -1842,8 +1843,8 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			if (i < inst_info.template_args.size()) {
 				Type concrete_type = inst_info.template_args[i];
 				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					concrete_type, 
-					TypeQualifier::None, 
+					concrete_type,
+					TypeQualifier::None,
 					get_type_size_bits(concrete_type),
 					param_decl.identifier_token()
 				);
@@ -1869,7 +1870,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		if (body_node_opt->is<BlockNode>()) {
 			const BlockNode& block = body_node_opt->as<BlockNode>();
 			const auto& stmts = block.get_statements();
-			
+
 			// Visit each statement in the block to generate IR
 			for (size_t i = 0; i < stmts.size(); ++i) {
 				visit(stmts[i]);

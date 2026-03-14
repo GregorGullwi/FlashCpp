@@ -200,9 +200,9 @@ All known downstream open-coded wrapped-vs-direct checks have been updated:
 - `ConstExprEvaluator_Core.cpp`: removed local `extract_identifier_name` lambda,
   now uses `getIdentifierNameFromAstNode()` directly
 - `ConstExprEvaluator_Members.cpp`: uses `tryGetIdentifier()` throughout
-- `CodeGen_Lambdas.cpp`: collapsed `is<IdentifierNode>()` / `is<ExpressionNode>()`
+- `IrGenerator_Lambdas.cpp`: collapsed `is<IdentifierNode>()` / `is<ExpressionNode>()`
   init-capture branches into single `tryGetIdentifier()` check
-- `CodeGen_MemberAccess.cpp`: `get_identifier` local lambda now delegates to
+- `IrGenerator_MemberAccess.cpp`: `get_identifier` local lambda now delegates to
   `tryGetIdentifier(object_node)`
 - `Parser_Expr_QualLookup.cpp`: unary-`+` lambda-decay path uses `tryGetIdentifier()`
 - `TemplateRegistry_Lazy.cpp`: dependent qualified-id checks use
@@ -279,7 +279,7 @@ For each slice:
 4. ~~Continue re-auditing downstream consumers (Step 4), replacing open-coded
    wrapped-vs-direct identifier handling with centralized helpers~~ ✅ — done
    across `ConstExprEvaluator_Core.cpp`, `ConstExprEvaluator_Members.cpp`,
-   `CodeGen_Lambdas.cpp`, `CodeGen_MemberAccess.cpp`,
+   `IrGenerator_Lambdas.cpp`, `IrGenerator_MemberAccess.cpp`,
    `Parser_Expr_QualLookup.cpp`, and `TemplateRegistry_Lazy.cpp`.
 5. ~~Only remove compatibility branches once non-parser/synthetic AST paths are
    confirmed not to rely on them~~ ✅ — compatibility branches retained in

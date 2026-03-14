@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_top_level_node()
 {
 	// Save the current token's position to restore later in case of a parsing

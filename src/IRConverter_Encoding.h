@@ -142,7 +142,7 @@ inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opco
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0; // Initialize count to 0
 
@@ -191,7 +191,7 @@ OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, int32_t 
  * @param offset The signed offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -225,7 +225,7 @@ OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, int32_t o
 	return result;
 }
 
-OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -260,7 +260,7 @@ OpCodeWithSize generateLeaFromFrame(X64Register destinationRegister, int32_t off
  * @param offset The signed byte offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -300,7 +300,7 @@ OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, int32_t
  * @param offset The signed byte offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -341,7 +341,7 @@ OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, int32_t 
  * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -383,7 +383,7 @@ OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegister, int
  * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -425,7 +425,7 @@ OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegister, in
  * @param offset The signed byte offset from RBP (stack slot location).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -466,7 +466,7 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
  * @param size_in_bits The size of the value in bits.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
- OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+ inline OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovzxFromFrame8(destinationRegister, offset);
 	} else if (size_in_bits == 16) {
@@ -488,7 +488,7 @@ OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegister, i
  * @param offset The signed offset from the base register.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+inline OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register base_reg, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -558,7 +558,7 @@ OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register base_reg,
  * @param offset The signed offset from the base register.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+inline OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register base_reg, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -627,7 +627,7 @@ OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register base_re
  * @param offset The signed offset from the base register.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+inline OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register base_reg, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -697,7 +697,7 @@ OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register base_re
  * @param offset The signed offset from the base register.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg, int32_t offset) {
+inline OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -780,7 +780,7 @@ OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register base_reg
  * @param is_float True for movss (float), false for movsd (double).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister, X64Register base_reg, int32_t offset, bool is_float) {
+inline OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister, X64Register base_reg, int32_t offset, bool is_float) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -835,7 +835,7 @@ OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister, X64Re
 	return result;
 }
 
-OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
+inline OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_t offset, bool is_float) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -879,7 +879,7 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
  * @param is_float True for movss (float), false for movsd (double).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offset, bool is_float) {
+inline OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offset, bool is_float) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -923,7 +923,7 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
  * @param is_float True for movss (float), false for movsd (double).
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Register ptr_reg, bool is_float) {
+inline OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Register ptr_reg, bool is_float) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -972,7 +972,7 @@ OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Register 
  * @return An `OpCodeWithSize` struct containing a stack-allocated `std::array`
  *         of `uint8_t` and the actual number of bytes generated.
  */
-OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset) {
 	// Assert that this is a general-purpose register, not an XMM register
 	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
 	       "generatePtrMovToFrame called with XMM register - use generateFloatMovToFrame instead");
@@ -1024,7 +1024,7 @@ OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset)
  * @param offset The signed offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) {
 	// Assert that this is a general-purpose register, not an XMM register
 	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
 	       "generateMovToFrame32 called with XMM register - use generateFloatMovToFrame instead");
@@ -1073,7 +1073,7 @@ OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) 
  * @param offset The signed offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -1119,7 +1119,7 @@ OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t offset) {
  * @param offset The signed offset from RBP.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
@@ -1167,7 +1167,7 @@ OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t offset) 
  * @param size_in_bits The size of the value in bits.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
-OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
+inline OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovToFrame8(sourceRegister, offset);
 	} else if (size_in_bits == 16) {
@@ -1211,7 +1211,7 @@ inline void emitAddRegImm32(std::vector<uint8_t>& textSectionData, X64Register r
 }
 
 // CLANG COMPATIBILITY: Generate MOV [rsp+offset], reg instruction for RSP-relative addressing
-OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -1268,7 +1268,7 @@ OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offset) {
 }
 
 // CLANG COMPATIBILITY: Generate 32-bit MOV [rsp+offset], reg instruction (like Clang)
-OpCodeWithSize generateMovToRsp32(X64Register sourceRegister, int32_t offset) {
+inline OpCodeWithSize generateMovToRsp32(X64Register sourceRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -1315,7 +1315,7 @@ OpCodeWithSize generateMovToRsp32(X64Register sourceRegister, int32_t offset) {
 }
 
 // CLANG COMPATIBILITY: Generate 32-bit MOV reg, [rsp+offset] instruction (like Clang)
-OpCodeWithSize generateMovFromRsp32(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovFromRsp32(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
@@ -1362,7 +1362,7 @@ OpCodeWithSize generateMovFromRsp32(X64Register destinationRegister, int32_t off
 }
 
 // CLANG COMPATIBILITY: Generate MOV reg, [rsp+offset] instruction for RSP-relative addressing
-OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_t offset) {
+inline OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_t offset) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 

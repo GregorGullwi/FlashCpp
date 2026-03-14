@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 // Phase 5: Unified function body parsing
 // This method handles all the common body parsing logic including:
 // - = default handling

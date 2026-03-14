@@ -1,88 +1,11 @@
-// Shared helper: register every member function of a nested struct for lazy instantiation.
-// Used by two paths that both create nested-class TypeInfos:
-//   1. try_instantiate_class_template (primary template path)
-//   2. instantiateLazyNestedType      (lazy nested type path, in Parser_Templates_Lazy.cpp)
-// Placing this helper here ensures it is textually visible to both files in the unity build
-// since Parser_Templates_Inst_ClassTemplate.cpp is #included before Parser_Templates_Lazy.cpp.
-template<typename TParams, typename TArgs>
-static void registerNestedMemberFunctionsForLazy(
-	const StructDeclarationNode& nested_struct,
-	StructTypeInfo& nested_struct_info,
-	StringHandle class_template_name,   // parent instantiated class (for self-type resolution in instantiateLazyMemberFunction)
-	StringHandle qualified_name,         // qualified nested class name  (e.g., "Container$hash::Inner")
-	const TParams& template_params,
-	const TArgs& template_args)
-{
-	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
-		if (mem_func.is_constructor || mem_func.is_destructor) {
-			if (mem_func.is_constructor)
-				nested_struct_info.addConstructor(mem_func.function_declaration, mem_func.access);
-			else
-				nested_struct_info.addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
-
-			// Also register constructors/destructors for lazy instantiation so nested types
-			// can materialize callable definitions on first use.
-			LazyMemberFunctionInfo lazy_mem_info;
-			lazy_mem_info.class_template_name = class_template_name;
-			lazy_mem_info.instantiated_class_name = qualified_name;
-			if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
-				lazy_mem_info.member_function_name = mem_func.function_declaration.as<ConstructorDeclarationNode>().name();
-				lazy_mem_info.is_constructor = true;
-				lazy_mem_info.is_destructor = false;
-			} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
-				lazy_mem_info.member_function_name = mem_func.function_declaration.as<DestructorDeclarationNode>().name();
-				lazy_mem_info.is_constructor = false;
-				lazy_mem_info.is_destructor = true;
-			}
-			lazy_mem_info.original_function_node = mem_func.function_declaration;
-			lazy_mem_info.template_params = template_params;
-			lazy_mem_info.template_args = template_args;
-			lazy_mem_info.access = mem_func.access;
-			lazy_mem_info.is_virtual = mem_func.is_virtual;
-			lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
-			lazy_mem_info.is_override = mem_func.is_override;
-			lazy_mem_info.is_final = mem_func.is_final;
-			lazy_mem_info.is_const_method = mem_func.is_const();
-			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
-		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func_decl.decl_node();
-
-			LazyMemberFunctionInfo lazy_mem_info;
-			lazy_mem_info.class_template_name    = class_template_name;
-			lazy_mem_info.instantiated_class_name = qualified_name;
-			lazy_mem_info.member_function_name   = decl.identifier_token().handle();
-			lazy_mem_info.original_function_node = mem_func.function_declaration;
-			lazy_mem_info.template_params        = template_params;
-			lazy_mem_info.template_args          = template_args;
-			lazy_mem_info.access                 = mem_func.access;
-			lazy_mem_info.is_virtual             = mem_func.is_virtual;
-			lazy_mem_info.is_pure_virtual        = mem_func.is_pure_virtual;
-			lazy_mem_info.is_override            = mem_func.is_override;
-			lazy_mem_info.is_final               = mem_func.is_final;
-			lazy_mem_info.is_const_method        = mem_func.is_const();
-			lazy_mem_info.is_constructor         = false;
-			lazy_mem_info.is_destructor          = false;
-
-			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
-
-			nested_struct_info.addMemberFunction(
-				decl.identifier_token().handle(),
-				mem_func.function_declaration,
-				mem_func.access,
-				mem_func.is_virtual,
-				mem_func.is_pure_virtual,
-				mem_func.is_override,
-				mem_func.is_final
-			);
-			if (!nested_struct_info.member_functions.empty())
-				nested_struct_info.member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-
-			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",
-			          qualified_name, "::", decl.identifier_token().value());
-		}
-	}
-}
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+#include "InstantiationQueue.h"
+#include "ParserTemplateClassShared.h"
 
 static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunctionForInitializer(
 	const StructTypeInfo* struct_info,
@@ -130,7 +53,7 @@ static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 	return {nullptr, nullptr};
 }
 
-static ASTNode rebindStaticMemberInitializerFunctionCalls(
+ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info)
 {

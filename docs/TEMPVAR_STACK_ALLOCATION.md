@@ -45,7 +45,7 @@ Add a `registerTempVar(TempVar var, int size_in_bits)` method to CodeGen that:
 - Single source of truth
 
 **Cons**:
-- Requires changes to many places in CodeGen.h where TempVars are created
+- Requires changes to many places in IrGenerator.h where TempVars are created
 - Need to pass size information to each var_counter.next() call
 
 ### Option 2: Typed TempVar
@@ -120,4 +120,4 @@ In `calculateFunctionStackSpace()` (IRConverter.h), the following produce TempVa
 ## Related Files
 - `src/IRTypes.h` - TempVar class, FunctionDeclOp struct
 - `src/IRConverter.h` - calculateFunctionStackSpace(), getStackOffsetFromTempVar()
-- `src/CodeGen.h` - var_counter, TempVar creation
+- `src/IrGenerator.h` - var_counter, TempVar creation

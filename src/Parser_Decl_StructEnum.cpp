@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_struct_declaration()
 {
 	return parse_struct_declaration_with_specs(false, false);

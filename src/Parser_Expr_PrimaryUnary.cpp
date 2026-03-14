@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_return_statement()
 {
 	auto current_token_opt = peek_info();
@@ -1013,14 +1020,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 // Trait info for type trait intrinsics - shared between is_known_type_trait_name and parse_primary_expression.
 // Keys use single underscore prefix (e.g. "_is_void") so both "__is_void" and "__builtin_is_void"
 // can be normalized to the same key via string_view::substr() with zero allocation.
-struct TraitInfo {
-	TypeTraitKind kind = TypeTraitKind::IsVoid;
-	bool is_binary = false;
-	bool is_variadic = false;
-	bool is_no_arg = false;
-};
-
-static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+const std::unordered_map<std::string_view, TraitInfo> trait_map = {
 	{"_is_void", {TypeTraitKind::IsVoid, false, false, false}},
 	{"_is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
 	{"_is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
@@ -1083,7 +1083,7 @@ static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
 // Normalize a type trait name to its single-underscore lookup key.
 // "__is_void" -> "_is_void", "__builtin_is_void" -> "_is_void"
 // Returns a string_view into the original name (zero allocation).
-static std::string_view normalize_trait_name(std::string_view name) {
+std::string_view normalize_trait_name(std::string_view name) {
 	if (name.starts_with("__builtin_"))
 		return name.substr(9); // "__builtin_is_foo" -> "_is_foo"
 	if (name.starts_with("_"))
@@ -1093,6 +1093,6 @@ static std::string_view normalize_trait_name(std::string_view name) {
 
 // Helper: check if a name (possibly with __builtin_ prefix) is a known compiler type trait intrinsic.
 // Used to distinguish type traits like __is_void(T) from regular functions like __is_single_threaded().
-static bool is_known_type_trait_name(std::string_view name) {
+bool is_known_type_trait_name(std::string_view name) {
 	return trait_map.contains(normalize_trait_name(name));
 }

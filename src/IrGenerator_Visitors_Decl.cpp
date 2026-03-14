@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 	void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value() && !node.is_implicit()) {
@@ -42,18 +43,18 @@
 		const std::string_view func_name_view = func_decl.identifier_token().value();
 		current_function_name_ = StringTable::getOrInternStringHandle(func_name_view);
 		current_function_mangled_name_ = StringHandle(); // will be set after mangled name is computed
-		
+
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
 		current_function_return_type_ = ret_type_spec.type();
 		current_function_returns_reference_ = ret_type_spec.is_reference();
-		
+
 		int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
-		
+
 		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
 		// References are represented as pointers at the IR level
-		current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference()) 
-			? 64 
+		current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference())
+			? 64
 			: actual_ret_size;
 
 		// Set or clear current_struct_name_ based on whether this is a member function
@@ -92,7 +93,7 @@
 					const DeclarationNode& param_decl = param.as<DeclarationNode>();
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					FLASH_LOG(Codegen, Debug, "  param[", i, "]: name='", param_decl.identifier_token().value()
-							, "' type=", (int)param_type.type() 
+							, "' type=", (int)param_type.type()
 							, " type_index=", param_type.type_index()
 							, " size=", (int)param_type.size_in_bits()
 							, " ptr_depth=", param_type.pointer_depth()
@@ -115,33 +116,33 @@
 		// Create function declaration with return type and name
 		// Use FunctionDeclOp to store typed payload
 		FunctionDeclOp func_decl_op;
-		
+
 		// Return type information
 		func_decl_op.return_type = ret_type.type();
-		
+
 		int actual_return_size = getTypeSpecSizeBits(ret_type);
-		
+
 		// For pointer return types, use 64-bit size (pointer size on x64)
 		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
 		// but we display it as the base type with a reference qualifier)
-		func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0) 
-			? 64 
+		func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0)
+			? 64
 			: actual_return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
 		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
-		
+
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
 		bool returns_struct_by_value = returnsStructByValue(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference());
 		bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
-		
+
 		// Track return type index and hidden parameter flag for current function context
 		current_function_return_type_index_ = ret_type.type_index();
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
-		
+
 		if (returns_struct_by_value) {
 			if (needs_hidden_return_param) {
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -153,7 +154,7 @@
 					func_decl.identifier_token().value(), ret_type.size_in_bits());
 			}
 		}
-		
+
 		// Function name
 		func_decl_op.function_name = func_decl.identifier_token().handle();
 
@@ -170,7 +171,7 @@
 			struct_name_for_function = ""sv;
 		}
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
-		
+
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
@@ -195,7 +196,7 @@
 			}
 			func_decl_op.is_noexcept = is_truly_noexcept;
 		}
-		
+
 		// Member functions defined inside the class body are implicitly inline (C++ standard)
 		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
 		// This includes constructors, destructors, and regular member functions defined inline
@@ -210,7 +211,7 @@
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
 		std::string_view mangled_name;
-		
+
 		// Don't pass namespace_stack when struct_name already includes the namespace
 		// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
 		// This avoids double-encoding the namespace in the mangled name
@@ -238,7 +239,7 @@
 			}
 		}
 		// else: struct_name already contains namespace prefix, don't add it again
-		
+
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
 		} else if (node.has_non_type_template_args()) {
@@ -249,8 +250,8 @@
 				param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
 			}
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-				func_decl.identifier_token().value(), return_type, param_types, 
-				node.non_type_template_args(), node.is_variadic(), 
+				func_decl.identifier_token().value(), return_type, param_types,
+				node.non_type_template_args(), node.is_variadic(),
 				struct_name_for_function, namespace_for_mangling);
 			mangled_name = mangled.view();
 		} else {
@@ -280,7 +281,7 @@
 			FunctionParam param_info;
 			param_info.type = param_type.type();
 			param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
-			
+
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
 			int pointer_depth = static_cast<int>(param_type.pointer_depth());
 			if (param_type.is_lvalue_reference()) {
@@ -293,7 +294,7 @@
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = PointerDepth{pointer_depth};
-			
+
 			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
 			std::string_view param_name = param_decl.identifier_token().value();
@@ -321,7 +322,7 @@
 			} else {
 				param_info.name = StringTable::getOrInternStringHandle(param_name);
 			}
-			
+
 			param_info.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			param_info.cv_qualifier = param_type.cv_qualifier();
 
@@ -767,7 +768,7 @@
 
 				// Generate memberwise assignment from source parameter to 'this'
 				// (same code for both copy and move assignment - memberwise copy/move)
-				
+
 				// Get the parameter name from the function declaration
 				// For defaulted operator= without explicit parameter name (e.g., `operator=(const T&) = default;`),
 				// the parameter name might be empty. Use "other" as the default name.
@@ -905,7 +906,7 @@
 		if (gTemplateRegistry.isPatternStructName(node.name())) {
 			return;
 		}
-		
+
 		// Skip structs with incomplete instantiation - they have unresolved template params
 		{
 			auto incomplete_it = gTypesByName.find(node.name());
@@ -921,10 +922,10 @@
 		// Save the enclosing function context so member function visits don't clobber it
 		StringHandle saved_enclosing_function = current_function_name_;
 		StringHandle saved_struct_name = current_struct_name_;
-		
+
 		// Check if this is a local struct (declared inside a function)
 		bool is_local_struct = current_function_name_.isValid();
-		
+
 		// Set struct context so member functions know which struct they belong to
 		// NOTE: We don't clear this until the next struct - the string must persist
 		// because IrOperands store string_view references to it
@@ -942,7 +943,7 @@
 			// Top-level class - first try simple name, then look for namespace-qualified version
 			lookup_name = StringTable::getOrInternStringHandle(struct_name);
 		}
-		
+
 		auto type_it = gTypesByName.find(lookup_name);
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
@@ -967,7 +968,7 @@
 				current_struct_name_ = lookup_name;
 			}
 		}
-		
+
 		// For local structs, collect member functions for deferred generation
 		// For global structs, visit them immediately
 		if (is_local_struct) {
@@ -1079,18 +1080,18 @@
 				}
 			}
 		}  // End of if-else for local vs global struct
-		
+
 		// Clear current_function_name_ before visiting nested classes
 		// Nested classes should not be treated as local structs even if we're inside
 		// a member function context (e.g., after visiting constructors which set current_function_name_)
 		// Nested classes are always at class scope, not function scope
 		current_function_name_ = StringHandle();
 		current_function_mangled_name_ = StringHandle();
-		
+
 		// Save current_struct_name_ before visiting nested classes so each nested class
 		// gets the correct parent context (important when there are multiple nested classes)
 		StringHandle parent_struct_name = current_struct_name_;
-			
+
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
 				if (nested_class_node.is<StructDeclarationNode>()) {
@@ -1105,14 +1106,14 @@
 			auto static_member_type_it = gTypesByName.find(node.name());
 			if (static_member_type_it != gTypesByName.end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
-				
+
 				// Skip if we've already processed this TypeInfo pointer
 				// (same struct can be registered under multiple keys in gTypesByName)
 				if (processed_type_infos_.count(type_info) > 0) {
 					// Already processed in generateStaticMemberDeclarations() or earlier visit
 				} else {
 					processed_type_infos_.insert(type_info);
-					
+
 					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (struct_info) {
 						for (const auto& static_member : struct_info->static_members) {
@@ -1123,7 +1124,7 @@
 							qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(StringTable::getStringView(static_member.getName()));
 							std::string_view qualified_name = qualified_name_sb.commit();
 							StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
-							
+
 							// Skip if already emitted
 							if (emitted_static_members_.count(name_handle) > 0) {
 								continue;
@@ -1161,7 +1162,7 @@
 				}
 			}
 			// Clear current_struct_name_ for top-level structs
-		
+
 			if (current_struct_name_.isValid()) {
 				std::string_view current_name = StringTable::getStringView(current_struct_name_);
 				if (current_name.find("::") == std::string_view::npos) {
@@ -1207,7 +1208,7 @@
 		FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
 		std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
-		
+
 		// Extract just the last component of the class name for the constructor function name
 		// For "Outer::Inner", we want "Inner" as the function name
 		std::string_view ctor_function_name = struct_name_for_ctor;
@@ -1219,7 +1220,7 @@
 		} else {
 			parent_class_name = struct_name_for_ctor;  // Not nested, use as-is
 		}
-		
+
 		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
 		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
@@ -1254,7 +1255,7 @@
 			}
 			current_function_mangled_name_ = ctor_decl_op.mangled_name;
 		}
-		
+
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
 
@@ -1268,7 +1269,7 @@
 			func_param.type = param_type.type();
 			func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
-			
+
 			// Handle empty parameter names (e.g., from defaulted constructors)
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
@@ -1278,7 +1279,7 @@
 				bool is_copy_or_move_param = ctor_unnamed_param_counter == 0 &&
 					(param_type.is_reference() || param_type.is_rvalue_reference()) &&
 					node.parameter_nodes().size() == 1;
-				
+
 				if (is_copy_or_move_param) {
 					func_param.name = StringTable::getOrInternStringHandle("other");
 				} else {
@@ -1289,7 +1290,7 @@
 			} else {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
-			
+
 			func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			func_param.cv_qualifier = param_type.cv_qualifier();
 			ctor_decl_op.parameters.push_back(func_param);
@@ -1303,7 +1304,7 @@
 		generated_function_names_.insert(ctor_decl_op.mangled_name);
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), node.name_token()));
-		
+
 		symbol_table.enter_scope(ScopeType::Function);
 
 		// Add 'this' pointer to symbol table for member access
@@ -1339,7 +1340,7 @@
 		// No base class or member initialization should happen
 		if (node.delegating_initializer().has_value()) {
 			const auto& delegating_init = node.delegating_initializer().value();
-			
+
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
 			ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
@@ -1353,7 +1354,7 @@
 			}
 
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
-			
+
 			// Delegating constructors don't execute the body or initialize members
 			// Just return
 			emitVoidReturn(node.name_token());
@@ -1438,7 +1439,7 @@
 						}
 					}
 				}
-				
+
 				// Step 1.5: Initialize vptr if this class has virtual functions
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
@@ -1446,7 +1447,7 @@
 					// Use the pre-generated vtable symbol from struct_info
 					// The vtable symbol is generated once during buildVTable()
 					auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
-					
+
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;
 					vptr_store.object = StringTable::getOrInternStringHandle("this");
@@ -1455,7 +1456,7 @@
 					vptr_store.struct_type_info = struct_type_info;  // Use TypeInfo pointer
 					vptr_store.ref_qualifier = CVReferenceQualifier::None;
 					vptr_store.vtable_symbol = vtable_symbol;  // Store vtable symbol as string_view
-					
+
 					// The value is a vtable symbol reference
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
 					// The actual symbol will be loaded using the vtable_symbol field
@@ -1463,7 +1464,7 @@
 					vptr_store.value.ir_type = IrType::Void;
 					vptr_store.value.size_in_bits = SizeInBits{64};
 					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
-					
+
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
 				}
 			}
@@ -1663,7 +1664,7 @@
 							if (member.bitfield_width.has_value()) continue; // handled above
 							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
-							
+
 							// Determine the initial value
 							IrValue member_value;
 							// Check if member has a default initializer (C++11 feature)
@@ -1688,19 +1689,19 @@
 									// Handle brace initializers like `B b1 = { .a = 1 };`
 									const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 									const auto& initializers = init_list.initializers();
-									
+
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
 									if (member_type_index.value < gTypeInfo.size()) {
 										const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
-										
+
 										// If this is a struct type, we need to initialize its members
 										if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
 											// Build a map of member names to initializer expressions
 											std::unordered_map<StringHandle, const ASTNode*> member_values;
 											size_t positional_index = 0;
-											
+
 											for (size_t i = 0; i < initializers.size(); ++i) {
 												if (init_list.is_designated(i)) {
 													// Designated initializer - use member name
@@ -1715,26 +1716,26 @@
 													}
 												}
 											}
-											
+
 											// Generate nested member stores for each member of the nested struct
 											for (const StructMember& nested_member : member_type_info.struct_info_->members) {
 												// Determine initial value for nested member
 												std::optional<IrValue> nested_member_value;
 												StringHandle nested_member_name_handle = nested_member.getName();
-												
+
 												if (member_values.count(nested_member_name_handle)) {
 													const ASTNode& init_expr = *member_values[nested_member_name_handle];
-														
+
 													// Check if this is a nested braced initializer (two-level nesting)
 													if (init_expr.is<InitializerListNode>()) {
 														// Handle nested braced initializers using the recursive helper
 														const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
-															
+
 														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
 														if (nested_member_type_index.value < gTypeInfo.size()) {
 															const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
-																
+
 															// If this is a struct type, use the recursive helper
 															if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
 																generateNestedMemberStores(
@@ -1775,7 +1776,7 @@
 														}
 													}
 												}
-												
+
 												if (nested_member_value.has_value()) {
 													// Generate nested member store
 													MemberStoreOp nested_member_store;
@@ -1788,11 +1789,11 @@
 													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
 													nested_member_store.ref_qualifier = ((nested_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((nested_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 													nested_member_store.struct_type_info = nullptr;
-												
+
 													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
 												}
 											}
-											
+
 											// Skip the outer member store since we've already generated nested stores
 											continue;
 										} else {
@@ -1839,7 +1840,7 @@
 										is_struct_with_constructor = true;
 									}
 								}
-								
+
 								if (is_struct_with_constructor) {
 									// Call the nested struct's default constructor instead of zero-initializing
 									const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
@@ -1869,7 +1870,7 @@
 									}
 								}
 							}
-	
+
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -1879,7 +1880,7 @@
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 							member_store.struct_type_info = nullptr;
-	
+
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					}
@@ -1896,7 +1897,7 @@
 					// Initialize all members
 					for (const auto& member : struct_info->members) {
 						// Generate MemberStore IR to initialize the member
-						
+
 						// Determine the initial value
 						IrValue member_value;
 						// Check for explicit initializer first (highest precedence)
@@ -1914,13 +1915,13 @@
 									if (std::holds_alternative<IdentifierNode>(expr_node)) {
 										const auto& id_node = std::get<IdentifierNode>(expr_node);
 										auto init_name = StringTable::getOrInternStringHandle(id_node.name());
-										
+
 										// Look up the identifier in the symbol table
 										std::optional<ASTNode> init_symbol = symbol_table.lookup(init_name);
 										if (init_symbol.has_value() && init_symbol->is<DeclarationNode>()) {
 											const auto& init_decl = init_symbol->as<DeclarationNode>();
 											const auto& init_type = init_decl.type_node().as<TypeSpecifierNode>();
-											
+
 											// If the initializer is a reference, use its value directly (it's already a pointer)
 											// Don't dereference it - just use the string_view to refer to the variable
 											if (init_type.is_reference() || init_type.is_rvalue_reference()) {
@@ -1931,7 +1932,7 @@
 									}
 								}
 							}
-							
+
 							if (!handled_as_reference_init) {
 								// Use explicit initializer from constructor initializer list
 								ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
@@ -1987,7 +1988,7 @@
 									is_struct_with_constructor = true;
 								}
 							}
-							
+
 							if (is_struct_with_constructor) {
 								// Call the nested struct's default constructor instead of zero-initializing
 								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
@@ -2017,7 +2018,7 @@
 								}
 							}
 						}
-	
+
 						MemberStoreOp member_store;
 						member_store.value.type = member.type;
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -2160,9 +2161,9 @@
 // This is the "compiler magic" that creates a backing array on the stack
 // and constructs an initializer_list pointing to it
 ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
-	FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
+	FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ",
 	init_list.size(), " elements");
-	
+
 	// Get the target initializer_list type
 	const ASTNode& target_type_node = init_list.target_type();
 	if (!target_type_node.is<TypeSpecifierNode>()) {
@@ -2170,11 +2171,11 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		return ExprResult{};
 	}
 	const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
-	
+
 	// Get element type (default to int for now)
 	int element_size_bits = 32;  // Default: int
 	Type element_type = Type::Int;
-	
+
 	// Infer element type from first element if available
 	std::vector<ExprResult> element_operands;
 	for (size_t i = 0; i < init_list.elements().size(); ++i) {
@@ -2188,17 +2189,17 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			}
 		}
 	}
-	
+
 	// Step 1: Create a backing array on the stack using VariableDecl
 	size_t array_size = init_list.size();
 	size_t total_size_bits = array_size * element_size_bits;
-	
+
 	// Create a unique name for the backing array using the temp var number
 	TempVar array_var = var_counter.next();
 	StringBuilder array_name_builder;
 	array_name_builder.append("__init_list_array_"sv).append(array_var.var_number);
 	StringHandle array_name = StringTable::getOrInternStringHandle(array_name_builder.commit());
-	
+
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
 	array_decl.type = element_type;
@@ -2208,7 +2209,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	array_decl.array_element_size = element_size_bits;
 	array_decl.array_count = array_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
-	
+
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
@@ -2221,35 +2222,35 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
 	}
-	
+
 	// Step 3: Create the initializer_list struct
 	TypeIndex init_list_type_index = target_type.type_index();
 	if (init_list_type_index.value >= gTypeInfo.size()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
 		return ExprResult{};
 	}
-	
+
 	const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index.value];
 	const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
 	if (!init_list_struct_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
 		return ExprResult{};
 	}
-	
+
 	int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
-	
+
 	// Create a unique name for the initializer_list struct using the temp var number
 	TempVar init_list_var = var_counter.next();
 	StringBuilder init_list_name_builder;
 	init_list_name_builder.append("__init_list_"sv).append(init_list_var.var_number);
 	StringHandle init_list_name = StringTable::getOrInternStringHandle(init_list_name_builder.commit());
-	
+
 	VariableDeclOp init_list_decl;
 	init_list_decl.var_name = init_list_name;
 	init_list_decl.type = Type::Struct;
 	init_list_decl.size_in_bits = SizeInBits{static_cast<int>(init_list_size_bits)};
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
-	
+
 	// Store pointer to array (first member)
 	if (init_list_struct_info->members.size() >= 1) {
 		const auto& ptr_member = init_list_struct_info->members[0];
@@ -2268,7 +2269,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_ptr.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_ptr), init_list.called_from()));
 	}
-	
+
 	// Store size (second member)
 	if (init_list_struct_info->members.size() >= 2) {
 		const auto& size_member = init_list_struct_info->members[1];
@@ -2281,7 +2282,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
 	}
-	
+
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
 	return makeExprResult(
@@ -2322,7 +2323,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Create a temporary variable for the result (the constructed object)
 	TempVar ret_var = var_counter.next();
-	
+
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
@@ -2340,7 +2341,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			struct_info = type_it->second->struct_info_.get();
 		}
 	}
-	
+
 	// Build ConstructorCallOp
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = constructor_name;
@@ -2350,7 +2351,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	const ConstructorDeclarationNode* matching_ctor = nullptr;
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
-	
+
 	if (struct_info) {
 			if (parser_) {
 				std::vector<TypeSpecifierNode> arg_types;
@@ -2380,7 +2381,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 				const auto& params = ctor_node.parameter_nodes();
-				
+
 				// Skip implicit copy/move constructors — they only apply when the
 				// argument is actually the same struct type, not for aggregate-like
 				// brace init with scalar values like my_type{0}
@@ -2394,7 +2395,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						}
 					}
 				}
-				
+
 				// Match constructor with same number of parameters or with default parameters
 				if (params.size() == num_args) {
 					matching_ctor = &ctor_node;
@@ -2403,7 +2404,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					// Check if remaining params have defaults
 					bool all_have_defaults = true;
 					for (size_t i = num_args; i < params.size(); ++i) {
-						if (!params[i].is<DeclarationNode>() || 
+						if (!params[i].is<DeclarationNode>() ||
 						!params[i].as<DeclarationNode>().has_default_value()) {
 							all_have_defaults = false;
 							break;
@@ -2432,12 +2433,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				}
 			}
 		}
-		
+
 		if (is_aggregate && num_args <= struct_info->members.size()) {
 			// Emit default constructor call first (zero-initializes the object)
 			fillInDefaultConstructorArguments(ctor_op, *struct_info);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
-			
+
 			// Then emit member stores for each argument
 			size_t member_idx = 0;
 			constructorCallNode.arguments().visit([&](ASTNode argument) {
@@ -2489,9 +2490,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), constructorCallNode.called_from()));
 				member_idx++;
 			});
-			
+
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
-			
+
 			TypeIndex result_type_index = type_spec.type_index();
 			return makeExprResult(
 				type_spec.type(),
@@ -2501,7 +2502,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			);
 		}
 	}
-	
+
 	const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
 
 	// Generate IR for constructor arguments and add them to ctor_op.arguments
@@ -2512,12 +2513,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		if (arg_index < ctor_params.size() && ctor_params[arg_index].is<DeclarationNode>()) {
 			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 		}
-		
+
 		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 		// argumentIrOperands = [type, size, value]
 		{
 			TypedValue tv;
-			
+
 			// Check if parameter expects a reference and argument is an identifier
 			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -2526,7 +2527,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 					const auto& arg_decl = symbol->as<DeclarationNode>();
 					const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
-					
+
 					if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
 						tv = toTypedValue(argumentIrOperands);
@@ -2541,7 +2542,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
-						
+
 						// Create TypedValue with the address
 						tv.type = arg_type.type();
 						tv.ir_type = toIrType(arg_type.type());
@@ -2558,7 +2559,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// Not a reference parameter or not an identifier - use as-is
 				tv = toTypedValue(argumentIrOperands);
 			}
-			
+
 			// If we have parameter type information, use it to set pointer depth and CV qualifiers
 			if (param_type) {
 				tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
@@ -2579,7 +2580,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					tv.type_index = param_type->type_index();
 				}
 			}
-			
+
 			ctor_op.arguments.push_back(std::move(tv));
 		}
 		arg_index++;
@@ -2589,14 +2590,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Find the matching constructor and add default values for missing parameters
 	if (struct_info) {
 		size_t num_explicit_args = ctor_op.arguments.size();
-		
+
 		// Find a constructor that has MORE parameters than explicit arguments
 		// and has default values for those extra parameters
 		for (const auto& func : struct_info->member_functions) {
 			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 				const auto& params = ctor_node.parameter_nodes();
-				
+
 				// Only consider constructors that have MORE parameters than explicit args
 				// (constructors with exact match don't need default argument filling)
 				if (params.size() > num_explicit_args) {
@@ -2613,7 +2614,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 							break;
 						}
 					}
-					
+
 					if (all_remaining_have_defaults) {
 						// Generate IR for the default values of the remaining parameters
 						for (size_t i = num_explicit_args; i < params.size(); ++i) {
@@ -2650,7 +2651,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Constructor calls always produce prvalues, which are eligible for copy elision
 	// when returned from a function
 	setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
-	
+
 	FLASH_LOG_FORMAT(Codegen, Debug,
 		"Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
 

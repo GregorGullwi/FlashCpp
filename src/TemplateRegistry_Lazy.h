@@ -1,3 +1,7 @@
+#pragma once
+
+#include "TemplateRegistry.h"
+
 // Strip namespace prefix from a class name handle (e.g., "ns::Foo$hash" -> "Foo$hash").
 // Used by lazy registries so lookups match regardless of qualification.
 static StringHandle normalizeClassName(StringHandle handle) {
@@ -1573,4 +1577,3 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();
 }
-

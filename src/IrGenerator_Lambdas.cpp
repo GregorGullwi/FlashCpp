@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 namespace {
 // Build a replacement declaration node for an instantiated generic-lambda
@@ -156,7 +157,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			// Use the target variable name directly
 			// We MUST emit VariableDecl here before any MemberStore operations
 			closure_var_name = target_var_name;
-			
+
 			// Declare the closure variable with the target name
 			VariableDeclOp lambda_decl_op;
 			lambda_decl_op.type = Type::Struct;
@@ -195,7 +196,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 					if (capture.is_capture_all()) {
 						continue;
 					}
-					
+
 					// Handle [this] capture - stores pointer to enclosing object
 					if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 						const StructMember* member = struct_info->findMember("__this");
@@ -216,7 +217,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 						}
 						continue;
 					}
-					
+
 					// Handle [*this] capture - stores copy of entire enclosing object
 					if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 						// For [*this], we need to copy the entire object into the closure
@@ -512,7 +513,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		if (lambda_info.captures.empty()) {
 			generateLambdaInvokeFunction(lambda_info);
 		}
-		
+
 		// CRITICAL FIX: Add operator() to the closure struct's member_functions list
 		// This allows member function calls to find the correct declaration for mangling
 		// Without this, lambda calls generate incorrect mangled names
@@ -526,26 +527,26 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()
 				// We need this so member function calls can generate the correct mangled name
-				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, 
+				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index,
 					lambda_info.return_size, lambda_info.lambda_token);
 				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
-				
+
 				Token operator_token = lambda_info.lambda_token;  // Use lambda token as placeholder
 				DeclarationNode& decl_node = gChunkedAnyStorage.emplace_back<DeclarationNode>(return_type_ast, operator_token);
-				
+
 				FunctionDeclarationNode& func_decl = gChunkedAnyStorage.emplace_back<FunctionDeclarationNode>(decl_node);
-				
+
 				// C++20: Lambda operator() is implicitly constexpr if it satisfies constexpr requirements
 				// Mark it as constexpr so the ConstExprEvaluator can evaluate lambda calls at compile time
 				func_decl.set_is_constexpr(true);
-				
+
 				// Add parameters to the function declaration
 				for (const auto& param_node : lambda_info.parameter_nodes) {
 					func_decl.add_parameter_node(param_node);
 				}
-				
+
 				ASTNode func_decl_ast(&func_decl);
-				
+
 				// Create StructMemberFunction and add to struct
 				StructMemberFunction member_func(
 					StringTable::getOrInternStringHandle("operator()"),
@@ -561,7 +562,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				member_func.is_override = false;
 				member_func.is_final = false;
 				member_func.vtable_index = 0;
-				
+
 				struct_info->member_functions.push_back(std::move(member_func));
 			}
 		}
@@ -577,16 +578,16 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
-		
+
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
 		bool returns_struct_by_value = returnsStructByValue(lambda_info.return_type, 0, lambda_info.returns_reference);
 		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
-		
+
 		// Track hidden return parameter flag for current function context
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
-		
+
 		if (returns_struct_by_value) {
 			if (needs_hidden_return_param) {
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -601,7 +602,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
 		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
-		
+
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
 		size_t param_idx = 0;
@@ -609,7 +610,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				
+
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
@@ -629,7 +630,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			}
 			param_idx++;
 		}
-		
+
 		// Generate mangled name using the same function as regular member functions
 		std::string_view mangled = generateMangledNameForCall(
 			"operator()",
@@ -647,9 +648,9 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				
+
 				FunctionParam func_param;
-				
+
 				// Handle empty parameter names
 				std::string_view param_name = param_decl.identifier_token().value();
 				if (param_name.empty()) {
@@ -658,9 +659,9 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				} else {
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
-				
+
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
-				
+
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
@@ -685,7 +686,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			}
 			param_idx++;
 		}
-		
+
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
 
@@ -753,7 +754,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		popLambdaContext();
 
 		symbol_table.exit_scope();
-		
+
 		// Note: Nested lambdas collected during body generation will be processed
 		// by the main generateCollectedLambdas() loop - no recursive call needed here
 	}
@@ -768,18 +769,18 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
-		
+
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
-		
+
 		// Track hidden return parameter flag for current function context
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
 		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
-		
+
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
 		size_t param_idx = 0;
@@ -787,7 +788,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				
+
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
@@ -805,7 +806,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			}
 			param_idx++;
 		}
-		
+
 		// Generate mangled name for the __invoke function (free function, not member)
 		std::string_view mangled = generateMangledNameForCall(
 			lambda_info.invoke_name,
@@ -823,9 +824,9 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				
+
 				FunctionParam func_param;
-				
+
 				// Handle empty parameter names
 				std::string_view param_name = param_decl.identifier_token().value();
 				if (param_name.empty()) {
@@ -834,9 +835,9 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				} else {
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
-				
+
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
-				
+
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
 				if (param_type.type() == Type::Auto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
@@ -939,7 +940,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				// If we see one here, it means the parser didn't expand it (shouldn't happen)
 				continue;
 			}
-			
+
 			// Skip [this] and [*this] captures - they don't have variable declarations
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
 			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
@@ -980,7 +981,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 		.append(lambda.generate_lambda_name())
 		.append("_invoke")
 		.commit();
-	
+
 	// Compute the mangled name for the __invoke function
 	// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
 	Type return_type = Type::Void;
@@ -991,7 +992,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 		return_size = ret_type_node.size_in_bits();
 	}
 	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());
-	
+
 	// Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;
 	for (const auto& param : lambda.parameters()) {
@@ -1001,11 +1002,11 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 			param_type_nodes.push_back(param_type);
 		}
 	}
-	
+
 	// Generate mangled name
 	std::string_view mangled = generateMangledNameForCall(
 		invoke_name, return_type_node, param_type_nodes, false, "");
-	
+
 	// Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
@@ -1016,7 +1017,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 	op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
-	
+
 	return func_addr_var;
 }
 

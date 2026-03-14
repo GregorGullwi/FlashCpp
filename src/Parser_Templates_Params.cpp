@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 ParseResult Parser::parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params) {
 	// Save the current template parameter names so we can restore them later.
 	// This allows nested template declarations to have their own parameter scope.

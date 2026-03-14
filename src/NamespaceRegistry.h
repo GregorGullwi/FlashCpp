@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "StringTable.h"
 
 template<typename T1, typename T2>

@@ -327,8 +327,8 @@ This is incorrect - there are ~5+ references in IRConverter files. Change `IRCon
 handlers to read `ir_type` instead of `type`.
 
 The scope includes:
-- IRConverter_Conv_CorePrivate.h (pointer arithmetic)
-- IRConverter_Emit_EHSeh.h (exception handling guard)
+- `IRConverter_ConvertMain.h` pointer arithmetic code (formerly `IRConverter_Conv_CorePrivate.h`)
+- `IRConverter_ConvertMain.h` exception handling guard code (formerly `IRConverter_Emit_EHSeh.h`)
 - Any other IRConverter files using Type::Enum/UserDefined
 
 After this phase, the backend should no longer depend on the semantic `Type` enum for
@@ -383,7 +383,7 @@ family is this value?"), but a separate class of backend heuristics exists that
 address or a scalar?").
 
 The clearest example is the `is_likely_pointer` heuristic in
-`IRConverter_Conv_VarDecl.h` (`handleVariableDecl`, reference-init-from-TempVar
+`IRConverter_ConvertMain.h` (formerly `IRConverter_Conv_VarDecl.h`, `handleVariableDecl`, reference-init-from-TempVar
 path). When initializing a reference from a TempVar that isn't already tracked
 in `indirect_stack_info_`, the x86 emitter must choose between:
 
@@ -447,63 +447,63 @@ type metadata.
 - `populateIncDecTypedValueMetadata` in `generateBuiltinIncDec` now uses
   `carriesSemanticTypeIndex(typed_value.type)` — previously missed
   `Type::UserDefined` (only checked Struct and Enum).
-- Return type_index patterns in `CodeGen_Call_Direct.cpp` and
-  `CodeGen_Call_Indirect.cpp` now use `isIrStructType(toIrType(...))`.
-- Struct checks in `IRConverter_Conv_Calls.h` (constructor overload resolution
+- Return type_index patterns in `IrGenerator_Call_Direct.cpp` and
+  `IrGenerator_Call_Indirect.cpp` now use `isIrStructType(toIrType(...))`.
+- Struct checks in `IRConverter_ConvertMain.h` (formerly `IRConverter_Conv_Calls.h`, constructor overload resolution
   and implicit copy/move detection) migrated to `isIrStructType(toIrType(...))`.
-- `carries_type_index` patterns in `CodeGen_Expr_Primitives.cpp` now use
+- `carries_type_index` patterns in `IrGenerator_Expr_Primitives.cpp` now use
   `carriesSemanticTypeIndex(...)` and `isIrStructType(toIrType(...))`.
-- Struct member type checks in `CodeGen_MemberAccess.cpp` (trivially-copyable,
+- Struct member type checks in `IrGenerator_MemberAccess.cpp` (trivially-copyable,
   trivial, struct info lookup, this-pointer resolution) migrated.
-- Nested struct detection in `CodeGen_Stmt_Decl.cpp` and
-  `CodeGen_Visitors_TypeInit.cpp` (recursive zero-fill) migrated.
+- Nested struct detection in `IrGenerator_Stmt_Decl.cpp` and
+  `IrGenerator_Visitors_TypeInit.cpp` (recursive zero-fill) migrated.
 
 **Remaining Phase 3 work:**
-- `CodeGen_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
+- `IrGenerator_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
   applicability (semantic: checks Type::Enum for overload semantics)
-- `CodeGen_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
+- `IrGenerator_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
   and enum↔int cast rules
-- `CodeGen_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
+- `IrGenerator_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
   scalar classification (semantic)
-- `CodeGen_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
-- `CodeGen_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
+- `IrGenerator_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
 
 **UPDATE (2026-03-14)**: A third Phase 3 slice is now in place:
 
-- `requiresUserDefinedOp` lambdas in `CodeGen_Expr_Operators.cpp` (lines 793, 798)
+- `requiresUserDefinedOp` lambdas in `IrGenerator_Expr_Operators.cpp` (lines 793, 798)
   now use `isIrStructType(toIrType(base_type))` — catches both Struct and UserDefined
   aliases without explicit two-way OR.
 - `param_type.type() != Type::Struct && param_type.type() != Type::UserDefined`
   check (line 899) simplified to `!isIrStructType(toIrType(param_type.type()))`.
-- Constructor overload identity check in `CodeGen_Call_Direct.cpp` (line 845)
+- Constructor overload identity check in `IrGenerator_Call_Direct.cpp` (line 845)
   migrated to `isIrStructType(toIrType(arg_type))`.
 - `base_type != Type::Struct && base_type != Type::UserDefined` checks in
-  `CodeGen_MemberAccess.cpp` (lines 1009, 3383, 3408) all migrated to
+  `IrGenerator_MemberAccess.cpp` (lines 1009, 3383, 3408) all migrated to
   `!isIrStructType(toIrType(...))`.
-- `isTwoRegisterStructRaw` in `IRConverter_Emit_CompareBranch.h` now takes
+- `isTwoRegisterStructRaw` in `IRConverter_ConvertMain.h` (formerly `IRConverter_Emit_CompareBranch.h`) now takes
   `IrType ir_type` instead of `Type type`; all callers updated to use
   `toIrType(...)` or `arg.effectiveIrType()`.
 - Remaining TypedValue.type **write** sites: all now have companion
   `ir_type = toIrType(...)` assignments alongside the `type =` write, across
-  `CodeGen_Call_Direct.cpp`, `CodeGen_Call_Indirect.cpp`,
-  `CodeGen_Expr_Conversions.cpp`, `CodeGen_Expr_Operators.cpp`,
-  `CodeGen_Expr_Primitives.cpp`, `CodeGen_Lambdas.cpp`,
-  `CodeGen_MemberAccess.cpp`, `CodeGen_Stmt_Decl.cpp`,
-  `CodeGen_Visitors_Decl.cpp` (~65 additional sites).
-- `ExprResult.type == Type::Void` sentinel checks in `CodeGen_Expr_Primitives.cpp`
-  and `CodeGen_Expr_Operators.cpp` migrated to `effectiveIrType() == IrType::Void`.
-- `IRConverter_Conv_Calls.h:954` struct identity check migrated to
+  `IrGenerator_Call_Direct.cpp`, `IrGenerator_Call_Indirect.cpp`,
+  `IrGenerator_Expr_Conversions.cpp`, `IrGenerator_Expr_Operators.cpp`,
+  `IrGenerator_Expr_Primitives.cpp`, `IrGenerator_Lambdas.cpp`,
+  `IrGenerator_MemberAccess.cpp`, `IrGenerator_Stmt_Decl.cpp`,
+  `IrGenerator_Visitors_Decl.cpp` (~65 additional sites).
+- `ExprResult.type == Type::Void` sentinel checks in `IrGenerator_Expr_Primitives.cpp`
+  and `IrGenerator_Expr_Operators.cpp` migrated to `effectiveIrType() == IrType::Void`.
+- `IRConverter_ConvertMain.h` struct identity check (formerly in `IRConverter_Conv_Calls.h`) migrated to
   `!isIrStructType(arg.effectiveIrType())`.
 
 **Remaining semantically-intentional Phase 3 sites (intentionally kept as Type::X):**
-- `CodeGen_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
+- `IrGenerator_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
   applicability (semantic: checks Type::Enum for overload semantics)
-- `CodeGen_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
+- `IrGenerator_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
   and enum↔int cast rules
-- `CodeGen_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
+- `IrGenerator_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
   scalar classification (semantic)
-- `CodeGen_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
-- `CodeGen_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
+- `IrGenerator_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
 
 These remaining sites are **semantic checks** that intentionally need `Type::Enum`
 or the full `Type` enum.  They will stay as-is until a semantic analysis pass
@@ -528,18 +528,18 @@ All previously listed blockers have been resolved:
   `buildTypeSpecFromTypedValue` lambda that uses `effectiveIrType()` for struct detection.
   The `.type` dependency is centralised into a single location for later replacement
   (TODO: Phase 5 IrType-based `TypeSpecifierNode` construction).
-- ~~`IRConverter_Conv_Arithmetic.h` line 1161 unused debug variable~~ — **DONE**: Removed.
+- ~~`IRConverter_Conv_Arithmetic.h` line 1161 unused debug variable~~ — **DONE**: Removed from code now living in `IRConverter_ConvertMain.h`.
 - ~~`IRConverter_Conv_VarDecl.h` lines 213, 244 debug logging of `init.type`~~ — **DONE**:
   Migrated to `init.effectiveIrType()`.
 - ~~`is_likely_pointer` heuristic regression~~ — **DONE**: Replaced overly broad
   `!isIrFloatingPointType(...)` with positive whitelist:
   `isIrIntegerType || isIrStructType || isIrPointerLikeType`.
-- ~~Unmigrated `TypedValue` aggregate inits~~ — **DONE**: `CodeGen_Expr_Conversions.cpp`
+- ~~Unmigrated `TypedValue` aggregate inits~~ — **DONE**: `IrGenerator_Expr_Conversions.cpp`
   `storeBackUpdatedValue` migrated to `makeTypedValue()`. New
   `makeTypedValue(Type, SizeInBits, IrValue, ReferenceQualifier)` overload added. All 6
-  designated-init sites in `CodeGen_Call_Indirect.cpp` migrated.
+  designated-init sites in `IrGenerator_Call_Indirect.cpp` migrated.
 - ~~`carriesSemanticTypeIndex` widening for primitive typedefs~~ — **DONE**: Added
-  `type_index.is_valid()` guard at `CodeGen_Expr_Primitives.cpp:1034` so primitive
+  `type_index.is_valid()` guard at `IrGenerator_Expr_Primitives.cpp:1034` so primitive
   typedefs (`typedef int MyInt` → `Type::UserDefined`) don't propagate stale type_index.
 - ~~`is_signed` not propagated through `makeTypedValue`~~ — **DONE**: Set
   `ctx.result_value.is_signed = isSignedType(result_type)` after `makeTypedValue`
@@ -584,19 +584,19 @@ Remaining work for this phase:
 
 - `IROperandHelpers.h` is clean: no remaining `Type::Enum` / `Type::UserDefined` references.
 - `IRConverter*.h` runtime dispatch is clean, but there is still one transitional runtime/diagnostic
-  check in `IRConverter_Conv_Memory.h` (`op.result.type != Type::Struct`) used to distinguish
+  check in `IRConverter_ConvertMain.h` (formerly `IRConverter_Conv_Memory.h`, `op.result.type != Type::Struct`) used to distinguish
   unresolved `Type::UserDefined` metadata from a genuine zero-sized-struct bug. The other
   `IRConverter*.h` matches are comments describing the migration.
 - Remaining `CodeGen_*.cpp` references are concentrated in semantic or template-driven logic:
-  - `CodeGen_NewDeleteCast.cpp` — semantic identity checks and enum↔int cast rules.
-  - `CodeGen_Expr_Operators.cpp` — overload applicability / user-defined-operator detection.
-  - `CodeGen_MemberAccess.cpp` — semantic scalar classification, `__underlying_type`,
+  - `IrGenerator_NewDeleteCast.cpp` — semantic identity checks and enum↔int cast rules.
+  - `IrGenerator_Expr_Operators.cpp` — overload applicability / user-defined-operator detection.
+  - `IrGenerator_MemberAccess.cpp` — semantic scalar classification, `__underlying_type`,
     conversion-operator alias resolution, and enum fallback suppression.
-  - `CodeGen_Call_Direct.cpp` — unresolved dependent template return types still represented as
+  - `IrGenerator_Call_Direct.cpp` — unresolved dependent template return types still represented as
     `Type::UserDefined`.
-  - `CodeGen_Helpers.cpp` / `CodeGen_Expr_Primitives.cpp` — enum underlying-type recovery and
+  - `IrGenerator_Helpers.cpp` / `IrGenerator_Expr_Primitives.cpp` — enum underlying-type recovery and
     enumerator/type-index preservation helpers that still start from semantic `Type`.
-  - `CodeGen_Visitors_Namespace.cpp` / `CodeGen_Visitors_TypeInit.cpp` — AST/type-node
+  - `IrGenerator_Visitors_Namespace.cpp` / `IrGenerator_Visitors_TypeInit.cpp` — AST/type-node
     construction paths, not IR runtime dispatch.
 
 So the Phase 6 cleanup criterion:
@@ -685,15 +685,15 @@ and will need review during implementation:
 
 | File | Type of Changes Expected |
 |------|-------------------------|
-| `CodeGen_Expr_Primitives.cpp` | Enum-to-runtime lowering in primitive operations (~15+ refs) |
-| `CodeGen_Expr_Conversions.cpp` | Conversion logic between enum and integral types |
-| `CodeGen_Expr_Operators.cpp` | Binary/unary operator handling for enums (~10+ refs) |
-| `CodeGen_Call_Direct.cpp` | Argument passing and return value handling |
-| `CodeGen_Helpers.cpp` | Enum size/type resolution helpers |
-| `CodeGen_NewDeleteCast.cpp` | Cast handling between enum and int |
-| `CodeGen_MemberAccess.cpp` | Member access for enum types |
+| `IrGenerator_Expr_Primitives.cpp` | Enum-to-runtime lowering in primitive operations (~15+ refs) |
+| `IrGenerator_Expr_Conversions.cpp` | Conversion logic between enum and integral types |
+| `IrGenerator_Expr_Operators.cpp` | Binary/unary operator handling for enums (~10+ refs) |
+| `IrGenerator_Call_Direct.cpp` | Argument passing and return value handling |
+| `IrGenerator_Helpers.cpp` | Enum size/type resolution helpers |
+| `IrGenerator_NewDeleteCast.cpp` | Cast handling between enum and int |
+| `IrGenerator_MemberAccess.cpp` | Member access for enum types |
 | `IROperandHelpers.h` | **CRITICAL** - Slot-4 encoding redesign (~6 refs) |
-| `IRConverter_Conv_CorePrivate.h` | IR conversion logic (pointer arithmetic) |
+| `IRConverter_ConvertMain.h` | IR conversion logic (pointer arithmetic; includes code formerly in `IRConverter_Conv_CorePrivate.h`) |
 | `OverloadResolution.h` | Ranking and resolution logic (semantic, unchanged) |
 | `NameMangling.h` | Type identity preservation (semantic, unchanged) |
 | `Parser_Decl_StructEnum.cpp` | Enum parsing (semantic, unchanged) |

@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 
 
@@ -128,7 +129,7 @@ const Token& token) {
 	payload.value = value;
 	payload.member_offset = member_offset;
 	payload.is_pointer_to_array = is_pointer_to_array;
-	
+
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
 }
 
@@ -154,7 +155,7 @@ size_t bitfield_bit_offset) {
 	member_store.is_pointer_to_member = is_pointer_to_member;
 	member_store.bitfield_width = bitfield_width;
 	member_store.bitfield_bit_offset = bitfield_bit_offset;
-	
+
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 }
 
@@ -166,7 +167,7 @@ std::variant<StringHandle, TempVar> pointer,
 const Token& token) {
 	DereferenceStoreOp store_op;
 	store_op.value = value;
-	
+
 	// Populate pointer TypedValue
 	store_op.pointer.type = pointee_type;
 	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
@@ -177,7 +178,7 @@ const Token& token) {
 	} else {
 		store_op.pointer.value = std::get<TempVar>(pointer);
 	}
-	
+
 	ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 }
 
@@ -306,7 +307,7 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 
 
 
-// ── inline private helpers (CodeGen_Lambdas.cpp) ──
+// ── inline private helpers (IrGenerator_Lambdas.cpp) ──
 /// Unified symbol lookup: searches local scope first, then falls back to global scope
 std::optional<ASTNode> AstToIr::lookupSymbol(StringHandle handle) const {
 	auto symbol = symbol_table.lookup(handle);

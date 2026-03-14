@@ -15,10 +15,8 @@
 #include <array> // Include array for std::array
 #include <charconv> // Include charconv for std::from_chars
 #include <cctype>
-#include "ChunkedString.h"
+#include "StringBuilder.h"
 #include "Log.h"
-
-static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle);
 
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
@@ -32,52 +30,13 @@ static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle);
     #define DEBUG_BREAK() ((void)0)
 #endif
 
-// Maximum number of elements allowed in a parameter pack for fold expressions
-// This prevents infinite loops and excessive memory usage in case of bugs
-static constexpr size_t MAX_PACK_ELEMENTS = 1000;
-
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
 ChunkedStringAllocator gChunkedStringAllocator;
 // Global registries
 TemplateRegistry gTemplateRegistry;
 ConceptRegistry gConceptRegistry;
-
-// Type keywords set - used for if-statement initializer detection
-static const std::unordered_set<std::string_view> type_keywords = {
-	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
-	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv,
-	"auto"sv, "wchar_t"sv, "char8_t"sv, "char16_t"sv, "char32_t"sv, "decltype"sv,
-	// Microsoft-specific type keywords
-	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
-};
-
-// Calling convention keyword mapping - Microsoft-specific
-struct CallingConventionMapping {
-	std::string_view keyword;
-	CallingConvention convention;
-};
-
-static constexpr CallingConventionMapping calling_convention_map[] = {
-	{"__cdecl"sv, CallingConvention::Cdecl},
-	{"_cdecl"sv, CallingConvention::Cdecl},
-	{"__stdcall"sv, CallingConvention::Stdcall},
-	{"_stdcall"sv, CallingConvention::Stdcall},
-	{"__fastcall"sv, CallingConvention::Fastcall},
-	{"_fastcall"sv, CallingConvention::Fastcall},
-	{"__vectorcall"sv, CallingConvention::Vectorcall},
-	{"__thiscall"sv, CallingConvention::Thiscall},
-	{"__clrcall"sv, CallingConvention::Clrcall}
-};
-
-// Helper function to calculate member size and alignment
-// Handles pointers, references, and basic types correctly
-struct MemberSizeAndAlignment {
-	size_t size;
-	size_t alignment;
-};
-
-static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
+MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
 	MemberSizeAndAlignment result;
 	
 	// For pointers, references, and function pointers, size and alignment are always sizeof(void*)
@@ -93,7 +52,7 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 }
 
 // Helper function to safely get type size from TemplateTypeArg
-static int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
+int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
@@ -111,7 +70,7 @@ static int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
-static InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
+InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
 	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	for (const auto& arg : template_args) {
 		TypeInfo::TemplateArgInfo info;
@@ -134,7 +93,7 @@ static InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const
 // Helper to check if a type name is a dependent template placeholder
 // Uses TypeInfo metadata first (O(1)), falls back to string parsing for backward compatibility
 // Returns: {is_dependent, base_template_name}
-static std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name) {
+std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name) {
 	// First try TypeInfo-based detection (O(1), preferred)
 	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 	if (type_it != gTypesByName.end()) {
@@ -154,7 +113,7 @@ static std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::str
 }
 
 // Split a qualified namespace string ("a::b::c") into components for mangling.
-static std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace) {
+std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace) {
 	std::vector<std::string_view> components;
 	if (qualified_namespace.empty()) {
 		return components;
@@ -173,7 +132,7 @@ static std::vector<std::string_view> splitQualifiedNamespace(std::string_view qu
 }
 
 // Helper function to find all local variable declarations in an AST node
-static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
+void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
 		const auto& var_decl = node.as<VariableDeclarationNode>();
 		const auto& decl = var_decl.declaration();
@@ -330,7 +289,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 }
 
 // Helper function to find capture candidates and detect implicit [this] usage in lambdas
-static void collectLambdaCaptureCandidates(const ASTNode& node,
+void collectLambdaCaptureCandidates(const ASTNode& node,
     std::unordered_set<StringHandle>& capture_candidates,
     bool& uses_implicit_this_capture) {
     if (node.is<IdentifierNode>()) {
@@ -1203,4 +1162,3 @@ void Parser::register_builtin_functions() {
 	// so we register it globally without explicit mangling
 	register_no_param_builtin("terminate", Type::Void);
 }
-

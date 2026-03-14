@@ -1,3 +1,10 @@
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+
 std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	std::string_view struct_name,
 	std::string_view member_name,

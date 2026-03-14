@@ -1,4 +1,5 @@
-#include "CodeGen.h"
+#include "Parser.h"
+#include "IrGenerator.h"
 
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {

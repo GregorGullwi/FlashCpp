@@ -2,7 +2,7 @@
 
 [← Index](../NON_STANDARD_BEHAVIOR.md)
 
-Covers `src/IRConverter_Conv_Calls.h`, `src/IRConverter_Emit_CompareBranch.h`.
+Covers the calling-convention code now living in `src/IRConverter_ConvertMain.h` (formerly `src/IRConverter_Conv_Calls.h` and `src/IRConverter_Emit_CompareBranch.h`).
 For pointer-type IR issues in the codegen layer see [06_codegen.md](06_codegen.md).
 
 > **Legend** · ✅ Correct · ⚠️ Partial · ❌ Missing / Wrong
@@ -18,5 +18,5 @@ classify as INTEGER must be passed in two consecutive registers for non-variadic
 Linux. Both caller and callee agree, so internal calls work; but calls to or from GCC/Clang
 code using the actual ABI produce incorrect results.
 
-**Location:** `src/IRConverter_Emit_CompareBranch.h:1239`, `src/IRConverter_Conv_Calls.h:273–275`
+**Location:** `src/IRConverter_ConvertMain.h` (code formerly in `src/IRConverter_Emit_CompareBranch.h` and `src/IRConverter_Conv_Calls.h`)
 **See also:** `docs/KNOWN_ISSUES.md`

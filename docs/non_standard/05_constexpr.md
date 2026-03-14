@@ -58,7 +58,7 @@ context" rule is not enforced.
 **FlashCpp:** In some paths the parser incorrectly treats `arr` as a type name. Two
 workarounds exist that detect `size_in_bits == 0` and fall back to a symbol table lookup:
 
-**Location:** `src/ConstExprEvaluator_Core.cpp:209–230`, `src/CodeGen_MemberAccess.cpp:1441`
+**Location:** `src/ConstExprEvaluator_Core.cpp:209–230`, `src/IrGenerator_MemberAccess.cpp:1441`
 
 ---
 

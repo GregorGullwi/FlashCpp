@@ -1,4 +1,13 @@
-﻿// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+#include "Parser.h"
+#include "ConstExprEvaluator.h"
+#include "NameMangling.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+
+std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
+
+
+// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
 // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined
 // literals, and conversion operators.
 // On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult.
