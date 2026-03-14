@@ -33,15 +33,6 @@ uniformly.
   constexpr evaluator recursion guard works, but the parser can still fail first on
   sufficiently deep source expressions.
 
-## Enum overload resolution ranks enum as int
-
-When both `f(int)` and `f(Color)` overloads exist and `Color c` is passed, the
-compiler currently calls `f(int)` instead of `f(Color)`.  Per C++20
-[over.ics.rank], exact match (enum→enum) should be preferred over promotion
-(enum→int).  This is related to the missing semantic analysis pass for implicit
-standard conversions (see above) — enum identity is not preserved through the
-overload resolution ranking step.  Test: `test_enum_overload_resolution_ret0.cpp`.
-
 ## Generic lambda `auto` parameter normalization still lives in codegen
 
 Generic lambda bodies now receive synthetic parameter declarations carrying the

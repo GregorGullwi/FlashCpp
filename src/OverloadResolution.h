@@ -193,19 +193,6 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 	return false;
 }
 
-// Helper function to resolve UserDefined type aliases to their underlying types
-// Returns the resolved Type, or the original Type if not a resolvable alias
-inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
-		// Only resolve if underlying type is a primitive (not Struct, Enum, or another UserDefined)
-		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
-			return type_info.type_;
-		}
-	}
-	return type;
-}
-
 // Check if one type can be implicitly converted to another (considering pointers and references)
 // 
 // IMPORTANT: For proper overload resolution with lvalue vs rvalue references, the caller must:
@@ -1444,5 +1431,4 @@ inline OverloadResolutionResult resolve_overload_cached(
 	
 	return result;
 }
-
 

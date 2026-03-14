@@ -20,15 +20,15 @@
 // ============================================================================
 enum class IrType : int_fast16_t {
 	Void,
-	Integer,                // All integer types, enums, bool — distinguished by size_in_bits + is_signed
+	Integer,                // Deliberately coarse: width stays in size_in_bits, signedness in is_signed
 	Float,                  // 32-bit IEEE 754
 	Double,                 // 64-bit IEEE 754
 	LongDouble,             // 80-bit x87 extended precision
-	Struct,                 // Needs type_index for size/layout, ABI classification
+	Struct,                 // Runtime family only; exact layout/ABI still comes from type_index + size metadata
 	FunctionPointer,
-	MemberFunctionPointer,
-	MemberObjectPointer,
-	Nullptr,
+	MemberFunctionPointer,  // Kept distinct until member-pointer ABI/layout is lowered more explicitly
+	MemberObjectPointer,    // Kept distinct until member-pointer ABI/layout is lowered more explicitly
+	Nullptr,                // Transitional null-pointer family; can disappear once lowered earlier to concrete zero/pointer form
 };
 
 // ============================================================================
@@ -61,7 +61,8 @@ inline IrType toIrType(Type semantic_type) {
 		case Type::UnsignedLongLong:
 			return IrType::Integer;
 
-		// Enums lower to Integer — size/signedness come from EnumTypeInfo
+		// Enums lower to Integer — width/signedness stay in the existing metadata
+		// fields instead of multiplying IrType variants by size and signedness.
 		case Type::Enum:
 			return IrType::Integer;
 
@@ -94,8 +95,8 @@ inline IrType toIrType(Type semantic_type) {
 
 		// These must not reach IR — they must be resolved before codegen.
 		// During the transition period, we still tolerate some semantic-only
-		// forms to preserve existing runtime behavior until their lowering is
-		// migrated earlier in the pipeline.
+		// forms to preserve existing runtime behavior until their lowering moves
+		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
 		case Type::Auto:
 			return IrType::Integer;
 		case Type::Template:

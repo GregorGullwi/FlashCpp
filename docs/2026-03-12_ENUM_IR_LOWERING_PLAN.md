@@ -181,6 +181,42 @@ No `Enum`. No `UserDefined`. No `Char` vs `Int` vs `Long` (they are all
 `Integer` with different `size_in_bits` and `is_signed`). No `Auto`, `Template`,
 `Invalid` — those are parser/semantic concerns that must not leak into IR.
 
+#### Why `Integer` stays coarse instead of `Int8` / `UInt8` / `Int16` / ...
+
+For this migration, `IrType` is intentionally a **runtime family** enum, not a
+full scalar-layout lattice. Width and signedness are already carried by existing
+IR metadata (`size_in_bits`, `is_signed`), and most backend decisions in
+FlashCpp already consume those fields. Splitting `IrType::Integer` into
+`Int8`/`UInt8`/`Int16`/`UInt16`/… would multiply enum variants without removing
+the need for `size_in_bits` or `is_signed`, because structs, pointers, member
+pointers, and ABI-specific cases still need separate metadata anyway.
+
+If later backend work wants a richer scalar classification, add a dedicated
+scalar-layout helper or field rather than overloading `IrType` itself with every
+bit-width / signedness combination.
+
+#### Why `Struct` still relies on separate layout metadata
+
+`IrType::Struct` only answers “this is aggregate / user-defined runtime
+storage”. Exact layout remains separate on purpose:
+
+- `type_index` answers which aggregate/member-pointer ABI rules apply
+- `size_in_bits` answers current storage width
+- later ABI lowering can derive calling-convention classes from that metadata
+
+That separation is intentional. `IrType` should stay coarse; exact size/layout
+should not be encoded by exploding the enum itself.
+
+#### Why `MemberFunctionPointer`, `MemberObjectPointer`, and `Nullptr` exist
+
+- **Member pointers** stay distinct because their representation is not a plain
+  raw pointer on common ABIs. Keeping them separate prevents backend code from
+  accidentally treating them as ordinary pointer integers too early.
+- **`Nullptr`** exists as a transitional pointer-like runtime family so codegen
+  does not silently treat `nullptr` as an integer literal during the migration.
+  Once null pointer constants are lowered earlier to concrete zero/pointer-form
+  values, this dedicated variant can disappear.
+
 ### Where the conversion happens
 
 `AstToIr` is the converter. It already reads `TypeSpecifierNode` (which carries
@@ -338,6 +374,17 @@ smallest correct local repair for the current PR, but it is not the desired end
 state. `auto` deduction and implicit-conversion normalization should still move
 into a dedicated post-parse semantic pass instead of continuing to accrete in
 parser/codegen boundary code.
+
+**Layering follow-up:** after the `Type` → `IrType` migration is complete, a
+useful next cleanup would be to make the separation explicit between:
+
+1. **runtime family** (`IrType`: integer / float / struct / pointer-family)
+2. **scalar/layout metadata** (`size_in_bits`, `is_signed`, `type_index`)
+3. **semantic normalization** (implicit conversions, enum identity,
+   generic-lambda `auto`, `nullptr` contextual conversions) in a semantic pass
+
+That keeps `IrType` small while moving policy decisions out of parser/codegen
+glue and into the correct compiler layer.
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
 
