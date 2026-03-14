@@ -89,17 +89,16 @@ This is the initial list to audit before changing behavior:
 2. **Primary-expression leaf paths**
    - identifier paths already often wrap in `ExpressionNode`
    - qualified identifier paths appear mixed and need full audit
-   - 4 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
-     outside the three helper functions (not yet normalized):
-     - `Parser_Expr_PrimaryExpr.cpp:1145` — `identifier::identifier` early path
-     - `Parser_Expr_PrimaryExpr.cpp:1525` — `Template<T>::member` nested path
-     - `Parser_Expr_PrimaryExpr.cpp:2260` — `identifier::identifier` late path
-     - `Parser_Expr_PrimaryExpr.cpp:3607` — `Template<T>::member` inline path
-     Note: the `::identifier` global-scope path (line 945) was already converted
-     to a stack-local `QualifiedIdentifierNode` in this PR. All 4 remaining sites
-     are consumed locally (`.as<QualifiedIdentifierNode>()` on the next line) and
-     then re-wrapped in `ExpressionNode` before returning, so the final returned
-     shape is already normalized — only the intermediate bare node allocation is not.
+   - ✅ All inline `emplace_node<QualifiedIdentifierNode>(...)` sites have been
+     converted to stack-local construction in this PR:
+     - `Parser_Expr_PrimaryExpr.cpp:945`  — `::identifier` global-scope path
+     - `Parser_Expr_PrimaryExpr.cpp:1143` — `identifier::identifier` early path
+     - `Parser_Expr_PrimaryExpr.cpp:1521` — `Template<T>::member` nested path
+     - `Parser_Expr_PrimaryExpr.cpp:2256` — `identifier::identifier` late path
+     - `Parser_Expr_PrimaryExpr.cpp:3602` — `Template<T>::member` inline path
+     All were consumed locally and re-wrapped in `ExpressionNode` before
+     returning, so the final returned shape was already normalized — only the
+     intermediate bare persistent allocation was eliminated.
 
 3. **Special expression constructors**
    - constructor-call paths already wrap and should remain the model
@@ -150,11 +149,8 @@ that used `.as<QualifiedIdentifierNode>()` were updated to use the new
 `asQualifiedIdentifier()` helper, and redundant re-wrapping was removed.
 
 **Remaining**: Other direct identifier-like leaves have not been normalized yet.
-4 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
-helper functions create bare intermediate nodes but already re-wrap before
-returning (see Inconsistency Inventory §2 for exact locations). The 5th site
-(`::identifier` global-scope path at line 945) was already converted to a
-stack-local construction in this PR.
+All inline `emplace_node<QualifiedIdentifierNode>(...)` sites have been converted
+to stack-local construction in this PR (see Inconsistency Inventory §2).
 
 ### Step 3: Add a tiny parser-side helper if repetition appears ✅
 
@@ -255,9 +251,8 @@ For each slice:
 
 1. ~~Evaluate removing `parse_qualified_identifier()`~~ ✅ — removed as dead code
    in this PR.
-2. Simplify the 4 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
-   sites in `parse_primary_expression()` to construct directly into
-   `ExpressionNode` (eliminating the intermediate bare node + re-wrap pattern).
+2. ~~Simplify the remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
+   sites~~ ✅ — all converted to stack-local construction in this PR.
 3. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
 4. Continue re-auditing downstream consumers (Step 4), replacing open-coded
    wrapped-vs-direct identifier handling with centralized helpers first

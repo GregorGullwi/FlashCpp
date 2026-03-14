@@ -1140,10 +1140,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		// current_token_ is now the token after the final identifier
 
-		// Create a QualifiedIdentifierNode
+		// Create a QualifiedIdentifierNode (stack-local; copied into ExpressionNode before returning)
 		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
+		QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 
 		// Check for std::forward intrinsic
 		// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
@@ -1521,8 +1520,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						advance(); // consume identifier
 					}
 					
-					// Create QualifiedIdentifierNode with the complete path
-					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_ns_handle, member_token);
+					// Create QualifiedIdentifierNode with the complete path (stack-local; copied into ExpressionNode before returning)
+					QualifiedIdentifierNode full_qual_id(full_ns_handle, member_token);
 					
 					// Look up the member in the instantiated struct's symbol table
 					auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
@@ -1619,7 +1618,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::success(*result);
 					}
 					
-					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
+					result = emplace_node<ExpressionNode>(full_qual_id);
 					return ParseResult::success(*result);
 				}
 				
@@ -2255,10 +2254,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			
-			// Create a QualifiedIdentifierNode with namespace handle
+			// Create a QualifiedIdentifierNode with namespace handle (stack-local; copied into ExpressionNode before returning)
 			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
+			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 			
 			// Look up the qualified identifier (either the template name or instantiated template)
 			if (template_args.has_value()) {
@@ -3602,11 +3600,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								return ParseResult::success(*result);
 							}
 							
-							// Create a QualifiedIdentifierNode with the instantiated type name
+							// Create a QualifiedIdentifierNode with the instantiated type name (stack-local; copied into ExpressionNode)
 							NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
-							result = emplace_node<ExpressionNode>(qualified_node);
+							result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
 							// Clear pending template args since they were used for this qualified identifier
 							pending_explicit_template_args_.reset();
 							return ParseResult::success(*result);
