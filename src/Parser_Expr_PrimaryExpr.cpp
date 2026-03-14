@@ -198,7 +198,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 	}
 	// Not a call — return the operator name as a (qualified) identifier
 	if (!namespaces.empty()) {
-		auto result = emplace_node<QualifiedIdentifierNode>(ns_handle, op_token);
+		auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, op_token));
 		return ParseResult::success(result);
 	}
 	auto result = emplace_node<ExpressionNode>(IdentifierNode(op_token));
@@ -2317,7 +2317,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (peek() == "::"_tok) {
 						auto qualified_result = parse_qualified_identifier_after_template(final_identifier);
 						if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
+							const auto& qual_expr = qualified_result.node()->as<ExpressionNode>();
+							const auto& qualified_node2 = std::get<QualifiedIdentifierNode>(qual_expr);
 							auto member_call_result = try_parse_member_template_function_call(
 								StringTable::getStringView(inst_struct.name()),
 								qualified_node2.name(),
@@ -2328,8 +2329,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 								return ParseResult::success(*member_call_result->node());
 							}
-							result = emplace_node<ExpressionNode>(qualified_node2);
-							return ParseResult::success(*result);
+							return ParseResult::success(*qualified_result.node());
 						}
 					}
 					
@@ -4386,7 +4386,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Parse qualified identifier after template
 					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
-						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+						const auto& qual_expr = qualified_result.node()->as<ExpressionNode>();
+						const auto& qualified_node = std::get<QualifiedIdentifierNode>(qual_expr);
 						
 						// Try to parse member template function call: Template<T>::member<U>()
 						auto func_call_result = try_parse_member_template_function_call(
@@ -4399,9 +4400,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::success(*result);
 						}
 						
-						// Not a function call - return as qualified identifier
-						result = emplace_node<ExpressionNode>(qualified_node);
-						return ParseResult::success(*result);
+						// Not a function call - return as already-wrapped qualified identifier
+						return ParseResult::success(*qualified_result.node());
 					}
 				}
 				

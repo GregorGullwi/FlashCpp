@@ -32,10 +32,10 @@ ParseResult Parser::parse_qualified_identifier() {
 		}
 	}
 
-	// Create a QualifiedIdentifierNode
+	// Create a QualifiedIdentifierNode wrapped in ExpressionNode
 	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-	return ParseResult::success(qualified_node);
+	auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+	return ParseResult::success(result);
 }
 
 // Helper: Parse template brace initialization: Template<Args>{}
@@ -194,10 +194,10 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		*had_template_keyword = encountered_template_keyword;
 	}
 	
-	// Create a QualifiedIdentifierNode
+	// Create a QualifiedIdentifierNode wrapped in ExpressionNode
 	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
-	return ParseResult::success(qualified_node);
+	auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+	return ParseResult::success(result);
 }
 
 // Helper to parse member template function calls: Template<T>::member<U>()
