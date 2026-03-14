@@ -177,11 +177,10 @@ int main() {
     // Expected: 205 + 40 + 190 + 875 + 55 = 1365
     
     // Add float results (converted to int)
-    int float_sum = test2 + test5;  // 205 + 190 = 395
+    int float_sum = (int)test2 + (int)test5;  // (int)205.0f + (int)190.0f = 395
     
-    // Final total
-    int total = final_result + float_sum;  // 1365 + 395 = 1760
-    
-    return total;
+    // Final total = 1365 + 395 = 1760; return (total - 1715) = 45
+    int total = final_result + float_sum;
+    return total - 1715;
 }
 

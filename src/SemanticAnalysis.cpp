@@ -250,13 +250,18 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		// Record local variable type in the current scope for expression inference
 		const auto& decl = var.declaration();
 		const ASTNode vtype = decl.type_node();
+		CanonicalTypeId decl_type_id;
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+			decl_type_id = canonicalizeType(vtype.as<TypeSpecifierNode>());
 			const StringHandle vname = decl.identifier_token().handle();
 			if (vname.isValid())
-				addLocalType(vname, canonicalizeType(vtype.as<TypeSpecifierNode>()));
+				addLocalType(vname, decl_type_id);
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
+			// Annotate the initializer with any needed implicit conversion to the declared type.
+			if (decl_type_id)
+				tryAnnotateConversion(*init, decl_type_id);
 			normalizeExpression(*init, ctx);
 		}
 	}
@@ -357,6 +362,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
 					tryAnnotateBinaryOperandConversions(e);
+				}
+				// For simple assignment, annotate the RHS with the LHS type.
+				if (op == "=" &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					const CanonicalTypeId lhs_type_id = inferExpressionType(e.get_lhs());
+					if (lhs_type_id)
+						tryAnnotateConversion(e.get_rhs(), lhs_type_id);
 				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
@@ -611,6 +624,47 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return operand_id;
 				}
 				return {};
+			}
+			else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				const std::string_view op = e.op();
+				// Comparison and logical operators always produce bool
+				if (op == "==" || op == "!=" || op == "<" || op == ">" ||
+					op == "<=" || op == ">=" || op == "&&" || op == "||")
+				{
+					CanonicalTypeDesc desc;
+					desc.base_type = Type::Bool;
+					return type_context_.intern(desc);
+				}
+				// Comma: result is the RHS type
+				if (op == ",") return inferExpressionType(e.get_rhs());
+				// Assignment: result is LHS type (lvalue of LHS)
+				if (op == "=" || op == "+=" || op == "-=" || op == "*=" ||
+					op == "/=" || op == "%=" || op == "&=" || op == "|=" ||
+					op == "^=" || op == "<<=" || op == ">>=")
+					return inferExpressionType(e.get_lhs());
+				// Arithmetic/bitwise: usual arithmetic conversions
+				{
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
+					if (!lhs_id || !rhs_id) return {};
+					const CanonicalTypeDesc& l = type_context_.get(lhs_id);
+					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
+					if (l.base_type == Type::Invalid || r.base_type == Type::Invalid) return {};
+					if (l.base_type == Type::Auto   || r.base_type == Type::Auto)    return {};
+					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
+					const Type common = get_common_type(l.base_type, r.base_type);
+					if (common == Type::Invalid) return {};
+					CanonicalTypeDesc desc;
+					desc.base_type = common;
+					return type_context_.intern(desc);
+				}
+			}
+			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				// Infer result type from the resolved function declaration's return type.
+				const DeclarationNode& decl = e.function_declaration();
+				const ASTNode ret_type_node = decl.type_node();
+				if (!ret_type_node.has_value() || !ret_type_node.is<TypeSpecifierNode>()) return {};
+				return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 			}
 			return {};
 		}, expr);

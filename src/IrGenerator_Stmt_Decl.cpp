@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
@@ -1375,6 +1376,43 @@
 									// Replace init_operands with the result of the conversion
 									init_operands = makeExprResult(type_node.type(), SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())}, IrOperand{result_var});
 								}
+							}
+						}
+					}
+
+					// Apply primitive-to-primitive conversion when the init type differs from the
+					// declared type.  First check for a sema-pass annotation (prefers explicit cast
+					// info); then fall back to can_convert_type for types the sema pass couldn't
+					// infer (e.g., complex sub-expressions or function-call result values).
+					{
+						const Type init_type  = init_operands.type;
+						const Type decl_type  = type_node.type();
+						if (init_type != decl_type
+							&& init_type  != Type::Struct && decl_type  != Type::Struct
+							&& init_type  != Type::Enum   && decl_type  != Type::Enum
+							&& init_type  != Type::Invalid && decl_type != Type::Invalid
+							&& init_type  != Type::Auto    && decl_type != Type::Auto
+							&& type_node.pointer_depth() == 0) {
+							bool sema_applied = false;
+							if (sema_ && init_node.is<ExpressionNode>()) {
+								const void* key = &init_node.as<ExpressionNode>();
+								const auto slot = sema_->getSlot(key);
+								if (slot.has_value() && slot->has_cast()) {
+									const ImplicitCastInfo& cast_info =
+										sema_->castInfoTable()[slot->cast_info_index.value - 1];
+									const Type from_t = sema_->typeContext().get(cast_info.source_type_id).base_type;
+									const Type to_t   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+									if (from_t != Type::Struct && to_t != Type::Struct) {
+										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
+										sema_applied = true;
+									}
+								}
+							}
+							if (!sema_applied) {
+								const TypeConversionResult conv =
+									can_convert_type(init_type, decl_type);
+								if (conv.is_valid && conv.rank != ConversionRank::UserDefined)
+									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
 							}
 						}
 					}
