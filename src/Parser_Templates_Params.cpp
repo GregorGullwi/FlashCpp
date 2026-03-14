@@ -620,12 +620,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				const auto& val = lit.value();
 				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
-				if (std::holds_alternative<unsigned long long>(val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
+				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
-				} else if (std::holds_alternative<double>(val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<double>(val)), literal_type);
+				} else if (const auto* d_val = std::get_if<double>(&val)) {
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*d_val), literal_type);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else {

@@ -430,8 +430,8 @@ struct TypedValue {
 
 // Helper function to print TypedValue
 inline void printTypedValue(std::ostringstream& oss, const TypedValue& typedValue) {
-	if (std::holds_alternative<unsigned long long>(typedValue.value))
-		oss << std::get<unsigned long long>(typedValue.value);
+	if (const auto* ull_val = std::get_if<unsigned long long>(&typedValue.value))
+		oss << *ull_val;
 	else if (std::holds_alternative<double>(typedValue.value))
 		oss << std::get<double>(typedValue.value);
 	else if (std::holds_alternative<TempVar>(typedValue.value))
@@ -1088,8 +1088,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	oss << op.lhs.size_in_bits << " ";
 	
 	// LHS value
-	if (std::holds_alternative<unsigned long long>(op.lhs.value)) {
-		oss << std::get<unsigned long long>(op.lhs.value);
+	if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&op.lhs.value)) {
+		oss << *ull_val_ptr;
 	} else if (const auto* d_val = std::get_if<double>(&op.lhs.value)) {
 		oss << *d_val;
 	} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.lhs.value)) {
@@ -1101,8 +1101,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	oss << ", ";
 	
 	// RHS value
-	if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
-		oss << std::get<unsigned long long>(op.rhs.value);
+	if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
+		oss << *ull_val;
 	} else if (const auto* d_val = std::get_if<double>(&op.rhs.value)) {
 		oss << *d_val;
 	} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {

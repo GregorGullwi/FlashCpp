@@ -1461,8 +1461,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																	const ASTNode& init_node = *static_member.initializer;
 																	if (init_node.is<ExpressionNode>()) {
 																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-																		if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-																			bool val = std::get<BoolLiteralNode>(init_expr).value();
+																		if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
+																			bool val = bool_literal_ptr->value();
 																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																		} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																			const NumericLiteralNode& lit = *numeric_literal;
@@ -3529,8 +3529,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																			const ASTNode& init_node = *static_member.initializer;
 																			if (init_node.is<ExpressionNode>()) {
 																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-																				if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-																					bool val = std::get<BoolLiteralNode>(init_expr).value();
+																				if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
+																					bool val = bool_literal_ptr->value();
 																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 																				} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																					const NumericLiteralNode& lit = *numeric_literal;

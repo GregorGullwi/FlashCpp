@@ -698,8 +698,8 @@
 						// Convert to raw bytes
 						{
 							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-								value = std::get<unsigned long long>(init_operands.value);
+							if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
+								value = *ull_val_ptr;
 								FLASH_LOG(Codegen, Debug, "  Extracted uint64 value: ", value);
 							} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 								double d = *d_val;
@@ -939,15 +939,14 @@
 							static_member_ptr->initializer->is<ExpressionNode>()) {
 								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
 
-								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-									const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
-									inferred_value = bool_lit.value() ? 1ULL : 0ULL;
+								if (const auto* bool_lit = std::get_if<BoolLiteralNode>(&init_expr)) {
+									inferred_value = bool_lit->value() ? 1ULL : 0ULL;
 									found_base_value = true;
-									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit.value());
+									FLASH_LOG(Codegen, Debug, "Found bool literal value: ", bool_lit->value());
 								} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 									ExprResult init_operands = visitExpressionNode(init_expr);
-									if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-										inferred_value = std::get<unsigned long long>(init_operands.value);
+									if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										inferred_value = *ull_val;
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found numeric literal value: ", inferred_value);
 									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
@@ -1157,10 +1156,10 @@
 							// Verify we have at least 3 elements before accessing
 
 							IrValue member_value;
-							if (std::holds_alternative<TempVar>(init_operands.value)) {
-								member_value = std::get<TempVar>(init_operands.value);
-							} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-								member_value = std::get<unsigned long long>(init_operands.value);
+							if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+								member_value = *temp_var;
+							} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+								member_value = *ull_val;
 							} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 								member_value = *d_val;
 							} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
@@ -1596,8 +1595,8 @@ const Token& token)
 			if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 				ExprResult init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
 				IrValue member_value = 0ULL;
-					if (std::holds_alternative<TempVar>(init_operands.value)) {
-						member_value = std::get<TempVar>(init_operands.value);
+					if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+						member_value = *temp_var;
 					} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
 						member_value = *ull_val;
 					} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
@@ -1633,8 +1632,8 @@ const Token& token)
 			// Direct expression initializer
 			ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 			IrValue member_value = 0ULL;
-				if (std::holds_alternative<TempVar>(init_operands.value)) {
-					member_value = std::get<TempVar>(init_operands.value);
+				if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+					member_value = *temp_var;
 				} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
 					member_value = *ull_val;
 				} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {

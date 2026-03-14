@@ -114,10 +114,9 @@
 							}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
-						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
-							const auto& literal = std::get<NumericLiteralNode>(arg_expr);
-							arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None,
-								static_cast<unsigned char>(literal.sizeInBits())));
+						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
+							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
+								static_cast<unsigned char>(literal->sizeInBits())));
 						} else {
 							// For complex expressions, evaluate and get type
 							ExprResult operand_result = visitExpressionNode(arg_expr);
@@ -787,8 +786,8 @@
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 						arg_types.push_back({Type::Bool, TypeIndex{}});
-					} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
-						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
+					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
+						const NumericLiteralNode& lit = *numeric_literal;
 						// DEBUG removed
 						arg_types.push_back({lit.type(), TypeIndex{}});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
@@ -1044,8 +1043,8 @@
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
-						} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
-							const NumericLiteralNode& lit = std::get<NumericLiteralNode>(arg_expr);
+						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
+							const NumericLiteralNode& lit = *numeric_literal;
 							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -1123,10 +1122,9 @@
 								}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
 						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
-							} else if (std::holds_alternative<NumericLiteralNode>(arg_expr)) {
-								const auto& literal = std::get<NumericLiteralNode>(arg_expr);
-								arg_types.push_back(TypeSpecifierNode(literal.type(), TypeQualifier::None,
-									static_cast<unsigned char>(literal.sizeInBits())));
+							} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
+								arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
+									static_cast<unsigned char>(literal->sizeInBits())));
 							} else {
 								// Default to int for complex expressions
 								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));

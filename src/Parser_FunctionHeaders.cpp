@@ -380,8 +380,8 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						Type deduced_type = Type::Int;
 						if (arg->is<ExpressionNode>()) {
 							const ExpressionNode& expr = arg->as<ExpressionNode>();
-							if (std::holds_alternative<NumericLiteralNode>(expr)) {
-								deduced_type = std::get<NumericLiteralNode>(expr).type();
+							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+								deduced_type = numeric_literal->type();
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));

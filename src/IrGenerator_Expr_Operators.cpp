@@ -928,8 +928,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							// Take address of LHS to pass as 'this' pointer
 							std::variant<StringHandle, TempVar> lhs_value;
-							if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
-								lhs_value = std::get<StringHandle>(lhsExprResult.value);
+							if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
+								lhs_value = *string;
 							} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
 								lhs_value = *temp_var;
 							} else {
@@ -1390,8 +1390,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Take address of LHS to pass as 'this' pointer
 				// The LHS operand contains a struct value - extract it properly
 				std::variant<StringHandle, TempVar> lhs_value;
-				if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
-					lhs_value = std::get<StringHandle>(lhsExprResult.value);
+				if (const auto* string_val = std::get_if<StringHandle>(&lhsExprResult.value)) {
+					lhs_value = *string_val;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
 					lhs_value = *temp_var;
 				} else {
@@ -1996,8 +1996,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
 			// Extract the LHS value directly (it's either StringHandle or TempVar)
-			if (std::holds_alternative<StringHandle>(lhsExprResult.value)) {
-				assign_op.result = std::get<StringHandle>(lhsExprResult.value);
+			if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
+				assign_op.result = *string;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
 				assign_op.result = *temp_var;
 			} else {
@@ -2607,8 +2607,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// va_list_ir[2] contains the variable/temp identifier
 		std::variant<StringHandle, TempVar> va_list_var;
-		if (std::holds_alternative<TempVar>(vaListExprResult.value)) {
-			va_list_var = std::get<TempVar>(vaListExprResult.value);
+		if (const auto* temp_var = std::get_if<TempVar>(&vaListExprResult.value)) {
+			va_list_var = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&vaListExprResult.value)) {
 			va_list_var = *string;
 		} else {
@@ -2631,9 +2631,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// The va_list variable is a char* that points to the va_list structure.
 			// We need to load this pointer value into a TempVar.
 			TempVar va_list_struct_ptr;
-			if (std::holds_alternative<TempVar>(va_list_var)) {
+			if (const auto* temp_var = std::get_if<TempVar>(&va_list_var)) {
 				// va_list is already a TempVar - use it directly
-				va_list_struct_ptr = std::get<TempVar>(va_list_var);
+				va_list_struct_ptr = *temp_var;
 			} else {
 				// va_list is a variable name - load its value (which is a pointer) into a TempVar
 				va_list_struct_ptr = var_counter.next();
@@ -3294,8 +3294,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::variant<StringHandle, TempVar> va_list_var;
 			if (va_list_name_handle.isValid()) {
 				va_list_var = va_list_name_handle;
-			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
-				va_list_var = std::get<TempVar>(arg0ExprResult.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
+				va_list_var = *temp_var;
 			} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
 				va_list_var = *string;
 			} else {
@@ -3322,8 +3322,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			std::variant<StringHandle, TempVar> va_list_var;
 			if (va_list_name_handle.isValid()) {
 				va_list_var = va_list_name_handle;
-			} else if (std::holds_alternative<TempVar>(arg0ExprResult.value)) {
-				va_list_var = std::get<TempVar>(arg0ExprResult.value);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&arg0ExprResult.value)) {
+				va_list_var = *temp_var;
 			} else if (const auto* string = std::get_if<StringHandle>(&arg0ExprResult.value)) {
 				va_list_var = *string;
 			} else {
@@ -3818,9 +3818,9 @@ std::string_view op) {
 
 		// Extract the base (TempVar or StringHandle)
 		std::variant<TempVar, StringHandle> base_value;
-		if (std::holds_alternative<TempVar>(lv_info.base)) {
-			deref_op.pointer.value = std::get<TempVar>(lv_info.base);
-			base_value = std::get<TempVar>(lv_info.base);
+		if (const auto* temp_var = std::get_if<TempVar>(&lv_info.base)) {
+			deref_op.pointer.value = *temp_var;
+			base_value = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&lv_info.base)) {
 			deref_op.pointer.value = *string;
 			base_value = *string;

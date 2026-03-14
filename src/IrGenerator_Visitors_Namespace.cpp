@@ -400,8 +400,8 @@
 
 			// Extract IrValue from operands.value
 			IrValue return_value;
-			if (std::holds_alternative<unsigned long long>(operands.value)) {
-				return_value = std::get<unsigned long long>(operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
+				return_value = *ull_val;
 			} else if (std::holds_alternative<TempVar>(operands.value)) {
 				TempVar return_temp = std::get<TempVar>(operands.value);
 				return_value = return_temp;

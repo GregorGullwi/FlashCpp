@@ -895,8 +895,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				//   2. this->member access:  this->x = ...
 				std::string_view var_name;
 					bool assign_to_member_binding = false;
-				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
-					var_name = std::get<IdentifierNode>(lhs_expr).name();
+				if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&lhs_expr)) {
+					var_name = identifier_ptr->name();
 				} else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 					const auto& ma = std::get<MemberAccessNode>(lhs_expr);
 					const ASTNode& obj = ma.object();

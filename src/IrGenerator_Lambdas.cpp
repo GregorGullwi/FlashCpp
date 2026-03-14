@@ -300,8 +300,8 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 								addr_op.operand.pointer_depth = PointerDepth{};
 
-								if (std::holds_alternative<StringHandle>(init_value)) {
-									addr_op.operand.value = std::get<StringHandle>(init_value);
+								if (const auto* string_ptr = std::get_if<StringHandle>(&init_value)) {
+									addr_op.operand.value = *string_ptr;
 								} else if (const auto* temp_var = std::get_if<TempVar>(&init_value)) {
 									addr_op.operand.value = *temp_var;
 								} else {
@@ -329,14 +329,14 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 								// Convert IrOperand to IrValue
-								if (std::holds_alternative<TempVar>(init_value)) {
-									member_store.value.value = std::get<TempVar>(init_value);
-								} else if (std::holds_alternative<int>(init_value)) {
-									member_store.value.value = static_cast<unsigned long long>(std::get<int>(init_value));
-								} else if (std::holds_alternative<unsigned long long>(init_value)) {
-									member_store.value.value = std::get<unsigned long long>(init_value);
-								} else if (std::holds_alternative<double>(init_value)) {
-									member_store.value.value = std::get<double>(init_value);
+								if (const auto* temp_var_ptr = std::get_if<TempVar>(&init_value)) {
+									member_store.value.value = *temp_var_ptr;
+								} else if (const auto* int_val = std::get_if<int>(&init_value)) {
+									member_store.value.value = static_cast<unsigned long long>(*int_val);
+								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_value)) {
+									member_store.value.value = *ull_val;
+								} else if (const auto* d_val = std::get_if<double>(&init_value)) {
+									member_store.value.value = *d_val;
 								} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
 									member_store.value.value = *string;
 								} else {

@@ -233,12 +233,12 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				is_rvalue = !isTempVarLValue(*temp_var);
 			}
 
-			if (std::holds_alternative<TempVar>(expr_result.value)) {
-				exception_value = std::get<TempVar>(expr_result.value);
-			} else if (std::holds_alternative<StringHandle>(expr_result.value)) {
-				exception_value = std::get<StringHandle>(expr_result.value);
-			} else if (std::holds_alternative<unsigned long long>(expr_result.value)) {
-				exception_value = std::get<unsigned long long>(expr_result.value);
+			if (const auto* temp_var_ptr = std::get_if<TempVar>(&expr_result.value)) {
+				exception_value = *temp_var_ptr;
+			} else if (const auto* string = std::get_if<StringHandle>(&expr_result.value)) {
+				exception_value = *string;
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&expr_result.value)) {
+				exception_value = *ull_val;
 			} else if (const auto* d_val = std::get_if<double>(&expr_result.value)) {
 				exception_value = *d_val;
 			} else {
@@ -327,9 +327,9 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		int32_t constant_filter_value = 0;
 		TempVar filter_result = var_counter.next();
 
-		if (std::holds_alternative<NumericLiteralNode>(filter_inner_expr)) {
+		if (const auto* numeric_literal_ptr = std::get_if<NumericLiteralNode>(&filter_inner_expr)) {
 			is_constant_filter = true;
-			const auto& lit = std::get<NumericLiteralNode>(filter_inner_expr);
+			const auto& lit = *numeric_literal_ptr;
 			constant_filter_value = static_cast<int32_t>(std::get<unsigned long long>(lit.value()));
 			FLASH_LOG(Codegen, Debug, "SEH filter is constant literal: ", constant_filter_value);
 		} else if (std::holds_alternative<UnaryOperatorNode>(filter_inner_expr)) {
@@ -404,17 +404,17 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Determine filter result - TempVar or constant
 			SehFilterEndOp filter_end_op;
-			if (std::holds_alternative<TempVar>(filter_result_expr.value)) {
-				filter_result = std::get<TempVar>(filter_result_expr.value);
+			if (const auto* temp_var = std::get_if<TempVar>(&filter_result_expr.value)) {
+				filter_result = *temp_var;
 				filter_end_op.filter_result = filter_result;
 				filter_end_op.is_constant_result = false;
 				filter_end_op.constant_result = 0;
 				FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
-			} else if (std::holds_alternative<unsigned long long>(filter_result_expr.value)) {
+			} else if (const auto* ull_val = std::get_if<unsigned long long>(&filter_result_expr.value)) {
 				// Filter expression returned a constant (e.g. comma expr ending in literal 1)
 				filter_end_op.filter_result = filter_result;
 				filter_end_op.is_constant_result = true;
-				filter_end_op.constant_result = static_cast<int32_t>(std::get<unsigned long long>(filter_result_expr.value));
+				filter_end_op.constant_result = static_cast<int32_t>(*ull_val);
 				FLASH_LOG(Codegen, Debug, "SEH filter funclet returns constant=", filter_end_op.constant_result);
 			} else {
 				filter_end_op.filter_result = filter_result;

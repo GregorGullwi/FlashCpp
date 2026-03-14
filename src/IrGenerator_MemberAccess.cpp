@@ -829,8 +829,8 @@
 		std::string_view error_context) {
 
 		base_type = operands.type;
-		if (std::holds_alternative<TempVar>(operands.value)) {
-			base_object = std::get<TempVar>(operands.value);
+		if (const auto* temp_var = std::get_if<TempVar>(&operands.value)) {
+			base_object = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
 			base_object = *string;
 		} else {

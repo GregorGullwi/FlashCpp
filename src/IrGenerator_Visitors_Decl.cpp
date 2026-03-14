@@ -1674,10 +1674,10 @@
 									// Use the default member initializer
 									ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 									// Extract just the value (third element of init_operands)
-									if (std::holds_alternative<TempVar>(init_operands.value)) {
-										member_value = std::get<TempVar>(init_operands.value);
-									} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-										member_value = std::get<unsigned long long>(init_operands.value);
+									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+										member_value = *temp_var;
+									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										member_value = *ull_val;
 									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 										member_value = *d_val;
 									} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
@@ -1751,8 +1751,8 @@
 																const auto& nested_initializers = nested_init_list.initializers();
 																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
 																	ExprResult nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
-																	if (std::holds_alternative<TempVar>(nested_init_operands.value)) {
-																		nested_member_value = std::get<TempVar>(nested_init_operands.value);
+																	if (const auto* temp_var = std::get_if<TempVar>(&nested_init_operands.value)) {
+																		nested_member_value = *temp_var;
 																	} else if (const auto* ull_val = std::get_if<unsigned long long>(&nested_init_operands.value)) {
 																		nested_member_value = *ull_val;
 																	} else if (const auto* d_val = std::get_if<double>(&nested_init_operands.value)) {
@@ -1765,8 +1765,8 @@
 														}
 													} else if (init_expr.is<ExpressionNode>()) {
 														ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
-														if (std::holds_alternative<TempVar>(init_operands.value)) {
-															nested_member_value = std::get<TempVar>(init_operands.value);
+														if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+															nested_member_value = *temp_var;
 														} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
 															nested_member_value = *ull_val;
 														} else if (const auto* d_val_ptr = std::get_if<double>(&init_operands.value)) {
@@ -1800,10 +1800,10 @@
 											// For non-struct types with single-element initializer lists
 											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
 												ExprResult init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
-												if (std::holds_alternative<TempVar>(init_operands.value)) {
-													member_value = std::get<TempVar>(init_operands.value);
-												} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-													member_value = std::get<unsigned long long>(init_operands.value);
+												if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+													member_value = *temp_var;
+												} else if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
+													member_value = *ull_val_ptr;
 												} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 													member_value = *d_val;
 												} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
@@ -1937,10 +1937,10 @@
 								// Use explicit initializer from constructor initializer list
 								ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
-								if (std::holds_alternative<TempVar>(init_operands.value)) {
-									member_value = std::get<TempVar>(init_operands.value);
-								} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-									member_value = std::get<unsigned long long>(init_operands.value);
+								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+									member_value = *temp_var;
+								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+									member_value = *ull_val;
 								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 									member_value = *d_val;
 								} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
@@ -1955,10 +1955,10 @@
 								// Use default member initializer (C++11 feature)
 								ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 								// Extract just the value (third element of init_operands)
-								if (std::holds_alternative<TempVar>(init_operands.value)) {
-									member_value = std::get<TempVar>(init_operands.value);
-								} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-									member_value = std::get<unsigned long long>(init_operands.value);
+								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+									member_value = *temp_var;
+								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+									member_value = *ull_val;
 								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 									member_value = *d_val;
 								} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {

@@ -157,8 +157,8 @@ int main_impl(int argc, char *argv[]) {
 
     if (argsparser.hasOption("o"_opt)) {
         auto output_file = argsparser.optionValue("o"_opt);
-        if (std::holds_alternative<std::string_view>(output_file))
-            context.setOutputFile(std::get<std::string_view>(output_file));
+        if (const auto* sv_val = std::get_if<std::string_view>(&output_file))
+            context.setOutputFile(*sv_val);
     }
 
     context.setVerboseMode(argsparser.hasFlag("v"_opt) || argsparser.hasFlag("verbose"_opt));

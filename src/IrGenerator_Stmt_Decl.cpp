@@ -445,9 +445,8 @@
 						const auto& unary = std::get<UnaryOperatorNode>(init_expr);
 						if (unary.op() == "&" && unary.get_operand().is<ExpressionNode>()) {
 							const ExpressionNode& inner = unary.get_operand().as<ExpressionNode>();
-							if (std::holds_alternative<IdentifierNode>(inner)) {
-								const auto& target_id = std::get<IdentifierNode>(inner);
-								initializeGlobalReloc(target_id.name());
+							if (const auto* inner_target_id = std::get_if<IdentifierNode>(&inner)) {
+								initializeGlobalReloc(inner_target_id->name());
 							} else if (std::holds_alternative<ArraySubscriptNode>(inner)) {
 								const auto& subscript = std::get<ArraySubscriptNode>(inner);
 								if (subscript.array_expr().is<ExpressionNode>() && subscript.index_expr().is<ExpressionNode>()) {
@@ -645,10 +644,10 @@
 					decl_op.is_array = false;
 
 					// Set the compile-time evaluated initializer
-					if (std::holds_alternative<long long>(eval_result.value)) {
-						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(std::get<long long>(eval_result.value)));
-					} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, std::get<unsigned long long>(eval_result.value));
+					if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(*ll_val));
+					} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, *ull_val);
 					} else if (std::holds_alternative<double>(eval_result.value)) {
 						double d = std::get<double>(eval_result.value);
 						if (type_node.type() == Type::Float) {
@@ -1125,10 +1124,10 @@
 											throw InternalError("Initializer must be an ExpressionNode or InitializerListNode");
 										}
 
-											if (std::holds_alternative<TempVar>(init_operands.value)) {
-												member_value = std::get<TempVar>(init_operands.value);
-											} else if (std::holds_alternative<unsigned long long>(init_operands.value)) {
-												member_value = std::get<unsigned long long>(init_operands.value);
+											if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+												member_value = *temp_var;
+											} else if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&init_operands.value)) {
+												member_value = *ull_val_ptr;
 											} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
 												member_value = *d_val;
 											} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
@@ -1143,10 +1142,10 @@
 											ConstExpr::EvaluationContext ctx(gSymbolTable);
 											auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 											if (eval_result.success()) {
-												if (std::holds_alternative<unsigned long long>(eval_result.value)) {
-													member_value = std::get<unsigned long long>(eval_result.value);
-												} else if (std::holds_alternative<long long>(eval_result.value)) {
-													member_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+												if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
+													member_value = *ull_val;
+												} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+													member_value = static_cast<unsigned long long>(*ll_val);
 												} else if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
 													member_value = *b_val ? 1ULL : 0ULL;
 												} else if (const auto* d_val_ptr = std::get_if<double>(&eval_result.value)) {
@@ -1573,9 +1572,9 @@
 								const auto& expr = init_node.as<ExpressionNode>();
 								FLASH_LOG(Codegen, Debug, "Checking initializer for ", decl.identifier_token().value());
 								// Check if this is a direct constructor call (e.g., S s(x))
-								if (std::holds_alternative<ConstructorCallNode>(expr)) {
+								if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr)) {
 									has_direct_ctor_call = true;
-									direct_ctor = &std::get<ConstructorCallNode>(expr);
+									direct_ctor = constructor_call;
 									FLASH_LOG(Codegen, Debug, "Found ConstructorCallNode initializer");
 								} else if (!init_node.is<InitializerListNode>()) {
 									// For copy initialization like "AllSizes b = a;", we need to

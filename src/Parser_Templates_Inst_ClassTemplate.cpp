@@ -671,8 +671,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													const ASTNode& init_node = *static_member.initializer;
 													if (init_node.is<ExpressionNode>()) {
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-															bool val = std::get<BoolLiteralNode>(init_expr).value();
+														if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
+															bool val = bool_literal->value();
 															TemplateTypeArg arg(val ? 1LL : 0LL, Type::Bool);
 															filled_args_for_pattern_match.push_back(arg);
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
@@ -693,14 +693,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
-					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
-						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+						const NumericLiteralNode& lit = *numeric_literal;
 						const auto& val = lit.value();
 						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
 						}
-					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
-						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+					} else if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&expr)) {
+						const BoolLiteralNode& lit = *bool_literal_ptr;
 						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 						// Handle sizeof(T) as a default value
@@ -1198,10 +1198,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									? static_cast<int64_t>(std::get<unsigned long long>(nv))
 									: static_cast<int64_t>(std::get<double>(nv));
 								resolved_args.push_back(va);
-							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+							} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 								TemplateTypeArg va;
 								va.is_value = true;
-								va.value = std::get<BoolLiteralNode>(expr).value() ? 1 : 0;
+								va.value = bool_literal->value() ? 1 : 0;
 								resolved_args.push_back(va);
 							} else {
 								// Unresolvable expression argument - cannot safely instantiate
@@ -2522,8 +2522,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												const ASTNode& init_node = *static_member.initializer;
 												if (init_node.is<ExpressionNode>()) {
 													const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-													if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-														bool val = std::get<BoolLiteralNode>(init_expr).value();
+													if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
+														bool val = bool_literal->value();
 														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 														FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
@@ -2554,9 +2554,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						int64_t int_val = static_cast<int64_t>(*d_val);
 						filled_template_args.push_back(TemplateTypeArg(int_val));
 					}
-				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+				} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 					// Handle boolean literals
-					const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+					const BoolLiteralNode& lit = *bool_literal;
 					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
 				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 					// Handle dependent expressions like is_arithmetic<T>::value
@@ -2606,8 +2606,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													const ASTNode& init_node = *static_member.initializer;
 													if (init_node.is<ExpressionNode>()) {
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
-															bool val = std::get<BoolLiteralNode>(init_expr).value();
+														if (const auto* inner_bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
+															bool val = inner_bool_literal->value();
 															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
@@ -3545,11 +3545,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if it's an ExpressionNode
 				if (array_size_node.is<ExpressionNode>()) {
 					const ExpressionNode& expr = array_size_node.as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const IdentifierNode& ident = std::get<IdentifierNode>(expr);
+					if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
+						const IdentifierNode& ident = *identifier_ptr;
 						identifier_name = ident.name();
-					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+					} else if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+						const TemplateParameterReferenceNode& tparam_ref = *template_parameter_reference;
 						identifier_name = tparam_ref.param_name().view();
 					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
 						const NumericLiteralNode& lit = *numeric_literal;

@@ -462,8 +462,8 @@
 					DestructorCallOp dtor_op;
 					dtor_op.struct_name = type_info.name();
 					dtor_op.object_is_pointer = true;
-					if (std::holds_alternative<TempVar>(ptr_value)) {
-						dtor_op.object = std::get<TempVar>(ptr_value);
+					if (const auto* temp_var = std::get_if<TempVar>(&ptr_value)) {
+						dtor_op.object = *temp_var;
 					} else if (const auto* string = std::get_if<StringHandle>(&ptr_value)) {
 						dtor_op.object = *string;
 					} else {
@@ -595,8 +595,8 @@
 		const char* cast_name) {
 
 		std::variant<StringHandle, TempVar> base;
-		if (std::holds_alternative<StringHandle>(expr_operands.value)) {
-			base = std::get<StringHandle>(expr_operands.value);
+		if (const auto* string = std::get_if<StringHandle>(&expr_operands.value)) {
+			base = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
 			base = *temp_var;
 		} else {
@@ -923,8 +923,8 @@
 
 			// Extract IrValue from expression result
 			std::variant<StringHandle, TempVar> operand_value;
-			if (std::holds_alternative<TempVar>(expr_operands.value)) {
-				operand_value = std::get<TempVar>(expr_operands.value);
+			if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
+				operand_value = *temp_var;
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&expr_operands.value)) {
 				operand_value = *string_ptr;
 			} else {
@@ -979,8 +979,8 @@
 
 		// Extract source pointer from expression result
 		TempVar source_ptr;
-		if (std::holds_alternative<TempVar>(expr_operands.value)) {
-			source_ptr = std::get<TempVar>(expr_operands.value);
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
+			source_ptr = *temp_var;
 		} else if (std::holds_alternative<StringHandle>(expr_operands.value)) {
 			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();

@@ -1284,8 +1284,8 @@ const ConstructorCallNode* Evaluator::extract_constructor_call(const std::option
 		return &initializer->as<ConstructorCallNode>();
 	if (initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = initializer->as<ExpressionNode>();
-		if (std::holds_alternative<ConstructorCallNode>(expr))
-			return &std::get<ConstructorCallNode>(expr);
+		if (const auto* constructor_call = std::get_if<ConstructorCallNode>(&expr))
+			return constructor_call;
 	}
 	return nullptr;
 }

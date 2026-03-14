@@ -49,8 +49,8 @@
 			}
 
 			// For same-domain literal conversions, keep the value immediate.
-			if (std::holds_alternative<unsigned long long>(operands.value)) {
-				unsigned long long value = std::get<unsigned long long>(operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
+				unsigned long long value = *ull_val;
 				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{value});
 			} else if (const auto* int_val = std::get_if<int>(&operands.value)) {
 				int value = *int_val;
@@ -369,8 +369,8 @@
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
-			if (std::holds_alternative<unsigned long long>(index_operands.value)) {
-				arr_idx.index = std::get<unsigned long long>(index_operands.value);
+			if (const auto* ull_val = std::get_if<unsigned long long>(&index_operands.value)) {
+				arr_idx.index = *ull_val;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&index_operands.value)) {
 				arr_idx.index = *temp_var;
 			} else if (const auto* string = std::get_if<StringHandle>(&index_operands.value)) {
@@ -1139,8 +1139,8 @@
 			const LambdaExpressionNode* lambda_ptr = nullptr;
 			const StructTypeInfo* lambda_struct_info = nullptr;
 
-			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
-				lambda_ptr = &std::get<LambdaExpressionNode>(operandExpr);
+			if (const auto* lambda_expression = std::get_if<LambdaExpressionNode>(&operandExpr)) {
+				lambda_ptr = lambda_expression;
 			} else if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
 				auto symbol = lookupSymbol(ident.nameHandle());
@@ -1391,10 +1391,10 @@
 
 				// Extract the pointer base (StringHandle or TempVar)
 				std::variant<StringHandle, TempVar> base;
-				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-					base = std::get<StringHandle>(operandIrOperands.value);
-				} else if (std::holds_alternative<TempVar>(operandIrOperands.value)) {
-					base = std::get<TempVar>(operandIrOperands.value);
+				if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+					base = *string;
+				} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&operandIrOperands.value)) {
+					base = *temp_var_ptr;
 				} else {
 					// Fall back to old behavior if we can't extract base
 					// This can happen with complex expressions that don't have a simple base
@@ -1407,8 +1407,8 @@
 				// The reference init code reads the TempVar's stack value; without this
 				// assignment the slot would be uninitialized.
 				IrValue rhs_value;
-				if (std::holds_alternative<StringHandle>(operandIrOperands.value)) {
-					rhs_value = std::get<StringHandle>(operandIrOperands.value);
+				if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
+					rhs_value = *string;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 					rhs_value = *temp_var;
 				} else if (const auto* ull_val = std::get_if<unsigned long long>(&operandIrOperands.value)) {

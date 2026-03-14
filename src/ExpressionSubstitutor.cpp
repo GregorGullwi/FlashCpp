@@ -265,8 +265,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(substituted_expr);
 						const NumericLiteralValue& raw_value = lit.value();
 						int64_t value = 0;
-						if (std::holds_alternative<unsigned long long>(raw_value)) {
-							value = static_cast<int64_t>(std::get<unsigned long long>(raw_value));
+						if (const auto* ull_val = std::get_if<unsigned long long>(&raw_value)) {
+							value = static_cast<int64_t>(*ull_val);
 						} else if (const auto* d_val = std::get_if<double>(&raw_value)) {
 							value = static_cast<int64_t>(*d_val);
 						} else {
@@ -275,8 +275,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 							break;
 						}
 						substituted_template_args.emplace_back(value, lit.type());
-					} else if (std::holds_alternative<BoolLiteralNode>(substituted_expr)) {
-						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(substituted_expr);
+					} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&substituted_expr)) {
+						const BoolLiteralNode& lit = *bool_literal;
 						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
 					} else {
 						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
