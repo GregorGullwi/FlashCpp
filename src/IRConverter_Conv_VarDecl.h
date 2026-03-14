@@ -1033,7 +1033,7 @@
 		{
 			for (const auto& p : parameter_types) {
 				bool is_two_reg = !is_variadic &&
-				                  isTwoRegisterStructRaw(p.type(), p.size_in_bits(), p.is_reference(), static_cast<int>(p.pointer_depth()));
+				                  isTwoRegisterStructRaw(toIrType(p.type()), p.size_in_bits(), p.is_reference(), static_cast<int>(p.pointer_depth()));
 				param_count += is_two_reg ? 2 : 1;
 			}
 		}
@@ -1499,7 +1499,7 @@
 				// For variadic callees, the register-save-area prologue handles all register args,
 				// so this path is gated on !is_variadic.
 				bool is_two_reg_struct = !is_variadic &&
-				                        isTwoRegisterStructRaw(param_type, param_size, is_reference, param_pointer_depth);
+				                        isTwoRegisterStructRaw(toIrType(param_type), param_size, is_reference, param_pointer_depth);
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
@@ -1659,7 +1659,7 @@
 				// For variadic callees, the register-save-area prologue handles all register args,
 				// so this path is gated on !is_variadic.
 				bool is_two_reg_struct = !is_variadic &&
-				                        isTwoRegisterStructRaw(param.type, param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
+				                        isTwoRegisterStructRaw(toIrType(param.type), param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
 			
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();

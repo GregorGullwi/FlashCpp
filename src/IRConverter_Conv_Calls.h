@@ -951,7 +951,7 @@
 										if ((pts.is_reference() || pts.is_rvalue_reference()) &&
 											isIrStructType(toIrType(pts.type()))) {
 											const TypedValue& arg = ctor_op.arguments[0];
-											if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
+											if (!isIrStructType(arg.effectiveIrType()) || arg.type_index != struct_type_it->second->type_index_) {
 												continue;
 											}
 										}

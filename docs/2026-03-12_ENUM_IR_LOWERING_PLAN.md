@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-3 landed through 2026-03-14)  
+**Status**: In Progress (Phase 0-3 largely complete through 2026-03-14, Phase 4 prep complete)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -413,8 +413,43 @@ glue and into the correct compiler layer.
   `CodeGen_Visitors_TypeInit.cpp` (recursive zero-fill) migrated.
 
 **Remaining Phase 3 work:**
-- `CodeGen_Expr_Operators.cpp` lines 793, 798, 899 — user-defined operator
-  detection (semantic: intentionally uses `Type::Struct || Type::UserDefined`)
+- `CodeGen_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
+  applicability (semantic: checks Type::Enum for overload semantics)
+- `CodeGen_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
+  and enum↔int cast rules
+- `CodeGen_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
+  scalar classification (semantic)
+- `CodeGen_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
+- `CodeGen_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+
+**UPDATE (2026-03-14)**: A third Phase 3 slice is now in place:
+
+- `requiresUserDefinedOp` lambdas in `CodeGen_Expr_Operators.cpp` (lines 793, 798)
+  now use `isIrStructType(toIrType(base_type))` — catches both Struct and UserDefined
+  aliases without explicit two-way OR.
+- `param_type.type() != Type::Struct && param_type.type() != Type::UserDefined`
+  check (line 899) simplified to `!isIrStructType(toIrType(param_type.type()))`.
+- Constructor overload identity check in `CodeGen_Call_Direct.cpp` (line 845)
+  migrated to `isIrStructType(toIrType(arg_type))`.
+- `base_type != Type::Struct && base_type != Type::UserDefined` checks in
+  `CodeGen_MemberAccess.cpp` (lines 1009, 3383, 3408) all migrated to
+  `!isIrStructType(toIrType(...))`.
+- `isTwoRegisterStructRaw` in `IRConverter_Emit_CompareBranch.h` now takes
+  `IrType ir_type` instead of `Type type`; all callers updated to use
+  `toIrType(...)` or `arg.effectiveIrType()`.
+- Remaining TypedValue.type **write** sites: all now have companion
+  `ir_type = toIrType(...)` assignments alongside the `type =` write, across
+  `CodeGen_Call_Direct.cpp`, `CodeGen_Call_Indirect.cpp`,
+  `CodeGen_Expr_Conversions.cpp`, `CodeGen_Expr_Operators.cpp`,
+  `CodeGen_Expr_Primitives.cpp`, `CodeGen_Lambdas.cpp`,
+  `CodeGen_MemberAccess.cpp`, `CodeGen_Stmt_Decl.cpp`,
+  `CodeGen_Visitors_Decl.cpp` (~65 additional sites).
+- `ExprResult.type == Type::Void` sentinel checks in `CodeGen_Expr_Primitives.cpp`
+  and `CodeGen_Expr_Operators.cpp` migrated to `effectiveIrType() == IrType::Void`.
+- `IRConverter_Conv_Calls.h:954` struct identity check migrated to
+  `!isIrStructType(arg.effectiveIrType())`.
+
+**Remaining semantically-intentional Phase 3 sites (intentionally kept as Type::X):**
 - `CodeGen_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
   applicability (semantic: checks Type::Enum for overload semantics)
 - `CodeGen_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
@@ -425,11 +460,27 @@ glue and into the correct compiler layer.
 - `CodeGen_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
 
 These remaining sites are **semantic checks** that intentionally need `Type::Enum`
-or the full `Type` enum.  They will stay as-is until Phase 4 (or a semantic
-analysis pass) provides a clean way to query semantic identity without
-touching the runtime type field.
+or the full `Type` enum.  They will stay as-is until a semantic analysis pass
+provides a clean way to query semantic identity without touching the runtime type field.
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
+
+**Phase 4 preparation is now complete (2026-03-14):**
+- All TypedValue **write** sites (`.type = ...`) now have companion `ir_type = toIrType(...)` writes.
+- All TypedValue **read** sites (`.type == Type::X` comparisons) in IRConverter and CodeGen
+  have been migrated to `effectiveIrType()` or `isIrStructType(toIrType(...))`.
+- Zero TypedValue.type equality-comparison reads remain in codegen/IRConverter code.
+
+**Remaining before full removal:**
+- `IRConverter_Conv_Memory.h` lines 145, 293, 796 — `setReferenceInfo(offset, op.result.type, ...)`
+  passes the semantic type to `IndirectStorageInfo`. `setReferenceInfo` / `setAddressOnlyInfo`
+  signatures take `Type` and store it in `IndirectStorageInfo::value_type` for later semantic use.
+  These need `IndirectStorageInfo` to be updated to use `IrType` or to accept both fields.
+- `IRConverter_Conv_Calls.h` lines 924, 989 — `TypeSpecifierNode(arg.type, ...)` constructs a
+  temporary type spec for ABI classification. TypeSpecifierNode constructor takes `Type`.
+- `IRConverter_Conv_Arithmetic.h` line 1161 — `[[maybe_unused]] Type type = unary_op.value.type;`
+  debug/unused variable.
+- `IRConverter_Conv_VarDecl.h` lines 213, 244 — debug logging of `init.type`.
 
 Once all consumers read `ir_type`, remove the old `type` field. Any remaining
 code that tries to match on `Type::Enum` inside a codegen helper will fail to
@@ -443,11 +494,14 @@ slot-4 positional encoding, `encoded_metadata`, `preserveEncodedExprMetadata`, a
 (`type`, `size_in_bits`, `value`, `type_index`, `pointer_depth`). The original
 slot-4 ambiguity (same slot for `type_index` and `pointer_depth`) no longer exists.
 
-Remaining work for this phase:
+**UPDATE (2026-03-14)**: `ExprResult` now has `IrType ir_type = IrType::Void` field
+and `effectiveIrType()` method (mirroring TypedValue). `makeExprResult(...)` always
+populates `ir_type = toIrType(type)`. All `ExprResult.type == Type::Void` sentinel
+checks have been migrated to `effectiveIrType() == IrType::Void`.
 
-- `ExprResult` can carry `IrType` instead of `Type` for its runtime fields
-- `makeExprResult(...)` helpers should accept `IrType` instead of `Type`
-- `toTypedValue(const ExprResult&)` can copy `ir_type` directly
+Remaining work for this phase:
+- `makeExprResult(...)` helpers could eventually accept `IrType` instead of `Type`
+- `toTypedValue(const ExprResult&)` already copies `ir_type` directly
 
 ### Phase 6 — Audit and cleanup
 
