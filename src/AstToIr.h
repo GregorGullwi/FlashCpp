@@ -184,7 +184,7 @@ private:
 		const ExpressionNode& expr,
 		int accumulated_offset = 0);
 	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
-	ExpressionContext context = ExpressionContext::Load);
+		ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
