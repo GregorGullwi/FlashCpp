@@ -1,7 +1,7 @@
 # ExpressionNode Wrapping Normalization Plan
 
 **Date**: 2026-03-12  
-**Status**: Proposed  
+**Status**: In Progress (Steps 1–3 complete for `QualifiedIdentifierNode`; Steps 4–5 pending)  
 **Context**: Parser / AST cleanup plan for expression-valued parse results
 
 ## Problem Statement
@@ -10,12 +10,12 @@ The parser currently returns some expression-valued results as `ExpressionNode`
 and others as direct node types stored in `ASTNode`. That inconsistency leaks
 into downstream code, which then has to support both shapes.
 
-Concrete examples already visible in the tree:
+Concrete examples already visible in the tree (items marked ✅ have been fixed):
 
-- qualified identifiers can be returned directly as `QualifiedIdentifierNode`
-  (`src\Parser_Expr_QualLookup.cpp:35-38`)
-- some primary-expression paths also return a direct
-  `QualifiedIdentifierNode` (`src\Parser_Expr_PrimaryExpr.cpp:199-202`)
+- ✅ ~~qualified identifiers returned directly as `QualifiedIdentifierNode`
+  (`src\Parser_Expr_QualLookup.cpp:35-38`)~~ — now wrapped at line 37
+- ✅ ~~some primary-expression paths returned a direct
+  `QualifiedIdentifierNode` (`src\Parser_Expr_PrimaryExpr.cpp:199-202`)~~ — now wrapped at line 201
 - constructor calls are intentionally wrapped in `ExpressionNode`
   (`src\Parser_Expr_QualLookup.cpp:159-160`)
 - lambdas are wrapped before returning
@@ -78,16 +78,19 @@ for expression results at parser boundaries.
 This is the initial list to audit before changing behavior:
 
 1. **Qualified identifier parse helpers**
-   - direct `QualifiedIdentifierNode` return in
-     `src\Parser_Expr_QualLookup.cpp:35-38`
-   - direct `QualifiedIdentifierNode` return in
-     `src\Parser_Expr_QualLookup.cpp:197-200`
-   - direct qualified return in operator-name path
-     `src\Parser_Expr_PrimaryExpr.cpp:199-202`
+   - ✅ `parse_qualified_identifier()` — was direct `QualifiedIdentifierNode`
+     at `src\Parser_Expr_QualLookup.cpp:35-38`, now wrapped at line 37
+   - ✅ `parse_qualified_identifier_after_template()` — was direct
+     `QualifiedIdentifierNode` at `src\Parser_Expr_QualLookup.cpp:197-200`,
+     now wrapped at line 199
+   - ✅ `parse_qualified_operator_call()` — was direct qualified return at
+     `src\Parser_Expr_PrimaryExpr.cpp:199-202`, now wrapped at line 201
 
 2. **Primary-expression leaf paths**
    - identifier paths already often wrap in `ExpressionNode`
    - qualified identifier paths appear mixed and need full audit
+   - ~6 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
+     outside the three helper functions (not yet normalized)
 
 3. **Special expression constructors**
    - constructor-call paths already wrap and should remain the model
@@ -101,7 +104,7 @@ This is the initial list to audit before changing behavior:
 
 ## Recommended Implementation Order
 
-### Step 1: Build a parser return-shape audit
+### Step 1: Build a parser return-shape audit ✅
 
 Create a small inventory of parser functions that return expression-valued
 `ParseResult`s and classify each site as:
@@ -118,7 +121,11 @@ Prioritize:
 - `Parser_Expr_BinaryPrecedence.cpp`
 - `Parser_Expr_ControlFlowStmt.cpp`
 
-### Step 2: Normalize the lowest-risk leaf sites first
+**Completed**: Audit identified 3 `QualifiedIdentifierNode` producer sites
+(see Inconsistency Inventory §1 above). Remaining expression leaf types have
+not yet been fully audited.
+
+### Step 2: Normalize the lowest-risk leaf sites first ✅ (partial)
 
 Start with direct returns of:
 
@@ -128,7 +135,16 @@ Start with direct returns of:
 These are the safest because they change AST shape without changing parse
 precedence or ownership logic.
 
-### Step 3: Add a tiny parser-side helper if repetition appears
+**Completed for `QualifiedIdentifierNode`**: All 3 producer sites now wrap in
+`ExpressionNode` (PR #909). Callers of `parse_qualified_identifier_after_template`
+that used `.as<QualifiedIdentifierNode>()` were updated to use the new
+`asQualifiedIdentifier()` helper, and redundant re-wrapping was removed.
+
+**Remaining**: Other direct identifier-like leaves have not been normalized yet.
+~6 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
+helper functions also remain unwrapped.
+
+### Step 3: Add a tiny parser-side helper if repetition appears ✅
 
 If the parser has many sites doing:
 
@@ -139,7 +155,21 @@ and keep callsites consistent.
 
 This helper should stay parser-local unless another layer genuinely needs it.
 
-### Step 4: Update downstream consumers to prefer the normalized shape
+**Completed**: Added `asQualifiedIdentifier(const ASTNode&)` to
+`src\AstNodeTypes.h:26-28` to encapsulate extraction of a
+`QualifiedIdentifierNode` from the normalized `ExpressionNode` wrapper:
+
+```cpp
+inline const QualifiedIdentifierNode& asQualifiedIdentifier(const ASTNode& node) {
+	return std::get<QualifiedIdentifierNode>(node.as<ExpressionNode>());
+}
+```
+
+This is used by callers that need to inspect the qualified name (e.g. to read
+`.name()` or `.namespace_handle()`) after receiving an already-wrapped result
+from the parse helpers.
+
+### Step 4: Update downstream consumers to prefer the normalized shape ❌
 
 After the parser side is normalized, re-audit mixed-shape consumers and remove
 only the compatibility branches that are no longer needed.
@@ -147,17 +177,24 @@ only the compatibility branches that are no longer needed.
 Likely candidates:
 
 - constexpr extraction helpers
-- generic AST-name helpers
+- generic AST-name helpers (`getIdentifierNameFromAstNode` in `AstNodeTypes.h`)
 - codegen expression readers that still special-case direct leaf storage
 
 Do this cautiously and only after parser behavior is validated.
 
-### Step 5: Keep compatibility only where the AST legitimately allows both
+**Not yet started**. Backward-compatibility branches in
+`ConstExprEvaluator_Core.cpp` and `TemplateRegistry_Lazy.cpp` are intentionally
+preserved for now — those consumers handle synthetic/template-substituted AST
+nodes that may still legitimately hold unwrapped forms.
+
+### Step 5: Keep compatibility only where the AST legitimately allows both ❌
 
 Some APIs may still need to accept both forms temporarily or permanently if
 they consume older nodes, synthetic nodes, or non-parser-produced AST values.
 
 Do not force a cleanup that breaks valid non-parser construction paths.
+
+**Not yet started**. Depends on Step 4 audit results.
 
 ## Validation Strategy
 
@@ -193,12 +230,19 @@ For each slice:
 
 ## Concrete Recommendation
 
-The next best step is:
+~~The next best step is:~~
 
-1. audit all expression-valued `ParseResult` return sites
-2. normalize direct `QualifiedIdentifierNode` expression returns first
+1. ~~audit all expression-valued `ParseResult` return sites~~ ✅
+2. ~~normalize direct `QualifiedIdentifierNode` expression returns first~~ ✅
 3. validate downstream constexpr/codegen consumers
 4. only then widen the cleanup to the remaining expression leaves
 
-This keeps the cleanup incremental and makes it much easier to tell whether a
-bug comes from parser shape normalization or from unrelated expression logic.
+**Current next steps** (post PR #909):
+
+1. Normalize the ~6 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
+   sites that are not inside the three helper functions
+2. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
+3. Re-audit downstream consumers (Step 4) and remove compatibility branches
+   that are no longer reachable
+4. Evaluate whether `getIdentifierNameFromAstNode` dual-path logic can be
+   simplified once all expression leaves are wrapped
