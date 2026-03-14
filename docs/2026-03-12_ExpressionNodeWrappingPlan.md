@@ -80,6 +80,8 @@ This is the initial list to audit before changing behavior:
 1. **Qualified identifier parse helpers**
    - ✅ `parse_qualified_identifier()` — was direct `QualifiedIdentifierNode`
      at `src\Parser_Expr_QualLookup.cpp:35-38`, now wrapped at line 37
+     ⚠️ **Note**: This function appears to have zero call sites (declared at
+     `Parser.h:758` but never called). Consider removing it as dead code.
    - ✅ `parse_qualified_identifier_after_template()` — was direct
      `QualifiedIdentifierNode` at `src\Parser_Expr_QualLookup.cpp:197-200`,
      now wrapped at line 199
@@ -89,8 +91,17 @@ This is the initial list to audit before changing behavior:
 2. **Primary-expression leaf paths**
    - identifier paths already often wrap in `ExpressionNode`
    - qualified identifier paths appear mixed and need full audit
-   - ~6 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
-     outside the three helper functions (not yet normalized)
+   - 5 inline `emplace_node<QualifiedIdentifierNode>(...)` sites remain
+     outside the three helper functions (not yet normalized):
+     - `Parser_Expr_PrimaryExpr.cpp:945`  — `::identifier` global-scope path
+     - `Parser_Expr_PrimaryExpr.cpp:1146` — `identifier::identifier` early path
+     - `Parser_Expr_PrimaryExpr.cpp:1526` — `Template<T>::member` nested path
+     - `Parser_Expr_PrimaryExpr.cpp:2261` — `identifier::identifier` late path
+     - `Parser_Expr_PrimaryExpr.cpp:3608` — `Template<T>::member` inline path
+     Note: all 5 are consumed locally (`.as<QualifiedIdentifierNode>()` on the
+     next line) and then re-wrapped in `ExpressionNode` before returning, so
+     the final returned shape is already normalized — only the intermediate
+     bare node allocation is not.
 
 3. **Special expression constructors**
    - constructor-call paths already wrap and should remain the model
@@ -141,8 +152,9 @@ that used `.as<QualifiedIdentifierNode>()` were updated to use the new
 `asQualifiedIdentifier()` helper, and redundant re-wrapping was removed.
 
 **Remaining**: Other direct identifier-like leaves have not been normalized yet.
-~6 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
-helper functions also remain unwrapped.
+5 inline `emplace_node<QualifiedIdentifierNode>(...)` sites outside the three
+helper functions create bare intermediate nodes but already re-wrap before
+returning (see Inconsistency Inventory §2 for exact locations).
 
 ### Step 3: Add a tiny parser-side helper if repetition appears ✅
 
@@ -241,10 +253,17 @@ For each slice:
 
 **Current next steps** (post PR #909):
 
-1. Normalize the ~6 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
-   sites that are not inside the three helper functions
-2. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
-3. Continue re-auditing downstream consumers (Step 4), replacing open-coded
+1. Evaluate removing `parse_qualified_identifier()` — it appears to be dead code
+   (zero call sites). If removed, one of the three normalized producer sites goes
+   away entirely.
+2. Simplify the 5 remaining inline `emplace_node<QualifiedIdentifierNode>(...)`
+   sites in `parse_primary_expression()` to construct directly into
+   `ExpressionNode` (eliminating the intermediate bare node + re-wrap pattern).
+3. Audit and normalize other direct expression leaf returns (e.g. `IdentifierNode`)
+4. Continue re-auditing downstream consumers (Step 4), replacing open-coded
    wrapped-vs-direct identifier handling with centralized helpers first
-4. Only remove compatibility branches once non-parser/synthetic AST paths are
+5. Only remove compatibility branches once non-parser/synthetic AST paths are
    confirmed not to rely on them
+6. Audit `TemplateRegistry_Lazy.cpp` and `ExpressionSubstitutor.cpp` sites that
+   check `node.is<QualifiedIdentifierNode>()` directly — these will become dead
+   branches once synthetic/substituted AST paths are also normalized
