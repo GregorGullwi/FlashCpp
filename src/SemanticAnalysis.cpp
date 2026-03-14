@@ -4,6 +4,7 @@
 #include "SymbolTable.h"
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
+#include "OverloadResolution.h"
 #include "Log.h"
 
 // --- CanonicalTypeDesc::operator== ---
@@ -52,12 +53,37 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 	return types_[id.value - 1];
 }
 
+// --- Determine StandardConversionKind from two primitive Type values ---
+
+static StandardConversionKind determineConversionKind(Type from, Type to) {
+	if (to == Type::Bool) return StandardConversionKind::BooleanConversion;
+
+	const bool from_int = is_integer_type(from) || from == Type::Bool;
+	const bool to_int   = is_integer_type(to);
+	const bool from_flt = is_floating_point_type(from);
+	const bool to_flt   = is_floating_point_type(to);
+
+	if (from_int && to_int) {
+		// Promotion: smaller → larger, or bool/char → int
+		if (from == Type::Bool || get_type_size_bits(from) < get_type_size_bits(to))
+			return StandardConversionKind::IntegralPromotion;
+		return StandardConversionKind::IntegralConversion;
+	}
+	if (from_flt && to_flt) {
+		if (get_type_size_bits(from) < get_type_size_bits(to))
+			return StandardConversionKind::FloatingPromotion;
+		return StandardConversionKind::FloatingConversion;
+	}
+	if (from_int && to_flt) return StandardConversionKind::FloatingIntegralConversion;
+	if (from_flt && to_int) return StandardConversionKind::FloatingIntegralConversion;
+
+	return StandardConversionKind::IntegralConversion;  // safe fallback
+}
+
 // --- SemanticAnalysis ---
 
 SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols)
 	: parser_(parser), context_(context), symbols_(symbols) {
-	// context_ and symbols_ are used by later phases but stored now to
-	// avoid changing the constructor signature when those phases land.
 	(void)context_;
 	(void)symbols_;
 }
@@ -129,13 +155,39 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	if (!def.has_value()) return;  // Forward declaration only
 
 	SemanticContext ctx;
-	// Track return type for future return-statement conversion
+	// Track return type for return-statement conversion annotation
 	ASTNode type_node = func.decl_node().type_node();
 	if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
 		ctx.current_function_return_type_id = canonicalizeType(type_node.as<TypeSpecifierNode>());
 	}
 
+	// Push a scope for this function's parameters
+	pushScope();
+	for (const auto& param_node : func.parameter_nodes()) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& decl = param_node.as<DeclarationNode>();
+			const ASTNode ptype = decl.type_node();
+			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
+				CanonicalTypeId tid = type_context_.intern(
+					[&]() {
+						CanonicalTypeDesc d;
+						const auto& ts = ptype.as<TypeSpecifierNode>();
+						d.base_type = ts.type();
+						d.type_index = ts.type_index();
+						d.base_cv = ts.cv_qualifier();
+						d.ref_qualifier = ts.reference_qualifier();
+						return d;
+					}()
+				);
+				std::string_view pname = decl.identifier_token().value();
+				if (!pname.empty())
+					addLocalType(pname, tid);
+			}
+		}
+	}
+
 	normalizeStatement(*def, ctx);
+	popScope();
 }
 
 void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& decl) {
@@ -186,11 +238,28 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		const auto& ret = node.as<ReturnStatementNode>();
 		const auto& expr = ret.expression();
 		if (expr.has_value()) {
+			// Try to annotate the return expression with implicit cast info
+			// before the normal traversal (which just counts).
+			if (ctx.current_function_return_type_id) {
+				tryAnnotateReturnConversion(*expr, ctx);
+			}
 			normalizeExpression(*expr, ctx);
 		}
 	}
 	else if (node.is<VariableDeclarationNode>()) {
 		const auto& var = node.as<VariableDeclarationNode>();
+		// Record local variable type in the current scope for expression inference
+		const auto& decl = var.declaration();
+		const ASTNode vtype = decl.type_node();
+		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+			CanonicalTypeDesc desc;
+			const auto& ts = vtype.as<TypeSpecifierNode>();
+			desc.base_type = ts.type();
+			desc.type_index = ts.type_index();
+			desc.base_cv = ts.cv_qualifier();
+			desc.ref_qualifier = ts.reference_qualifier();
+			addLocalType(decl.identifier_token().value(), type_context_.intern(desc));
+		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
 			normalizeExpression(*init, ctx);
@@ -254,20 +323,20 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 }
 
 void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticContext& ctx) {
+	pushScope();
 	for (auto& stmt : block.get_statements()) {
 		normalizeStatement(stmt, ctx);
 	}
+	popScope();
 }
 
-// --- Expression handler (Phase 1: counting only) ---
+// --- Expression handler (Phase 2: counting + type inference for annotatable nodes) ---
 
 SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, const SemanticContext& ctx) {
 	if (!node.has_value()) return {};
 	stats_.expressions_visited++;
 
-	// Phase 1: just count. No actual normalization.
-	// In later phases, this will dispatch on expression node type,
-	// compute canonical types, and fill semantic slots.
+	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
 
 	if (node.is<ExpressionNode>()) {
 		// Walk into variant-based expression nodes to count children
@@ -442,4 +511,143 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
+}
+
+std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
+	auto it = semantic_slots_.find(key);
+	if (it != semantic_slots_.end())
+		return it->second;
+	return std::nullopt;
+}
+
+void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
+	semantic_slots_[key] = slot;
+}
+
+CastInfoIndex SemanticAnalysis::allocateCastInfo(const ImplicitCastInfo& info) {
+	cast_info_table_.push_back(info);
+	stats_.cast_infos_allocated++;
+	// CastInfoIndex is 1-based; 0 is the "no cast" sentinel
+	return CastInfoIndex{static_cast<uint16_t>(cast_info_table_.size())};
+}
+
+// --- Scope tracking ---
+
+void SemanticAnalysis::pushScope() {
+	scope_stack_.emplace_back();
+}
+
+void SemanticAnalysis::popScope() {
+	if (!scope_stack_.empty())
+		scope_stack_.pop_back();
+}
+
+void SemanticAnalysis::addLocalType(std::string_view name, CanonicalTypeId type_id) {
+	if (!scope_stack_.empty())
+		scope_stack_.back()[name] = type_id;
+}
+
+CanonicalTypeId SemanticAnalysis::lookupLocalType(std::string_view name) const {
+	for (auto it = scope_stack_.rbegin(); it != scope_stack_.rend(); ++it) {
+		auto found = it->find(name);
+		if (found != it->end())
+			return found->second;
+	}
+	return {};
+}
+
+// --- Expression type inference ---
+
+CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
+	if (!node.has_value()) return {};
+
+	if (node.is<ExpressionNode>()) {
+		const auto& expr = node.as<ExpressionNode>();
+		return std::visit([this](const auto& e) -> CanonicalTypeId {
+			using T = std::decay_t<decltype(e)>;
+			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
+				CanonicalTypeDesc desc;
+				desc.base_type = e.type();
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Bool;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return lookupLocalType(e.name());
+			}
+			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				// Pass-through for simple unary +/-
+				const std::string_view op = e.op();
+				if (op == "+" || op == "-")
+					return inferExpressionType(e.get_operand());
+				return {};
+			}
+			return {};
+		}, expr);
+	}
+
+	// Handle old-style nodes stored directly (not wrapped in ExpressionNode)
+	if (node.is<NumericLiteralNode>()) {
+		CanonicalTypeDesc desc;
+		desc.base_type = node.as<NumericLiteralNode>().type();
+		return type_context_.intern(desc);
+	}
+	if (node.is<BoolLiteralNode>()) {
+		CanonicalTypeDesc desc;
+		desc.base_type = Type::Bool;
+		return type_context_.intern(desc);
+	}
+
+	return {};
+}
+
+// --- Return conversion annotation ---
+
+void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
+	if (!ctx.current_function_return_type_id) return;
+	if (!expr_node.is<ExpressionNode>()) return;
+
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id) return;
+	if (expr_type_id == *ctx.current_function_return_type_id) return;  // exact match, no cast needed
+
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& to_desc   = type_context_.get(*ctx.current_function_return_type_id);
+
+	// Only handle plain primitive conversions (no pointers, no arrays, no structs)
+	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return;
+	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return;
+	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return;
+	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return;
+	if (from_desc.ref_qualifier != ReferenceQualifier::None) return;
+
+	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
+	if (!conv.is_valid || conv.rank == ConversionRank::UserDefined) return;
+
+	const StandardConversionKind kind = determineConversionKind(from_desc.base_type, to_desc.base_type);
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = expr_type_id;
+	cast_info.target_type_id = *ctx.current_function_return_type_id;
+	cast_info.cast_kind = kind;
+	cast_info.value_category_after = ValueCategory::PRValue;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = *ctx.current_function_return_type_id;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+	setSlot(key, slot);
+	stats_.slots_filled++;
+
+	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated return conversion ",
+		static_cast<int>(from_desc.base_type), " → ",
+		static_cast<int>(to_desc.base_type),
+		" (kind=", static_cast<int>(kind), ")");
 }

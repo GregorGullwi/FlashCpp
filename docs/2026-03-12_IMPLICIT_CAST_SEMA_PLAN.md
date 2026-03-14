@@ -775,18 +775,21 @@ What Phase 1 does NOT do:
 - no `AstToIr` lowering changes for semantic annotations (deferred to Phase 2)
 - `SemanticAnalysis` object is scoped to a block and destroyed before IR conversion — its `TypeContext` and cast-info table do not survive into later phases yet
 
-Known issues to address in Phase 2:
+Known issues resolved in Phase 2:
 
-- `TypeContext::intern()` uses linear scan — acceptable at current type counts (only function return types), but needs hash map when all expressions are canonicalized
-- `CanonicalTypeDesc::operator==` for `FunctionSignature` does not compare all fields (`is_static`, `is_variadic`, `is_inline`, `calling_convention`, `namespace_name`) — these are not needed for canonical type identity but should be explicitly documented or cleaned up
-- `CastInfoIndex` uses `uint16_t` (max 65535 entries) — needs overflow guard when the cast-info table is actually populated
+- `SemanticAnalysis` results now outlive the timing scope — the object is kept alive past `AstToIr` construction and `converter.setSemanticData(&sema)` wires up the connection
+- Semantic annotations (`slots_filled`, `cast_infos_allocated`) now tracked and visible under `--perf-stats`
+
+Known issues still to address:
+
+- `TypeContext::intern()` uses linear scan — acceptable at current type counts, but needs hash map when all expressions are canonicalized (Phase 4 TODO)
+- `CanonicalTypeDesc::operator==` for `FunctionSignature` does not compare all fields — acceptable for now
+- `CastInfoIndex` uses `uint16_t` (max 65535 entries) — needs overflow guard when cast-info table grows large
 - `normalizeStructDeclaration` only visits member function bodies, not member variable initializers or nested types
 - `normalizeStatement` does not walk `ThrowStatementNode` or `LabelStatementNode` children
-- `SemanticAnalysis` results need to outlive the timing scope for downstream consumption
+- `inferExpressionType` does not handle `BinaryOperatorNode` or `FunctionCallNode` — complex expressions return unknown type and fall back to codegen policy
 
-Test results: 1471 pass / 0 fail / 35 expected-fail
-
-### Phase 2: migrate the highest-value conversion contexts
+### Phase 2: migrate the highest-value conversion contexts 🚧 IN PROGRESS (partial, return statements done)
 
 Goal:
 
@@ -794,8 +797,8 @@ Goal:
 
 Work:
 
+- ✅ return statements (standard primitive conversions)
 - function-call arguments
-- return statements
 - builtin binary arithmetic / comparison operands
 - establish semantic-pass diagnostics ownership for these migrated contexts so codegen no longer reports them late
 
@@ -804,8 +807,40 @@ Exit criteria:
 - delete corresponding ad-hoc conversion policy from:
 	- `IrGenerator_Call_Direct.cpp`
 	- `IrGenerator_Expr_Operators.cpp`
-	- `IrGenerator_Visitors_Namespace.cpp`
+	- `IrGenerator_Visitors_Namespace.cpp` (standard primitive conversions in return — partially done, dual-path kept for struct/user-defined cases)
 - add regression tests for each migrated context
+
+#### Implementation notes (Phase 2 — return statements, partial)
+
+**Pre-requisites addressed:**
+
+1. **`SemanticAnalysis` lifetime** — moved outside the block scope in `FlashCppMain.cpp` so the object (and its `TypeContext` + `cast_info_table_`) survives into `AstToIr` conversion. `converter.setSemanticData(&sema)` wires up the connection.
+
+2. **SemanticSlot side table** — added `semantic_slots_: unordered_map<const void*, SemanticSlot>` to `SemanticAnalysis` (keyed by raw `ExpressionNode*` pointer from stable `gChunkedAnyStorage`). Added `getSlot(const void*)`, `setSlot(...)`, `allocateCastInfo(...)` helpers. Adding `SemanticSlot` to every ExpressionNode variant type would have been too invasive; the side-table approach is used instead (see plan §2).
+
+3. **AstToIr reads annotations** — added `sema_: const SemanticAnalysis*` member and `setSemanticData()` to `AstToIr`. The return-statement handler in `IrGenerator_Visitors_Namespace.cpp` now checks `sema_->getSlot(key)` before the local `generateTypeConversion` fallback. Dual-path: when the slot has cast info, use it; otherwise fall through to the unchanged codegen policy.
+
+**New infrastructure in SemanticAnalysis:**
+
+- `inferExpressionType(node)` — infers `CanonicalTypeId` for `NumericLiteralNode`, `BoolLiteralNode`, and `IdentifierNode` (via a scope stack of `string_view → CanonicalTypeId` maps). Returns invalid when inference is not possible.
+- `tryAnnotateReturnConversion(expr_node, ctx)` — if `inferExpressionType` succeeds and `can_convert_type` confirms a standard (non-user-defined) conversion is needed, allocates an `ImplicitCastInfo` and fills the expression's slot.
+- Scope stack — `normalizeBlock` now calls `pushScope()`/`popScope()`, and `normalizeStatement` for `VariableDeclarationNode` registers the local's type. `normalizeFunctionDeclaration` registers function parameters.
+- `determineConversionKind(from, to)` — maps a `(Type, Type)` pair to the right `StandardConversionKind` (IntegralPromotion, IntegralConversion, FloatingPromotion, FloatingConversion, FloatingIntegralConversion, BooleanConversion).
+- Stats: `slots_filled` and `cast_infos_allocated` are now tracked and reported under `--perf-stats`.
+
+**New tests:**
+
+- `tests/test_ret_implicit_cast_int_to_long_ret0.cpp` — int→long return from literal, local variable, and function parameter
+- `tests/test_ret_implicit_cast_float_to_int_ret0.cpp` — float→int and double→int return from local variable (literal float returns trigger a pre-existing handleFloatToInt limitation)
+- `tests/test_ret_implicit_cast_unsigned_ret0.cpp` — int→unsigned, int→long long, int→unsigned long return conversions
+
+Test results: 1474 pass / 0 fail / 35 expected-fail
+
+**Remaining Phase 2 work:**
+
+- function-call arguments (`IrGenerator_Call_Direct.cpp`)
+- binary arithmetic operands (`IrGenerator_Expr_Operators.cpp`)
+- fully delete fallback codegen policies once semantic pass coverage is complete
 
 ### Phase 3: initializer and reference-binding coverage
 

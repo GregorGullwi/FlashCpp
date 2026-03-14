@@ -2,6 +2,9 @@
 #include "IrGenerator.h"
 #include "InlineVector.h"
 
+// Forward-declare to avoid pulling SemanticAnalysis.h into every TU that includes AstToIr.h
+class SemanticAnalysis;
+
 class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
@@ -28,6 +31,10 @@ public:
 	void generateStaticMemberDeclarations();
 
 	void generateTrivialDefaultConstructors();
+
+	// Wire in semantic-analysis results so that IR lowering can consume
+	// pre-computed implicit-cast annotations instead of recomputing them.
+	void setSemanticData(const SemanticAnalysis* sema) { sema_ = sema; }
 
 private:
 	struct MultiDimArrayAccess {
@@ -617,6 +624,7 @@ private:
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
+	const SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;

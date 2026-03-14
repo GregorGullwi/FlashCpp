@@ -1,6 +1,10 @@
 #pragma once
 #include "SemanticTypes.h"
 #include "AstNodeTypes_Core.h"
+#include <optional>
+#include <unordered_map>
+#include <string_view>
+#include <vector>
 
 class Parser;
 class CompileContext;
@@ -11,9 +15,8 @@ class BlockNode;
 class NamespaceDeclarationNode;
 
 // --- Semantic analysis pass ---
-// Post-parse semantic normalization. Phase 1 is a no-op traversal that
-// establishes the pipeline seam, collects stats, and validates that the
-// pass can walk the full AST without errors.
+// Post-parse semantic normalization. Phase 1 established the pipeline seam.
+// Phase 2 migrates standard return-value conversions into the semantic pass.
 
 class SemanticAnalysis {
 public:
@@ -31,6 +34,10 @@ public:
 	// Access cast info side table.
 	const std::vector<ImplicitCastInfo>& castInfoTable() const { return cast_info_table_; }
 
+	// Look up the semantic slot for an expression node.
+	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
+	std::optional<SemanticSlot> getSlot(const void* key) const;
+
 private:
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
@@ -44,11 +51,32 @@ private:
 	void normalizeStatement(const ASTNode& node, const SemanticContext& ctx);
 	void normalizeBlock(const BlockNode& block, const SemanticContext& ctx);
 
-	// Expression handler (Phase 1: just counts, no actual normalization)
+	// Expression handler (counts and infers types for annotatable expressions)
 	SemanticExprInfo normalizeExpression(const ASTNode& node, const SemanticContext& ctx);
 
 	// Helpers
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
+
+	// Infer the canonical type of a simple expression without full evaluation.
+	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
+	// Returns invalid CanonicalTypeId if inference is not possible.
+	CanonicalTypeId inferExpressionType(const ASTNode& node);
+
+	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
+	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);
+
+	// Store a semantic slot for the given expression node pointer.
+	void setSlot(const void* key, const SemanticSlot& slot);
+
+	// Try to annotate a return expression with implicit cast info when the
+	// expression type differs from the declared function return type.
+	void tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx);
+
+	// Scope stack for local variable type tracking (used by inferExpressionType).
+	void pushScope();
+	void popScope();
+	void addLocalType(std::string_view name, CanonicalTypeId type_id);
+	CanonicalTypeId lookupLocalType(std::string_view name) const;
 
 	// State
 	Parser& parser_;
@@ -57,4 +85,10 @@ private:
 	TypeContext type_context_;
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
+
+	// Side table: expression node pointer → semantic slot.
+	std::unordered_map<const void*, SemanticSlot> semantic_slots_;
+
+	// Scope stack: each entry maps local variable name → canonical type id.
+	std::vector<std::unordered_map<std::string_view, CanonicalTypeId>> scope_stack_;
 };
