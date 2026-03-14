@@ -213,7 +213,7 @@
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-  </ItemGroup>
+  <ClCompile Include="src\UnitySupport.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityParser.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityParserTemplates.cpp"><Filter>Source Files</Filter></ClCompile><ClCompile Include="src\UnityBackend.cpp"><Filter>Source Files</Filter></ClCompile></ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\AstNodeTypes.h">
       <Filter>Header Files</Filter>

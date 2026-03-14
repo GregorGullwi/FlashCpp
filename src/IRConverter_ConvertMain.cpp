@@ -15994,7 +15994,7 @@ bool IrToObjConverter<TWriterClass>::CatchHandler::is_reference() const  { retur
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::CatchHandler::is_rvalue_reference() const  { return ref_qualifier == CVReferenceQualifier::RValueReference; }
 
-#ifndef UNITY_BUILD
+#if !defined(UNITY_BUILD) || defined(UNITY_SHARD_BACKEND)
 template void IrToObjConverter<ObjectFileWriter>::convert(const Ir&, const std::string_view, const std::string_view, bool);
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
 template void IrToObjConverter<ElfFileWriter>::convert(const Ir&, const std::string_view, const std::string_view, bool);
