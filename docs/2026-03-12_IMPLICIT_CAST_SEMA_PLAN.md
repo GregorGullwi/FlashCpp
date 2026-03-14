@@ -92,12 +92,50 @@ home for other semantic normalizations that codegen should not own:
   fallbacks or synthetic declarations
 - diagnostics for narrowing or disallowed implicit conversions
 - a single place to classify value category (`lvalue` / `xvalue` / `prvalue`) after wrapping
+- function signature equivalence (`TypeSpecifierNode::matches_signature`) — currently
+  a heuristic on a syntax-level AST node that reaches into `gTypeInfo` via
+  `resolve_type_alias` to approximate semantic type identity; should be replaced
+  by a proper semantic type comparison once canonical types are available (see
+  note below)
 
 Longer-term, the same framework could also host:
 
 - constant-expression marking / early constexpr folding hooks
 - unreachable semantic diagnostics after overload resolution
 - standard conversion ranking data reused by overload resolution explanations
+
+### `matches_signature` — semantic decision on a syntax node
+
+`TypeSpecifierNode::matches_signature` (in `src/AstNodeTypes_DeclNodes.h`) is
+called from `SymbolTable::insert()` during parsing to decide whether a new
+function declaration is a redeclaration of an existing overload or a distinct
+overload. This is a semantic decision (function signature equivalence per
+C++20 [over.load]), but it lives on a syntax-level AST node that only has
+access to raw parser metadata (`type_`, `size_`, `pointer_levels_`).
+
+**History:** the old implementation used a size-and-indirection heuristic
+(`same_size && same_indirection`) that allowed `Type::Enum` (32-bit) to match
+`Type::Int` (32-bit), incorrectly merging `f(Color)` and `f(int)` as the same
+signature. PR #907 replaced this with `resolve_type_alias` comparison, which
+preserves enum identity but drops the old `size_ != 0` safety guard for
+incomplete types.
+
+**Why this belongs in the semantic pass:**
+
+- Signature equivalence depends on canonical type identity, not raw parser
+  metadata. A semantic pass that canonicalizes types (resolving typedefs,
+  preserving enum/struct identity) would make this comparison trivial and
+  correct by construction.
+- The current `resolve_type_alias` call from a syntax node method reaches into
+  the global `gTypeInfo` table — a layering violation that would disappear if
+  the comparison operated on already-canonicalized semantic types.
+- The dropped size check is only a concern for malformed/incomplete AST nodes,
+  which would not exist after a semantic pass validates type completeness.
+
+**Migration path:** once the semantic pass canonicalizes parameter types,
+`matches_signature` can be replaced by direct comparison of canonical type
+identities, eliminating both the alias-resolution heuristic and any residual
+size-based workarounds.
 
 ## What should stay out of the parser
 
@@ -158,6 +196,8 @@ As coverage grows, delete the ad-hoc conversion calls from codegen:
 - return lowering
 - direct function-call argument lowering
 - any initializer-specific fallback conversion paths
+- `TypeSpecifierNode::matches_signature` heuristic — replace with canonical
+  type comparison once the semantic pass provides resolved type identities
 
 The end state is:
 
