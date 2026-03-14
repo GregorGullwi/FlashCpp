@@ -1031,7 +1031,9 @@
 			// - For enum types, return type_index to preserve type information
 			// - For non-struct/enum pointer types, return pointer_depth
 			// - Otherwise return 0
-			TypeIndex type_index = carriesSemanticTypeIndex(type_node.type())
+			// Guard with is_valid() so primitive typedefs (Type::UserDefined but
+			// no struct/enum info) don't propagate a stale type_index.
+			TypeIndex type_index = (carriesSemanticTypeIndex(type_node.type()) && type_node.type_index().is_valid())
 				? type_node.type_index()
 				: TypeIndex{};
 			// Enums are scalar (carry pointer_depth like integers), while structs

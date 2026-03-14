@@ -1158,7 +1158,6 @@
 		// Extract UnaryOp from typed payload
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
-		[[maybe_unused]] Type type = unary_op.value.type;
 		int size_in_bits = unary_op.value.size_in_bits.value;
 
 		// Load the operand into a register

@@ -884,6 +884,22 @@
 		// Process constructor parameters (if any) - similar to function call
 		const size_t num_params = ctor_op.arguments.size();
 
+		// Phase 4 helper: builds a TypeSpecifierNode from TypedValue metadata.
+		// Centralises the .type dependency so it can later be replaced with IrType-based logic.
+		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
+			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
+				? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
+				: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
+			if (arg.pointer_depth.is_pointer()) {
+				for (int i = 0; i < arg.pointer_depth.value; ++i) {
+					ts.add_pointer_level();
+				}
+			}
+			ts.set_reference_qualifier(arg.ref_qualifier);
+			ts.set_cv_qualifier(arg.cv_qualifier);
+			return ts;
+		};
+
 		// Look up the struct type once for use in both loops
 		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 
@@ -919,17 +935,7 @@
 					std::vector<TypeSpecifierNode> arg_types;
 					arg_types.reserve(num_params);
 					for (const auto& arg : ctor_op.arguments) {
-						TypeSpecifierNode arg_type = isIrStructType(toIrType(arg.type))
-							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
-							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
-						if (arg.pointer_depth.is_pointer()) {
-							for (int i = 0; i < arg.pointer_depth.value; ++i) {
-								arg_type.add_pointer_level();
-							}
-						}
-						arg_type.set_reference_qualifier(arg.ref_qualifier);
-						arg_type.set_cv_qualifier(arg.cv_qualifier);
-						arg_types.push_back(std::move(arg_type));
+						arg_types.push_back(buildTypeSpecFromTypedValue(arg));
 					}
 
 					auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
@@ -984,9 +990,9 @@
 						continue;
 					}
 				}
-				// Fallback: if we can't get the param type, create a default one
+				// Fallback: if we can't get the param type, build from the TypedValue
 				const TypedValue& arg = ctor_op.arguments[i];
-				parameter_types.push_back(TypeSpecifierNode(arg.type, TypeQualifier::None, static_cast<unsigned char>(arg.size_in_bits.value), Token{}));
+				parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 			}
 		} else {
 			// Fallback to old logic: infer from argument types

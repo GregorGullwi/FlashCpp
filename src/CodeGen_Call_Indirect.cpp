@@ -1347,25 +1347,15 @@
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
 								// Use 64-bit pointer size since references are passed as pointers
-								call_op.args.push_back(TypedValue{
-									.type = type_node.type(),
-									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
-									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.ref_qualifier = ReferenceQualifier::LValueReference,
-									.ir_type = toIrType(type_node.type())
-								});
+								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
-								call_op.args.push_back(TypedValue{
-									.type = type_node.type(),
-									.size_in_bits = SizeInBits{64},  // Pointer size
-									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference,
-									.ir_type = toIrType(type_node.type())
-								});
+								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							}
 						} else {
 							// Regular pass by value
@@ -1383,25 +1373,15 @@
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
 								// Use 64-bit pointer size since references are passed as pointers
-								call_op.args.push_back(TypedValue{
-									.type = type_node.type(),
-									.size_in_bits = SizeInBits{64},  // Reference is passed as pointer (64 bits on x64)
-									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.ref_qualifier = ReferenceQualifier::LValueReference,
-									.ir_type = toIrType(type_node.type())
-								});
+								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
 								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 						
 								// Pass the address with pointer size
-								call_op.args.push_back(TypedValue{
-									.type = type_node.type(),
-									.size_in_bits = SizeInBits{64},  // Pointer size
-									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference,
-									.ir_type = toIrType(type_node.type())
-								});
+								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							}
 						} else {
 							// Regular pass by value
@@ -1457,13 +1437,8 @@
 							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 							
 							// Pass the address
-							call_op.args.push_back(TypedValue{
-								.type = literal_type,
-								.size_in_bits = SizeInBits{64},  // Pointer size
-								.value = IrValue(addr_var),
-								.ref_qualifier = ReferenceQualifier::LValueReference,
-								.ir_type = toIrType(literal_type)
-							});
+							call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
+								IrValue(addr_var), ReferenceQualifier::LValueReference));
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -1473,13 +1448,8 @@
 								
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 								
-								call_op.args.push_back(TypedValue{
-									.type = expr_type,
-									.size_in_bits = SizeInBits{64},  // Pointer size
-									.value = IrValue(addr_var),
-									.ref_qualifier = ReferenceQualifier::LValueReference,
-									.ir_type = toIrType(expr_type)
-								});
+								call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
+									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							} else {
 								// Fallback - just pass through
 								call_op.args.push_back(toTypedValue(argument_result));

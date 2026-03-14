@@ -269,6 +269,7 @@ struct TempVarMetadata {
 	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
 	Type value_type = Type::Invalid;
+	IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field for TempVar metadata
 	SizeInBits value_size_bits;
 	bool is_rvalue_reference = false;
 	
@@ -281,6 +282,7 @@ struct TempVarMetadata {
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
 		meta.value_type = type;
+		meta.ir_type = toIrType(type);
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
@@ -292,6 +294,7 @@ struct TempVarMetadata {
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
 		meta.value_type = type;
+		meta.ir_type = toIrType(type);
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
@@ -327,6 +330,7 @@ struct TempVarMetadata {
 		meta.is_address = true;  // References hold addresses
 		meta.holds_address_only = false;
 		meta.value_type = type;
+		meta.ir_type = toIrType(type);
 		meta.value_size_bits = size_bits;
 		meta.is_rvalue_reference = (category == ValueCategory::XValue);
 		return meta;
@@ -341,6 +345,7 @@ struct TempVarMetadata {
 		meta.is_address = true;  // It's an address/pointer
 		meta.holds_address_only = true;  // But not a true reference
 		meta.value_type = type;
+		meta.ir_type = toIrType(type);
 		meta.value_size_bits = size_bits;
 		meta.is_rvalue_reference = (category == ValueCategory::XValue);
 		return meta;

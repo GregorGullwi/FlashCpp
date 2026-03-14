@@ -1706,7 +1706,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<StringHandle>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = { operandIrResult.type, operandIrResult.size_in_bits, lhs_value };
+			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -1720,7 +1720,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<TempVar>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = { operandIrResult.type, operandIrResult.size_in_bits, lhs_value };
+			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
