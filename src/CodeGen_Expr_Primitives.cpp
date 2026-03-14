@@ -281,7 +281,7 @@
 			if (type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
 				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index().value].type_, type_node.type_index());
 			}
-			const bool carries_type_index = semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
+			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,
@@ -297,7 +297,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
-			return (type == Type::Struct || type == Type::Enum || type == Type::UserDefined) ? type_index : TypeIndex{};
+			return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -1025,10 +1025,10 @@
 			// - For enum types, return type_index to preserve type information
 			// - For non-struct/enum pointer types, return pointer_depth
 			// - Otherwise return 0
-			TypeIndex type_index = (type_node.type() == Type::Struct || type_node.type() == Type::Enum)
+			TypeIndex type_index = carriesSemanticTypeIndex(type_node.type())
 				? type_node.type_index()
 				: TypeIndex{};
-			PointerDepth pointer_depth{(type_node.type() == Type::Struct || type_node.type() == Type::UserDefined)
+			PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
@@ -1197,10 +1197,10 @@
 					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					(result_type == Type::Struct || result_type == Type::Enum || result_type == Type::UserDefined)
+					carriesSemanticTypeIndex(result_type)
 						? result_type_index
 						: TypeIndex{},
-					PointerDepth{(result_type == Type::Struct || result_type == Type::UserDefined)
+					PointerDepth{isIrStructType(toIrType(result_type))
 						? 0
 						: static_cast<int>(type_node.pointer_depth())});
 			}

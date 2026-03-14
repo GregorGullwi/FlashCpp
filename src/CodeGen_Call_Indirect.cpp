@@ -355,7 +355,7 @@
 			const DeclarationNode& decl = func_call.function_declaration();
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+				if (isIrStructType(toIrType(ret_type.type()))) {
 					object_type = ret_type;
 					// object_name remains empty; expression will be evaluated when needed
 				}
@@ -366,7 +366,7 @@
 			const DeclarationNode& decl = mem_call.function_declaration().decl_node();
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-				if (ret_type.type() == Type::Struct || ret_type.type() == Type::UserDefined) {
+				if (isIrStructType(toIrType(ret_type.type()))) {
 					object_type = ret_type;
 					// object_name remains empty; expression will be evaluated when needed
 				}
@@ -388,7 +388,7 @@
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && (resolved_member->type == Type::Struct || resolved_member->type == Type::UserDefined)) {
+				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index.value < gTypeInfo.size()) {
 						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index.value];
@@ -481,7 +481,7 @@
 							}
 							
 							// Now base_type_spec should be the struct type
-							if (base_type_spec.type() == Type::Struct || base_type_spec.type() == Type::UserDefined) {
+							if (isIrStructType(toIrType(base_type_spec.type()))) {
 								object_type = base_type_spec;
 								object_name = base_name;  // Use the base name for the call
 							}
@@ -505,7 +505,7 @@
 		// Verify this is a struct type BEFORE checking other cases
 		// If object_type is not a struct, this might be a misparsed namespace-qualified function call
 		// Note: Template instantiations may be registered as Type::UserDefined but carry full struct info
-		if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
+		if (!isIrStructType(toIrType(object_type.type()))) {
 			// The object is not a struct - this might be a namespace identifier or other non-struct type
 			// Treat this as a regular function call instead of a member function call
 			return convertMemberCallToFunctionCall(memberFunctionCallNode);
@@ -1537,7 +1537,7 @@
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
 		
-		TypeIndex ret_type_index = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+		TypeIndex ret_type_index = isIrStructType(toIrType(return_type.type()))
 			? return_type.type_index()
 			: TypeIndex{};
 		return makeExprResult(

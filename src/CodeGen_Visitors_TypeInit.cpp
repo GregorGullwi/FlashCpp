@@ -1363,7 +1363,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
-		bool is_nested_struct = (sub_member.type == Type::Struct || sub_member.type == Type::UserDefined)
+		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
 			&& sub_member.type_index.value < gTypeInfo.size()
 			&& gTypeInfo[sub_member.type_index.value].struct_info_
 			&& (sub_member.size * 8) > 64;
@@ -1490,7 +1490,7 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
-	const bool is_struct_element = (member.type == Type::Struct || member.type == Type::UserDefined)
+	const bool is_struct_element = isIrStructType(toIrType(member.type))
 		&& member.type_index.value < gTypeInfo.size()
 		&& gTypeInfo[member.type_index.value].struct_info_
 		&& element_size_bits > 64;

@@ -1691,7 +1691,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if ((typed_value.type == Type::Struct || typed_value.type == Type::Enum) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {

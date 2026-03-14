@@ -1126,7 +1126,7 @@
 		// Try to find by direct index lookup
 		if (base_type_index.value < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[base_type_index.value];
-			if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+			if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		}
@@ -1135,7 +1135,7 @@
 		// This handles cases where type_index might not be set correctly
 		if (!type_info) {
 			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == base_type_index && (ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 					type_info = &ti;
 					break;
 				}
@@ -1149,13 +1149,13 @@
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (const auto& ti : gTypeInfo) {
-				if ((ti.type_ == Type::Struct || ti.type_ == Type::UserDefined) && ti.getStructInfo()) {
+				if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.value << ")\n";
 				}
 			}
 			std::cerr << "  Available types in gTypesByName:\n";
 			for (const auto& [name, ti] : gTypesByName) {
-				if (ti->type_ == Type::Struct || ti->type_ == Type::UserDefined) {
+				if (isIrStructType(toIrType(ti->type_))) {
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_.value << ")\n";
 				}
 			}
@@ -1978,7 +1978,7 @@
 		if (struct_info->hasUserDefinedDestructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+			if (isIrStructType(toIrType(member.type))) {
 				if (member.type_index.value >= gTypeInfo.size()) return false;
 				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTriviallyCopyableStruct(member_info)) return false;
@@ -2003,7 +2003,7 @@
 		if (struct_info->hasUserDefinedConstructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (member.type == Type::Struct || member.type == Type::UserDefined) {
+			if (isIrStructType(toIrType(member.type))) {
 				if (member.type_index.value >= gTypeInfo.size()) return false;
 				const StructTypeInfo* member_info = gTypeInfo[member.type_index.value].getStructInfo();
 				if (!isTrivialStruct(member_info)) return false;
@@ -2405,7 +2405,7 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				else if (isIrStructType(toIrType(type)) &&
 				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
@@ -2419,7 +2419,7 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if ((type == Type::Struct || type == Type::UserDefined) &&
+				else if (isIrStructType(toIrType(type)) &&
 				type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
@@ -3249,7 +3249,7 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 		const DeclarationNode& this_decl = this_symbol->as<DeclarationNode>();
 		const TypeSpecifierNode& this_type = this_decl.type_node().as<TypeSpecifierNode>();
 
-		if ((this_type.type() == Type::Struct || this_type.type() == Type::UserDefined) && this_type.type_index().value < gTypeInfo.size()) {
+		if (isIrStructType(toIrType(this_type.type())) && this_type.type_index().value < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[this_type.type_index().value];
 			return type_info.getStructInfo();
 		}

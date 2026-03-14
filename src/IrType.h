@@ -137,6 +137,24 @@ inline bool isIrPointerLikeType(IrType t) {
 }
 
 // ============================================================================
+// Semantic-layer classification helpers
+//
+// These operate on the semantic Type enum and are used by codegen paths that
+// need to decide whether a value carries a meaningful type_index (for struct
+// layout, enum identity, or typedef resolution).  Unlike the IrType helpers
+// above, they do NOT erase semantic identity — they just centralise the
+// recurring "Struct || Enum || UserDefined" pattern into a single name.
+// ============================================================================
+
+/// True for types that carry a meaningful type_index in IR metadata: Struct,
+/// Enum, and UserDefined.  Use this when deciding whether to propagate
+/// type_index through ExprResult / TypedValue rather than hard-coding the
+/// three-way disjunction at each call site.
+inline bool carriesSemanticTypeIndex(Type t) {
+	return t == Type::Struct || t == Type::Enum || t == Type::UserDefined;
+}
+
+// ============================================================================
 // Formatting support for IrType (for FLASH_LOG_FORMAT and std::format)
 // ============================================================================
 inline std::string_view irTypeName(IrType t) {

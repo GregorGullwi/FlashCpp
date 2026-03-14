@@ -212,12 +212,20 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
-	if (type == Type::Struct) {
-		assert(type_index.value < gTypeInfo.size() && "Invalid type_index for struct");
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
-		assert(struct_info && "Struct type info not found");
-		return struct_info->total_size;
+	// Use IrType to catch both Type::Struct and Type::UserDefined (which maps
+	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
+	// path and get total_size instead of falling through to the scalar path.
+	if (isIrStructType(toIrType(type))) {
+		if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_index.value];
+			if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+				return struct_info->total_size;
+			}
+		}
+		// Type::Struct must always have a valid StructInfo; reaching here for
+		// a genuine Struct is a compiler bug.  Type::UserDefined may be a
+		// typedef to a primitive, so fall through to the generic path.
+		assert(type != Type::Struct && "Struct type must have StructInfo in gTypeInfo");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
 	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);

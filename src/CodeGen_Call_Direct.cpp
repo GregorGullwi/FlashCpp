@@ -1308,8 +1308,9 @@
 		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
-		// Return type_index for struct types so structured bindings can decompose the result
-		TypeIndex type_index_result = (return_type.type() == Type::Struct || return_type.type() == Type::UserDefined)
+		// Return type_index for struct types so structured bindings can decompose the result.
+		// Use IrType to catch both Type::Struct and Type::UserDefined.
+		TypeIndex type_index_result = isIrStructType(toIrType(return_type.type()))
 			? return_type.type_index()
 			: TypeIndex{};
 		return makeExprResult(

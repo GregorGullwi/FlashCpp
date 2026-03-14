@@ -244,7 +244,7 @@
 								size_t abs_offset = base_offset + member.offset;
 								const ASTNode& elem_init = ilist.initializers()[i];
 								if (elem_init.is<InitializerListNode>() &&
-									(member.type == Type::Struct || member.type == Type::UserDefined) &&
+									isIrStructType(toIrType(member.type)) &&
 									member.type_index.value < gTypeInfo.size()) {
 									// Nested struct: recurse
 									const StructTypeInfo* nested = gTypeInfo[member.type_index.value].getStructInfo();
@@ -1896,7 +1896,7 @@
 													if (param_type.type() == init_type) {
 														param_matches = true;
 														// For class types, require exact type match, not just Type::Struct kind.
-														if ((init_type == Type::Struct || init_type == Type::UserDefined) &&
+														if (isIrStructType(toIrType(init_type)) &&
 															(!init_type_index.is_valid() || !param_type.type_index().is_valid() ||
 															param_type.type_index() != init_type_index)) {
 															param_matches = false;

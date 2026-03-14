@@ -919,7 +919,7 @@
 					std::vector<TypeSpecifierNode> arg_types;
 					arg_types.reserve(num_params);
 					for (const auto& arg : ctor_op.arguments) {
-						TypeSpecifierNode arg_type = (arg.type == Type::Struct || arg.type == Type::UserDefined)
+						TypeSpecifierNode arg_type = isIrStructType(toIrType(arg.type))
 							? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
 							: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
 						if (arg.pointer_depth.is_pointer()) {
@@ -949,7 +949,7 @@
 									if (param_type.is<TypeSpecifierNode>()) {
 										const auto& pts = param_type.as<TypeSpecifierNode>();
 										if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-											(pts.type() == Type::Struct || pts.type() == Type::UserDefined)) {
+											isIrStructType(toIrType(pts.type()))) {
 											const TypedValue& arg = ctor_op.arguments[0];
 											if (arg.type != Type::Struct || arg.type_index != struct_type_it->second->type_index_) {
 												continue;

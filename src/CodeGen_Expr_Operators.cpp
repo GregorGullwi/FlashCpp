@@ -860,7 +860,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsExprResult.type_index.is_valid()) {
 			// Get the type index of the struct
 			TypeIndex lhs_type_index = lhsExprResult.type_index;
-			TypeIndex rhs_type_index = (rhsType == Type::Enum || rhsType == Type::UserDefined)
+			TypeIndex rhs_type_index = carriesSemanticTypeIndex(rhsType)
 				? rhsExprResult.type_index
 				: TypeIndex{};
 
@@ -3552,7 +3552,9 @@ const Token& token) {
 	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
-		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+		// Use IrType to catch both Type::Struct and Type::UserDefined, so
+		// typedef-to-struct aliases also use the struct-layout path.
+		if (isIrStructType(toIrType(lvalue_type))) {
 			if (lhs_operands.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index.value];
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
@@ -3720,7 +3722,9 @@ std::string_view op) {
 	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
-		if (lvalue_type == Type::Struct || lvalue_type == Type::UserDefined) {
+		// Use IrType to catch both Type::Struct and Type::UserDefined, so
+		// typedef-to-struct aliases also use the struct-layout path.
+		if (isIrStructType(toIrType(lvalue_type))) {
 			if (lhs_operands.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[lhs_operands.type_index.value];
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
