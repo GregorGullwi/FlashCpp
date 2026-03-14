@@ -33,7 +33,7 @@ public:
 
 private:
 	// Top-level dispatch
-	void normalizeTopLevelNode(ASTNode node);
+	void normalizeTopLevelNode(const ASTNode& node);
 
 	// Declaration handlers
 	void normalizeFunctionDeclaration(const FunctionDeclarationNode& func);
@@ -41,11 +41,11 @@ private:
 	void normalizeNamespace(const NamespaceDeclarationNode& ns);
 
 	// Statement handler
-	void normalizeStatement(ASTNode node, const SemanticContext& ctx);
+	void normalizeStatement(const ASTNode& node, const SemanticContext& ctx);
 	void normalizeBlock(const BlockNode& block, const SemanticContext& ctx);
 
 	// Expression handler (Phase 1: just counts, no actual normalization)
-	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
+	SemanticExprInfo normalizeExpression(const ASTNode& node, const SemanticContext& ctx);
 
 	// Helpers
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);

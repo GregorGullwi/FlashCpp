@@ -81,7 +81,7 @@ void SemanticAnalysis::run() {
 
 // --- Top-level dispatch ---
 
-void SemanticAnalysis::normalizeTopLevelNode(ASTNode node) {
+void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 	if (!node.has_value()) return;
 	stats_.roots_visited++;
 
@@ -172,7 +172,7 @@ void SemanticAnalysis::normalizeNamespace(const NamespaceDeclarationNode& ns) {
 
 // --- Statement handler ---
 
-void SemanticAnalysis::normalizeStatement(ASTNode node, const SemanticContext& ctx) {
+void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticContext& ctx) {
 	if (!node.has_value()) return;
 	stats_.statements_visited++;
 
@@ -261,7 +261,7 @@ void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticCont
 
 // --- Expression handler (Phase 1: counting only) ---
 
-SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const SemanticContext& ctx) {
+SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, const SemanticContext& ctx) {
 	if (!node.has_value()) return {};
 	stats_.expressions_visited++;
 
