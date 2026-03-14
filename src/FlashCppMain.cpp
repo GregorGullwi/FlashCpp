@@ -8,9 +8,7 @@ struct PhaseTimer {
     double* accumulator = nullptr;  // Optional accumulator for phase timing
 
     PhaseTimer(const char* name, bool print_enable, double* accum = nullptr)
-        : phase_name(name), print_enabled(print_enable), accumulator(accum) {
-        // Always start timing
-        start = std::chrono::high_resolution_clock::now();
+        : start(std::chrono::high_resolution_clock::now()), phase_name(name), print_enabled(print_enable), accumulator(accum) {
     }
 
     ~PhaseTimer() {
