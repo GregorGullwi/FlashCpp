@@ -24,8 +24,10 @@
 				
 				// Get type name for type descriptor generation
 				if (!handler.is_catch_all) {
-					// For built-in types, use the Type enum; for user-defined types, use gTypeInfo
-					if (handler.exception_type != Type::Void && handler.exception_type != Type::UserDefined && handler.exception_type != Type::Struct) {
+					// Use IrType to detect struct-like types (both Type::Struct and Type::UserDefined
+					// map to IrType::Struct) and distinguish them from primitive built-in types.
+					IrType exc_ir_type = toIrType(handler.exception_type);
+					if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
 						// Built-in type - get name from Type enum
 						handler_info.type_name = getTypeName(handler.exception_type);
 					} else if (handler.type_index.value < gTypeInfo.size()) {

@@ -184,13 +184,13 @@
 				if (strides[0] == 1) {
 					BinaryOp add_op;
 					add_op.lhs = toTypedValue(idx0_operands);
-					add_op.rhs = TypedValue{Type::Int, SizeInBits{32}, 0ULL};
+					add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
 					add_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 				} else {
 					BinaryOp mul_op;
 					mul_op.lhs = toTypedValue(idx0_operands);
-					mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0])};
+					mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 					mul_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 				}
@@ -202,7 +202,7 @@
 					if (strides[k] == 1) {
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 						add_op.rhs = toTypedValue(idx_operands);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -211,14 +211,14 @@
 						TempVar temp_prod = var_counter.next();
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx_operands);
-						mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k])};
+						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 						mul_op.result = IrValue{temp_prod};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
-						add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, temp_prod};
+						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+						add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 						flat_index = new_flat;
@@ -315,14 +315,14 @@
 						// Use Add with 0 to effectively copy
 						BinaryOp add_op;
 						add_op.lhs = toTypedValue(idx0_operands);
-						add_op.rhs = TypedValue{Type::Int, SizeInBits{32}, 0ULL};
+						add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
 						add_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 					} else {
 						// flat_index = indices[0] * strides[0]
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx0_operands);
-						mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0])};
+						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 						mul_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 					}
@@ -335,7 +335,7 @@
 							// flat_index += indices[k]
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
+							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
 							add_op.rhs = toTypedValue(idx_operands);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -345,15 +345,15 @@
 							TempVar temp_prod = var_counter.next();
 							BinaryOp mul_op;
 							mul_op.lhs = toTypedValue(idx_operands);
-							mul_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k])};
+							mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 							mul_op.result = IrValue{temp_prod};
 							ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 							// flat_index += temp
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, flat_index};
-							add_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, temp_prod};
+							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+							add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 							flat_index = new_flat;
@@ -963,11 +963,7 @@
 						call_op.is_member_function = true;
 
 						// Add 'this' pointer as first argument
-						call_op.args.push_back(TypedValue{
-							.type = type_node->type(),
-							.size_in_bits = SizeInBits{64},  // Pointer size
-							.value = IrValue(identifier_handle)
-						});
+						call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
 
 						// Add the function call instruction
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));

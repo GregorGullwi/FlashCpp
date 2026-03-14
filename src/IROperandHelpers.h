@@ -82,6 +82,40 @@ inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand v
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
 }
 
+// ============================================================================
+// TypedValue factory helpers
+//
+// These replace direct aggregate initializations like TypedValue{type, size, value}
+// to ensure ir_type is always populated from the semantic type at construction time.
+// This is Phase 4 preparation: once all construction sites use makeTypedValue and
+// all read sites use effectiveIrType(), the semantic `type` field can be removed.
+// ============================================================================
+
+/// Basic TypedValue factory — sets ir_type from semantic type automatically.
+inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value) {
+	TypedValue tv;
+	tv.type = type;
+	tv.ir_type = toIrType(type);
+	tv.size_in_bits = size_in_bits;
+	tv.value = std::move(value);
+	return tv;
+}
+
+/// TypedValue factory with type_index — for Struct/Enum/UserDefined types that
+/// carry a type_index for layout and identity information.
+inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
+	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
+	tv.type_index = type_index;
+	return tv;
+}
+
+/// TypedValue factory with type_index and pointer_depth.
+inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
+	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value), type_index);
+	tv.pointer_depth = pointer_depth;
+	return tv;
+}
+
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");

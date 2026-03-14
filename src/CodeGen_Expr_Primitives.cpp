@@ -162,8 +162,8 @@
 				StringHandle obj_ptr_name = std::get<StringHandle>(object_result.value);
 				AssignmentOp assign_op;
 				assign_op.result = object_addr;
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
-				assign_op.rhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name};
+				assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
+				assign_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, obj_ptr_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
 				object_addr = std::get<TempVar>(object_result.value);
@@ -180,7 +180,8 @@
 					.type = object_result.type,
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
-					.pointer_depth = PointerDepth{}
+					.pointer_depth = PointerDepth{},
+					.ir_type = toIrType(object_result.type)
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 			} else if (std::holds_alternative<TempVar>(object_result.value)) {
@@ -193,7 +194,7 @@
 		
 		TempVar member_addr = var_counter.next();
 		BinaryOp add_op;
-		add_op.lhs = TypedValue{Type::UnsignedLongLong, SizeInBits{64}, object_addr};
+		add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, object_addr);
 		add_op.rhs = toTypedValue(ptr_result);
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
@@ -945,8 +946,8 @@
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					AssignmentOp assign_op;
 					assign_op.result = lvalue_temp;
-					assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, lvalue_temp};  // 64-bit pointer dest
-					assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
+					assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, lvalue_temp);  // 64-bit pointer dest
+					assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
 					assign_op.is_pointer_store = false;
 					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
@@ -1128,8 +1129,8 @@
 						// Use AssignmentOp to copy the pointer value to a temp
 						AssignmentOp assign_op;
 						assign_op.result = addr_temp;
-						assign_op.lhs = TypedValue{pointee_type, SizeInBits{64}, addr_temp};  // 64-bit pointer dest
-						assign_op.rhs = TypedValue{pointee_type, SizeInBits{64}, var_handle};  // 64-bit pointer source
+						assign_op.lhs = makeTypedValue(pointee_type, SizeInBits{64}, addr_temp);  // 64-bit pointer dest
+						assign_op.rhs = makeTypedValue(pointee_type, SizeInBits{64}, var_handle);  // 64-bit pointer source
 						assign_op.is_pointer_store = false;
 						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
