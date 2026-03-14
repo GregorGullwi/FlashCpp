@@ -1028,6 +1028,8 @@
 			TypeIndex type_index = carriesSemanticTypeIndex(type_node.type())
 				? type_node.type_index()
 				: TypeIndex{};
+			// Enums are scalar (carry pointer_depth like integers), while structs
+			// use type_index for layout and zero pointer_depth here.
 			PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};

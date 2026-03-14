@@ -6,8 +6,6 @@ enum Color : int { Red = 1, Green = 2, Blue = 4 };
 enum class Status : int { Pending = 0, Running = 1, Done = 2 };
 
 int main() {
-int result = 0;
-
 // Test += with enum
 int x = Red;
 x += Green;
@@ -29,5 +27,5 @@ int s = static_cast<int>(Status::Running);
 s += static_cast<int>(Status::Done);
 if (s != 3) return 4;  // 1 + 2 = 3
 
-return result;
+return 0;
 }

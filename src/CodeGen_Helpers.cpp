@@ -225,7 +225,7 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 		// Type::Struct must always have a valid StructInfo; reaching here for
 		// a genuine Struct is a compiler bug.  Type::UserDefined may be a
 		// typedef to a primitive, so fall through to the generic path.
-		assert(type != Type::Struct && "Struct type must have StructInfo in gTypeInfo");
+		assert(type != Type::Struct && "Type::Struct without valid StructInfo is a compiler bug");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
 	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
