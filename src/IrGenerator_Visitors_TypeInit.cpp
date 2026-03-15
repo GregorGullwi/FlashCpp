@@ -194,8 +194,14 @@
 				// Process from the end (newly added lambdas) backwards
 				size_t current_size = collected_lambdas_.size();
 				for (size_t i = current_size; i > processed_count; --i) {
+					// Normalize in-place via index. normalizeGenericLambdaParams
+					// currently cannot grow collected_lambdas_, but using the index
+					// keeps this robust if that ever changes.
+					normalizeGenericLambdaParams(collected_lambdas_[i - 1]);
+
+					// Re-access via index after normalization to avoid any stale-
+					// reference risk (the vector could theoretically reallocate).
 					LambdaInfo& stored_lambda_info = collected_lambdas_[i - 1];
-					normalizeGenericLambdaParams(stored_lambda_info);
 
 					// Generic lambdas are only emitted once an instantiation has provided
 					// concrete deduced parameter types. Untouched generic lambdas remain in
@@ -220,8 +226,10 @@
 
 			bool generated_deferred_lambda = false;
 			for (size_t di = 0; di < collected_lambdas_.size(); ++di) {
+				// Normalize in-place via index, then re-read to avoid stale references.
+				normalizeGenericLambdaParams(collected_lambdas_[di]);
 				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
-				normalizeGenericLambdaParams(stored_lambda_info);
+
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
 					continue;
 				}
