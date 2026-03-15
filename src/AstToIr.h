@@ -774,6 +774,10 @@ private:
 	// Used by break/continue to know which __finally blocks need calling
 	std::vector<size_t> loop_seh_depth_stack_;
 
+	// Loop-scope depth tracking: records scope_stack_.size() at each loop entry
+	// Used by break/continue to know which local destructors to call before jumping
+	std::vector<size_t> loop_scope_depth_stack_;
+
 	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
 	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
 	bool seh_has_saved_exception_code_ = false; // True when a saved exception code var is available
@@ -794,6 +798,7 @@ private:
 	// Track SEH context depth when entering/leaving loops
 	void pushLoopSehDepth() {
 		loop_seh_depth_stack_.push_back(seh_context_stack_.size());
+		loop_scope_depth_stack_.push_back(scope_stack_.size());
 	}
 
 	void popLoopSehDepth();
@@ -801,6 +806,11 @@ private:
 	// Emit SehFinallyCall for __try/__finally blocks between break/continue and the enclosing loop.
 	// Only calls finally blocks that were pushed AFTER the loop began (i.e., inside the loop body).
 	bool emitSehFinallyCallsBeforeBreakContinue(const Token& token);
+
+	// Emit destructor calls for all local variables in scopes from the current innermost scope
+	// down to (but not including) target_depth, WITHOUT modifying scope_stack_.
+	// Used by break, continue, and return to ensure destructors run before non-local jumps.
+	void emitDestructorsForNonLocalExit(size_t target_depth);
 
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter

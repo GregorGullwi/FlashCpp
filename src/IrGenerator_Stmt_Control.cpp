@@ -1003,6 +1003,11 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	void AstToIr::visitBreakStatementNode(const BreakStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before breaking
 		emitSehFinallyCallsBeforeBreakContinue(node.break_token());
+		// Emit destructor calls for all local variables in scopes between the current
+		// position and the enclosing loop scope before jumping to the loop exit.
+		if (!loop_scope_depth_stack_.empty()) {
+			emitDestructorsForNonLocalExit(loop_scope_depth_stack_.back());
+		}
 		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
 	}
@@ -1010,6 +1015,11 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	void AstToIr::visitContinueStatementNode(const ContinueStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before continuing
 		emitSehFinallyCallsBeforeBreakContinue(node.continue_token());
+		// Emit destructor calls for all local variables in scopes between the current
+		// position and the enclosing loop scope before jumping to the loop increment.
+		if (!loop_scope_depth_stack_.empty()) {
+			emitDestructorsForNonLocalExit(loop_scope_depth_stack_.back());
+		}
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
 	}

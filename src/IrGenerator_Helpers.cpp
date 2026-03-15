@@ -112,6 +112,24 @@ void AstToIr::registerVariableWithDestructor(const std::string& var_name, const 
 
 
 
+void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
+	// Emit destructor calls for all variables in scopes from the current innermost scope
+	// down to (but not including) target_depth, in LIFO order (innermost scope first).
+	// Does NOT modify scope_stack_ — the normal exitScope() calls will still run later
+	// (emitting dead code after the jump), which is harmless.
+	for (size_t scope_index = scope_stack_.size(); scope_index > target_depth; --scope_index) {
+		const auto& scope_vars = scope_stack_[scope_index - 1];
+		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+			DestructorCallOp dtor_op;
+			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
+			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+		}
+	}
+}
+
+
+
 // Helper functions to emit store instructions
 // These can be used by both the unified handler and special-case code
 

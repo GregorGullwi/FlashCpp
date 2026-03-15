@@ -160,6 +160,9 @@
 				// Call any enclosing __finally funclets before returning
 				emitSehFinallyCallsBeforeReturn(node.return_token());
 
+				// Emit destructor calls for all local variables before returning
+				emitDestructorsForNonLocalExit(0);
+
 				// Now return the temporary variable
 				emitReturn(temp_var, return_type, return_size, node.return_token());
 				return;
@@ -184,6 +187,7 @@
 							const auto& ident = std::get<IdentifierNode>(operand_expr);
 							if (ident.name() == "this") {
 								emitSehFinallyCallsBeforeReturn(node.return_token());
+								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
 								current_function_return_type_, current_function_return_size_,
 								node.return_token());
@@ -212,6 +216,7 @@
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
+					emitDestructorsForNonLocalExit(0);
 					emitVoidReturn(node.return_token());
 					return;
 				}
@@ -397,6 +402,11 @@
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
 
+			// Emit destructor calls for all local variables before returning.
+			// The return value expression has already been evaluated above, so destroying
+			// locals here is correct: the return value is computed first, then locals are destroyed.
+			emitDestructorsForNonLocalExit(0);
+
 			// Extract IrValue from operands.value
 			IrValue return_value;
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
@@ -427,6 +437,8 @@
 		else {
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
+			// Emit destructor calls for all local variables before returning
+			emitDestructorsForNonLocalExit(0);
 			emitVoidReturn(node.return_token());
 		}
 	}

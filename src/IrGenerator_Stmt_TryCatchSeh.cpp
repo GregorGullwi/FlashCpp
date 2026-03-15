@@ -632,6 +632,9 @@ void AstToIr::popLoopSehDepth() {
 	if (!loop_seh_depth_stack_.empty()) {
 		loop_seh_depth_stack_.pop_back();
 	}
+	if (!loop_scope_depth_stack_.empty()) {
+		loop_scope_depth_stack_.pop_back();
+	}
 }
 
 
