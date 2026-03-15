@@ -361,38 +361,38 @@ ParseResult Parser::parse_statement_or_declaration()
 		if (!current_template_param_names_.empty()) {
 			for (const auto& param_name : current_template_param_names_) {
 				if (param_name == type_name_handle) {
-					// This is a template parameter being used as a type
-					// Need to disambiguate: _Tp(args).member() is an expression,
-					// but _Tp var(args) is a declaration.
-					// peek() returns the current token (_Tp), so look ahead with peek(1)
+					// This is a template parameter being used as a type.
+					// Disambiguate per C++20 [stmt.ambig]: when a statement is ambiguous
+					// between a declaration and an expression, it is a declaration.
+					// _Tp(x); is a declaration. But _Tp(x).m(), _Tp(x)->m(), _Tp(x)+y, etc.
+					// are unambiguously expressions.
 					if (peek(1) == "("_tok) {
 						SaveHandle tparam_check = save_token_position();
 						advance(); // consume type name (_Tp)
-						// Now current token is '('
-						advance(); // consume '('
-						int paren_depth = 1;
-						while (paren_depth > 0 && !peek().is_eof()) {
-							auto tok = advance();
-							if (tok.value() == "(") paren_depth++;
-							else if (tok.value() == ")") paren_depth--;
-						}
-						// Check what follows the )
+						// skip_balanced_parens expects peek() == '('
+						skip_balanced_parens();
+						// After skip_balanced_parens, peek() is the token after ')'
 						if (!peek().is_eof()) {
 							auto next_val = peek_info().value();
-							// If followed by . or ->, this is an expression (temporary construction)
-							if (next_val == "." || next_val == "->") {
-								restore_token_position(tparam_check);
-								return parse_expression_statement();
-							}
-							// If followed by ; this is a standalone expression statement like _Tp(args);
-							if (next_val == ";") {
+							// Any token that can only follow an expression (not a declaration)
+							// means this is unambiguously an expression.
+							if (next_val == "." || next_val == "->" || next_val == "[" || next_val == "(" ||
+							    next_val == "?" || next_val == "++" || next_val == "--" ||
+							    next_val == "+" || next_val == "-" || next_val == "*" || next_val == "/" || next_val == "%" ||
+							    next_val == "&" || next_val == "|" || next_val == "^" ||
+							    next_val == "<<" || next_val == ">>" || next_val == "&&" || next_val == "||" ||
+							    next_val == "==" || next_val == "!=" ||
+							    next_val == "<" || next_val == ">" || next_val == "<=" || next_val == ">=" || next_val == "<=>" ||
+							    next_val == "+=" || next_val == "-=" || next_val == "*=" || next_val == "/=" ||
+							    next_val == "%=" || next_val == "&=" || next_val == "|=" || next_val == "^=" ||
+							    next_val == "<<=" || next_val == ">>=") {
 								restore_token_position(tparam_check);
 								return parse_expression_statement();
 							}
 						}
 						restore_token_position(tparam_check);
 					}
-					// Parse as variable declaration
+					// Parse as variable declaration (including the _Tp(x); case per [stmt.ambig])
 					return parse_variable_declaration();
 				}
 			}
