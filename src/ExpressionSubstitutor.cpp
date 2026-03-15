@@ -15,7 +15,16 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (expr.is<ExpressionNode>()) {
 		auto& substitutor = *this;
 		return std::visit([&substitutor](auto&& node) -> ASTNode {
-			return substitutor.substitute(ASTNode(&node));
+			ASTNode result = substitutor.substitute(ASTNode(&node));
+			// If the recursive call returned an unwrapped result (unhandled variant type
+			// that fell through to the else branch), re-wrap the original node in
+			// ExpressionNode to preserve invariants: downstream callers require
+			// is<ExpressionNode>() to return true on substituted expression results.
+			if (!result.is<ExpressionNode>()) {
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
+				return ASTNode(&new_expr);
+			}
+			return result;
 		}, expr.as<ExpressionNode>());
 	}
 

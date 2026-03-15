@@ -374,16 +374,22 @@ ParseResult Parser::parse_statement_or_declaration()
 						// After skip_balanced_parens, peek() is the token after ')'
 						if (!peek().is_eof()) {
 							auto next_val = peek_info().value();
-							// Any token that can only follow an expression (not a declaration)
-							// means this is unambiguously an expression.
-							if (next_val == "." || next_val == "->" || next_val == "[" || next_val == "(" ||
+							// Per C++20 [stmt.ambig] / [dcl.ambig.res]: only route to expression
+							// when the following token can ONLY appear after an expression, not a
+							// declaration. Specifically:
+							//   '.' '->'          → member access, unambiguously expression
+							//   '++' '--'         → postfix operators, unambiguously expression
+							//   binary/ternary/assignment operators → unambiguously expression
+							//   '[' is EXCLUDED: _Tp(x)[N] → declaration (array declarator)
+							//   '(' is EXCLUDED: _Tp(x)(args) → declaration (function declarator)
+							if (next_val == "." || next_val == "->" ||
 							    next_val == "?" || next_val == "++" || next_val == "--" ||
 							    next_val == "+" || next_val == "-" || next_val == "*" || next_val == "/" || next_val == "%" ||
 							    next_val == "&" || next_val == "|" || next_val == "^" ||
 							    next_val == "<<" || next_val == ">>" || next_val == "&&" || next_val == "||" ||
 							    next_val == "==" || next_val == "!=" ||
 							    next_val == "<" || next_val == ">" || next_val == "<=" || next_val == ">=" || next_val == "<=>" ||
-							    next_val == "+=" || next_val == "-=" || next_val == "*=" || next_val == "/=" ||
+							    next_val == "=" || next_val == "+=" || next_val == "-=" || next_val == "*=" || next_val == "/=" ||
 							    next_val == "%=" || next_val == "&=" || next_val == "|=" || next_val == "^=" ||
 							    next_val == "<<=" || next_val == ">>=") {
 								restore_token_position(tparam_check);
