@@ -389,7 +389,10 @@ ParseResult Parser::parse_statement_or_declaration()
 							    next_val == "<<" || next_val == ">>" || next_val == "&&" || next_val == "||" ||
 							    next_val == "==" || next_val == "!=" ||
 							    next_val == "<" || next_val == ">" || next_val == "<=" || next_val == ">=" || next_val == "<=>" ||
-							    next_val == "=" || next_val == "+=" || next_val == "-=" || next_val == "*=" || next_val == "/=" ||
+							    // '=' is EXCLUDED: _Tp(x) = expr → declaration (parenthesized declarator
+							    // with copy-init) per [dcl.ambig.res]. Compound assignments are fine
+							    // because += etc. cannot appear in a declaration.
+							    next_val == "+=" || next_val == "-=" || next_val == "*=" || next_val == "/=" ||
 							    next_val == "%=" || next_val == "&=" || next_val == "|=" || next_val == "^=" ||
 							    next_val == "<<=" || next_val == ">>=") {
 								restore_token_position(tparam_check);
