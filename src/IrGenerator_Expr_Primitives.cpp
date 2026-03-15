@@ -225,20 +225,22 @@
 		}
 	}
 
-	static int resolveCodegenSizeBits(Type type, int size_bits, std::string_view context) {
-		requireResolvedCodegenType(type, context);
-		if (size_bits != 0) {
-			return size_bits;
-		}
+	static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::string_view context) {
+		requireResolvedCodegenType(type_node.type(), context);
 
-		const int fallback_size = get_type_size_bits(type);
-		if (fallback_size != 0) {
-			return fallback_size;
+		const int resolved_size = getTypeSpecSizeBits(type_node);
+		if (resolved_size != 0) {
+			return resolved_size;
 		}
 
 		throw InternalError(std::string(StringBuilder()
 			.append("Type with no runtime size reached codegen in ")
 			.append(context)
+			.append(" (type=")
+			.append(static_cast<int64_t>(type_node.type()))
+			.append(", pointer_depth=")
+			.append(static_cast<int64_t>(type_node.pointer_depth()))
+			.append(")")
 			.commit()));
 	}
 
@@ -944,10 +946,7 @@
 				// For simple assignments and function calls, we can return the reference directly
 				if (context == ExpressionContext::LValueAddress) {
 					Type pointee_type = type_node.type();
-					int pointee_size = resolveCodegenSizeBits(
-						pointee_type,
-						static_cast<int>(type_node.size_in_bits()),
-						"reference identifier lvalue lowering");
+					int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
 
 					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 
@@ -983,10 +982,7 @@
 				// For non-array references in Load context, we need to dereference to get the value
 
 				Type pointee_type = type_node.type();
-				int pointee_size = resolveCodegenSizeBits(
-					pointee_type,
-					static_cast<int>(type_node.size_in_bits()),
-					"reference identifier load lowering");
+				int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier load lowering");
 
 				Type semantic_pointee_type = pointee_type;
 
@@ -1129,10 +1125,7 @@
 					if (context == ExpressionContext::LValueAddress) {
 						FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
 						Type pointee_type = type_node.type();
-						int pointee_size = resolveCodegenSizeBits(
-							pointee_type,
-							static_cast<int>(type_node.size_in_bits()),
-							"reference variable lvalue lowering");
+						int pointee_size = resolveCodegenSizeBits(type_node, "reference variable lvalue lowering");
 
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
@@ -1164,10 +1157,7 @@
 					// For Load context (reading the value), dereference to get the value
 
 					Type pointee_type = type_node.type();
-					int pointee_size = resolveCodegenSizeBits(
-						pointee_type,
-						static_cast<int>(type_node.size_in_bits()),
-						"reference variable load lowering");
+					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
 
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,

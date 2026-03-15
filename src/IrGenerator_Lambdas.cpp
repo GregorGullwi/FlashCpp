@@ -489,6 +489,9 @@
 	}
 
 	void AstToIr::normalizeGenericLambdaParams(LambdaInfo& lambda_info) {
+		// Lambda generation can revisit the same LambdaInfo when deferred passes
+		// copy entries out of collected_lambdas_. Keep this idempotent so we only
+		// rewrite the parameter nodes once per instantiated generic lambda.
 		if (!sema_ || !lambda_info.is_generic || !lambda_info.resolved_param_nodes.empty() ||
 			lambda_info.deduced_auto_types.empty()) {
 			return;

@@ -146,11 +146,6 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 		return parameter_nodes;
 	}
 
-	std::unordered_map<size_t, TypeSpecifierNode> deduced_by_index;
-	for (const auto& [index, type_node] : deduced_types) {
-		deduced_by_index[index] = type_node;
-	}
-
 	std::vector<ASTNode> resolved_nodes;
 	resolved_nodes.reserve(parameter_nodes.size());
 
@@ -161,15 +156,23 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 			continue;
 		}
 
-		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(param_decl);
-
-		auto it = deduced_by_index.find(index);
-		if (it != deduced_by_index.end()) {
-			ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(it->second);
-			resolved_decl.set_type_node(resolved_type_node);
+		const TypeSpecifierNode* deduced_type = nullptr;
+		for (const auto& [deduced_index, type_node] : deduced_types) {
+			if (deduced_index == index) {
+				deduced_type = &type_node;
+				break;
+			}
 		}
 
+		if (!deduced_type) {
+			resolved_nodes.push_back(param_node);
+			continue;
+		}
+
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(param_decl);
+		ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type);
+		resolved_decl.set_type_node(resolved_type_node);
 		resolved_nodes.push_back(ASTNode::emplace_node<DeclarationNode>(resolved_decl));
 	}
 
@@ -225,7 +228,6 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	}
 
 	std::optional<TypeSpecifierNode> deduced_type;
-	bool saw_return_statement = false;
 
 	std::function<bool(const ASTNode&)> visit_returns = [&](const ASTNode& node) -> bool {
 		if (!node.has_value()) {
@@ -233,7 +235,6 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		}
 
 		if (node.is<ReturnStatementNode>()) {
-			saw_return_statement = true;
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
 			TypeSpecifierNode current_type(Type::Void, TypeQualifier::None, 0, ret.return_token());
 			if (ret.expression().has_value()) {
@@ -314,11 +315,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		return std::nullopt;
 	}
 
-	if (!saw_return_statement) {
-		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0);
-	}
-
-	return deduced_type;
+	return deduced_type.value_or(TypeSpecifierNode(Type::Void, TypeQualifier::None, 0));
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
