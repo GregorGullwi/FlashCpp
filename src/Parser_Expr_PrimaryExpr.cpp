@@ -4671,11 +4671,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), identifier_token.value());
 
 					// Check if this is a struct with operator()
-					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
+					// Covers four cases that may have an operator() to find:
+					//  - Type::Struct/UserDefined: plain struct variable or user-defined type
+					//  - Type::Auto: lambda variable ("auto lambda = [...]{}") — the closure
+					//    struct's TypeIndex is stored on the auto-typed variable declaration
+					//  - Type::DeclTypeAuto: decltype(auto) variable with a similar closure type
+					// Note: generic lambda *parameters* (auto&& self) have TypeIndex{0} (invalid),
+					// so type_index.is_valid() is false for them; they are handled via the
+					// postfix-operator path and do not enter this branch in a meaningful way.
 					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined || type_node.type() == Type::Auto || type_node.type() == Type::DeclTypeAuto) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
-						if (type_index.value < gTypeInfo.size()) {
+						if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions", 
@@ -4692,11 +4699,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								FLASH_LOG_FORMAT(Parser, Debug, "has_operator_call for '{}': {}", identifier_token.value(), has_operator_call);
 							}
 						}
-					}
-					// Treat Type::Auto or Type::DeclTypeAuto as a callable type (function pointer-like)
-					// This handles generic lambda parameters: [](auto&& func) { func(); }
-					else if (type_node.type() == Type::Auto || type_node.type() == Type::DeclTypeAuto) {
-						is_function_pointer = true;
 					}
 				}
 			}

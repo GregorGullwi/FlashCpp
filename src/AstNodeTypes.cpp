@@ -231,7 +231,6 @@ bool is_integer_type(Type type) {
         case Type::LongLong:
         case Type::UnsignedLongLong:
         case Type::Auto:  // Treat auto as integer type for now (generic lambdas)
-        case Type::DeclTypeAuto:  // decltype(auto) also treated as integer until resolved
             return true;
         default:
             return false;
