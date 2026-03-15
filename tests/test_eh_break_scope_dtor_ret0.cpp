@@ -14,7 +14,8 @@ int test_break_plain_loop() {
 		Guard g;
 		if (i == 1) break;  // breaks after i=0 and i=1 iterations
 	}
-	// Guard was constructed for i=0 (dtor on normal exit) and i=1 (dtor before break)
+	// Guard was constructed for i=0 (destructor on normal loop-body exit) and
+	// i=1 (destructor called before break); 2 destructor calls expected.
 	return (g_dtor_count - prev) == 2 ? 0 : (g_dtor_count - prev);
 }
 

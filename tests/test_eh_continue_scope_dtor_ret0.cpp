@@ -7,7 +7,9 @@ struct Guard {
 	~Guard() { g_dtor_count++; }
 };
 
-// Test 1: continue in plain loop — all 3 Guards must be destroyed.
+// Test 1: continue in plain loop — one Guard per iteration (i=0,1,2), each
+// destroyed either before `continue` (i=1) or at the end of the loop body.
+// Total: 3 destructor calls expected.
 int test_continue_plain_loop() {
 	int prev = g_dtor_count;
 	for (int i = 0; i < 3; i++) {

@@ -31,7 +31,7 @@ int test_return_from_loop() {
 	int prev = g_dtor_count;
 	for (int i = 0; i < 3; i++) {
 		Guard loop_g;
-		if (i == 1) return (g_dtor_count - prev);  // loop_g for i=0 destroyed at end of iteration, loop_g for i=1 destroyed before return
+		if (i == 1) return (g_dtor_count - prev);  // Guard for i=0 destroyed at loop-body end, Guard for i=1 destroyed before return
 	}
 	return -1;  // unreachable
 }
