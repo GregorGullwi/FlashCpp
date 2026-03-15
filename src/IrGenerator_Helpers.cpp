@@ -175,13 +175,44 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	} else if (node.is<DoWhileStatementNode>()) {
 		prescanLabels(node.as<DoWhileStatementNode>().get_body_statement(), depth);
 	} else if (node.is<RangedForStatementNode>()) {
-		// Ranged-for desugars into a regular for loop (visitRangedForStatementNodeArray /
-		// visitRangedForStatementNodeRange) and creates a scope of its own, so +1 here
-		// mirrors the same logic as ForStatementNode above.
+		// Ranged-for does NOT call enterScope() — the body BlockNode handles scope.
 		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth);
 	} else if (node.is<SwitchStatementNode>()) {
-		// Switch does not call enterScope() itself; the body BlockNode handles it.
-		prescanLabels(node.as<SwitchStatementNode>().get_body(), depth);
+		// The switch visitor iterates the body block's children inline without calling
+		// enterScope(), so we must NOT let the body go through the BlockNode handler
+		// (which would increment depth).  Instead, iterate children at the current depth.
+		const auto& body = node.as<SwitchStatementNode>().get_body();
+		if (body.is<BlockNode>()) {
+			body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
+				prescanLabels(stmt, depth);
+			});
+		}
+	} else if (node.is<CaseLabelNode>()) {
+		const auto& case_node = node.as<CaseLabelNode>();
+		if (case_node.has_statement()) {
+			const auto& case_stmt = *case_node.get_statement();
+			// The switch visitor unwraps case-body BlockNodes inline (no enterScope),
+			// so mirror that here: iterate the block's children at the same depth.
+			if (case_stmt.is<BlockNode>()) {
+				case_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
+					prescanLabels(s, depth);
+				});
+			} else {
+				prescanLabels(case_stmt, depth);
+			}
+		}
+	} else if (node.is<DefaultLabelNode>()) {
+		const auto& def_node = node.as<DefaultLabelNode>();
+		if (def_node.has_statement()) {
+			const auto& def_stmt = *def_node.get_statement();
+			if (def_stmt.is<BlockNode>()) {
+				def_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
+					prescanLabels(s, depth);
+				});
+			} else {
+				prescanLabels(def_stmt, depth);
+			}
+		}
 	} else if (node.is<TryStatementNode>()) {
 		const auto& try_stmt = node.as<TryStatementNode>();
 		// Both the try block and each catch body are BlockNodes that manage their own scopes.
@@ -191,7 +222,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		}
 	}
 	// All other node types (expressions, plain declarations, break, continue, return,
-	// goto, etc.) cannot contain LabelStatementNodes — no recursion needed.
+	// goto, case values, etc.) cannot contain LabelStatementNodes — no recursion needed.
 }
 
 
