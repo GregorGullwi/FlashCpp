@@ -178,7 +178,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		// Ranged-for desugars into a regular for loop (visitRangedForStatementNodeArray /
 		// visitRangedForStatementNodeRange) and creates a scope of its own, so +1 here
 		// mirrors the same logic as ForStatementNode above.
-		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth + 1);
+		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth);
 	} else if (node.is<SwitchStatementNode>()) {
 		// Switch does not call enterScope() itself; the body BlockNode handles it.
 		prescanLabels(node.as<SwitchStatementNode>().get_body(), depth);
