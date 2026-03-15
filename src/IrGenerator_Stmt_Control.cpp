@@ -46,7 +46,12 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 			continue;
 		}
 
-		return &member_func.function_decl.as<FunctionDeclarationNode>();
+		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
+		// Unary operator*() (dereference) has 0 parameters; binary operator*(rhs) has 1.
+		if (func.parameter_nodes().size() != 0) {
+			continue;
+		}
+		return &func;
 	}
 
 	return nullptr;
