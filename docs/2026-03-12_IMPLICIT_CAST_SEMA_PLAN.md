@@ -848,23 +848,12 @@ Exit criteria:
 
 Test results: 1476 pass / 0 fail / 35 expected-fail (5 new tests added)
 
-**Remaining work (Phase 3+):**
+**Remaining known limitations (carried forward to Phase 4+):**
 
-- Function call argument annotation only handles the simple single-overload lookup case; overloaded functions still use the codegen fallback
-- `inferExpressionType` doesn't handle `BinaryOperatorNode` results, so nested binary sub-expressions fall back to codegen
-- Assignment RHS conversion is not yet annotated (Phase 3: initializer and reference-binding coverage)
+- Function call argument annotation handles only the simple single-overload lookup case; overloaded functions still use the codegen fallback
+- `inferExpressionType` coverage for nested `BinaryOperatorNode` sub-expressions is complete; `FunctionCallNode` result type is also inferred
 
-
-
-Test results: 1474 pass / 0 fail / 35 expected-fail
-
-**Remaining Phase 2 work:**
-
-- function-call arguments (`IrGenerator_Call_Direct.cpp`)
-- binary arithmetic operands (`IrGenerator_Expr_Operators.cpp`)
-- fully delete fallback codegen policies once semantic pass coverage is complete
-
-### Phase 3: initializer and reference-binding coverage
+### Phase 3: initializer and reference-binding coverage ✅ COMPLETED (declaration initializers, assignment RHS)
 
 Goal:
 
@@ -872,19 +861,41 @@ Goal:
 
 Work:
 
-- declaration initializers
-- member initialization
-- constructor-argument normalization
-- assignment
-- reference binding
-- temporary materialization
-- conditional-expression conversions
-- contextual `bool`
-- integrate semantic-orchestrated constant evaluation for the first must-have contexts (`array bounds`, `enumerators`, `case`, `if constexpr`, `noexcept(expr)`)
+- ✅ declaration initializers (`long x = some_int;`, `double d = int_var;`)
+- ✅ assignment RHS (`long x; x = some_int;`)
+- ✅ `inferExpressionType` extended to cover `BinaryOperatorNode` and `FunctionCallNode` results
+- ✅ Bug fix: `int i = double_var;` was storing raw IEEE-754 bits instead of truncating
+- member initialization — deferred to Phase 4+
+- constructor-argument normalization — deferred to Phase 4+
+- reference binding — deferred to Phase 4+
+- temporary materialization — deferred to Phase 4+
+- conditional-expression conversions — deferred to Phase 4+
+- contextual `bool` — deferred to Phase 4+
+- integrate semantic-orchestrated constant evaluation — deferred to Phase 4+
 
 Exit criteria:
 
-- no remaining policy-style `generateTypeConversion(...)` calls for these contexts
+- no remaining policy-style `generateTypeConversion(...)` calls for these contexts — partially met; declaration initializers and assignment now go through sema path; remaining contexts still use codegen fallback
+
+#### Implementation notes (Phase 3)
+
+- `normalizeStatement` for `VariableDeclarationNode` calls `tryAnnotateConversion(*init, decl_type_id)` before visiting the initializer expression.
+- `normalizeExpression` for `BinaryOperatorNode` with `op == "="` infers the LHS type and calls `tryAnnotateConversion` on the RHS.
+- `IrGenerator_Stmt_Decl.cpp` dual-path: sema annotation wins when present; `can_convert_type` fallback handles any case the sema pass could not infer (e.g., function-call return values that are still unresolved at annotation time).
+- `inferExpressionType` extended: `BinaryOperatorNode` arithmetic→`get_common_type`, comparisons/logical→`bool`, assignment→LHS type, comma→RHS type; `FunctionCallNode`→return type from `decl_node().type_node()`.
+- Test suite hygiene: six tests that relied on implicit shell exit-code truncation (e.g., returning 330 and depending on 330 % 256 = 74) now have an explicit `% 256` in their return expressions.
+
+**New tests:**
+
+- `tests/test_decl_init_implicit_cast_ret0.cpp` — double→int, float→int, int→double, int→float initializer conversions
+
+Test results: 1477 pass / 0 fail / 35 expected-fail (1 new test added)
+
+**Remaining known limitations (carried forward to Phase 4+):**
+
+- Function call argument annotation handles only the simple single-overload lookup case; overloaded functions still use the codegen fallback
+- Reference-binding initializer conversions are not yet annotated
+- Member initialization and constructor-argument conversions are not yet annotated
 
 ### Phase 4: canonical type identity cleanup
 
