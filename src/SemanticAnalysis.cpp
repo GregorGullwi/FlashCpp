@@ -73,7 +73,7 @@ static StandardConversionKind determineConversionKind(Type from, Type to) {
 		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
 		const int from_rank = get_integer_rank(from);
 		const int to_rank   = get_integer_rank(to);
-		if (from_rank < INT_RANK && to_rank >= INT_RANK)
+		if (from_rank < INT_RANK && to_rank == INT_RANK)
 			return StandardConversionKind::IntegralPromotion;
 		return StandardConversionKind::IntegralConversion;
 	}
