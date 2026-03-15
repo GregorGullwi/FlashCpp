@@ -44,7 +44,7 @@
 				if (param_node.is<DeclarationNode>()) {
 					const auto& param_decl = param_node.as<DeclarationNode>();
 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					if (param_type.type() == Type::Auto) {
+					if (isPlaceholderAutoType(param_type.type())) {
 						is_generic = true;
 						auto_param_indices.push_back(param_idx);
 					}
@@ -99,7 +99,7 @@
 								if (decl) {
 									TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
 									// Resolve auto type from lambda initializer if available
-									if (type_node.type() == Type::Auto) {
+									if (isPlaceholderAutoType(type_node.type())) {
 										if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
 											type_node = *deduced;
 										}
@@ -135,7 +135,7 @@
 							const auto& param_decl = param_node.as<DeclarationNode>();
 							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-							if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
+							if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
 								// Deduce type from argument, preserving reference flags from auto&& parameter
 								TypeSpecifierNode deduced_type = arg_types[arg_idx];
 								// Copy reference flags from auto parameter (e.g., auto&& -> T&&)
@@ -294,7 +294,7 @@
 					object_type = object_decl->type_node().as<TypeSpecifierNode>();
 
 					// If the type is 'auto', deduce the actual closure type from lambda initializer
-					if (object_type.type() == Type::Auto) {
+					if (isPlaceholderAutoType(object_type.type())) {
 						if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
 							object_type = *deduced;
 						} else if (current_lambda_context_.isActive() && object_type.is_rvalue_reference()) {
@@ -1089,7 +1089,7 @@
 									if (decl) {
 										TypeSpecifierNode type_node = decl->type_node().as<TypeSpecifierNode>();
 										// Resolve auto type from lambda initializer if available
-										if (type_node.type() == Type::Auto) {
+										if (isPlaceholderAutoType(type_node.type())) {
 											if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
 												type_node = *deduced;
 											} else if (current_lambda_context_.isActive() && type_node.is_rvalue_reference()) {
@@ -1138,7 +1138,7 @@
 								const auto& param_decl = param_node.as<DeclarationNode>();
 								const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-								if (param_type.type() == Type::Auto && arg_idx < arg_types.size()) {
+								if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
 									// Deduce type from argument, preserving reference flags from auto&& parameter
 									TypeSpecifierNode deduced_type = arg_types[arg_idx];
 									deduced_type.set_reference_qualifier(param_type.reference_qualifier());

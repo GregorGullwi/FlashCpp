@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include "AstNodeTypes_TypeSystem.h"
 
 // Struct type information
@@ -954,6 +955,7 @@ public:
 
 	auto type() const { return type_; }
 	auto size_in_bits() const { return size_; }
+	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
 	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
@@ -1121,6 +1123,7 @@ public:
 // references/cv for value returns, while `decltype(auto)` preserves the exact
 // type category and qualifiers of the deduced expression.
 inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
+	assert(isPlaceholderAutoType(placeholder_type));
 	if (placeholder_type != Type::Auto) {
 		return deduced_type;
 	}

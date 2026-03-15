@@ -987,6 +987,10 @@ Implementation notes:
 - Generic lambda parameter normalization now runs through a semantic hook that rewrites instantiated parameter declarations with the deduced `TypeSpecifierNode`s before lambda IR generation; `IrGenerator_Lambdas.cpp` no longer synthesizes replacement declarations locally.
 - Identifier/reference lowering now treats unresolved placeholder types in codegen as an internal error instead of silently falling back to `int`.
 - Regression coverage added for ordinary `auto` return finalization, generic lambda parameter normalization, and `decltype(auto)` reference-preserving returns.
+- Deferred generic lambdas are re-scanned after the main collection pass so call-site deduction discovered from later-generated lambda bodies still triggers operator()/`__invoke` emission for previously skipped entries.
+- Range-for placeholder deduction now uses struct iterator `operator*()` return types instead of letting unresolved placeholder loop variables reach codegen.
+- Remaining placeholder checks in codegen/template plumbing now use `isPlaceholderAutoType()` where `DeclTypeAuto` should follow plain `auto`, while parser paths that only support plain `auto` keep explicit handling.
+- Parser-side `decltype(auto)` variable handling now preserves deduced size information and rejects declarators that add extra `*`, `&`, or `&&` around `decltype(auto)`.
 
 ### Parallel rollout guidance
 

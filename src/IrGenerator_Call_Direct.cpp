@@ -174,10 +174,21 @@
 				throw CompileError("'decltype(auto)' is not allowed as a parameter type");
 			}
 
-			// Handle auto-typed callable (e.g., recursive lambda pattern: self(self, n-1))
-			// When an auto&& parameter is called like a function, it's a callable object
-			// We need to generate a member function call to its operator()
-			if (func_type.type() == Type::Auto) {
+			bool is_recursive_lambda_self = false;
+			if (current_lambda_context_.isActive() && func_type.type() == Type::Struct &&
+				func_type.is_rvalue_reference()) {
+				auto closure_type_it = gTypesByName.find(current_lambda_context_.closure_type);
+				if (closure_type_it != gTypesByName.end() &&
+					func_type.type_index() == closure_type_it->second->type_index_) {
+					is_recursive_lambda_self = true;
+				}
+			}
+
+			// Handle auto-typed callables (e.g., recursive lambda pattern: self(self, n-1)).
+			// Once generic lambda params are normalized, the recursive `self` parameter is
+			// a concrete closure-type rvalue reference rather than plain `auto`, so accept
+			// that form here as well.
+			if (func_type.type() == Type::Auto || is_recursive_lambda_self) {
 				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
 				// We need to find the lambda's closure type and call its operator()
 
