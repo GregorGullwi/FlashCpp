@@ -43,3 +43,28 @@ dedicated semantic pass. The long-term architectural fix is still to move this
 kind of deduced-parameter and implicit-conversion normalization into a
 post-parse semantic analysis stage rather than keep growing codegen-local
 fallbacks and synthetic declarations.
+
+## Parenthesized declarator form `T(x)[N]` not supported
+
+FlashCpp does not yet parse the *parenthesized declarator* form of a variable
+declaration:
+
+```cpp
+template<typename T>
+void f() {
+    T(x)[3];   // C++20: declares x as T[3] — NOT a cast + subscript expression
+    T(y);      // C++20: declares y as T    — NOT a functional cast
+}
+```
+
+Per C++20 [dcl.ambig.res], when a statement is syntactically ambiguous between
+a declaration and an expression, it shall be treated as a declaration.
+`T(x)[3]` should therefore declare `x` as `T[3]`, but `parse_variable_declaration`
+currently expects a plain identifier directly after the type specifier and does
+not recognise the `(identifier)` declarator syntax.
+
+The disambiguation routing in `parse_statement_or_declaration` is **correct**
+(it no longer misidentifies `[` as an expression-only token), and a `_fail` test
+(`test_tparam_bracket_decl_ambig_fail.cpp`) documents the current parse error.
+The remaining work is to extend `parse_variable_declaration` (and the declarator
+parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
