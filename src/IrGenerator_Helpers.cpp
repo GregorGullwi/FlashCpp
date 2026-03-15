@@ -190,7 +190,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	} else if (node.is<CaseLabelNode>()) {
 		const auto& case_node = node.as<CaseLabelNode>();
 		if (case_node.has_statement()) {
-			const auto& case_stmt = *case_node.get_statement();
+			ASTNode case_stmt = *case_node.get_statement();
 			// The switch visitor unwraps case-body BlockNodes inline (no enterScope),
 			// so mirror that here: iterate the block's children at the same depth.
 			if (case_stmt.is<BlockNode>()) {
@@ -204,7 +204,7 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	} else if (node.is<DefaultLabelNode>()) {
 		const auto& def_node = node.as<DefaultLabelNode>();
 		if (def_node.has_statement()) {
-			const auto& def_stmt = *def_node.get_statement();
+			ASTNode def_stmt = *def_node.get_statement();
 			if (def_stmt.is<BlockNode>()) {
 				def_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
 					prescanLabels(s, depth);
