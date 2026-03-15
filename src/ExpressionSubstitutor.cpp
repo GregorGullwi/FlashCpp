@@ -16,9 +16,7 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		auto& substitutor = *this;
 		return std::visit([&substitutor](auto&& node) -> ASTNode {
 			using T = std::decay_t<decltype(node)>;
-			
-			FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing variant type");
-			
+
 			if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteConstructorCall");
 				return substitutor.substituteConstructorCall(node);
@@ -80,14 +78,10 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	else if (expr.is<StaticCastNode>()) {
 		return substituteStaticCast(expr.as<StaticCastNode>());
 	}
-	else if (expr.is<NumericLiteralNode>()) {
+	else if (expr.is<NumericLiteralNode>() ||
+	         expr.is<BoolLiteralNode>() ||
+	         expr.is<StringLiteralNode>()) {
 		// Literals don't need substitution
-		return expr;
-	}
-	else if (expr.is<BoolLiteralNode>()) {
-		return expr;
-	}
-	else if (expr.is<StringLiteralNode>()) {
 		return expr;
 	}
 	else {

@@ -7,19 +7,19 @@ struct integral_constant {
 	static constexpr T value = v;
 };
 
-template<int _Pn>
+template<int Pn>
 struct ternary_bucket
 	: integral_constant<int,
-		(_Pn < -5) ? -2 :
-		((_Pn < 0) ? -1 :
-		((_Pn == 0) ? 0 : 1))> { };
+		(Pn < -5) ? -2 :
+		((Pn < 0) ? -1 :
+		((Pn == 0) ? 0 : 1))> { };
 
-template<int _Pn>
+template<int Pn>
 struct ternary_adjusted
 	: integral_constant<int,
-		ternary_bucket<_Pn>::value < 0
-			? -ternary_bucket<_Pn>::value
-			: ternary_bucket<_Pn>::value> { };
+		ternary_bucket<Pn>::value < 0
+			? -ternary_bucket<Pn>::value
+			: ternary_bucket<Pn>::value> { };
 
 int main() {
 	static_assert(ternary_bucket<-6>::value == -2);
