@@ -168,6 +168,12 @@
 				}
 			}
 
+			// decltype(auto) is not a valid parameter type; reject it before
+			// the recursive-lambda auto&& callable fallback can mishandle it.
+			if (func_type.type() == Type::DeclTypeAuto) {
+				throw CompileError("'decltype(auto)' is not allowed as a parameter type");
+			}
+
 			// Handle auto-typed callable (e.g., recursive lambda pattern: self(self, n-1))
 			// When an auto&& parameter is called like a function, it's a callable object
 			// We need to generate a member function call to its operator()
@@ -265,6 +271,10 @@
 
 					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
 				}
+
+				// Not inside a lambda context — this is an unresolved placeholder that
+				// should have been resolved by semantic analysis or parameter normalization.
+				throw InternalError("Unresolved placeholder type reached direct-call lowering outside lambda context");
 			}
 		}
 
