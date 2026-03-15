@@ -79,6 +79,6 @@ int main() {
     result += test_decltype_multiple();        // 8
     result += test_decltype_nested();          // 60
     result += test_decltype_with_literal();    // 100
-    // Total: 354, return 354 % 256 = 98
-    return result;
+    // Total: 354, 354 % 256 = 98
+    return result % 256;
 }

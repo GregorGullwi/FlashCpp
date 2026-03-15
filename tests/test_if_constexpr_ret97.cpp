@@ -115,5 +115,6 @@ int main() {
     total = total + test_comparison();        // +77 = 338
     total = total + test_multiple_sequential(); // +15 = 353
     
-    return total;  // Expected: 353
+    // Total: 353; 353 % 256 = 97
+    return total % 256;
 }

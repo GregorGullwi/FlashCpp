@@ -65,8 +65,8 @@ int main() {
     int r1 = test_break_inner_not_outer();
     int r2 = test_continue_inner_not_outer();
     
-    // Expected: 306 + 216 = 522
+    // Expected: 306 + 216 = 522; 522 % 256 = 10
     // If targeting wrong loop: 102 + 202 = 304
-    return r1 + r2;
+    return (r1 + r2) % 256;
 }
 

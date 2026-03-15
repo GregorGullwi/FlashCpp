@@ -29,6 +29,5 @@ int main() {
 
     // Convert to int for return (210.0 -> 210)
     int iresult = result;
-    return iresult;
+    return iresult - 210;  // 210.0f -> 210 (float->int truncation); subtract to return 0
 }
-

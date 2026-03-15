@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
@@ -2014,14 +2015,30 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		Type commonType = get_common_type(lhsType, rhsType);
 
-		// Generate conversions if needed
-		if (lhsType != commonType) {
-			lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
+		// Check whether the semantic pass pre-computed operand conversion annotations.
+		// When present for non-struct types, use them and skip the local policy.
+		auto tryApplySemaConversion = [&](ExprResult& operands, const ASTNode& operand_node) -> bool {
+			if (!sema_ || !operand_node.is<ExpressionNode>()) return false;
+			const void* key = &operand_node.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (!slot.has_value() || !slot->has_cast()) return false;
+			const ImplicitCastInfo& cast_info =
+				sema_->castInfoTable()[slot->cast_info_index.value - 1];
+			const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+			const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+			if (from_type == Type::Struct || to_type == Type::Struct) return false;
+			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
+			return true;
+		};
 
+		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
+		if (lhsType != commonType) {
+			if (!tryApplySemaConversion(lhsExprResult, binaryOperatorNode.get_lhs()))
+				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
 		}
 		if (rhsType != commonType) {
-			rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
-
+			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs()))
+				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
 		}
 
 		// Check if we're dealing with floating-point operations

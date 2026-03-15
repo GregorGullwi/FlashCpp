@@ -441,10 +441,12 @@ int main_impl(int argc, char *argv[]) {
     // stale negative member lookups do not poison later IR generation.
     FlashCpp::gLazyMemberResolver.clearCache();
 
-    // Semantic analysis pass (post-parse, pre-IR)
+    // Semantic analysis pass (post-parse, pre-IR).
+    // The object is kept alive past AstToIr construction so that AstToIr can
+    // consume the semantic annotations (SemanticSlot side table, cast_info_table_).
+    SemanticAnalysis sema(*parser, context, gSymbolTable);
     {
         PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time);
-        SemanticAnalysis sema(*parser, context, gSymbolTable);
         sema.run();
 
         if (show_perf_stats) {
@@ -456,10 +458,13 @@ int main_impl(int argc, char *argv[]) {
             FLASH_LOG(General, Info, "  Statements visited: ", stats.statements_visited);
             FLASH_LOG(General, Info, "  Canonical types interned: ", stats.canonical_types_interned);
             FLASH_LOG(General, Info, "  Unique canonical types: ", sema.typeContext().size());
+            FLASH_LOG(General, Info, "  Slots filled: ", stats.slots_filled);
+            FLASH_LOG(General, Info, "  Cast infos allocated: ", stats.cast_infos_allocated);
         }
     }
 
     AstToIr converter(gSymbolTable, context, *parser);
+    converter.setSemanticData(&sema);
 
     // Reserve space for IR instructions
     // Estimate: ~2 instructions per source line (empirical heuristic)

@@ -27,6 +27,5 @@ int main() {
     
     // Convert to int for return (136.0 -> 136)
     int iresult = result;
-    return iresult;
+    return iresult - 136;  // 136.0f -> 136 (float->int truncation); subtract to return 0
 }
-

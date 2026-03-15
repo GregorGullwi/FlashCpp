@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	void AstToIr::visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 		// Namespace declarations themselves don't generate IR - they just provide scope
@@ -250,10 +251,28 @@
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
 
+				// Check whether the semantic pass has already computed a cast annotation.
+				// When present for a non-struct conversion, apply it and skip the local policy.
+				bool sema_applied_conversion = false;
+				if (sema_ && expr_opt->is<ExpressionNode>()) {
+					const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
+					auto slot = sema_->getSlot(key);
+					if (slot.has_value() && slot->has_cast()) {
+						const ImplicitCastInfo& cast_info =
+							sema_->castInfoTable()[slot->cast_info_index.value - 1];
+						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						if (from_type != Type::Struct && to_type != Type::Struct) {
+							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
+							sema_applied_conversion = true;
+						}
+					}
+				}
+
 				// For reference returns we already evaluated the expression in LValueAddress
 				// context, so the operand now represents the address-producing glvalue.
 				// Do not run ordinary value conversion against the ABI-sized return slot.
-				if (expr_type != return_type || expr_size != return_size) {
+				if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 					// Check for user-defined conversion operator
 					// If expr is a struct type with a conversion operator to return_type, call it
 					if (expr_type == Type::Struct) {
