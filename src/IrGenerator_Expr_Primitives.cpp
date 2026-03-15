@@ -259,9 +259,11 @@
 			// be resolved before codegen reaches identifier lowering.
 			if (size_bits == 0) {
 				requireResolvedCodegenType(type_node.type(), "identifier size calculation");
+				const int fallback_size = get_type_size_bits(type_node.type());
 				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
-					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
-				size_bits = get_type_size_bits(type_node.type());
+					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation (fallback_size=",
+					fallback_size, ")");
+				size_bits = fallback_size;
 			}
 		}
 

@@ -102,7 +102,7 @@
 				const auto& param_decl = param.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				if (param_type.type() == Type::Auto) {
+				if (isPlaceholderAutoType(param_type.type())) {
 					info.is_generic = true;
 					info.auto_param_indices.push_back(param_index);
 				}
