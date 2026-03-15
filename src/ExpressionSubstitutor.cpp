@@ -10,18 +10,55 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor::substitute: checking node type: ", expr.type_name());
 
-	// If this is an ExpressionNode variant, unwrap to the concrete inner node
-	// and recurse so that all dispatch logic lives in a single place below.
+	// Check if this is an ExpressionNode variant
 	if (expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
 		auto& substitutor = *this;
 		return std::visit([&substitutor](auto&& node) -> ASTNode {
-			ASTNode unwrapped(&node);
-			return substitutor.substitute(unwrapped);
+			using T = std::decay_t<decltype(node)>;
+			
+			FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing variant type");
+			
+			if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteConstructorCall");
+				return substitutor.substituteConstructorCall(node);
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteFunctionCall");
+				return substitutor.substituteFunctionCall(node);
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				return substitutor.substituteBinaryOp(node);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				return substitutor.substituteUnaryOp(node);
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				return substitutor.substituteTernaryOp(node);
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return substitutor.substituteIdentifier(node);
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				return substitutor.substituteQualifiedIdentifier(node);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return substitutor.substituteMemberAccess(node);
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteSizeofExpr");
+				return substitutor.substituteSizeofExpr(node);
+			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteStaticCast");
+				return substitutor.substituteStaticCast(node);
+			} else if constexpr (std::is_same_v<T, NumericLiteralNode> ||
+			                     std::is_same_v<T, BoolLiteralNode> || 
+			                     std::is_same_v<T, StringLiteralNode>) {
+				// Literals don't need substitution - return as ASTNode
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
+				return ASTNode(&new_expr);
+			} else {
+				// For other types, return as-is wrapped in ExpressionNode
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Unhandled expression variant type, returning as-is");
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
+				return ASTNode(&new_expr);
+			}
 		}, expr_variant);
 	}
 
-	// Handle concrete node types (direct or unwrapped from ExpressionNode above)
+	// Handle direct node types (not wrapped in variant)
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
 	}
