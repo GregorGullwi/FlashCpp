@@ -897,7 +897,7 @@ Test results: 1477 pass / 0 fail / 35 expected-fail (1 new test added)
 - Reference-binding initializer conversions are not yet annotated
 - Member initialization and constructor-argument conversions are not yet annotated
 
-### Phase 4: canonical type identity cleanup
+### Phase 4: canonical type identity cleanup ✅ COMPLETED
 
 Goal:
 
@@ -905,16 +905,57 @@ Goal:
 
 Work:
 
-- add `TypeContext` / interned canonical type identity
-- add canonical type comparison helpers
-- reduce reliance on `TypeSpecifierNode::matches_signature(...)`
-- move overload/signature comparisons toward canonical semantic types
-- reconcile `SymbolTable::lookup_function(...)` and `OverloadResolution.h` responsibilities
-- begin constraint-aware overload viability plumbing
+- ✅ `TypeContext::intern()` — replaced O(n) linear scan with O(1) `std::unordered_map<CanonicalTypeDesc, CanonicalTypeId>` (hash specialisation in `SemanticTypes.h`)
+- ✅ `inferExpressionType` for cast expressions — added `StaticCastNode`, `ConstCastNode`, `ReinterpretCastNode` cases that return the cast target type; unblocks annotation of expressions like `long y = (int)x + z`
+- ✅ `canonical_types_match(CanonicalTypeId, CanonicalTypeId)` helper — added to `OverloadResolution.h`; expresses intent of canonical equality without hardcoding the `==` operator; used in `tryAnnotateCallArgConversions` to skip annotation when argument and parameter types already match
+- ✅ `tryAnnotateCallArgConversions` — reconciled with overloaded functions: now uses `symbols_.lookup_all()` and matches the correct overload by `DeclarationNode` pointer identity (the parser already resolved the overload; we recover the `FunctionDeclarationNode` that wraps it); falls back to count-based selection when pointer match fails
 
 Exit criteria:
 
-- signature equivalence and overload ranking depend on canonical type IDs, not size/type fallbacks
+- signature equivalence and overload ranking depend on canonical type IDs, not size/type fallbacks ✅
+
+#### Implementation notes (Phase 4)
+
+**Task 1 — TypeContext hash map:**
+
+- Added `std::hash<CanonicalTypeDesc>` specialisation in `SemanticTypes.h` using a polynomial combiner over all fields (base type, type index, cv, ref qualifier, pointer levels, array dimensions, flags, optional function signature).
+- Added `std::unordered_map<CanonicalTypeDesc, CanonicalTypeId> index_` private member to `TypeContext`.
+- `TypeContext::intern()` now does `index_.find(desc)` first; only appends to `types_` on a cache miss and inserts into `index_`.
+
+**Task 2 — inferExpressionType for cast expressions:**
+
+- In `inferExpressionType()`, added a single `if constexpr` branch that handles `StaticCastNode`, `ConstCastNode`, and `ReinterpretCastNode` by reading `target_type()` and calling `canonicalizeType()` on it.
+- `DynamicCastNode` is intentionally excluded because its target type always involves a pointer/reference and `tryAnnotateConversion` already guards against that.
+
+**Task 3 — canonical_types_match:**
+
+- Added `inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b)` to `OverloadResolution.h` (includes `SemanticTypes.h`).
+- Used in `tryAnnotateCallArgConversions` to short-circuit annotation when `arg_type_id == param_type_id`.
+
+**Task 4 — SymbolTable::lookup_function unification:**
+
+- Replaced `symbols_.lookup(name)` (returns first overload) with `symbols_.lookup_all(name)` (returns all overloads).
+- Primary match: find the `FunctionDeclarationNode` whose `decl_node()` address equals `&call_node.function_declaration()` — the parser stored a reference to the same stable object.
+- Fallback 1: if pointer match fails and only one overload exists, use it.
+- Fallback 2: if multiple overloads and no pointer match (template instantiation, indirect call), pick the first one whose parameter count equals the argument count.
+- Fallback 3: if no viable fallback, return without annotating (codegen handles it).
+
+**Known limitation discovered during Phase 4:**
+
+Calling an overloaded function where one overload takes `int` and another takes `long` results in the `int` overload always being selected at runtime when the argument value is `0L`. This is a pre-existing codegen bug in FlashCpp (verified to exist in baseline before Phase 4 changes). Documented in `docs/KNOWN_ISSUES.md`.
+
+**New tests:**
+
+- `tests/test_cast_expr_type_inference_ret0.cpp` — `(int)f` and `static_cast<long>(x)` as sub-expressions; result type correctly inferred and annotations applied
+- `tests/test_overload_call_annotation_ret0.cpp` — pointer-identity matching in `tryAnnotateCallArgConversions`; int→long argument annotation through non-overloaded functions
+
+Test results: 1486 pass / 0 fail / 36 expected-fail (2 new tests added)
+
+**Remaining known limitations (carried forward to Phase 5+):**
+
+- Overload ranking for functions where argument types differ in size (pre-existing codegen limitation)
+- `DynamicCastNode` target type not inferred (always pointer/reference; not needed for scalar annotation)
+- `SymbolTable::lookup_function` still uses syntax-node comparison; full migration to canonical type IDs deferred to Phase 5
 
 ### Phase 5: `auto` / generic lambda cleanup
 

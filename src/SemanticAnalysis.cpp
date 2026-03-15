@@ -38,15 +38,13 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 // --- TypeContext ---
 
 CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
-	// Linear scan for now; acceptable at small type counts.
-	// Phase 4 can add a hash map for O(1) lookup.
-	for (size_t i = 0; i < types_.size(); ++i) {
-		if (types_[i] == desc) {
-			return CanonicalTypeId{static_cast<uint32_t>(i + 1)};  // 1-based
-		}
-	}
+	auto it = index_.find(desc);
+	if (it != index_.end())
+		return it->second;
 	types_.push_back(desc);
-	return CanonicalTypeId{static_cast<uint32_t>(types_.size())};  // 1-based
+	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())};  // 1-based
+	index_.emplace(desc, id);
+	return id;
 }
 
 const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
@@ -689,6 +687,15 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!ret_type_node.has_value() || !ret_type_node.is<TypeSpecifierNode>()) return {};
 				return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
 			}
+			else if constexpr (std::is_same_v<T, StaticCastNode> ||
+			                   std::is_same_v<T, ConstCastNode> ||
+			                   std::is_same_v<T, ReinterpretCastNode>) {
+				// Explicit casts: the result type is the declared target type.
+				const ASTNode& tt = e.target_type();
+				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
+					return canonicalizeType(tt.template as<TypeSpecifierNode>());
+				return {};
+			}
 			return {};
 		}, expr);
 	}
@@ -804,14 +811,46 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		? call_node.qualified_name()
 		: decl.identifier_token().value();
 
-	// Look up the function in the symbol table to get parameter types
-	const auto maybe_func = symbols_.lookup(name);
-	if (!maybe_func.has_value() || !maybe_func->is<FunctionDeclarationNode>()) return;
-	const auto& func_decl = maybe_func->as<FunctionDeclarationNode>();
-	if (func_decl.is_variadic()) return;  // can't annotate variadic calls
+	const auto& arguments = call_node.arguments();
 
-	const auto& param_nodes = func_decl.parameter_nodes();
-	const auto& arguments   = call_node.arguments();
+	// Collect all overloads from the symbol table.
+	const auto overloads = symbols_.lookup_all(name);
+	if (overloads.empty()) return;
+
+	// Find the overload whose DeclarationNode address matches the one stored in the call.
+	// The parser resolved the overload at parse time; we just need to recover the
+	// FunctionDeclarationNode that wraps it so we can read the parameter types.
+	const FunctionDeclarationNode* func_decl = nullptr;
+	for (const auto& overload : overloads) {
+		if (!overload.is<FunctionDeclarationNode>()) continue;
+		const auto& candidate = overload.as<FunctionDeclarationNode>();
+		// Match by DeclarationNode address — the call stores a reference to the same object.
+		if (&candidate.decl_node() == &decl)
+			func_decl = &candidate;
+	}
+
+	// If pointer match failed (e.g. indirect call or template instance), fall back to
+	// picking the sole overload or the first one whose parameter count fits.
+	if (!func_decl) {
+		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
+			for (const auto& overload : overloads) {
+				if (!overload.is<FunctionDeclarationNode>()) continue;
+				const auto& candidate = overload.as<FunctionDeclarationNode>();
+				if (arguments.size() == candidate.parameter_nodes().size())
+					return &candidate;
+			}
+			return nullptr;
+		};
+		if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>())
+			func_decl = &overloads[0].as<FunctionDeclarationNode>();
+		else
+			func_decl = find_by_arg_count();
+		if (!func_decl) return;
+	}
+
+	if (func_decl->is_variadic()) return;  // can't annotate variadic calls
+
+	const auto& param_nodes = func_decl->parameter_nodes();
 
 	// Only annotate when argument count matches parameter count (no default args or packs)
 	if (arguments.size() != param_nodes.size()) return;
@@ -826,6 +865,10 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+		// Quick exit when both types are inferable and already identical (no cast needed).
+		// tryAnnotateConversion will re-infer if arg_type_id is invalid, so no information is lost.
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 	}
 }
