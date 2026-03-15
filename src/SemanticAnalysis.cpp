@@ -219,6 +219,14 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 		for (auto& decl : declarations) {
 			resolveRemainingAutoReturnsInNode(decl);
 		}
+		return;
+	}
+
+	if (node.is<BlockNode>()) {
+		for (const auto& stmt : node.as<BlockNode>().get_statements()) {
+			ASTNode& mutable_stmt = const_cast<ASTNode&>(stmt);
+			resolveRemainingAutoReturnsInNode(mutable_stmt);
+		}
 	}
 }
 
