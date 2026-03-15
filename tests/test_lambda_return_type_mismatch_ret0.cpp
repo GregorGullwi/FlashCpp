@@ -1,21 +1,25 @@
 // Test: lambda return type must not inherit the enclosing function's return type
-// for sema annotation purposes.  The enclosing function returns double, but the
+// for sema annotation purposes.  The enclosing function returns long, but the
 // lambda returns int.  If the sema pass leaks the enclosing return type into
-// the lambda body, the lambda's "return x;" is annotated with int→double,
+// the lambda body, the lambda's "return x;" is annotated with int→long,
 // producing a wrong result.
+//
+// The lambda must capture a variable from the enclosing scope (not use a lambda
+// parameter) so that inferExpressionType can resolve its type via the scope
+// stack — lambda parameters are not registered in the sema scope stack, so a
+// lambda-parameter-only version silently avoids the bug.
 
-double invoke_lambda(int val) {
-	// Lambda explicitly returns int — no conversion should happen inside it.
-	auto lam = [](int x) -> int { return x; };
-	int result = lam(val);
-	// The enclosing function returns double; only *this* return should convert.
-	return result;
+long capture_and_return() {
+	int x = 7;
+	// Lambda captures x (int, visible in sema scope stack) and returns int.
+	// Sema should NOT annotate this return with int→long, but the bug causes
+	// it to use the enclosing function's return type (long) as the target.
+	auto lam = [x]() -> int { return x; };
+	int r = lam();          // r should be 7
+	return (long)r;         // explicit conversion in the enclosing function
 }
 
 int main() {
-	double d = invoke_lambda(42);
-	// If the lambda incorrectly applied int→double inside its body,
-	// the value would be mangled (e.g., truncated back from double bits).
-	int check = (int)d;
-	return check - 42;  // expected: 0
+	long v = capture_and_return();
+	return (int)(v - 7L);   // expected: 0
 }

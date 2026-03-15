@@ -16,3 +16,4 @@ int main() {
 	long c = from_param(7);
 	return (int)(a - 42L) + (int)(b - 100L) + (int)(c - 7L);
 }
+
