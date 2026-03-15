@@ -126,9 +126,10 @@ test_one_file() {
     compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
-    # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
-    if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-        echo "COMPILE_FAIL|$base|CRASHED (signal: $compile_exit)" > "$result_file"
+    # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
+    # 135=SIGBUS, 136=SIGFPE, 137=SIGKILL, 139=SIGSEGV, etc.)
+    if [ $compile_exit -gt 128 ]; then
+        echo "COMPILE_FAIL|$base|CRASHED (exit: $compile_exit)" > "$result_file"
         rm -f "$obj"
         return
     fi
@@ -218,9 +219,12 @@ test_one_fail_file() {
     compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
-    # Check if compiler crashed
-    if [ $compile_exit -eq 134 ] || [ $compile_exit -eq 136 ] || [ $compile_exit -eq 139 ]; then
-        echo "FAIL_BAD|$base|CRASHED (signal: $compile_exit)" > "$result_file"
+    # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
+    # 135=SIGBUS, 136=SIGFPE, 137=SIGKILL, 139=SIGSEGV, etc.)
+    # A crash must be treated as a failure even for _fail tests — the compiler is
+    # expected to report a clean compile error, not to crash.
+    if [ $compile_exit -gt 128 ]; then
+        echo "FAIL_BAD|$base|CRASHED (exit: $compile_exit)" > "$result_file"
         rm -f "$obj"
         return
     fi
