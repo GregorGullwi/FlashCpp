@@ -1019,7 +1019,11 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		else if (type_specifier.type() == Type::DeclTypeAuto && initializer.has_value()) {
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (!deduced_type_spec_opt.has_value()) {
-				return std::nullopt;
+				throw CompileError(std::string(StringBuilder()
+					.append("Could not deduce decltype(auto) from initializer for '")
+					.append(decl_node.identifier_token().value())
+					.append("'; use an explicit type when the initializer's exact type cannot be inferred")
+					.commit()));
 			}
 			type_specifier = *deduced_type_spec_opt;
 		}

@@ -2,20 +2,24 @@
 #include "IrGenerator.h"
 
 namespace {
-ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_decl, TypeSpecifierNode deduced_type) {
+// Ranged-for desugaring synthesizes a fresh variable declaration for each loop
+// iteration. When the source declaration used `auto` or `decltype(auto)`,
+// replace the placeholder with the deduced element type while preserving the
+// original declaration's cv/reference spelling.
+ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
 	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
 	if (!isPlaceholderAutoType(placeholder_type.type())) {
 		return original_var_decl.declaration_node();
 	}
 
-	deduced_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), std::move(deduced_type));
-	deduced_type.set_reference_qualifier(placeholder_type.reference_qualifier());
+	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
+	resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
 	if (placeholder_type.cv_qualifier() != CVQualifier::None) {
-		deduced_type.set_cv_qualifier(placeholder_type.cv_qualifier());
+		resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
 	}
 
-	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
+	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
 	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
 	resolved_decl.set_type_node(resolved_type_node);
 	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);

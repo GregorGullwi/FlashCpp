@@ -315,7 +315,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		return std::nullopt;
 	}
 
-	return deduced_type.value_or(TypeSpecifierNode(Type::Void, TypeQualifier::None, 0));
+	return deduced_type.value_or(TypeSpecifierNode(
+		Type::Void,
+		TypeQualifier::None,
+		get_type_size_bits(Type::Void)));
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
