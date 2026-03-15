@@ -510,6 +510,44 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							has_dependent_args = true;
 							break;
 						}
+						// Check if this is a dependent template placeholder (e.g., is_fundamental$hash
+						// created from is_fundamental<T> where T is a template parameter).
+						// The hashed name may not contain the parameter name literally, so
+						// isDependentTemplatePlaceholder provides a more reliable check.
+						// Additionally verify that at least one stored template arg actually
+						// references a current template parameter, to avoid false positives
+						// for concrete instantiations (e.g., is_void_custom<int> whose TypeInfo
+						// also has isTemplateInstantiation() == true).
+						if (parsing_template_depth_ > 0) {
+							auto [is_dep_placeholder, dep_base_name] = isDependentTemplatePlaceholder(
+								StringTable::getStringView(type_name_handle));
+							if (is_dep_placeholder) {
+								bool confirmed_dependent = false;
+								auto type_it = gTypesByName.find(type_name_handle);
+								if (type_it != gTypesByName.end()) {
+									for (const auto& t_arg : type_it->second->templateArgs()) {
+										// dependent_name is set when arg was a template parameter reference
+										if (t_arg.dependent_name.isValid()) {
+											confirmed_dependent = true;
+											break;
+										}
+										// Also check if the type_index name matches any template param
+										if (!t_arg.is_value && t_arg.type_index.value < gTypeInfo.size()) {
+											if (contains_template_param(gTypeInfo[t_arg.type_index.value].name())) {
+												confirmed_dependent = true;
+												break;
+											}
+										}
+									}
+								}
+								if (confirmed_dependent) {
+									FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a dependent template placeholder (base='{}') - marking as dependent",
+									                 StringTable::getStringView(type_name_handle), dep_base_name);
+									has_dependent_args = true;
+									break;
+								}
+							}
+						}
 					}
 				}
 			}

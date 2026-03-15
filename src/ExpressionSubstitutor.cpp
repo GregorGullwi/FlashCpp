@@ -10,54 +10,25 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor::substitute: checking node type: ", expr.type_name());
 
-	// Check if this is an ExpressionNode variant
+	// If this is an ExpressionNode variant, peel it off and recurse so all
+	// dispatch logic lives in one place below (handles ExpressionNode<ExpressionNode<...>>).
 	if (expr.is<ExpressionNode>()) {
-		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
-		
-		// Use std::visit to dispatch to the correct handler based on variant type
 		auto& substitutor = *this;
 		return std::visit([&substitutor](auto&& node) -> ASTNode {
-			using T = std::decay_t<decltype(node)>;
-			
-			FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing variant type");
-			
-			if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteConstructorCall");
-				return substitutor.substituteConstructorCall(node);
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteFunctionCall");
-				return substitutor.substituteFunctionCall(node);
-			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-				return substitutor.substituteBinaryOp(node);
-			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				return substitutor.substituteUnaryOp(node);
-			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-				return substitutor.substituteTernaryOp(node);
-			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
-				return substitutor.substituteIdentifier(node);
-			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-				return substitutor.substituteQualifiedIdentifier(node);
-			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				return substitutor.substituteMemberAccess(node);
-			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
-				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteSizeofExpr");
-				return substitutor.substituteSizeofExpr(node);
-			} else if constexpr (std::is_same_v<T, NumericLiteralNode> ||
-			                     std::is_same_v<T, BoolLiteralNode> || 
-			                     std::is_same_v<T, StringLiteralNode>) {
-				// Literals don't need substitution - return as ASTNode
-				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
-				return ASTNode(&new_expr);
-			} else {
-				// For other types, return as-is wrapped in ExpressionNode
-				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Unhandled expression variant type, returning as-is");
+			ASTNode result = substitutor.substitute(ASTNode(&node));
+			// If the recursive call returned an unwrapped result (unhandled variant type
+			// that fell through to the else branch), re-wrap the original node in
+			// ExpressionNode to preserve invariants: downstream callers require
+			// is<ExpressionNode>() to return true on substituted expression results.
+			if (!result.is<ExpressionNode>()) {
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
 				return ASTNode(&new_expr);
 			}
-		}, expr_variant);
+			return result;
+		}, expr.as<ExpressionNode>());
 	}
 
-	// Handle direct node types (not wrapped in variant)
+	// Dispatch on concrete node types (reached directly or after ExpressionNode unwrap above).
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
 	}
@@ -70,21 +41,37 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	else if (expr.is<UnaryOperatorNode>()) {
 		return substituteUnaryOp(expr.as<UnaryOperatorNode>());
 	}
+	else if (expr.is<TernaryOperatorNode>()) {
+		return substituteTernaryOp(expr.as<TernaryOperatorNode>());
+	}
 	else if (expr.is<IdentifierNode>()) {
 		return substituteIdentifier(expr.as<IdentifierNode>());
+	}
+	else if (expr.is<QualifiedIdentifierNode>()) {
+		return substituteQualifiedIdentifier(expr.as<QualifiedIdentifierNode>());
+	}
+	else if (expr.is<MemberAccessNode>()) {
+		return substituteMemberAccess(expr.as<MemberAccessNode>());
 	}
 	else if (expr.is<SizeofExprNode>()) {
 		return substituteSizeofExpr(expr.as<SizeofExprNode>());
 	}
+	else if (expr.is<StaticCastNode>()) {
+		return substituteStaticCast(expr.as<StaticCastNode>());
+	}
 	else if (expr.is<NumericLiteralNode>()) {
-		// Literals don't need substitution
-		return expr;
+		// Literals don't need content substitution, but always return wrapped in ExpressionNode
+		// so downstream evaluators (which require is<ExpressionNode>()) see a consistent result.
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(expr.as<NumericLiteralNode>());
+		return ASTNode(&new_expr);
 	}
 	else if (expr.is<BoolLiteralNode>()) {
-		return expr;
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(expr.as<BoolLiteralNode>());
+		return ASTNode(&new_expr);
 	}
 	else if (expr.is<StringLiteralNode>()) {
-		return expr;
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(expr.as<StringLiteralNode>());
+		return ASTNode(&new_expr);
 	}
 	else {
 		// For any other node type, return as-is
@@ -952,6 +939,31 @@ ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof_ref);
 		return ASTNode(&new_expr);
 	}
+}
+
+ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_node) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing static_cast/functional cast expression");
+	
+	// Recursively substitute in the inner expression
+	ASTNode substituted_expr = substitute(cast_node.expr());
+	
+	// The target type typically doesn't need substitution for built-in functional casts
+	// like bool(x), int(x), but handle it for completeness
+	ASTNode target_type = cast_node.target_type();
+	if (target_type.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = target_type.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_type = substituteInType(type_spec);
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
+		target_type = ASTNode(&new_type);
+	}
+	
+	// Create new StaticCastNode with substituted expression
+	StaticCastNode& new_cast = gChunkedAnyStorage.emplace_back<StaticCastNode>(
+		target_type, substituted_expr, cast_node.cast_token());
+	
+	// Wrap in ExpressionNode
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_cast);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {

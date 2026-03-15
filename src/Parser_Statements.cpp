@@ -4,6 +4,31 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+// Tokens that can ONLY follow an expression after Type(args), never a declaration.
+// Used by the Type(args) disambiguation in parse_statement_or_declaration() for both
+// known struct/enum/typedef types and template type parameters.
+//
+// Per C++20 [stmt.ambig] / [dcl.ambig.res]:
+//   '.' '->'          → member access, unambiguously expression
+//   '++' '--'         → postfix operators, unambiguously expression
+//   binary/ternary/compound-assignment operators → unambiguously expression
+//
+// EXCLUDED (valid in declarations, so ambiguous → declaration per the standard):
+//   '[' → _Tp(x)[N] is a declaration (array declarator)
+//   '(' → _Tp(x)(args) is a declaration (function declarator)
+//   '=' → _Tp(x) = expr is a declaration (parenthesized declarator with copy-init)
+static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
+	".", "->",
+	"?", "++", "--",
+	"+", "-", "*", "/", "%",
+	"&", "|", "^",
+	"<<", ">>", "&&", "||",
+	"==", "!=",
+	"<", ">", "<=", ">=", "<=>",
+	"+=", "-=", "*=", "/=",
+	"%=", "&=", "|=", "^=",
+	"<<=", ">>="
+};
 
 ParseResult Parser::parse_block()
 {
@@ -268,23 +293,13 @@ ParseResult Parser::parse_statement_or_declaration()
 				
 				if (peek() == "("_tok) {
 					// TypeName(...) - could be declaration or functional cast
-					// Skip to matching )
-					advance();  // consume '('
-					int paren_depth = 1;
-					while (paren_depth > 0 && !peek().is_eof()) {
-						auto tok = advance();
-						if (tok.value() == "(") paren_depth++;
-						else if (tok.value() == ")") paren_depth--;
-					}
+					// Use skip_balanced_parens to skip to matching )
+					skip_balanced_parens();
 					
-					// Check what follows the )
-					if (!peek().is_eof()) {
-						auto next_val = peek_info().value();
-						// If followed by . or ->, this is an expression (temporary construction)
-						if (next_val == "." || next_val == "->") {
-							restore_token_position(check_pos);
-							return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						}
+					// Check what follows the ) using the shared expression-only token set
+					if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
+						restore_token_position(check_pos);
+						return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					}
 				}
 				restore_token_position(check_pos);
@@ -357,11 +372,28 @@ ParseResult Parser::parse_statement_or_declaration()
 
 		// Check if this identifier is a template parameter name (e.g., T in template<typename T>)
 		// Template parameters can be used as types in variable declarations like "T result = value;"
+		// OR as functional-style casts like "_Tp(args...).swap(c)" (temporary construction)
 		if (!current_template_param_names_.empty()) {
 			for (const auto& param_name : current_template_param_names_) {
 				if (param_name == type_name_handle) {
-					// This is a template parameter being used as a type
-					// Parse as variable declaration
+					// This is a template parameter being used as a type.
+					// Disambiguate per C++20 [stmt.ambig]: when a statement is ambiguous
+					// between a declaration and an expression, it is a declaration.
+					// _Tp(x); is a declaration. But _Tp(x).m(), _Tp(x)->m(), _Tp(x)+y, etc.
+					// are unambiguously expressions.
+					if (peek(1) == "("_tok) {
+						SaveHandle tparam_check = save_token_position();
+						advance(); // consume type name (_Tp)
+						// skip_balanced_parens expects peek() == '('
+						skip_balanced_parens();
+						// After skip_balanced_parens, peek() is the token after ')'
+						if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
+							restore_token_position(tparam_check);
+							return parse_expression_statement();
+						}
+						restore_token_position(tparam_check);
+					}
+					// Parse as variable declaration (including the _Tp(x); case per [stmt.ambig])
 					return parse_variable_declaration();
 				}
 			}
