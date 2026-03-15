@@ -90,3 +90,11 @@ recover the parser-resolved overload, but when the argument value is `0L` and th
 overload was chosen by the parser the behaviour diverges from the standard.
 
 Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
+## ~~`goto` cross-scope destructor cleanup not implemented~~ ✅ Fixed (2026-03-15)
+
+`visitGotoStatementNode` now calls `emitDestructorsForNonLocalExit(target_depth)` before
+emitting the `Branch` instruction.  `prescanLabels()` is called at the start of each
+function body to populate `label_scope_depth_map_` so that both forward and backward
+`goto` statements know the scope depth of their target label.
+
+Regression coverage: `tests/test_eh_goto_scope_dtor_ret0.cpp`

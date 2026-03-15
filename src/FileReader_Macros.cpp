@@ -1512,7 +1512,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
 	defines_["__cpp_designated_initializers"] = DefineDirective{ "201707L", {} };  // Designated initializers
 	defines_["__cpp_enumerator_attributes"] = DefineDirective{ "201411L", {} };  // Enumerator attributes
-		defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling (throw/catch/unwind)
+	defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling (throw/catch/unwind)
 	defines_["__cpp_fold_expressions"] = DefineDirective{ "201603L", {} };  // Fold expressions
 	defines_["__cpp_generic_lambdas"] = DefineDirective{ "201707L", {} };  // Generic lambdas with template params
 	defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{ "201606L", {} };  // Guaranteed copy elision

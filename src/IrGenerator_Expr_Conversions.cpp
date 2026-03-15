@@ -974,6 +974,17 @@
 		const StructMember* member, bool is_reference_capture,
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
+			int increment_amount = 1;
+			if (member->pointer_depth > 0) {
+				if (member->pointer_depth > 1) {
+					increment_amount = 8;
+				} else {
+					increment_amount = static_cast<int>(getSizeInBytes(member->type, member->type_index, get_type_size_bits(member->type)));
+					if (increment_amount == 0) {
+						increment_amount = 1;
+					}
+				}
+			}
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -997,7 +1008,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, 1ULL },
+					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1032,7 +1043,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, 1ULL },
+					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1745,6 +1756,16 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 		}
 	}
+	auto getPointerMemberElementSize = [&](const auto& member_result, int pointer_depth) {
+		if (pointer_depth > 1) {
+			return 8;
+		}
+		int size = getSizeInBytes(
+			member_result.member->type,
+			member_result.member->type_index,
+			get_type_size_bits(member_result.member->type));
+		return size != 0 ? size : 1;
+	};
 	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
 		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);
 		if (auto lvalue_info = getTempVarLValueInfo(operand_temp);
@@ -1758,7 +1779,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = (operand_pointer_depth > 1) ? 8 : static_cast<int>(member_result.member->size);
+					element_size = getPointerMemberElementSize(member_result, operand_pointer_depth);
 				}
 			}
 		}
@@ -1773,7 +1794,10 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), type_node.size_in_bits());
+			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.type()));
+			if (element_size == 0) {
+				element_size = 1;
+			}
 		}
 	};
 	auto tryApplyPointerInfoFromIdentifier = [&](const IdentifierNode& identifier, size_t consumed_dereferences = 0) -> bool {
@@ -1797,7 +1821,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
-			element_size = (operand_pointer_depth > 1) ? 8 : static_cast<int>(member_result.member->size);
+			element_size = getPointerMemberElementSize(member_result, operand_pointer_depth);
 			return true;
 		};
 
@@ -1862,11 +1886,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					if (operand_pointer_depth > 1) {
-						element_size = 8;
-					} else {
-						element_size = static_cast<int>(member_result.member->size);
-					}
+					element_size = getPointerMemberElementSize(member_result, operand_pointer_depth);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {

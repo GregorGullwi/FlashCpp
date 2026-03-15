@@ -120,15 +120,13 @@ This keeps common header declarations working while making `#ifdef __restrict` e
 
 ---
 
-### 6.1 `__cpp_exceptions` Not Defined; Standard Library Uses Abort Paths ⚠️
+### 6.1 `__cpp_exceptions` ✅ Defined
 
 **Standard (SD-6):** `__cpp_exceptions` must be defined when exception handling is supported.
 Standard library headers (`<stdexcept>`, `<new>`, etc.) guard their exception-throwing paths
 with `#if __cpp_exceptions`.
 
-**FlashCpp:** The macro is intentionally absent (FileReader_Macros.cpp:1518–1520). Even the
-partial exception handling that does work (simple `throw`/`catch` of primitives on Linux and
-Windows) is therefore invisible to the standard library. `std::bad_alloc`, `std::out_of_range`,
-and similar types will call `std::abort()` rather than throw.
+**FlashCpp:** `__cpp_exceptions 199711L` is defined in `FileReader_Macros.cpp`. Full
+`throw`/`catch` with primitives and class types works on both Linux and Windows.
 
-**Location:** `src/FileReader_Macros.cpp:1518–1520`
+**Location:** `src/FileReader_Macros.cpp:1515`

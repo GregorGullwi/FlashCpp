@@ -1,6 +1,6 @@
 # Exception Handling in FlashCpp
 
-**Updated**: 2026-03-11
+**Updated**: 2026-03-15
 **Platform Targets**: Linux (Itanium C++ ABI) and Windows (MSVC SEH / `__CxxFrameHandler3`)
 
 ## Current Status
@@ -26,6 +26,7 @@ Basic and intermediate exception handling works end-to-end:
 | Rethrowing (`throw;`) | ✅ | Fixed: correct RSP alignment + full LSDA coverage |
 | Class-type exceptions with destructors | ✅ | Fixed (Linux): proper _ZTI/_ZTS typeinfo with vtable relocs; dtor arg to __cxa_throw |
 | Stack unwinding with local destructors | ✅ | Fixed (Linux): cleanup landing pads emitted for try-block-local vars (Phase 1) and function-scope vars (Phase 2) |
+| Local destructors before `break`/`continue`/`return` | ✅ | Fixed: `emitDestructorsForNonLocalExit` emits scope dtors before all non-local jumps |
 | **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info`; virtual base matching via vtable vbase offsets |
 | `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
 
@@ -68,19 +69,25 @@ This intentionally does **not** yet change `throw <expr>` lowering inside a catc
 1. **Minimal fix first**
    Close the concrete bug with the smallest safe change. The landed minimal fix handles `throw;` / rethrow from inside a catch body by emitting cleanup for the active catch scopes before lowering `Rethrow`. This was the best first step because it fixed a real failing case with low risk.
 
-2. **Medium refactor if we keep touching EH exits**
-   Introduce a shared “leave scopes down to depth X” cleanup helper in AST→IR and use it for `return`, `break`, `continue`, `goto`, `throw`, and `throw;`. This is not strictly required before a larger redesign, but it is the best practical next step if more non-local-exit hardening work is expected.
+2. **Medium refactor if we keep touching EH exits** ✅ Done
+   `emitDestructorsForNonLocalExit(target_depth)` is now the shared helper in
+   AST→IR used for `break`, `continue`, `return`, and `goto`. It emits destructor
+   calls for all live local variables in scopes between the current execution point
+   and the target scope depth before the non-local jump is taken, without modifying
+   `scope_stack_` so the normal `exitScope()` / `exitFunctionScope()` paths still
+   work. `goto` uses `prescanLabels()` + `label_scope_depth_map_` so that both
+   forward and backward gotos know the target scope depth at jump time.
 
 3. **Large redesign only if the area keeps surfacing bugs**
-   Upgrade the Windows unwind-state / unwind-map model so catch-body locals and other destructible scopes become first-class unwind actions, instead of relying on frontend-emitted cleanup before exceptional exits. This is the highest-ceiling solution, but also the highest-risk and highest-effort one.
+   Upgrade the Windows unwind-state / unwind-map model so catch-body locals and
+   other destructible scopes become first-class unwind actions, instead of relying
+   on frontend-emitted cleanup before exceptional exits. This is the highest-ceiling
+   solution, but also the highest-risk and highest-effort one.
 
 ### Recommendation
 
-The current recommendation is **minimal first, then reassess**.
-
-- If the minimal fix closes the bug and no other EH-exit holes appear, stopping there is reasonable.
-- If more control-flow exits in this area need attention, do the medium refactor before continuing.
-- The medium step is **useful but not mandatory** before a future larger redesign.
+Steps 1 and 2 of the hardening roadmap are complete. The remaining open item
+is `__CxxFrameHandler3` full type-matching on Windows (step 3 is deferred).
 
 ### Explicit follow-ups still worth tracking
 
@@ -271,6 +278,7 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-03-09 | Vtable vbase prefix: classes with virtual bases now emit vbase offset entries before `offset_to_top` in the vtable | **Enables personality routine to locate virtual base subobjects at runtime** |
 | 2026-03-09 | Diamond flag detection (`__diamond_shaped_mask` 0x2) now correctly set when two bases share a common virtual ancestor | **Correct VMI typeinfo flags for diamond inheritance** |
 | 2026-03-09 | `vtable_offset` in `add_vtable` was captured before `add_typeinfo` appended to `.rodata`, causing vtable symbols/relocations to point into typeinfo data | **Fixed vtable pointer corruption for all ELF classes with RTTI** |
+| 2026-03-15 | `emitDestructorsForNonLocalExit()`: emit scope destructors before `break`, `continue`, `return`, and `goto` non-local jumps; `prescanLabels()` + `label_scope_depth_map_` for forward/backward goto; combined `loop_depth_stack_` (was two separate stacks) | **Fixed missing destructor calls when exiting scopes via non-local jumps** |
 
 ---
 
@@ -343,6 +351,10 @@ Key test files:
 - `test_eh_catch_conditional_return_fallthrough_ret0.cpp` — catch body can return on one path and fall through on another
 - `test_eh_catch_shared_fixup_late_return_ret0.cpp` — multiple handlers safely share one continuation/fixup path
 - `test_eh_noexcept_normal_ret0.cpp` — noexcept functions work normally + inner try/catch
+- `test_eh_break_scope_dtor_ret0.cpp` — local destructors called before `break` in loops (with and without try)
+- `test_eh_continue_scope_dtor_ret0.cpp` — local destructors called before `continue` in loops (with and without try)
+- `test_eh_return_scope_dtor_ret0.cpp` — local destructors called before `return` (function scope, loop scope, try scope)
+- `test_eh_goto_scope_dtor_ret0.cpp` — local destructors called before `goto` (forward and backward, scope-crossing)
 
 ## References
 
