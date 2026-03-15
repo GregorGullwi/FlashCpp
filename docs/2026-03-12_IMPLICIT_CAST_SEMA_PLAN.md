@@ -986,7 +986,25 @@ Exit criteria:
 
 - Added `Type::DeclTypeAuto` enum value after `Type::Auto` in `AstNodeTypes_TypeSystem.h`.
 - `Parser_TypeSpecifiers.cpp` now emits `Type::DeclTypeAuto` for `decltype(auto)` instead of reusing `Type::Auto`.
-- All switch/if statements in: `AstNodeTypes.cpp`, `AstNodeTypes_TypeSystem.h`, `NameMangling.h`, `IrType.cpp`, `Parser_Expr_QualLookup.cpp`, `SemanticAnalysis.cpp`, `LambdaHelpers.h`, `IrGenerator_Lambdas.cpp`, `IrGenerator_Expr_Primitives.cpp`, `IrGenerator_Call_Direct.cpp`, `IrGenerator_Expr_Operators.cpp`, `IrGenerator_Stmt_Decl.cpp`, `ExpressionSubstitutor.cpp`, `Parser_Templates_Inst_Deduction.cpp`, `Parser_Expr_PrimaryExpr.cpp`, `Parser_Expr_ControlFlowStmt.cpp`, `Parser_Decl_FunctionOrVar.cpp`, `Parser_FunctionBodies.cpp` updated to handle `Type::DeclTypeAuto` alongside `Type::Auto`.
+- All switch/if statements were updated to handle `Type::DeclTypeAuto` alongside `Type::Auto` in the following files:
+  - `AstNodeTypes.cpp`
+  - `AstNodeTypes_TypeSystem.h`
+  - `NameMangling.h`
+  - `IrType.cpp`
+  - `Parser_Expr_QualLookup.cpp`
+  - `SemanticAnalysis.cpp`
+  - `LambdaHelpers.h`
+  - `IrGenerator_Lambdas.cpp`
+  - `IrGenerator_Expr_Primitives.cpp`
+  - `IrGenerator_Call_Direct.cpp`
+  - `IrGenerator_Expr_Operators.cpp`
+  - `IrGenerator_Stmt_Decl.cpp`
+  - `ExpressionSubstitutor.cpp`
+  - `Parser_Templates_Inst_Deduction.cpp`
+  - `Parser_Expr_PrimaryExpr.cpp`
+  - `Parser_Expr_ControlFlowStmt.cpp`
+  - `Parser_Decl_FunctionOrVar.cpp`
+  - `Parser_FunctionBodies.cpp`
 - `deduce_and_update_auto_return_type` now handles both `Type::Auto` and `Type::DeclTypeAuto`.
 - Native type entry for `decltype(auto)` added to `gNativeTypes` in `AstNodeTypes.cpp`.
 - Regression test: `tests/test_decltype_auto_forward_ret0.cpp`.
