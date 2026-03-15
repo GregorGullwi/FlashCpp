@@ -933,11 +933,20 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-		TypeSpecifierNode deduced_loop_type = begin_return_type;
-		if (deduced_loop_type.pointer_depth() > 0) {
-			deduced_loop_type.remove_pointer_level();
-		}
-		ASTNode loop_decl_node = resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
+		// For pointer-based iterators (e.g. int*), stripping one pointer level
+		// gives the element type directly.  For struct iterators the element type
+		// is whatever operator*() returns, which we cannot cheaply determine here.
+		// Fall back to the original (possibly placeholder) declaration and let the
+		// `*__begin` initializer expression drive type deduction at variable-init
+		// time — matching the pre-Phase-5 behaviour.
+		ASTNode loop_decl_node = [&]() -> ASTNode {
+			if (begin_return_type.pointer_depth() > 0) {
+				TypeSpecifierNode deduced_loop_type = begin_return_type;
+				deduced_loop_type.remove_pointer_level();
+				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
+			}
+			return original_var_decl.declaration_node();
+		}();
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 
