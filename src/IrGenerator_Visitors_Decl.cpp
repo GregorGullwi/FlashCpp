@@ -1002,7 +1002,7 @@
 						for (const auto& p : fn.parameter_nodes()) {
 							if (p.is<DeclarationNode>()) {
 								const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								if (pt.type() == Type::Auto) {
+								if (isPlaceholderAutoType(pt.type())) {
 									fn_has_auto = true;
 									break;
 								}
@@ -1034,7 +1034,7 @@
 						for (const auto& p : ctor.parameter_nodes()) {
 							if (p.is<DeclarationNode>()) {
 								const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								if (pt.type() == Type::Auto) {
+								if (isPlaceholderAutoType(pt.type())) {
 									ctor_has_auto = true;
 									break;
 								}
@@ -1062,7 +1062,7 @@
 								for (const auto& p : inner_func.parameter_nodes()) {
 									if (p.is<DeclarationNode>()) {
 										const auto& pt = p.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-										if (pt.type() == Type::Auto) {
+										if (isPlaceholderAutoType(pt.type())) {
 											has_auto_param = true;
 											break;
 										}

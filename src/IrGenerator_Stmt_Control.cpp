@@ -29,6 +29,51 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	resolved_decl.set_type_node(resolved_type_node);
 	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
 }
+
+const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type, bool prefer_const) {
+	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
+		return nullptr;
+	}
+
+	const StructTypeInfo* struct_info = gTypeInfo[iterator_type.type_index().value].getStructInfo();
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	const FunctionDeclarationNode* fallback = nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Multiply ||
+			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
+		// Unary operator*() (dereference) has 0 parameters; binary operator*(rhs) has 1.
+		if (func.parameter_nodes().size() != 0) {
+			continue;
+		}
+
+		if (prefer_const && member_func.is_const()) {
+			return &func;
+		}
+		if (!prefer_const && !member_func.is_const()) {
+			return &func;
+		}
+		if (!fallback) {
+			fallback = &func;
+		}
+	}
+
+	return fallback;
+}
+
+std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
+	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
+		return dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+	}
+
+	return std::nullopt;
+}
 }
 
 	void AstToIr::visitBlockNode(const BlockNode& node) {
@@ -934,16 +979,27 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		// For pointer-based iterators (e.g. int*), stripping one pointer level
-		// gives the element type directly.  For struct iterators the element type
-		// is whatever operator*() returns, which we cannot cheaply determine here.
-		// Fall back to the original (possibly placeholder) declaration and let the
-		// `*__begin` initializer expression drive type deduction at variable-init
-		// time — matching the pre-Phase-5 behaviour.
+		// gives the element type directly. For struct iterators, use the declared
+		// operator*() return type as the range element type.
 		ASTNode loop_decl_node = [&]() -> ASTNode {
 			if (begin_return_type.pointer_depth() > 0) {
 				TypeSpecifierNode deduced_loop_type = begin_return_type;
 				deduced_loop_type.remove_pointer_level();
 				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
+			}
+
+			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+			if (auto deduced_loop_type = getRangeIteratorElementType(begin_return_type, prefer_const_deref); deduced_loop_type.has_value()) {
+				return resolveRangedForLoopDecl(original_var_decl, *deduced_loop_type);
+			}
+
+			const TypeSpecifierNode& placeholder_type = original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			if (isPlaceholderAutoType(placeholder_type.type())) {
+				throw InternalError(std::string(StringBuilder()
+					.append("Could not deduce range-for element type from iterator type '")
+					.append(begin_return_type.getReadableString())
+					.append("'")
+					.commit()));
 			}
 			return original_var_decl.declaration_node();
 		}();
@@ -954,7 +1010,7 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 		// value and reference loop variables. The iterator is always dereferenced.
 		// For struct iterators, reinterpret as pointer to element type, then dereference.
 		ASTNode init_expr;
-		{
+		if (begin_return_type.pointer_depth() > 0) {
 			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
@@ -967,6 +1023,13 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
 				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true)
+			);
+		} else {
+			init_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(
+					Token(Token::Type::Operator, "*"sv, 0, 0, 0),
+					ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token)),
+					true)
 			);
 		}
 

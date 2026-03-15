@@ -91,29 +91,18 @@ overload was chosen by the parser the behaviour diverges from the standard.
 
 Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
 
-## Range-for `auto` deduction with struct iterators
+## Struct-iterator range-for result miscompare after `+=`
 
-When a container's `begin()`/`end()` return a struct iterator (rather than a
-raw pointer), the range-for desugaring in `visitRangedForBeginEnd` incorrectly
-deduces the loop variable's type as the iterator struct itself instead of the
-element type that `operator*()` returns.
+While fixing range-for `auto` deduction for struct iterators, an additional
+codegen/runtime issue showed up in a nearby path: this returns `1` even though
+the loop sum itself evaluates to `60` when returned directly.
 
 ```cpp
-struct IntIter {
-	int* ptr;
-	int& operator*() { return *ptr; }
-	IntIter& operator++() { ++ptr; return *this; }
-	bool operator!=(const IntIter& o) const { return ptr != o.ptr; }
-};
-
-struct Container {
-	int data[3];
-	IntIter begin() { /* ... */ }
-	IntIter end()   { /* ... */ }
-};
-
-Container c;
-for (auto x : c) { /* x is deduced as IntIter instead of int */ }
+int sum = 0;
+for (auto value : c) {
+	sum += value;
+}
+return sum == 60 ? 0 : 1;
 ```
 
 Root cause: `resolveRangedForLoopDecl` in `IrGenerator_Stmt_Control.cpp`

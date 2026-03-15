@@ -1026,6 +1026,10 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 					.commit()));
 			}
 			type_specifier = *deduced_type_spec_opt;
+			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
+				!type_specifier.is_reference()) {
+				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.type()));
+			}
 		}
 		
 		return initializer;
