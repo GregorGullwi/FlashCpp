@@ -4671,8 +4671,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), identifier_token.value());
 
 					// Check if this is a struct with operator()
-					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
-					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined || type_node.type() == Type::Auto) {
+					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
 						if (type_index.value < gTypeInfo.size()) {
@@ -4693,9 +4692,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 					}
-					// Treat Type::Auto as a callable type (function pointer-like)
-					// This handles generic lambda parameters: [](auto&& func) { func(); }
-					else if (type_node.type() == Type::Auto) {
+					// Treat unresolved placeholder types as callable when parsing generic
+					// lambda parameters such as [](auto&& func) { func(); }.
+					else if (isPlaceholderAutoType(type_node.type())) {
 						is_function_pointer = true;
 					}
 				}

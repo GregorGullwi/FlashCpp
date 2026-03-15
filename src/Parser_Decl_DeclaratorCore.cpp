@@ -45,12 +45,17 @@ ParseResult Parser::parse_type_and_name() {
     // Per C++20 [dcl.struct.bind], decltype(auto) is not permitted in structured bindings.
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
     if (type_spec.type() == Type::DeclTypeAuto) {
-        // Peek ahead past optional &/&& to see if '[' follows
-        SaveHandle sb_check = save_token_position();
-        if (peek() == "&"_tok) {
-            advance();
-            if (peek() == "&"_tok) advance();
+        if (type_spec.cv_qualifier() != CVQualifier::None) {
+            return ParseResult::error("'decltype(auto)' cannot have cv-qualifiers", current_token_);
         }
+
+        if (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
+            return ParseResult::error("'decltype(auto)' cannot be combined with pointer or reference declarators", current_token_);
+        }
+
+        // Peek ahead to see if '[' follows. Per C++20 [dcl.struct.bind], decltype(auto)
+        // is not permitted in structured bindings.
+        SaveHandle sb_check = save_token_position();
         bool is_structured_binding = (peek() == "["_tok);
         restore_token_position(sb_check);
         if (is_structured_binding) {

@@ -91,41 +91,20 @@ overload was chosen by the parser the behaviour diverges from the standard.
 
 Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
 
-## Range-for `auto` deduction with struct iterators
+## Struct-iterator range-for result miscompare after `+=`
 
-When a container's `begin()`/`end()` return a struct iterator (rather than a
-raw pointer), the range-for desugaring in `visitRangedForBeginEnd` incorrectly
-deduces the loop variable's type as the iterator struct itself instead of the
-element type that `operator*()` returns.
+While fixing range-for `auto` deduction for struct iterators, an additional
+codegen/runtime issue showed up in a nearby path: this returns `1` even though
+the loop sum itself evaluates to `60` when returned directly.
 
 ```cpp
-struct IntIter {
-	int* ptr;
-	int& operator*() { return *ptr; }
-	IntIter& operator++() { ++ptr; return *this; }
-	bool operator!=(const IntIter& o) const { return ptr != o.ptr; }
-};
-
-struct Container {
-	int data[3];
-	IntIter begin() { /* ... */ }
-	IntIter end()   { /* ... */ }
-};
-
-Container c;
-for (auto x : c) { /* x is deduced as IntIter instead of int */ }
+int sum = 0;
+for (auto value : c) {
+	sum += value;
+}
+return sum == 60 ? 0 : 1;
 ```
 
-Root cause: `resolveRangedForLoopDecl` in `IrGenerator_Stmt_Control.cpp`
-receives `begin_return_type` as the deduced element type.  For pointer
-iterators (`pointer_depth() > 0`) one pointer level is correctly stripped to
-obtain the element type.  For struct iterators (`pointer_depth() == 0`) no
-stripping happens and the iterator type itself is used, which is wrong — the
-element type should come from the iterator's `operator*()` return type.
-
-The pre-Phase-5 code avoided this by leaving the declaration as `auto` and
-letting the `*__begin` initializer expression drive type deduction at
-variable-init time.  The fix is to fall back to the original declaration node
-when the iterator is not a pointer, restoring that behaviour.
-
-Tracking: `tests/test_range_for_auto_struct_iterator_ret0.cpp`
+Workaround: return the arithmetic delta (`return 60 - sum;`) or otherwise avoid
+this compare/conditional form on the affected path until the underlying
+miscompare is isolated.
