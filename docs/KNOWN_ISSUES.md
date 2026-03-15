@@ -131,43 +131,11 @@ when the iterator is not a pointer, restoring that behaviour.
 Tracking: `tests/test_range_for_auto_struct_iterator_ret0.cpp`
 
 
-## `goto` cross-scope destructor cleanup not implemented
+## ~~`goto` cross-scope destructor cleanup not implemented~~ ✅ Fixed (2026-03-15)
 
-When `goto` exits one or more scopes that contain local variables with destructors,
-those destructors are not called before the jump is taken.
+`visitGotoStatementNode` now calls `emitDestructorsForNonLocalExit(target_depth)` before
+emitting the `Branch` instruction.  `prescanLabels()` is called at the start of each
+function body to populate `label_scope_depth_map_` so that both forward and backward
+`goto` statements know the scope depth of their target label.
 
-Example:
-```cpp
-int g = 0;
-struct Guard { ~Guard() { g++; } };
-
-int main() {
-    {
-        Guard guard;
-        try {
-            goto out;  // guard's destructor should be called here
-        } catch (...) {}
-    }
-out:
-    return g == 1 ? 0 : 1;  // fails: g is 0
-}
-```
-
-**Root cause:** `visitGotoStatementNode` only emits a `Branch` IR instruction.
-Unlike `break`/`continue`/`return` (which have a well-defined target scope depth),
-`goto` requires knowing the scope depth of the target label at the point the `goto`
-is parsed. This requires either a two-pass approach (collect label scope depths
-first, then process gotos) or a deferred patch-up mechanism.
-
-**Impact:** Low in practice — `goto` usage in C++ code is rare. Affects correctness
-when `goto` skips across destructors.
-
-**Fix:** Extend `visitGotoStatementNode` to look up the scope depth of the target
-label from a `label_scope_depth_map_` populated during the first traversal of each
-label statement, then call `emitDestructorsForNonLocalExit(target_depth)` before
-emitting the `Branch`.
-
-**Status:** `break`, `continue`, and `return` are already fixed (2026-03-15).
-`goto` remains open.
-
-Tracking: see `docs/EXCEPTION_HANDLING.md` — Explicit follow-ups
+Regression coverage: `tests/test_eh_goto_scope_dtor_ret0.cpp`

@@ -71,11 +71,12 @@ This intentionally does **not** yet change `throw <expr>` lowering inside a catc
 
 2. **Medium refactor if we keep touching EH exits** ✅ Done
    `emitDestructorsForNonLocalExit(target_depth)` is now the shared helper in
-   AST→IR used for `break`, `continue`, and `return`. It emits destructor calls
-   for all live local variables in scopes between the current execution point and
-   the target scope depth before the non-local jump is taken, without modifying
+   AST→IR used for `break`, `continue`, `return`, and `goto`. It emits destructor
+   calls for all live local variables in scopes between the current execution point
+   and the target scope depth before the non-local jump is taken, without modifying
    `scope_stack_` so the normal `exitScope()` / `exitFunctionScope()` paths still
-   work. `goto` cross-scope cleanup remains an open item (see `docs/KNOWN_ISSUES.md`).
+   work. `goto` uses `prescanLabels()` + `label_scope_depth_map_` so that both
+   forward and backward gotos know the target scope depth at jump time.
 
 3. **Large redesign only if the area keeps surfacing bugs**
    Upgrade the Windows unwind-state / unwind-map model so catch-body locals and
@@ -92,7 +93,6 @@ is `__CxxFrameHandler3` full type-matching on Windows (step 3 is deferred).
 
 - **`throw <expr>` from inside a catch body** is now hardened on Windows: the frontend materializes the thrown value first, then cleans active catch scopes, and the Windows throw backend skips the extra copy-construction step when that payload is already materialized.
 - **Nested `try/catch` inside an active catch on Windows** now has focused regression coverage for fallthrough, `return`, `throw <expr>`, and `throw;` / rethrow. The nested-return fix uses an enclosing-catch bridge plus the correct Windows EH parameter-home slot bias so `dispUnwindHelp` keeps ownership of `[rbp-8]`.
-- **`goto` cross-scope destructor cleanup** is not yet implemented. See `docs/KNOWN_ISSUES.md` for details.
 
 ## Windows Catch-Funclet Return Model
 
@@ -278,7 +278,7 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-03-09 | Vtable vbase prefix: classes with virtual bases now emit vbase offset entries before `offset_to_top` in the vtable | **Enables personality routine to locate virtual base subobjects at runtime** |
 | 2026-03-09 | Diamond flag detection (`__diamond_shaped_mask` 0x2) now correctly set when two bases share a common virtual ancestor | **Correct VMI typeinfo flags for diamond inheritance** |
 | 2026-03-09 | `vtable_offset` in `add_vtable` was captured before `add_typeinfo` appended to `.rodata`, causing vtable symbols/relocations to point into typeinfo data | **Fixed vtable pointer corruption for all ELF classes with RTTI** |
-| 2026-03-15 | `emitDestructorsForNonLocalExit()`: emit scope destructors before `break`, `continue`, and `return` non-local jumps; track loop scope depth in `loop_scope_depth_stack_` | **Fixed missing destructor calls when exiting scopes via non-local jumps** |
+| 2026-03-15 | `emitDestructorsForNonLocalExit()`: emit scope destructors before `break`, `continue`, `return`, and `goto` non-local jumps; `prescanLabels()` + `label_scope_depth_map_` for forward/backward goto; combined `loop_depth_stack_` (was two separate stacks) | **Fixed missing destructor calls when exiting scopes via non-local jumps** |
 
 ---
 
@@ -354,6 +354,7 @@ Key test files:
 - `test_eh_break_scope_dtor_ret0.cpp` — local destructors called before `break` in loops (with and without try)
 - `test_eh_continue_scope_dtor_ret0.cpp` — local destructors called before `continue` in loops (with and without try)
 - `test_eh_return_scope_dtor_ret0.cpp` — local destructors called before `return` (function scope, loop scope, try scope)
+- `test_eh_goto_scope_dtor_ret0.cpp` — local destructors called before `goto` (forward and backward, scope-crossing)
 
 ## References
 
