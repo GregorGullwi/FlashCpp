@@ -1820,7 +1820,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	FLASH_LOG(Parser, Debug, "deduce_and_update_auto_return_type called for function: ", 
 			  decl_node.identifier_token().value(), " return_type=", (int)return_type.type());
 	
-	if (return_type.type() != Type::Auto) {
+	if (!isPlaceholderAutoType(return_type.type())) {
 		return;  // Not an auto return type, nothing to do
 	}
 	
@@ -1858,11 +1858,13 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				auto expr_type_opt = get_expression_type(*ret.expression());
 				if (expr_type_opt.has_value()) {
 					// Store this return type for validation
-					all_return_types.emplace_back(*expr_type_opt, decl_node.identifier_token());
+					TypeSpecifierNode normalized_type =
+						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
+					all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
 					
 					// Set deduced type from first return
 					if (!deduced_type.has_value()) {
-						deduced_type = *expr_type_opt;
+						deduced_type = normalized_type;
 						FLASH_LOG(Parser, Debug, "  Found return statement, deduced type: ", 
 								  (int)deduced_type->type(), " size: ", (int)deduced_type->size_in_bits());
 					}
@@ -2093,6 +2095,7 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::Double: result += "double"; break;
 		case Type::LongDouble: result += "long double"; break;
 		case Type::Auto: result += "auto"; break;
+		case Type::DeclTypeAuto: result += "decltype(auto)"; break;
 		case Type::Struct:
 			if (type.type_index().value < gTypeInfo.size()) {
 				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index().value].name()));

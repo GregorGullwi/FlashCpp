@@ -2368,11 +2368,8 @@ ParseResult Parser::parse_decltype_specifier()
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after 'decltype(auto)'", current_token_);
 		}
-		// Return Type::Auto to indicate deduced return type
-		// The semantics of decltype(auto) vs auto differ during instantiation,
-		// but for parsing purposes, we treat it as auto with special handling
-		TypeSpecifierNode auto_type(Type::Auto, TypeQualifier::None, 0);
-		return saved_position.success(emplace_node<TypeSpecifierNode>(auto_type));
+		TypeSpecifierNode decltype_auto_type(Type::DeclTypeAuto, TypeQualifier::None, 0, decltype_token);
+		return saved_position.success(emplace_node<TypeSpecifierNode>(decltype_auto_type));
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
@@ -2480,4 +2477,3 @@ ParseResult Parser::parse_decltype_specifier()
 	// Return the deduced type specifier
 	return saved_position.success(emplace_node<TypeSpecifierNode>(*type_spec_opt));
 }
-

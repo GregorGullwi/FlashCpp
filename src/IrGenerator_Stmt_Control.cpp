@@ -1,6 +1,36 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
+namespace {
+// Ranged-for desugaring synthesizes a fresh variable declaration for each loop
+// iteration. When the source declaration used `auto` or `decltype(auto)`,
+// replace the placeholder with the deduced element type while preserving the
+// original declaration's cv/reference spelling.
+ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
+	const DeclarationNode& original_decl = original_var_decl.declaration();
+	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
+	if (!isPlaceholderAutoType(placeholder_type.type())) {
+		return original_var_decl.declaration_node();
+	}
+
+	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
+	// Plain `auto` strips references during deduction, so re-apply the user's
+	// explicit qualifier (e.g. `auto&`).  `decltype(auto)` preserves the exact
+	// type category from the deduced expression — do not overwrite.
+	if (placeholder_type.type() == Type::Auto) {
+		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
+		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
+			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
+		}
+	}
+
+	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
+	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
+	resolved_decl.set_type_node(resolved_type_node);
+	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
+}
+}
+
 	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
 		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
@@ -727,7 +757,7 @@
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		ASTNode loop_decl_node = resolveRangedForLoopDecl(original_var_decl, array_type);
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
@@ -903,7 +933,20 @@
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		// For pointer-based iterators (e.g. int*), stripping one pointer level
+		// gives the element type directly.  For struct iterators the element type
+		// is whatever operator*() returns, which we cannot cheaply determine here.
+		// Fall back to the original (possibly placeholder) declaration and let the
+		// `*__begin` initializer expression drive type deduction at variable-init
+		// time — matching the pre-Phase-5 behaviour.
+		ASTNode loop_decl_node = [&]() -> ASTNode {
+			if (begin_return_type.pointer_depth() > 0) {
+				TypeSpecifierNode deduced_loop_type = begin_return_type;
+				deduced_loop_type.remove_pointer_level();
+				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
+			}
+			return original_var_decl.declaration_node();
+		}();
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 

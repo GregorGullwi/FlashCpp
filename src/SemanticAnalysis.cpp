@@ -8,6 +8,31 @@
 #include "OverloadResolution.h"
 #include "Log.h"
 
+namespace {
+// Placeholder return-type finalization requires every return statement in the
+// body to deduce to the same full type identity, including cv/reference and
+// pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
+// accidentally merging distinct return categories during semantic rewriting.
+bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	if (lhs.type() != rhs.type() ||
+		lhs.type_index() != rhs.type_index() ||
+		lhs.cv_qualifier() != rhs.cv_qualifier() ||
+		lhs.reference_qualifier() != rhs.reference_qualifier() ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.array_dimensions() != rhs.array_dimensions()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < lhs.pointer_depth(); ++i) {
+		if (lhs.pointer_levels()[i].cv_qualifier != rhs.pointer_levels()[i].cv_qualifier) {
+			return false;
+		}
+	}
+
+	return true;
+}
+}
+
 // --- CanonicalTypeDesc::operator== ---
 
 bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
@@ -105,11 +130,211 @@ void SemanticAnalysis::run() {
 		normalizeTopLevelNode(node);
 	}
 
+	resolveRemainingAutoReturns();
+
 	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
 		stats_.roots_visited, " roots visited, ",
 		stats_.expressions_visited, " expressions, ",
 		stats_.statements_visited, " statements, ",
 		stats_.canonical_types_interned, " canonical types");
+}
+
+std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
+	const std::vector<ASTNode>& parameter_nodes,
+	const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const {
+	if (deduced_types.empty()) {
+		return parameter_nodes;
+	}
+
+	std::vector<ASTNode> resolved_nodes;
+	resolved_nodes.reserve(parameter_nodes.size());
+
+	for (size_t index = 0; index < parameter_nodes.size(); ++index) {
+		const ASTNode& param_node = parameter_nodes[index];
+		if (!param_node.is<DeclarationNode>()) {
+			resolved_nodes.push_back(param_node);
+			continue;
+		}
+
+		const TypeSpecifierNode* deduced_type = nullptr;
+		for (const auto& [deduced_index, type_node] : deduced_types) {
+			if (deduced_index == index) {
+				deduced_type = &type_node;
+				break;
+			}
+		}
+
+		if (!deduced_type) {
+			resolved_nodes.push_back(param_node);
+			continue;
+		}
+
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(param_decl);
+		ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type);
+		resolved_decl.set_type_node(resolved_type_node);
+		resolved_nodes.push_back(ASTNode::emplace_node<DeclarationNode>(resolved_decl));
+	}
+
+	return resolved_nodes;
+}
+
+void SemanticAnalysis::resolveRemainingAutoReturns() {
+	auto& nodes = const_cast<std::vector<ASTNode>&>(parser_.get_nodes());
+	for (auto& node : nodes) {
+		resolveRemainingAutoReturnsInNode(node);
+	}
+}
+
+void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
+	if (!node.has_value()) {
+		return;
+	}
+
+	if (node.is<FunctionDeclarationNode>()) {
+		FunctionDeclarationNode& func = node.as<FunctionDeclarationNode>();
+		const ASTNode type_node = func.decl_node().type_node();
+		if (type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
+			if (isPlaceholderAutoType(return_type.type())) {
+				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
+					deduced_type.has_value()) {
+					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
+					parser_.compute_and_set_mangled_name(func, true);
+				}
+			}
+		}
+		return;
+	}
+
+	if (node.is<StructDeclarationNode>()) {
+		for (auto& member_func : node.as<StructDeclarationNode>().member_functions()) {
+			resolveRemainingAutoReturnsInNode(member_func.function_declaration);
+		}
+		return;
+	}
+
+	if (node.is<NamespaceDeclarationNode>()) {
+		auto& declarations = const_cast<std::vector<ASTNode>&>(node.as<NamespaceDeclarationNode>().declarations());
+		for (auto& decl : declarations) {
+			resolveRemainingAutoReturnsInNode(decl);
+		}
+		return;
+	}
+
+	if (node.is<BlockNode>()) {
+		for (const auto& stmt : node.as<BlockNode>().get_statements()) {
+			ASTNode& mutable_stmt = const_cast<ASTNode&>(stmt);
+			resolveRemainingAutoReturnsInNode(mutable_stmt);
+		}
+	}
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type) {
+	if (!body.has_value() || !body.is<BlockNode>()) {
+		return std::nullopt;
+	}
+
+	std::optional<TypeSpecifierNode> deduced_type;
+
+	std::function<bool(const ASTNode&)> visit_returns = [&](const ASTNode& node) -> bool {
+		if (!node.has_value()) {
+			return true;
+		}
+
+		if (node.is<ReturnStatementNode>()) {
+			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
+			TypeSpecifierNode current_type(Type::Void, TypeQualifier::None, 0, ret.return_token());
+			if (ret.expression().has_value()) {
+				auto expr_type = parser_.get_expression_type(*ret.expression());
+				if (!expr_type.has_value()) {
+					return false;
+				}
+				current_type = finalizePlaceholderDeduction(placeholder_type, *expr_type);
+			}
+
+			if (!deduced_type.has_value()) {
+				deduced_type = current_type;
+				return true;
+			}
+
+			return placeholderReturnTypesMatch(*deduced_type, current_type);
+		}
+
+		if (node.is<BlockNode>()) {
+			for (const auto& stmt : node.as<BlockNode>().get_statements()) {
+				if (!visit_returns(stmt)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		if (node.is<IfStatementNode>()) {
+			const auto& stmt = node.as<IfStatementNode>();
+			return visit_returns(stmt.get_then_statement()) &&
+				(!stmt.has_else() || visit_returns(stmt.get_else_statement().value()));
+		}
+
+		if (node.is<ForStatementNode>()) {
+			return visit_returns(node.as<ForStatementNode>().get_body_statement());
+		}
+
+		if (node.is<WhileStatementNode>()) {
+			return visit_returns(node.as<WhileStatementNode>().get_body_statement());
+		}
+
+		if (node.is<DoWhileStatementNode>()) {
+			return visit_returns(node.as<DoWhileStatementNode>().get_body_statement());
+		}
+
+		if (node.is<RangedForStatementNode>()) {
+			return visit_returns(node.as<RangedForStatementNode>().get_body_statement());
+		}
+
+		if (node.is<SwitchStatementNode>()) {
+			return visit_returns(node.as<SwitchStatementNode>().get_body());
+		}
+
+		if (node.is<CaseLabelNode>()) {
+			const auto& case_node = node.as<CaseLabelNode>();
+			return !case_node.has_statement() || visit_returns(*case_node.get_statement());
+		}
+
+		if (node.is<DefaultLabelNode>()) {
+			const auto& default_node = node.as<DefaultLabelNode>();
+			return !default_node.has_statement() || visit_returns(*default_node.get_statement());
+		}
+
+		if (node.is<TryStatementNode>()) {
+			const auto& try_node = node.as<TryStatementNode>();
+			if (!visit_returns(try_node.try_block())) {
+				return false;
+			}
+			for (const auto& handler : try_node.catch_clauses()) {
+				if (handler.is<CatchClauseNode>() &&
+					!visit_returns(handler.as<CatchClauseNode>().body())) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		return true;
+	};
+
+	if (!visit_returns(body)) {
+		return std::nullopt;
+	}
+
+	return deduced_type.value_or(TypeSpecifierNode(
+		Type::Void,
+		TypeQualifier::None,
+		get_type_size_bits(Type::Void)));
+}
+
+TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
+	return finalizePlaceholderTypeDeduction(placeholder_type, deduced_type);
 }
 
 // --- Top-level dispatch ---
@@ -671,7 +896,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const CanonicalTypeDesc& l = type_context_.get(lhs_id);
 					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
 					if (l.base_type == Type::Invalid || r.base_type == Type::Invalid) return {};
-					if (l.base_type == Type::Auto   || r.base_type == Type::Auto)    return {};
+					if (isPlaceholderAutoType(l.base_type) || isPlaceholderAutoType(r.base_type)) return {};
 					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
 					const Type common = get_common_type(l.base_type, r.base_type);
 					if (common == Type::Invalid) return {};
@@ -736,7 +961,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// Checking one lambda against both sides covers all non-handleable types in one place.
 	auto is_non_primitive = [](Type t) {
 		return t == Type::Struct || t == Type::Enum || t == Type::UserDefined ||
-		       t == Type::Invalid || t == Type::Auto;
+		       t == Type::Invalid || isPlaceholderAutoType(t);
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
@@ -795,7 +1020,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
 	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
 	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
-	if (lhs_desc.base_type == Type::Auto    || rhs_desc.base_type == Type::Auto)    return;
+	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
 	const Type common = get_common_type(lhs_desc.base_type, rhs_desc.base_type);
 	if (common == Type::Invalid) return;

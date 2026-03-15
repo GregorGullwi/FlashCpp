@@ -1116,6 +1116,22 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
+// Placeholder-type deduction helper shared by parser and semantic analysis.
+// Plain `auto` follows template-argument-deduction-style stripping of top-level
+// references/cv for value returns, while `decltype(auto)` preserves the exact
+// type category and qualifiers of the deduced expression.
+inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
+	if (placeholder_type != Type::Auto) {
+		return deduced_type;
+	}
+
+	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
+	if (deduced_type.pointer_depth() == 0 && !deduced_type.is_array()) {
+		deduced_type.set_cv_qualifier(CVQualifier::None);
+	}
+	return deduced_type;
+}
+
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
 // For Struct/UserDefined: authoritative lookup via StructTypeInfo::total_size * 8,

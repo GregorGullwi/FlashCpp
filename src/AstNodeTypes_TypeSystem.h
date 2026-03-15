@@ -311,12 +311,17 @@ enum class Type : int_fast16_t {
 	MemberObjectPointer,  // Pointer to data member: int MyClass::*
 	UserDefined,
 	Auto,
+	DeclTypeAuto,
 	Function,
 	Struct,
 	Enum,
 	Nullptr,              // nullptr_t type
 	Template,             // Nested template param
 };
+
+inline bool isPlaceholderAutoType(Type type) {
+	return type == Type::Auto || type == Type::DeclTypeAuto;
+}
 
 // Strong wrapper for type indices into gTypeInfo[].
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
@@ -411,6 +416,7 @@ inline bool isSignedType(Type t) {
 		case Type::Void:
 		case Type::UserDefined:
 		case Type::Auto:
+		case Type::DeclTypeAuto:
 		case Type::Function:
 		case Type::Struct:
 		case Type::Enum:

@@ -57,6 +57,7 @@ IrType toIrType(Type semantic_type) {
 		// forms to preserve existing runtime behavior until their lowering moves
 		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
 		case Type::Auto:
+		case Type::DeclTypeAuto:
 			return IrType::Integer;
 		case Type::Template:
 			return IrType::Void;

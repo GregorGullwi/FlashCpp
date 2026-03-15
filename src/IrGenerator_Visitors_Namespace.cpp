@@ -217,28 +217,8 @@
 				}
 			}
 
-			// If the current function has auto return type, deduce it from the return expression
-			if (current_function_return_type_ == Type::Auto) {
-				Type expr_type = operands.type;
-				int expr_size = operands.size_in_bits.value;
-
-				// Build a TypeSpecifierNode for the deduced type
-				TypeSpecifierNode deduced_type(expr_type, TypeQualifier::None, expr_size, node.return_token());
-
-				// If we have type_index information (for structs), include it
-				if (operands.type_index.is_valid()) {
-					deduced_type = TypeSpecifierNode(expr_type, TypeQualifier::None, expr_size, node.return_token());
-					deduced_type.set_type_index(operands.type_index);
-				}
-
-				// Store the deduced type for this function
-				if (current_function_name_.isValid()) {
-					deduced_auto_return_types_[std::string(StringTable::getStringView(current_function_name_))] = deduced_type;
-				}
-
-				// Update current function return type for subsequent return statements
-				current_function_return_type_ = expr_type;
-				current_function_return_size_ = expr_size;
+			if (isPlaceholderAutoType(current_function_return_type_)) {
+				throw InternalError("Unresolved placeholder return type reached IR return lowering");
 			}
 
 			// Convert to the function's return type if necessary

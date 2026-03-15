@@ -11,7 +11,7 @@ namespace {
 	}
 
 	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
-		return type_spec.type() != Type::Auto;
+		return !isPlaceholderAutoType(type_spec.type());
 	}
 
 	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {

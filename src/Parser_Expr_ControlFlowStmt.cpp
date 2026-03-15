@@ -949,8 +949,8 @@ ParseResult Parser::parse_lambda_expression() {
     // Deduce lambda return type if not explicitly specified or if it's auto
     // Now with proper guard against circular dependencies in get_expression_type
     // AND validation that all return paths return the same type
-    if (!return_type.has_value() || 
-        (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
+	if (!return_type.has_value() || 
+		(return_type->is<TypeSpecifierNode>() && isPlaceholderAutoType(return_type->as<TypeSpecifierNode>().type()))) {
         // Search lambda body for return statements to deduce return type
         [[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
         std::optional<TypeSpecifierNode> deduced_type;
