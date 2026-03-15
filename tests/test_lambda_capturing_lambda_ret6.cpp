@@ -7,5 +7,5 @@ int main() {
         return -outer();  
     };
 	if (outer_neg() != -6) return 1;
-    return outer() == 6 ? 0 : 1;
+    return outer() == 6 ? 6 : 2;
 }
