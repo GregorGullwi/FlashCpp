@@ -189,28 +189,54 @@
 
 		// Process until no new lambdas are added
 		size_t processed_count = 0;
-		while (processed_count < collected_lambdas_.size()) {
-			// Process from the end (newly added lambdas) backwards
-			size_t current_size = collected_lambdas_.size();
-			for (size_t i = current_size; i > processed_count; --i) {
-				// CRITICAL: Copy the LambdaInfo before calling generateLambdaFunctions
-				// because that function may push new lambdas which can reallocate the vector
-				// and invalidate any references
-				LambdaInfo lambda_info = collected_lambdas_[i - 1];
-				// Generic lambdas are only emitted once an instantiation has provided
-				// concrete deduced parameter types. Untouched generic lambdas remain in
-				// the deferred list and are generated on demand after a real call site.
-				if (lambda_info.is_generic && lambda_info.deduced_auto_types.empty()) {
+		while (true) {
+			while (processed_count < collected_lambdas_.size()) {
+				// Process from the end (newly added lambdas) backwards
+				size_t current_size = collected_lambdas_.size();
+				for (size_t i = current_size; i > processed_count; --i) {
+					LambdaInfo& stored_lambda_info = collected_lambdas_[i - 1];
+					normalizeGenericLambdaParams(stored_lambda_info);
+
+					// Generic lambdas are only emitted once an instantiation has provided
+					// concrete deduced parameter types. Untouched generic lambdas remain in
+					// the deferred list and are generated on demand after a real call site.
+					if (stored_lambda_info.is_generic && stored_lambda_info.deduced_auto_types.empty()) {
+						continue;
+					}
+					// Skip if this lambda has already been generated (prevents duplicate definitions)
+					if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+						continue;
+					}
+
+					// Copy the LambdaInfo before calling generateLambdaFunctions because that
+					// function may push new lambdas which can reallocate the vector and
+					// invalidate any references.
+					LambdaInfo lambda_info = stored_lambda_info;
+					generated_lambda_ids_.insert(lambda_info.lambda_id);
+					generateLambdaFunctions(lambda_info);
+				}
+				processed_count = current_size;
+			}
+
+			bool generated_deferred_lambda = false;
+			for (auto& stored_lambda_info : collected_lambdas_) {
+				normalizeGenericLambdaParams(stored_lambda_info);
+				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
 					continue;
 				}
-				// Skip if this lambda has already been generated (prevents duplicate definitions)
-				if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
+				if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {
 					continue;
 				}
+
+				LambdaInfo lambda_info = stored_lambda_info;
 				generated_lambda_ids_.insert(lambda_info.lambda_id);
 				generateLambdaFunctions(lambda_info);
+				generated_deferred_lambda = true;
 			}
-			processed_count = current_size;
+
+			if (!generated_deferred_lambda && processed_count >= collected_lambdas_.size()) {
+				break;
+			}
 		}
 	}
 
