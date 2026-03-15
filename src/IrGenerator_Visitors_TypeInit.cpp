@@ -219,7 +219,8 @@
 			}
 
 			bool generated_deferred_lambda = false;
-			for (auto& stored_lambda_info : collected_lambdas_) {
+			for (size_t di = 0; di < collected_lambdas_.size(); ++di) {
+				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 				normalizeGenericLambdaParams(stored_lambda_info);
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
 					continue;

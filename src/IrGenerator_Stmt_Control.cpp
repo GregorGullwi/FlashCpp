@@ -30,7 +30,7 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
 }
 
-const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type) {
+const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type, bool prefer_const) {
 	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
 		return nullptr;
 	}
@@ -40,6 +40,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		return nullptr;
 	}
 
+	const FunctionDeclarationNode* fallback = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.operator_kind != OverloadableOperator::Multiply ||
 			!member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -51,14 +52,23 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		if (func.parameter_nodes().size() != 0) {
 			continue;
 		}
-		return &func;
+
+		if (prefer_const && member_func.is_const()) {
+			return &func;
+		}
+		if (!prefer_const && !member_func.is_const()) {
+			return &func;
+		}
+		if (!fallback) {
+			fallback = &func;
+		}
 	}
 
-	return nullptr;
+	return fallback;
 }
 
-std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type) {
-	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type)) {
+std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
+	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
 		return dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
 	}
 
@@ -978,7 +988,8 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
 			}
 
-			if (auto deduced_loop_type = getRangeIteratorElementType(begin_return_type); deduced_loop_type.has_value()) {
+			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+			if (auto deduced_loop_type = getRangeIteratorElementType(begin_return_type, prefer_const_deref); deduced_loop_type.has_value()) {
 				return resolveRangedForLoopDecl(original_var_decl, *deduced_loop_type);
 			}
 
