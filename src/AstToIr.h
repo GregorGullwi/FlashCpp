@@ -285,9 +285,10 @@ private:
 	ExprResult generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode);
 	LambdaInfo collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda);
 	ExprResult generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name = "");
-	void generateLambdaFunctions(const LambdaInfo& lambda_info);
-	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info);
-	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info);
+	void generateLambdaFunctions(LambdaInfo& lambda_info);
+	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
+	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
+	void normalizeGenericLambdaParams(LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
 		const std::vector<ASTNode>& captured_var_decls);
 
@@ -664,10 +665,6 @@ private:
 	// from another: int (*fp2)(int,int) = fp1;
 	// Key: variable name StringHandle,  Value: reloc target (mangled function name)
 	std::unordered_map<StringHandle, StringHandle> global_func_ptr_reloc_map_;
-
-	// Map from function name to deduced auto return type
-	// Key: function name (mangled), Value: deduced TypeSpecifierNode
-	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
 
 	struct CachedParamInfo {
 		StringHandle name{};

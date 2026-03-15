@@ -268,6 +268,7 @@ class Parser {
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
+	friend class SemanticAnalysis;
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;

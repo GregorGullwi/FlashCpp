@@ -192,6 +192,9 @@ void initialize_native_types() {
     auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, TypeIndex{gTypeInfo.size()}, 0);
     gNativeTypes[Type::Auto] = &auto_type;
 
+    auto& decltype_auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("decltype(auto)"sv), Type::DeclTypeAuto, TypeIndex{gTypeInfo.size()}, 0);
+    gNativeTypes[Type::DeclTypeAuto] = &decltype_auto_type;
+
     auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, TypeIndex{gTypeInfo.size()}, get_type_size_bits(Type::FunctionPointer));
     gNativeTypes[Type::FunctionPointer] = &function_pointer_type;
 
@@ -574,6 +577,7 @@ static const std::string& type_to_string(Type type, TypeQualifier qualifier) {
         case Type::LongDouble: result += "long double"; break;
         case Type::UserDefined: result += "user_defined"; break;
         case Type::Auto: result += "auto"; break;
+        case Type::DeclTypeAuto: result += "decltype(auto)"; break;
         case Type::Function: result += "function"; break;
         case Type::Struct: result += "struct"; break;
         case Type::Enum: result += "enum"; break;

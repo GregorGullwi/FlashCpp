@@ -219,6 +219,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "$$T";
 			break;
 		case Type::Auto:
+		case Type::DeclTypeAuto:
 			throw CompileError("MSVC name mangling: unresolved 'auto' type reached mangling");
 		default: throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
@@ -388,6 +389,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			output += "Dn";
 			break;
 		case Type::Auto:
+		case Type::DeclTypeAuto:
 				throw CompileError("Itanium name mangling: unresolved 'auto' type reached mangling");
 		default:
 			throw CompileError("Itanium name mangling: unknown type — cannot generate valid symbol");

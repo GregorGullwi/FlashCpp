@@ -213,19 +213,30 @@
 		);
 	}
 
-	// Temporary migration helper: generic lambda local parameters can still reach
-	// identifier lowering as unresolved Type::Auto with size 0.  When that
-	// happens, this mutates both `type` and `size_bits` to the transitional
-	// int/32-bit fallback and returns true; otherwise it leaves them unchanged and
-	// returns false.  This can be removed once deduced lambda parameter types are
-	// threaded into lambda body codegen.
-	static bool applyTransitionalAutoRuntimeFallback(Type& type, int& size_bits) {
-		if (type == Type::Auto && size_bits == 0) {
-			type = Type::Int;
-			size_bits = 32;
-			return true;
+	static void requireResolvedCodegenType(Type type, std::string_view context) {
+		if (isPlaceholderAutoType(type)) {
+			throw InternalError(std::string(StringBuilder()
+				.append("Unresolved placeholder type reached codegen in ")
+				.append(context)
+				.commit()));
 		}
-		return false;
+	}
+
+	static int resolveCodegenSizeBits(Type type, int size_bits, std::string_view context) {
+		requireResolvedCodegenType(type, context);
+		if (size_bits != 0) {
+			return size_bits;
+		}
+
+		const int fallback_size = get_type_size_bits(type);
+		if (fallback_size != 0) {
+			return fallback_size;
+		}
+
+		throw InternalError(std::string(StringBuilder()
+			.append("Type with no runtime size reached codegen in ")
+			.append(context)
+			.commit()));
 	}
 
 	int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
@@ -239,16 +250,13 @@
 		} else {
 			// For regular variables, return the variable size
 			size_bits = static_cast<int>(type_node.size_in_bits());
-			// Fallback: if size_bits is 0, calculate from type. Generic lambda auto
-			// parameters still use a transitional int fallback here; other types keep
-			// the warning because size 0 indicates parser metadata drift.
+			// Fallback: if size_bits is 0, calculate from type. Placeholder types must
+			// be resolved before codegen reaches identifier lowering.
 			if (size_bits == 0) {
-				Type fallback_type = type_node.type();
-				if (!applyTransitionalAutoRuntimeFallback(fallback_type, size_bits)) {
-					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
+				requireResolvedCodegenType(type_node.type(), "identifier size calculation");
+				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
 					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
-					size_bits = get_type_size_bits(type_node.type());
-				}
+				size_bits = get_type_size_bits(type_node.type());
 			}
 		}
 
@@ -932,13 +940,11 @@
 				// For compound assignments, we need to return a TempVar with lvalue metadata
 				// For simple assignments and function calls, we can return the reference directly
 				if (context == ExpressionContext::LValueAddress) {
-					// For auto types, default to int (32 bits)
 					Type pointee_type = type_node.type();
-					int pointee_size = static_cast<int>(type_node.size_in_bits());
-					if (pointee_type == Type::Auto || pointee_size == 0) {
-						pointee_type = Type::Int;
-						pointee_size = 32;
-					}
+					int pointee_size = resolveCodegenSizeBits(
+						pointee_type,
+						static_cast<int>(type_node.size_in_bits()),
+						"reference identifier lvalue lowering");
 
 					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 
@@ -973,14 +979,11 @@
 
 				// For non-array references in Load context, we need to dereference to get the value
 
-				// For auto types, default to int (32 bits) since the mangling also defaults to int
-				// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 				Type pointee_type = type_node.type();
-				int pointee_size = static_cast<int>(type_node.size_in_bits());
-				if (pointee_type == Type::Auto || pointee_size == 0) {
-					pointee_type = Type::Int;
-					pointee_size = 32;
-				}
+				int pointee_size = resolveCodegenSizeBits(
+					pointee_type,
+					static_cast<int>(type_node.size_in_bits()),
+					"reference identifier load lowering");
 
 				Type semantic_pointee_type = pointee_type;
 
@@ -1122,13 +1125,11 @@
 					// as an indirect lvalue (pointer that needs dereferencing for stores)
 					if (context == ExpressionContext::LValueAddress) {
 						FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
-						// For auto types, default to int (32 bits)
 						Type pointee_type = type_node.type();
-						int pointee_size = static_cast<int>(type_node.size_in_bits());
-						if (pointee_type == Type::Auto || pointee_size == 0) {
-							pointee_type = Type::Int;
-							pointee_size = 32;
-						}
+						int pointee_size = resolveCodegenSizeBits(
+							pointee_type,
+							static_cast<int>(type_node.size_in_bits()),
+							"reference variable lvalue lowering");
 
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
@@ -1159,14 +1160,11 @@
 
 					// For Load context (reading the value), dereference to get the value
 
-					// For auto types, default to int (32 bits) since the mangling also defaults to int
-					// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 					Type pointee_type = type_node.type();
-					int pointee_size = static_cast<int>(type_node.size_in_bits());
-					if (pointee_type == Type::Auto || pointee_size == 0) {
-						pointee_type = Type::Int;
-						pointee_size = 32;
-					}
+					int pointee_size = resolveCodegenSizeBits(
+						pointee_type,
+						static_cast<int>(type_node.size_in_bits()),
+						"reference variable load lowering");
 
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1186,19 +1184,10 @@
 				}
 
 				// Regular local variable (not a reference) - return variable name.
-				// Generic lambda auto parameters still reach this path during the
-				// transition; keep the existing int fallback used by mangling and
-				// reference lowering so arithmetic/comparison codegen sees a concrete
-				// signed integer representation instead of Type::Auto with size 0.
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 				Type result_type = type_node.type();
 				TypeIndex result_type_index = type_node.type_index();
-				{
-					int probe_size = static_cast<int>(type_node.size_in_bits());
-					if (applyTransitionalAutoRuntimeFallback(result_type, probe_size)) {
-						result_type_index = TypeIndex{};
-					}
-				}
+				requireResolvedCodegenType(result_type, "identifier lowering");
 
 
 				// For the 4th element:

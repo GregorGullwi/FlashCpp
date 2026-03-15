@@ -197,6 +197,9 @@
 				// because that function may push new lambdas which can reallocate the vector
 				// and invalidate any references
 				LambdaInfo lambda_info = collected_lambdas_[i - 1];
+				if (lambda_info.is_generic && lambda_info.deduced_auto_types.empty()) {
+					continue;
+				}
 				// Skip if this lambda has already been generated (prevents duplicate definitions)
 				if (generated_lambda_ids_.find(lambda_info.lambda_id) != generated_lambda_ids_.end()) {
 					continue;

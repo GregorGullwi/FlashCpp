@@ -40,6 +40,11 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 
+	// Instantiation-time semantic hook for generic lambda parameter normalization.
+	std::vector<ASTNode> normalizeGenericLambdaParams(
+		const std::vector<ASTNode>& parameter_nodes,
+		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
+
 private:
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
@@ -58,6 +63,10 @@ private:
 
 	// Helpers
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
+	void resolveRemainingAutoReturns();
+	void resolveRemainingAutoReturnsInNode(ASTNode& node);
+	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type);
+	TypeSpecifierNode finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const;
 
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).

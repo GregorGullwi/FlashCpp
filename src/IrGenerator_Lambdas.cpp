@@ -1,17 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-namespace {
-// Build a replacement declaration node for an instantiated generic-lambda
-// parameter. The original syntax AST still stores `auto`, but body identifier
-// lookup should see the concrete deduced type while preserving the original
-// identifier token/name.
-ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_type, const Token& identifier_token) {
-	ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
-	return ASTNode::emplace_node<DeclarationNode>(deduced_type_node, identifier_token);
-}
-}
-
 	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
 		LambdaInfo info;
 		info.lambda_id = lambda.lambda_id();
@@ -499,7 +488,23 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		);
 	}
 
-	void AstToIr::generateLambdaFunctions(const LambdaInfo& lambda_info) {
+	void AstToIr::normalizeGenericLambdaParams(LambdaInfo& lambda_info) {
+		if (!sema_ || !lambda_info.is_generic || !lambda_info.resolved_param_nodes.empty()) {
+			return;
+		}
+
+		if (lambda_info.deduced_auto_types.empty()) {
+			throw InternalError("Generic lambda reached codegen before semantic parameter normalization");
+		}
+
+		lambda_info.resolved_param_nodes = sema_->normalizeGenericLambdaParams(
+			lambda_info.parameter_nodes,
+			lambda_info.deduced_auto_types);
+	}
+
+	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
+		normalizeGenericLambdaParams(lambda_info);
+
 		// Following Clang's approach, we generate:
 		// 1. operator() - member function with lambda body
 		// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
@@ -541,7 +546,10 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				func_decl.set_is_constexpr(true);
 
 				// Add parameters to the function declaration
-				for (const auto& param_node : lambda_info.parameter_nodes) {
+				const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+					? lambda_info.parameter_nodes
+					: lambda_info.resolved_param_nodes;
+				for (const auto& param_node : param_nodes) {
 					func_decl.add_parameter_node(param_node);
 				}
 
@@ -568,7 +576,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		}
 	}
 
-	void AstToIr::generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info) {
+	void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		// Generate function declaration for operator()
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
@@ -605,30 +613,21 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
-		size_t param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+			? lambda_info.parameter_nodes
+			: lambda_info.resolved_param_nodes;
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(param_idx);
-					if (deduced.has_value()) {
-						// Use the deduced type from call site (already has reference flags)
-						param_types.push_back(*deduced);
-					} else {
-						// No deduced type available, fallback to int
-						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
-						param_types.push_back(int_type);
-					}
-				} else {
-					// Use the parameter type as-is, preserving all reference flags
-					// This ensures mangled names are consistent between call sites and definitions
-					param_types.push_back(param_type);
+				if (isPlaceholderAutoType(param_type.type())) {
+					throw InternalError("Unresolved generic lambda parameter reached operator() mangling");
 				}
+
+				// Use the parameter type as-is, preserving all reference flags.
+				param_types.push_back(param_type);
 			}
-			param_idx++;
 		}
 
 		// Generate mangled name using the same function as regular member functions
@@ -642,9 +641,8 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
 		// Add parameters - use parameter_nodes to get complete type information
-		param_idx = 0;
 		size_t lambda_unnamed_param_counter = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -662,29 +660,15 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
-				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(param_idx);
-					if (deduced.has_value()) {
-						func_param.type = deduced->type();
-						func_param.size_in_bits = SizeInBits{deduced->size_in_bits()};
-						// Use reference flags from the deduced type (set at call site)
-						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-					} else {
-						// No deduced type available, fallback to int
-						func_param.type = Type::Int;
-						func_param.size_in_bits = SizeInBits{32};
-						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-					}
-				} else {
-					func_param.type = param_type.type();
-					func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
-					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				if (isPlaceholderAutoType(param_type.type())) {
+					throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
 				}
+				func_param.type = param_type.type();
+				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
+				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
-			param_idx++;
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
@@ -711,21 +695,11 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		// For instantiated generic lambdas, register synthetic declarations carrying the
 		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
 		// concrete parameter type instead of the original unresolved `auto`.
-		size_t body_param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				ASTNode symbol_param_node = param_node;
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(body_param_idx);
-					if (deduced.has_value()) {
-						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
-					}
-				}
-				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
 			}
-			body_param_idx++;
 		}
 
 		// Add captured variables to symbol table
@@ -759,7 +733,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		// by the main generateCollectedLambdas() loop - no recursive call needed here
 	}
 
-	void AstToIr::generateLambdaInvokeFunction(const LambdaInfo& lambda_info) {
+	void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		// Generate function declaration for __invoke
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
@@ -783,28 +757,19 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
-		size_t param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+			? lambda_info.parameter_nodes
+			: lambda_info.resolved_param_nodes;
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(param_idx);
-					if (deduced.has_value()) {
-						// Use the deduced type from call site (already has reference flags)
-						param_types.push_back(*deduced);
-					} else {
-						TypeSpecifierNode int_type(Type::Int, TypeIndex{}, 32, lambda_info.lambda_token);
-						param_types.push_back(int_type);
-					}
-				} else {
-					// Use the parameter type as-is, preserving all reference flags
-					param_types.push_back(param_type);
+				if (isPlaceholderAutoType(param_type.type())) {
+					throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
 				}
+				param_types.push_back(param_type);
 			}
-			param_idx++;
 		}
 
 		// Generate mangled name for the __invoke function (free function, not member)
@@ -818,9 +783,8 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
 		// Add parameters - use parameter_nodes to get complete type information
-		param_idx = 0;
 		size_t invoke_unnamed_param_counter = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -838,28 +802,15 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
-				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(param_idx);
-					if (deduced.has_value()) {
-						func_param.type = deduced->type();
-						func_param.size_in_bits = SizeInBits{deduced->size_in_bits()};
-						// Use reference flags from the deduced type (set at call site)
-						func_param.ref_qualifier = ((deduced->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((deduced->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-					} else {
-						func_param.type = Type::Int;
-						func_param.size_in_bits = SizeInBits{32};
-						func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-					}
-				} else {
-					func_param.type = param_type.type();
-					func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
-					func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				if (isPlaceholderAutoType(param_type.type())) {
+					throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");
 				}
+				func_param.type = param_type.type();
+				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
+				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();
 				func_decl_op.parameters.push_back(func_param);
 			}
-			param_idx++;
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
@@ -880,21 +831,11 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		// For instantiated generic lambdas, register synthetic declarations carrying the
 		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
 		// concrete parameter type instead of the original unresolved `auto`.
-		size_t invoke_param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
+		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				ASTNode symbol_param_node = param_node;
-				if (param_type.type() == Type::Auto) {
-					auto deduced = lambda_info.getDeducedType(invoke_param_idx);
-					if (deduced.has_value()) {
-						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
-					}
-				}
-				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
+				symbol_table.insert(param_decl.identifier_token().value(), param_node);
 			}
-			invoke_param_idx++;
 		}
 
 		// Add captured variables to symbol table

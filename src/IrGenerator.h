@@ -110,6 +110,7 @@ struct LambdaInfo {
 	std::vector<size_t> auto_param_indices;      // Indices of parameters with auto type
 	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
 	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
+	std::vector<ASTNode> resolved_param_nodes;
 	
 	// Get deduced type for a parameter at given index, returns nullopt if not deduced
 	std::optional<TypeSpecifierNode> getDeducedType(size_t param_index) const {

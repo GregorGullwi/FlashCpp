@@ -980,6 +980,14 @@ Exit criteria:
 - ordinary supported functions no longer depend on codegen to finalize `auto` return type
 - `decltype(auto)` has an explicit semantic-resolution path instead of reusing plain `auto` heuristics
 
+Implementation notes:
+
+- Added `Type::DeclTypeAuto` so `decltype(auto)` no longer reuses plain `Type::Auto` placeholder handling.
+- `SemanticAnalysis::resolveRemainingAutoReturns()` now finalizes unresolved ordinary function placeholder returns before codegen and forces mangled-name recomputation after rewriting the return annotation.
+- Generic lambda parameter normalization now runs through a semantic hook that rewrites instantiated parameter declarations with the deduced `TypeSpecifierNode`s before lambda IR generation; `IrGenerator_Lambdas.cpp` no longer synthesizes replacement declarations locally.
+- Identifier/reference lowering now treats unresolved placeholder types in codegen as an internal error instead of silently falling back to `int`.
+- Regression coverage added for ordinary `auto` return finalization, generic lambda parameter normalization, and `decltype(auto)` reference-preserving returns.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
