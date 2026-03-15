@@ -938,34 +938,34 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 // --- Phase 5 Task 2: generic lambda parameter normalization hook ---
 
 void SemanticAnalysis::normalizeGenericLambdaParams(const LambdaInfo& lambda_info) const {
-const size_t param_count = lambda_info.parameter_nodes.size();
-lambda_info.resolved_param_nodes.assign(param_count, ASTNode{});
+	const size_t param_count = lambda_info.parameter_nodes.size();
+	lambda_info.resolved_param_nodes.assign(param_count, ASTNode{});
 
-for (size_t i = 0; i < param_count; ++i) {
-const ASTNode& param_node = lambda_info.parameter_nodes[i];
-if (!param_node.is<DeclarationNode>()) continue;
-const auto& param_decl = param_node.as<DeclarationNode>();
-const ASTNode ptype_node = param_decl.type_node();
-if (!ptype_node.has_value() || !ptype_node.is<TypeSpecifierNode>()) continue;
-const TypeSpecifierNode& param_type = ptype_node.as<TypeSpecifierNode>();
-if (param_type.type() != Type::Auto && param_type.type() != Type::DeclTypeAuto) {
-// Concrete type: use the original node directly (no synthetic decl needed).
-lambda_info.resolved_param_nodes[i] = param_node;
-continue;
-}
-// Auto/DeclTypeAuto parameter: use deduced type if available.
-auto deduced_opt = lambda_info.getDeducedType(i);
-if (!deduced_opt.has_value()) {
-// Deduction not available yet (shouldn't happen after call-site processing).
-lambda_info.resolved_param_nodes[i] = param_node;
-continue;
-}
-// Build a synthetic DeclarationNode with the concrete deduced type.
-const TypeSpecifierNode& deduced_type = *deduced_opt;
-ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
-lambda_info.resolved_param_nodes[i] =
-ASTNode::emplace_node<DeclarationNode>(deduced_type_node, param_decl.identifier_token());
-FLASH_LOG(General, Debug, "SemanticAnalysis: resolved generic lambda param '",
-param_decl.identifier_token().value(), "' to type ", (int)deduced_type.type());
-}
+	for (size_t i = 0; i < param_count; ++i) {
+		const ASTNode& param_node = lambda_info.parameter_nodes[i];
+		if (!param_node.is<DeclarationNode>()) continue;
+		const auto& param_decl = param_node.as<DeclarationNode>();
+		const ASTNode ptype_node = param_decl.type_node();
+		if (!ptype_node.has_value() || !ptype_node.is<TypeSpecifierNode>()) continue;
+		const TypeSpecifierNode& param_type = ptype_node.as<TypeSpecifierNode>();
+		if (param_type.type() != Type::Auto && param_type.type() != Type::DeclTypeAuto) {
+			// Concrete type: use the original node directly (no synthetic decl needed).
+			lambda_info.resolved_param_nodes[i] = param_node;
+			continue;
+		}
+		// Auto/DeclTypeAuto parameter: use deduced type if available.
+		auto deduced_opt = lambda_info.getDeducedType(i);
+		if (!deduced_opt.has_value()) {
+			// Deduction not available yet (shouldn't happen after call-site processing).
+			lambda_info.resolved_param_nodes[i] = param_node;
+			continue;
+		}
+		// Build a synthetic DeclarationNode with the concrete deduced type.
+		const TypeSpecifierNode& deduced_type = *deduced_opt;
+		ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
+		lambda_info.resolved_param_nodes[i] =
+			ASTNode::emplace_node<DeclarationNode>(deduced_type_node, param_decl.identifier_token());
+		FLASH_LOG(General, Debug, "SemanticAnalysis: resolved generic lambda param '",
+			param_decl.identifier_token().value(), "' to type ", (int)deduced_type.type());
+	}
 }
