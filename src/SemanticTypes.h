@@ -143,6 +143,8 @@ struct hash<CanonicalTypeDesc> {
 			h = combine(h, static_cast<size_t>(fs.linkage));
 			h = combine(h, fs.is_const ? 1u : 0u);
 			h = combine(h, fs.is_volatile ? 1u : 0u);
+			if (fs.class_name)
+				h = combine(h, std::hash<std::string>{}(*fs.class_name));
 		}
 		return h;
 	}
