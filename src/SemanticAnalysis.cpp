@@ -728,18 +728,19 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc   = type_context_.get(target_type_id);
 
-	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums,
-	// no auto, no user-defined types).  UserDefined types can share the same base_type enum
-	// value while having different type_index values; can_convert_type(UserDefined, UserDefined)
-	// returns ExactMatch regardless of type_index, so the check at line 726 does not filter them
-	// out — determineConversionKind would then reach its unhandled-pair throw.
+	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
+	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
+	if (from_desc.base_type == to_desc.base_type) return false;
+
+	// Bail out if either side is not a plain primitive scalar.
+	// Checking one lambda against both sides covers all non-handleable types in one place.
+	auto is_non_primitive = [](Type t) {
+		return t == Type::Struct || t == Type::Enum || t == Type::UserDefined ||
+		       t == Type::Invalid || t == Type::Auto;
+	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
-	if (from_desc.base_type == Type::Struct      || to_desc.base_type == Type::Struct)      return false;
-	if (from_desc.base_type == Type::Enum        || to_desc.base_type == Type::Enum)        return false;
-	if (from_desc.base_type == Type::UserDefined || to_desc.base_type == Type::UserDefined) return false;
-	if (from_desc.base_type == Type::Invalid     || to_desc.base_type == Type::Invalid)     return false;
-	if (from_desc.base_type == Type::Auto        || to_desc.base_type == Type::Auto)        return false;
+	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
