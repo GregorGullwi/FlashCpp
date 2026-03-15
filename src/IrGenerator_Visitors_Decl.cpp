@@ -851,6 +851,13 @@
 			// Enter a scope for the function body to track destructors
 			enterScope();
 			const BlockNode& block = node.get_definition().value().as<BlockNode>();
+			// Pre-scan: populate label_scope_depth_map_ with the scope depth of every
+			// label in this function body so that goto can emit the correct scope-exit
+			// destructors before the branch (forward and backward gotos both need this).
+			label_scope_depth_map_.clear();
+			block.get_statements().visit([&](const ASTNode& stmt) {
+				prescanLabels(stmt, scope_stack_.size());
+			});
 			block.get_statements().visit([&](ASTNode statement) {
 				visit(statement);
 			});

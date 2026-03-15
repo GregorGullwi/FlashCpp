@@ -629,8 +629,8 @@ bool AstToIr::emitSehFinallyCallsBeforeReturn(const Token& token) {
 
 
 void AstToIr::popLoopSehDepth() {
-	if (!loop_seh_depth_stack_.empty()) {
-		loop_seh_depth_stack_.pop_back();
+	if (!loop_depth_stack_.empty()) {
+		loop_depth_stack_.pop_back();
 	}
 }
 
@@ -639,9 +639,9 @@ void AstToIr::popLoopSehDepth() {
 // Emit SehFinallyCall for __try/__finally blocks between break/continue and the enclosing loop.
 // Only calls finally blocks that were pushed AFTER the loop began (i.e., inside the loop body).
 bool AstToIr::emitSehFinallyCallsBeforeBreakContinue(const Token& token) {
-	if (loop_seh_depth_stack_.empty()) return false;
+	if (loop_depth_stack_.empty()) return false;
 
-	size_t loop_seh_depth = loop_seh_depth_stack_.back();
+	size_t loop_seh_depth = loop_depth_stack_.back().seh_depth;
 	bool emitted = false;
 	// Walk from innermost SEH context down to (but not including) the loop's entry depth
 	for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= static_cast<int>(loop_seh_depth); --i) {

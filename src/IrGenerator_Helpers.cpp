@@ -112,6 +112,121 @@ void AstToIr::registerVariableWithDestructor(const std::string& var_name, const 
 
 
 
+void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
+	// Emit destructor calls for all variables in scopes from the current innermost scope
+	// down to (but not including) target_depth, in LIFO order (innermost scope first).
+	// Does NOT modify scope_stack_ — the normal exitScope() calls will still run later
+	// (emitting dead code after the jump), which is harmless.
+	for (size_t scope_index = scope_stack_.size(); scope_index > target_depth; --scope_index) {
+		const auto& scope_vars = scope_stack_[scope_index - 1];
+		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+			DestructorCallOp dtor_op;
+			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
+			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
+			ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+		}
+	}
+}
+
+
+
+// Pre-scan a statement subtree to populate label_scope_depth_map_ before the main IR
+// generation pass.  This mirrors the scope-creation rules in the main visitor so that
+// every LabelStatementNode is recorded with the scope_stack_ depth it would have during
+// the real visit.  Both forward and backward goto statements can then look up the
+// target depth from the map.
+void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
+	if (node.is<LabelStatementNode>()) {
+		const auto& label = node.as<LabelStatementNode>();
+		// getOrInternStringHandle accepts string_view directly — no extra allocation needed.
+		label_scope_depth_map_[StringTable::getOrInternStringHandle(label.label_name())] = depth;
+	} else if (node.is<BlockNode>()) {
+		const auto& block = node.as<BlockNode>();
+		// Mirror the scope-creation rule from visitBlockNode: a block whose statements
+		// are ALL VariableDeclarationNodes (two or more) does NOT push a new scope.
+		bool only_var_decls = true;
+		size_t var_decl_count = 0;
+		// Single pass: gather the scope-creation predicate AND recurse into children.
+		block.get_statements().visit([&](const ASTNode& stmt) {
+			if (stmt.is<VariableDeclarationNode>()) var_decl_count++;
+			else only_var_decls = false;
+		});
+		bool enter_scope = !(only_var_decls && var_decl_count > 1);
+		size_t new_depth = enter_scope ? depth + 1 : depth;
+		block.get_statements().visit([&](const ASTNode& stmt) {
+			prescanLabels(stmt, new_depth);
+		});
+	} else if (node.is<IfStatementNode>()) {
+		const auto& if_stmt = node.as<IfStatementNode>();
+		// if / if constexpr: then/else bodies are BlockNodes which manage their own scope.
+		prescanLabels(if_stmt.get_then_statement(), depth);
+		if (if_stmt.has_else()) {
+			prescanLabels(*if_stmt.get_else_statement(), depth);
+		}
+	} else if (node.is<ForStatementNode>()) {
+		// visitForStatementNode (IrGenerator_Stmt_Control.cpp) calls enterScope() explicitly
+		// before visiting the body, adding one scope level for the for-init variables.
+		// The body is then a BlockNode which adds another level of its own.
+		// Passing depth + 1 here lets the BlockNode branch above handle that second increment.
+		prescanLabels(node.as<ForStatementNode>().get_body_statement(), depth + 1);
+	} else if (node.is<WhileStatementNode>()) {
+		// visitWhileStatementNode does NOT call enterScope(); the body BlockNode does.
+		prescanLabels(node.as<WhileStatementNode>().get_body_statement(), depth);
+	} else if (node.is<DoWhileStatementNode>()) {
+		prescanLabels(node.as<DoWhileStatementNode>().get_body_statement(), depth);
+	} else if (node.is<RangedForStatementNode>()) {
+		// Ranged-for does NOT call enterScope() — the body BlockNode handles scope.
+		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth);
+	} else if (node.is<SwitchStatementNode>()) {
+		// The switch visitor iterates the body block's children inline without calling
+		// enterScope(), so we must NOT let the body go through the BlockNode handler
+		// (which would increment depth).  Instead, iterate children at the current depth.
+		const auto& body = node.as<SwitchStatementNode>().get_body();
+		if (body.is<BlockNode>()) {
+			body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
+				prescanLabels(stmt, depth);
+			});
+		}
+	} else if (node.is<CaseLabelNode>()) {
+		const auto& case_node = node.as<CaseLabelNode>();
+		if (case_node.has_statement()) {
+			ASTNode case_stmt = *case_node.get_statement();
+			// The switch visitor unwraps case-body BlockNodes inline (no enterScope),
+			// so mirror that here: iterate the block's children at the same depth.
+			if (case_stmt.is<BlockNode>()) {
+				case_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
+					prescanLabels(s, depth);
+				});
+			} else {
+				prescanLabels(case_stmt, depth);
+			}
+		}
+	} else if (node.is<DefaultLabelNode>()) {
+		const auto& def_node = node.as<DefaultLabelNode>();
+		if (def_node.has_statement()) {
+			ASTNode def_stmt = *def_node.get_statement();
+			if (def_stmt.is<BlockNode>()) {
+				def_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
+					prescanLabels(s, depth);
+				});
+			} else {
+				prescanLabels(def_stmt, depth);
+			}
+		}
+	} else if (node.is<TryStatementNode>()) {
+		const auto& try_stmt = node.as<TryStatementNode>();
+		// Both the try block and each catch body are BlockNodes that manage their own scopes.
+		prescanLabels(try_stmt.try_block(), depth);
+		for (const auto& catch_node : try_stmt.catch_clauses()) {
+			prescanLabels(catch_node.as<CatchClauseNode>().body(), depth);
+		}
+	}
+	// All other node types (expressions, plain declarations, break, continue, return,
+	// goto, case values, etc.) cannot contain LabelStatementNodes — no recursion needed.
+}
+
+
+
 // Helper functions to emit store instructions
 // These can be used by both the unified handler and special-case code
 

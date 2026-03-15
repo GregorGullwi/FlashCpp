@@ -770,9 +770,13 @@ private:
 	};
 	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
 
-	// Loop-SEH depth tracking: records seh_context_stack_ size at each loop entry
-	// Used by break/continue to know which __finally blocks need calling
-	std::vector<size_t> loop_seh_depth_stack_;
+	// Paired loop-entry snapshot: SEH and scope depths are always pushed/popped
+	// together, so they are kept in one vector of structs to enforce the invariant.
+	struct LoopDepthEntry {
+		size_t seh_depth;    // seh_context_stack_.size() at loop entry
+		size_t scope_depth;  // scope_stack_.size() at loop entry
+	};
+	std::vector<LoopDepthEntry> loop_depth_stack_;
 
 	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
 	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
@@ -793,7 +797,7 @@ private:
 
 	// Track SEH context depth when entering/leaving loops
 	void pushLoopSehDepth() {
-		loop_seh_depth_stack_.push_back(seh_context_stack_.size());
+		loop_depth_stack_.push_back({seh_context_stack_.size(), scope_stack_.size()});
 	}
 
 	void popLoopSehDepth();
@@ -801,6 +805,22 @@ private:
 	// Emit SehFinallyCall for __try/__finally blocks between break/continue and the enclosing loop.
 	// Only calls finally blocks that were pushed AFTER the loop began (i.e., inside the loop body).
 	bool emitSehFinallyCallsBeforeBreakContinue(const Token& token);
+
+	// Emit destructor calls for all local variables in scopes from the current innermost scope
+	// down to (but not including) target_depth, WITHOUT modifying scope_stack_.
+	// Used by break, continue, return, and goto to ensure destructors run before non-local jumps.
+	void emitDestructorsForNonLocalExit(size_t target_depth);
+
+	// Per-function map from label name → scope_stack_.size() when the label is defined.
+	// Populated by prescanLabels() before visiting a function body; cleared at each new function.
+	// Allows visitGotoStatementNode to know how deep the target label is so it can emit
+	// the correct scope-exit destructors before the unconditional branch.
+	std::unordered_map<StringHandle, size_t> label_scope_depth_map_;
+
+	// Walk a statement subtree and record every LabelStatementNode in label_scope_depth_map_
+	// using the scope depth that the label would have during the main visitor pass.
+	// Called once per function body before the main visit loop.
+	void prescanLabels(const ASTNode& node, size_t depth);
 
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter

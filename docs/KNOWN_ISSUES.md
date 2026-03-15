@@ -105,6 +105,26 @@ for (auto value : c) {
 return sum == 60 ? 0 : 1;
 ```
 
-Workaround: return the arithmetic delta (`return 60 - sum;`) or otherwise avoid
-this compare/conditional form on the affected path until the underlying
-miscompare is isolated.
+Root cause: `resolveRangedForLoopDecl` in `IrGenerator_Stmt_Control.cpp`
+receives `begin_return_type` as the deduced element type.  For pointer
+iterators (`pointer_depth() > 0`) one pointer level is correctly stripped to
+obtain the element type.  For struct iterators (`pointer_depth() == 0`) no
+stripping happens and the iterator type itself is used, which is wrong — the
+element type should come from the iterator's `operator*()` return type.
+
+The pre-Phase-5 code avoided this by leaving the declaration as `auto` and
+letting the `*__begin` initializer expression drive type deduction at
+variable-init time.  The fix is to fall back to the original declaration node
+when the iterator is not a pointer, restoring that behaviour.
+
+Tracking: `tests/test_range_for_auto_struct_iterator_ret0.cpp`
+
+
+## ~~`goto` cross-scope destructor cleanup not implemented~~ ✅ Fixed (2026-03-15)
+
+`visitGotoStatementNode` now calls `emitDestructorsForNonLocalExit(target_depth)` before
+emitting the `Branch` instruction.  `prescanLabels()` is called at the start of each
+function body to populate `label_scope_depth_map_` so that both forward and backward
+`goto` statements know the scope depth of their target label.
+
+Regression coverage: `tests/test_eh_goto_scope_dtor_ret0.cpp`

@@ -1066,6 +1066,11 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 	void AstToIr::visitBreakStatementNode(const BreakStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before breaking
 		emitSehFinallyCallsBeforeBreakContinue(node.break_token());
+		// Emit destructor calls for all local variables in scopes between the current
+		// position and the enclosing loop scope before jumping to the loop exit.
+		if (!loop_depth_stack_.empty()) {
+			emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth);
+		}
 		// Generate Break IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Break, {}, node.break_token());
 	}
@@ -1073,13 +1078,26 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 	void AstToIr::visitContinueStatementNode(const ContinueStatementNode& node) {
 		// If inside __try/__finally within a loop, call __finally before continuing
 		emitSehFinallyCallsBeforeBreakContinue(node.continue_token());
+		// Emit destructor calls for all local variables in scopes between the current
+		// position and the enclosing loop scope before jumping to the loop increment.
+		if (!loop_depth_stack_.empty()) {
+			emitDestructorsForNonLocalExit(loop_depth_stack_.back().scope_depth);
+		}
 		// Generate Continue IR instruction (no operands - uses loop context stack in IRConverter)
 		ir_.addInstruction(IrOpcode::Continue, {}, node.continue_token());
 	}
 
 	void AstToIr::visitGotoStatementNode(const GotoStatementNode& node) {
-		// Generate Branch IR instruction (unconditional jump) with the target label name
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(node.label_name())}, node.goto_token()));
+		StringHandle target_label = StringTable::getOrInternStringHandle(node.label_name());
+		// Emit destructors for any local variables in scopes exited by the jump.
+		// prescanLabels() populated label_scope_depth_map_ for all labels in this function
+		// so both forward and backward gotos are handled.
+		auto it = label_scope_depth_map_.find(target_label);
+		if (it != label_scope_depth_map_.end()) {
+			emitDestructorsForNonLocalExit(it->second);
+		}
+		// Generate Branch IR instruction (unconditional jump)
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = target_label}, node.goto_token()));
 	}
 
 	void AstToIr::visitLabelStatementNode(const LabelStatementNode& node) {
