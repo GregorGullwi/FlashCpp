@@ -218,6 +218,9 @@
 			throw InternalError(std::string(StringBuilder()
 				.append("Unresolved placeholder type reached codegen in ")
 				.append(context)
+				.append(" (type=")
+				.append(static_cast<int64_t>(type))
+				.append(")")
 				.commit()));
 		}
 	}

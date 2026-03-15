@@ -9,6 +9,10 @@
 #include "Log.h"
 
 namespace {
+// Placeholder return-type finalization requires every return statement in the
+// body to deduce to the same full type identity, including cv/reference and
+// pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
+// accidentally merging distinct return categories during semantic rewriting.
 bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.type() != rhs.type() ||
 		lhs.type_index() != rhs.type_index() ||
@@ -300,6 +304,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 					return false;
 				}
 			}
+			return true;
 		}
 
 		return true;
@@ -317,16 +322,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
-	if (placeholder_type != Type::Auto) {
-		return deduced_type;
-	}
-
-	TypeSpecifierNode resolved_type = deduced_type;
-	resolved_type.set_reference_qualifier(ReferenceQualifier::None);
-	if (resolved_type.pointer_depth() == 0 && !resolved_type.is_array()) {
-		resolved_type.set_cv_qualifier(CVQualifier::None);
-	}
-	return resolved_type;
+	return finalizePlaceholderTypeDeduction(placeholder_type, deduced_type);
 }
 
 // --- Top-level dispatch ---

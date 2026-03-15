@@ -1811,20 +1811,6 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) {
 	return Type::Int;
 }
 
-namespace {
-TypeSpecifierNode finalizePlaceholderReturnType(Type placeholder_type, TypeSpecifierNode deduced_type) {
-	if (placeholder_type != Type::Auto) {
-		return deduced_type;
-	}
-
-	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
-	if (deduced_type.pointer_depth() == 0 && !deduced_type.is_array()) {
-		deduced_type.set_cv_qualifier(CVQualifier::None);
-	}
-	return deduced_type;
-}
-}
-
 // Helper function to deduce and update auto return type from function body
 void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl) {
 	// Check if the return type is auto
@@ -1873,7 +1859,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				if (expr_type_opt.has_value()) {
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
-						finalizePlaceholderReturnType(return_type.type(), *expr_type_opt);
+						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
 					all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
 					
 					// Set deduced type from first return

@@ -489,12 +489,9 @@
 	}
 
 	void AstToIr::normalizeGenericLambdaParams(LambdaInfo& lambda_info) {
-		if (!sema_ || !lambda_info.is_generic || !lambda_info.resolved_param_nodes.empty()) {
+		if (!sema_ || !lambda_info.is_generic || !lambda_info.resolved_param_nodes.empty() ||
+			lambda_info.deduced_auto_types.empty()) {
 			return;
-		}
-
-		if (lambda_info.deduced_auto_types.empty()) {
-			throw InternalError("Generic lambda reached codegen before semantic parameter normalization");
 		}
 
 		lambda_info.resolved_param_nodes = sema_->normalizeGenericLambdaParams(
