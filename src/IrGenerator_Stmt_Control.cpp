@@ -14,9 +14,14 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	}
 
 	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
-	if (placeholder_type.type() == Type::Auto && placeholder_type.cv_qualifier() != CVQualifier::None) {
-		resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
+	// Plain `auto` strips references during deduction, so re-apply the user's
+	// explicit qualifier (e.g. `auto&`).  `decltype(auto)` preserves the exact
+	// type category from the deduced expression — do not overwrite.
+	if (placeholder_type.type() == Type::Auto) {
+		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
+		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
+			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
+		}
 	}
 
 	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
