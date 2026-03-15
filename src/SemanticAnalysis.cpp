@@ -459,21 +459,44 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 						normalizeExpression(*capture.initializer(), ctx);
 					}
 				}
+				// Build a fresh SemanticContext for the lambda body so that the
+				// enclosing function's return type does not leak into the lambda's
+				// return-statement annotations.  If the lambda has an explicit
+				// trailing return type, use it; otherwise leave the return type
+				// unset so that tryAnnotateReturnConversion is a no-op (auto
+				// deduction is handled by codegen).
+				SemanticContext lambda_ctx;
+				if (e.return_type().has_value() &&
+					e.return_type()->template is<TypeSpecifierNode>()) {
+					lambda_ctx.current_function_return_type_id =
+						canonicalizeType(e.return_type()->template as<TypeSpecifierNode>());
+				}
+				// Push a scope for lambda parameters so they are visible inside
+				// the body but do not leak into the enclosing scope.
+				pushScope();
 				for (const auto& param : e.parameters()) {
 					if (param.template is<DeclarationNode>()) {
 						const auto& decl = param.template as<DeclarationNode>();
+						const ASTNode ptype = decl.type_node();
+						if (ptype.has_value() && ptype.template is<TypeSpecifierNode>()) {
+							const CanonicalTypeId tid = canonicalizeType(ptype.template as<TypeSpecifierNode>());
+							const StringHandle pname = decl.identifier_token().handle();
+							if (pname.isValid())
+								addLocalType(pname, tid);
+						}
 						for (const auto& dim : decl.array_dimensions()) {
-							normalizeExpression(dim, ctx);
+							normalizeExpression(dim, lambda_ctx);
 						}
 						if (decl.has_default_value()) {
-							normalizeExpression(decl.default_value(), ctx);
+							normalizeExpression(decl.default_value(), lambda_ctx);
 						}
 					}
 					else {
 						throw InternalError("Lambda parameter must be a DeclarationNode");
 					}
 				}
-				normalizeStatement(e.body(), ctx);
+				normalizeStatement(e.body(), lambda_ctx);
+				popScope();
 			}
 			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				if (e.init_expr().has_value()) {
