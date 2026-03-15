@@ -70,9 +70,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
 	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
 		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-		if (element_type.is_reference() || element_type.is_rvalue_reference()) {
-			element_type.set_reference_qualifier(ReferenceQualifier::None);
-		}
+		element_type.set_reference_qualifier(ReferenceQualifier::None);
 		return element_type;
 	}
 
@@ -1045,7 +1043,7 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			);
 			const TypeSpecifierNode& dereference_return_type =
 				dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-			if (!loop_type.is_reference() && !loop_type.is_rvalue_reference() &&
+			if (loop_type.reference_qualifier() == ReferenceQualifier::None &&
 				(dereference_return_type.is_reference() || dereference_return_type.is_rvalue_reference())) {
 				init_expr = ASTNode::emplace_node<ExpressionNode>(
 					UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), dereference_call, true)

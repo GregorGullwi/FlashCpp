@@ -4697,7 +4697,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					// Treat unresolved placeholder types as callable when parsing generic
 					// lambda parameters such as [](auto&& func) { func(); }.
-					else if (isPlaceholderAutoType(type_node.type())) {
+					if (!has_operator_call && isPlaceholderAutoType(type_node.type())) {
 						is_function_pointer = true;
 					}
 				}

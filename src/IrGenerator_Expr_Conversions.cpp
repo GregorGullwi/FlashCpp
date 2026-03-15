@@ -1752,20 +1752,15 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			lvalue_info->member_name.has_value() && current_struct_name_.isValid()) {
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second && type_it->second->getStructInfo()) {
-				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					TypeIndex{type_it->second->type_index_},
 					lvalue_info->member_name.value());
-				if (member_result && member_result.member->pointer_depth > 0) {
+					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
 					element_size = (operand_pointer_depth > 1) ? 8 : static_cast<int>(member_result.member->size);
-					FLASH_LOG(Codegen, Debug, "Inc/dec temp member pointer info: member ",
-						StringTable::getStringView(lvalue_info->member_name.value()),
-						" ptr_depth=", operand_pointer_depth, " elem_size=", element_size);
 				}
 			}
-		} else if (lvalue_info.has_value()) {
-			FLASH_LOG(Codegen, Debug, "Inc/dec temp member pointer info unavailable: kind=", static_cast<int>(lvalue_info->kind));
 		}
 	}
 	auto applyPointerTypeInfo = [&](const TypeSpecifierNode& type_node, size_t consumed_dereferences = 0) {
@@ -1782,21 +1777,18 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		}
 	};
 	auto tryApplyPointerInfoFromIdentifier = [&](const IdentifierNode& identifier, size_t consumed_dereferences = 0) -> bool {
-		auto tryApplyCurrentStructMemberPointerInfo = [&]() -> bool {
+		auto tryApplyCurrentStructMemberPointerInfo = [&](StringHandle member_name) -> bool {
 			if (!current_struct_name_.isValid()) {
-				FLASH_LOG(Codegen, Debug, "Inc/dec pointer info: no current_struct_name for identifier ", identifier.name());
 				return false;
 			}
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it == gTypesByName.end() || !type_it->second || !type_it->second->getStructInfo()) {
-				FLASH_LOG(Codegen, Debug, "Inc/dec pointer info: struct lookup failed for ", StringTable::getStringView(current_struct_name_));
 				return false;
 			}
 			auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 				TypeIndex{type_it->second->type_index_},
-				StringTable::getOrInternStringHandle(std::string(identifier.name())));
+				member_name);
 			if (!member_result || member_result.member->pointer_depth <= 0) {
-				FLASH_LOG(Codegen, Debug, "Inc/dec pointer info: member ", identifier.name(), " not pointer in struct ", StringTable::getStringView(current_struct_name_));
 				return false;
 			}
 			int resolved_pointer_depth = member_result.member->pointer_depth - static_cast<int>(consumed_dereferences);
@@ -1806,27 +1798,26 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
 			element_size = (operand_pointer_depth > 1) ? 8 : static_cast<int>(member_result.member->size);
-			FLASH_LOG(Codegen, Debug, "Inc/dec pointer info: member ", identifier.name(), " ptr_depth=", operand_pointer_depth, " elem_size=", element_size);
 			return true;
 		};
 
 		if (identifier.binding() == IdentifierBinding::NonStaticMember &&
-			tryApplyCurrentStructMemberPointerInfo()) {
+			tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle())) {
 			return true;
 		}
 
 		auto symbol = symbol_table.lookup(identifier.name());
 		if (!symbol.has_value()) {
-			return tryApplyCurrentStructMemberPointerInfo();
+			return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 		}
 		if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 			applyPointerTypeInfo(decl->type_node().as<TypeSpecifierNode>(), consumed_dereferences);
 			if (!is_pointer && !operand_pointer_depth) {
-				return tryApplyCurrentStructMemberPointerInfo();
+				return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 			}
 			return true;
 		}
-		return tryApplyCurrentStructMemberPointerInfo();
+		return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 	};
 	if (unaryOperatorNode.get_operand().is<IdentifierNode>()) {
 		tryApplyPointerInfoFromIdentifier(unaryOperatorNode.get_operand().as<IdentifierNode>());
@@ -1867,7 +1858,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				object_type_opt->type_index().is_valid() && object_type_opt->type_index().value < gTypeInfo.size()) {
 				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					object_type_opt->type_index(),
-					StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
+					StringTable::getOrInternStringHandle(member_access.member_name()));
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
@@ -1876,9 +1867,6 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					} else {
 						element_size = static_cast<int>(member_result.member->size);
 					}
-					FLASH_LOG(Codegen, Debug, "Inc/dec explicit member pointer info: member ",
-						member_access.member_name(), " ptr_depth=", operand_pointer_depth,
-						" elem_size=", element_size);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {

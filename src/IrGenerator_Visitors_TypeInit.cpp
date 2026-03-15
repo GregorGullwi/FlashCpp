@@ -189,6 +189,7 @@
 
 		// Process until no new lambdas are added
 		size_t processed_count = 0;
+		size_t deferred_scan_start = 0;
 		while (true) {
 			while (processed_count < collected_lambdas_.size()) {
 				// Process from the end (newly added lambdas) backwards
@@ -225,7 +226,6 @@
 			}
 
 			bool generated_deferred_lambda = false;
-			size_t deferred_scan_start = 0;
 			for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
 				// Normalize in-place via index, then re-read to avoid stale references.
 				normalizeGenericLambdaParams(collected_lambdas_[di]);
