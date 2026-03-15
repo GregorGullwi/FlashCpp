@@ -288,6 +288,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			return visit_returns(node.as<DoWhileStatementNode>().get_body_statement());
 		}
 
+		if (node.is<RangedForStatementNode>()) {
+			return visit_returns(node.as<RangedForStatementNode>().get_body_statement());
+		}
+
 		if (node.is<SwitchStatementNode>()) {
 			return visit_returns(node.as<SwitchStatementNode>().get_body());
 		}

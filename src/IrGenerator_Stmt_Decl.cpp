@@ -1391,7 +1391,7 @@
 							&& init_type  != Type::Struct && decl_type  != Type::Struct
 							&& init_type  != Type::Enum   && decl_type  != Type::Enum
 							&& init_type  != Type::Invalid && decl_type != Type::Invalid
-							&& init_type  != Type::Auto    && decl_type != Type::Auto
+							&& !isPlaceholderAutoType(init_type) && !isPlaceholderAutoType(decl_type)
 							&& type_node.pointer_depth() == 0) {
 							bool sema_applied = false;
 							if (sema_ && init_node.is<ExpressionNode>()) {
