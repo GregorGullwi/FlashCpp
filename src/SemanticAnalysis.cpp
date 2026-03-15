@@ -6,6 +6,7 @@
 #include "AstNodeTypes.h"
 #include "AstNodeTypes_Expr.h"
 #include "OverloadResolution.h"
+#include "IrGenerator.h"
 #include "Log.h"
 
 // --- CanonicalTypeDesc::operator== ---
@@ -105,11 +106,64 @@ void SemanticAnalysis::run() {
 		normalizeTopLevelNode(node);
 	}
 
+	// Phase 5 Task 1: second pass to resolve any auto return types that the parser
+	// could not deduce during initial parsing (e.g. friend functions whose enclosing
+	// struct was incomplete at parse time).
+	resolveRemainingAutoReturns();
+
 	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
 		stats_.roots_visited, " roots visited, ",
 		stats_.expressions_visited, " expressions, ",
 		stats_.statements_visited, " statements, ",
 		stats_.canonical_types_interned, " canonical types");
+}
+
+// --- Phase 5 Task 1: resolve remaining auto return types ---
+
+void SemanticAnalysis::resolveRemainingAutoReturns() {
+	const auto& nodes = parser_.get_nodes();
+	for (const auto& node : nodes) {
+		resolveAutoReturnNode(node);
+	}
+}
+
+void SemanticAnalysis::resolveAutoReturnNode(const ASTNode& node) {
+	if (!node.has_value()) return;
+
+	if (node.is<FunctionDeclarationNode>()) {
+		// const_cast is safe: the node lives in gChunkedAnyStorage (physically mutable);
+		// the const here is a visitor-pattern contract, not physical immutability.
+		auto& func = const_cast<FunctionDeclarationNode&>(node.as<FunctionDeclarationNode>());
+		const ASTNode& type_node = func.decl_node().type_node();
+		if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+			const Type ret = type_node.as<TypeSpecifierNode>().type();
+			if (ret == Type::Auto || ret == Type::DeclTypeAuto) {
+				FLASH_LOG(General, Debug, "SemanticAnalysis: second-pass deduction for auto-return function '",
+					func.decl_node().identifier_token().value(), "'");
+				parser_.deduce_and_update_auto_return_type(func);
+			}
+		}
+	}
+	else if (node.is<StructDeclarationNode>()) {
+		const auto& decl = node.as<StructDeclarationNode>();
+		for (const auto& member_func : decl.member_functions()) {
+			const ASTNode& func_node = member_func.function_declaration;
+			if (!func_node.has_value()) continue;
+			if (func_node.is<FunctionDeclarationNode>()) {
+				// Same const_cast rationale as above.
+				auto& mfunc = const_cast<FunctionDeclarationNode&>(func_node.as<FunctionDeclarationNode>());
+				const ASTNode& type_node = mfunc.decl_node().type_node();
+				if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+					const Type ret = type_node.as<TypeSpecifierNode>().type();
+					if (ret == Type::Auto || ret == Type::DeclTypeAuto) {
+						FLASH_LOG(General, Debug, "SemanticAnalysis: second-pass deduction for auto-return member function '",
+							mfunc.decl_node().identifier_token().value(), "'");
+						parser_.deduce_and_update_auto_return_type(mfunc);
+					}
+				}
+			}
+		}
+	}
 }
 
 // --- Top-level dispatch ---
@@ -672,6 +726,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
 					if (l.base_type == Type::Invalid || r.base_type == Type::Invalid) return {};
 					if (l.base_type == Type::Auto   || r.base_type == Type::Auto)    return {};
+					if (l.base_type == Type::DeclTypeAuto || r.base_type == Type::DeclTypeAuto) return {};
 					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
 					const Type common = get_common_type(l.base_type, r.base_type);
 					if (common == Type::Invalid) return {};
@@ -736,7 +791,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// Checking one lambda against both sides covers all non-handleable types in one place.
 	auto is_non_primitive = [](Type t) {
 		return t == Type::Struct || t == Type::Enum || t == Type::UserDefined ||
-		       t == Type::Invalid || t == Type::Auto;
+		       t == Type::Invalid || t == Type::Auto || t == Type::DeclTypeAuto;
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
@@ -796,6 +851,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
 	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
 	if (lhs_desc.base_type == Type::Auto    || rhs_desc.base_type == Type::Auto)    return;
+	if (lhs_desc.base_type == Type::DeclTypeAuto || rhs_desc.base_type == Type::DeclTypeAuto) return;
 
 	const Type common = get_common_type(lhs_desc.base_type, rhs_desc.base_type);
 	if (common == Type::Invalid) return;
@@ -877,4 +933,39 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 	}
+}
+
+// --- Phase 5 Task 2: generic lambda parameter normalization hook ---
+
+void SemanticAnalysis::normalizeGenericLambdaParams(const LambdaInfo& lambda_info) const {
+const size_t param_count = lambda_info.parameter_nodes.size();
+lambda_info.resolved_param_nodes.assign(param_count, ASTNode{});
+
+for (size_t i = 0; i < param_count; ++i) {
+const ASTNode& param_node = lambda_info.parameter_nodes[i];
+if (!param_node.is<DeclarationNode>()) continue;
+const auto& param_decl = param_node.as<DeclarationNode>();
+const ASTNode ptype_node = param_decl.type_node();
+if (!ptype_node.has_value() || !ptype_node.is<TypeSpecifierNode>()) continue;
+const TypeSpecifierNode& param_type = ptype_node.as<TypeSpecifierNode>();
+if (param_type.type() != Type::Auto && param_type.type() != Type::DeclTypeAuto) {
+// Concrete type: use the original node directly (no synthetic decl needed).
+lambda_info.resolved_param_nodes[i] = param_node;
+continue;
+}
+// Auto/DeclTypeAuto parameter: use deduced type if available.
+auto deduced_opt = lambda_info.getDeducedType(i);
+if (!deduced_opt.has_value()) {
+// Deduction not available yet (shouldn't happen after call-site processing).
+lambda_info.resolved_param_nodes[i] = param_node;
+continue;
+}
+// Build a synthetic DeclarationNode with the concrete deduced type.
+const TypeSpecifierNode& deduced_type = *deduced_opt;
+ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(deduced_type);
+lambda_info.resolved_param_nodes[i] =
+ASTNode::emplace_node<DeclarationNode>(deduced_type_node, param_decl.identifier_token());
+FLASH_LOG(General, Debug, "SemanticAnalysis: resolved generic lambda param '",
+param_decl.identifier_token().value(), "' to type ", (int)deduced_type.type());
+}
 }

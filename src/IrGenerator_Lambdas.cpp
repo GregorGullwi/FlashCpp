@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 namespace {
 // Build a replacement declaration node for an instantiated generic-lambda
@@ -113,7 +114,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				const auto& param_decl = param.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					info.is_generic = true;
 					info.auto_param_indices.push_back(param_index);
 				}
@@ -612,7 +613,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						// Use the deduced type from call site (already has reference flags)
@@ -663,7 +664,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						func_param.type = deduced->type();
@@ -707,25 +708,38 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		// Set lambda context for captured variable access
 		pushLambdaContext(lambda_info);
 
+		// Phase 5 Task 2: invoke the semantic-pass instantiation hook to pre-build
+		// resolved parameter declarations for generic lambdas.  After this call,
+		// lambda_info.resolved_param_nodes[i] holds the concrete DeclarationNode for
+		// each parameter (either the original or a synthetic node with the deduced type).
+		if (sema_ && lambda_info.is_generic) {
+			sema_->normalizeGenericLambdaParams(lambda_info);
+		}
+
 		// Add lambda parameters to symbol table as function parameters (operator() context).
-		// For instantiated generic lambdas, register synthetic declarations carrying the
-		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
-		// concrete parameter type instead of the original unresolved `auto`.
-		size_t body_param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
+		// For instantiated generic lambdas, use the pre-built resolved_param_nodes so that
+		// identifier lowering inside the body sees the concrete parameter type.
+		for (size_t body_param_idx = 0; body_param_idx < lambda_info.parameter_nodes.size(); ++body_param_idx) {
+			const ASTNode& orig_node = lambda_info.parameter_nodes[body_param_idx];
+			if (!orig_node.is<DeclarationNode>()) continue;
+			const auto& param_decl = orig_node.as<DeclarationNode>();
+			ASTNode symbol_param_node = orig_node;
+			// Use the sema-resolved node if available; otherwise fall back to inline deduction.
+			if (!lambda_info.resolved_param_nodes.empty() &&
+			    body_param_idx < lambda_info.resolved_param_nodes.size() &&
+			    lambda_info.resolved_param_nodes[body_param_idx].has_value()) {
+				symbol_param_node = lambda_info.resolved_param_nodes[body_param_idx];
+			} else {
+				// Legacy fallback: inline deduction (kept during the transition period).
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				ASTNode symbol_param_node = param_node;
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(body_param_idx);
 					if (deduced.has_value()) {
 						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
 					}
 				}
-				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 			}
-			body_param_idx++;
+			symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 		}
 
 		// Add captured variables to symbol table
@@ -790,7 +804,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						// Use the deduced type from call site (already has reference flags)
@@ -839,7 +853,7 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(param_idx);
 					if (deduced.has_value()) {
 						func_param.type = deduced->type();
@@ -876,25 +890,35 @@ ASTNode makeSyntheticDeducedLambdaParamDecl(const TypeSpecifierNode& deduced_typ
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
+		// Phase 5 Task 2: invoke the semantic-pass instantiation hook for __invoke context.
+		// resolved_param_nodes may already be populated by the operator() pass above; if not,
+		// fill them now so both code paths share the same concrete declarations.
+		if (sema_ && lambda_info.is_generic && lambda_info.resolved_param_nodes.empty()) {
+			sema_->normalizeGenericLambdaParams(lambda_info);
+		}
+
 		// Add lambda parameters to symbol table as function parameters (__invoke context).
-		// For instantiated generic lambdas, register synthetic declarations carrying the
-		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
-		// concrete parameter type instead of the original unresolved `auto`.
-		size_t invoke_param_idx = 0;
-		for (const auto& param_node : lambda_info.parameter_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
+		// Use the sema-resolved nodes when available.
+		for (size_t invoke_param_idx = 0; invoke_param_idx < lambda_info.parameter_nodes.size(); ++invoke_param_idx) {
+			const ASTNode& orig_node = lambda_info.parameter_nodes[invoke_param_idx];
+			if (!orig_node.is<DeclarationNode>()) continue;
+			const auto& param_decl = orig_node.as<DeclarationNode>();
+			ASTNode symbol_param_node = orig_node;
+			if (!lambda_info.resolved_param_nodes.empty() &&
+			    invoke_param_idx < lambda_info.resolved_param_nodes.size() &&
+			    lambda_info.resolved_param_nodes[invoke_param_idx].has_value()) {
+				symbol_param_node = lambda_info.resolved_param_nodes[invoke_param_idx];
+			} else {
+				// Legacy fallback.
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				ASTNode symbol_param_node = param_node;
-				if (param_type.type() == Type::Auto) {
+				if (param_type.type() == Type::Auto || param_type.type() == Type::DeclTypeAuto) {
 					auto deduced = lambda_info.getDeducedType(invoke_param_idx);
 					if (deduced.has_value()) {
 						symbol_param_node = makeSyntheticDeducedLambdaParamDecl(*deduced, param_decl.identifier_token());
 					}
 				}
-				symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 			}
-			invoke_param_idx++;
+			symbol_table.insert(param_decl.identifier_token().value(), symbol_param_node);
 		}
 
 		// Add captured variables to symbol table

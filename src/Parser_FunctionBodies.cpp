@@ -542,7 +542,7 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 	const DeclarationNode& decl_node = func_node.decl_node();
 	if (decl_node.type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
-		if (return_type.type() == Type::Auto && !func_node.get_definition().has_value()) {
+		if ((return_type.type() == Type::Auto || return_type.type() == Type::DeclTypeAuto) && !func_node.get_definition().has_value()) {
 			// A declaration-only function with placeholder return type cannot be mangled yet.
 			// Wait until a definition/body is attached and the signature is finalized.
 			return;

@@ -1392,6 +1392,7 @@
 							&& init_type  != Type::Enum   && decl_type  != Type::Enum
 							&& init_type  != Type::Invalid && decl_type != Type::Invalid
 							&& init_type  != Type::Auto    && decl_type != Type::Auto
+							&& init_type  != Type::DeclTypeAuto && decl_type != Type::DeclTypeAuto
 							&& type_node.pointer_depth() == 0) {
 							bool sema_applied = false;
 							if (sema_ && init_node.is<ExpressionNode>()) {

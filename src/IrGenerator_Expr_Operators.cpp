@@ -1425,7 +1425,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// that is deduced to int (returning -1/0/1)
 				Type resolved_return_type = return_type.type();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
-				if (resolved_return_type == Type::Auto && op == "<=>") {
+				if ((resolved_return_type == Type::Auto || resolved_return_type == Type::DeclTypeAuto) && op == "<=>") {
 					resolved_return_type = Type::Int;
 					actual_return_size = 32;
 				}
@@ -1587,7 +1587,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							int return_size = static_cast<int>(return_type_node.size_in_bits());
 
 							// Defaulted operator<=> with auto return type actually returns int
-							if (return_type == Type::Auto) {
+							if (return_type == Type::Auto || return_type == Type::DeclTypeAuto) {
 								return_type = Type::Int;
 								return_size = 32;
 							}
