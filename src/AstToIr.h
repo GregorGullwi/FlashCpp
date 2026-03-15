@@ -228,7 +228,7 @@ private:
 		Type& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
-	static ExprResult makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index = TypeIndex{});
+	static ExprResult makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{});
 	bool setupBaseFromIdentifier(
 		std::string_view object_name,
 		const Token& member_token,

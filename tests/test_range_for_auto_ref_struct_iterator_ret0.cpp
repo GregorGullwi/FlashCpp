@@ -42,5 +42,5 @@ int main() {
 		value += 1;
 	}
 
-	return c.data[0] == 11 && c.data[1] == 21 && c.data[2] == 31 ? 0 : 1;
+	return 63 - (c.data[0] + c.data[1] + c.data[2]);
 }

@@ -225,12 +225,16 @@
 			}
 
 			bool generated_deferred_lambda = false;
-			for (size_t di = 0; di < collected_lambdas_.size(); ++di) {
+			size_t deferred_scan_start = 0;
+			for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
 				// Normalize in-place via index, then re-read to avoid stale references.
 				normalizeGenericLambdaParams(collected_lambdas_[di]);
 				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
+					if (di == deferred_scan_start) {
+						deferred_scan_start = di + 1;
+					}
 					continue;
 				}
 				if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {

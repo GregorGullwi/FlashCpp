@@ -1,7 +1,8 @@
 int main() {
 	auto outer = [](auto base) {
-		auto lambda = [base]() {
-			return base + 2;
+		int local = base + 2;
+		auto lambda = [local]() {
+			return local;
 		};
 		return lambda();
 	};

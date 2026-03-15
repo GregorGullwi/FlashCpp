@@ -188,7 +188,7 @@
 			// Once generic lambda params are normalized, the recursive `self` parameter is
 			// a concrete closure-type rvalue reference rather than plain `auto`, so accept
 			// that form here as well.
-			if (func_type.type() == Type::Auto || is_recursive_lambda_self) {
+			if (isPlaceholderAutoType(func_type.type()) || is_recursive_lambda_self) {
 				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
 				// We need to find the lambda's closure type and call its operator()
 

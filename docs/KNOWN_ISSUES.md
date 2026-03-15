@@ -90,21 +90,3 @@ recover the parser-resolved overload, but when the argument value is `0L` and th
 overload was chosen by the parser the behaviour diverges from the standard.
 
 Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
-
-## Struct-iterator range-for result miscompare after `+=`
-
-While fixing range-for `auto` deduction for struct iterators, an additional
-codegen/runtime issue showed up in a nearby path: this returns `1` even though
-the loop sum itself evaluates to `60` when returned directly.
-
-```cpp
-int sum = 0;
-for (auto value : c) {
-	sum += value;
-}
-return sum == 60 ? 0 : 1;
-```
-
-Workaround: return the arithmetic delta (`return 60 - sum;`) or otherwise avoid
-this compare/conditional form on the affected path until the underlying
-miscompare is isolated.
