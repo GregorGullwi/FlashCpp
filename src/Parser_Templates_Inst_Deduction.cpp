@@ -257,7 +257,7 @@ void Parser::reparse_template_function_body(
 				current_template_param_names_.push_back(pn);
 			}
 
-			auto block_result = parse_block();
+			auto block_result = parse_function_body();  // handles function-try-blocks
 			if (!block_result.is_error() && block_result.node().has_value()) {
 				new_func_ref.set_definition(
 					substituteTemplateParameters(*block_result.node(), template_params, template_args));

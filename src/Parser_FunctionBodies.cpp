@@ -403,10 +403,8 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 		}
 
-		ASTNode try_stmt = emplace_node<TryStatementNode>(try_body, std::move(catch_clauses), try_token);
-		auto [wrapped_block, wrapped_ref] = create_node_ref(BlockNode());
-		wrapped_ref.add_statement_node(try_stmt);
-		block_result = ParseResult::success(wrapped_block);
+		ASTNode try_stmt_block = make_try_block_body(try_body, std::move(catch_clauses), try_token);
+		block_result = ParseResult::success(try_stmt_block);
 	}
 	
 	// Set the body on the appropriate node
@@ -469,15 +467,19 @@ ParseResult Parser::parse_function_body() {
 			return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 		}
 
-		ASTNode try_stmt = emplace_node<TryStatementNode>(try_block, std::move(catch_clauses), try_token);
-
-		// Wrap in a block node so callers always receive a BlockNode
-		auto [block_node, block_ref] = create_node_ref(BlockNode());
-		block_ref.add_statement_node(try_stmt);
-		return ParseResult::success(block_node);
+		return ParseResult::success(make_try_block_body(try_block, std::move(catch_clauses), try_token));
 	}
 
 	return ParseResult::error("Expected '{' or 'try' for function body", current_token_);
+}
+
+// Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
+// Both parse_function_body() and parse_delayed_function_body() use this common helper.
+ASTNode Parser::make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token) {
+	ASTNode try_stmt = emplace_node<TryStatementNode>(try_body, std::move(catch_clauses), try_token);
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	block_ref.add_statement_node(try_stmt);
+	return block_node;
 }
 
 // Parse one catch clause at the current token position and append it to catch_clauses.

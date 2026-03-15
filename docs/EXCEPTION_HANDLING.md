@@ -29,7 +29,7 @@ Basic and intermediate exception handling works end-to-end:
 | Local destructors before `break`/`continue`/`return` | ✅ | Fixed: `emitDestructorsForNonLocalExit` emits scope dtors before all non-local jumps |
 | **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info`; virtual base matching via vtable vbase offsets |
 | `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
-| **Function-try-blocks** | ✅ | `int f() try { … } catch(…) { … }` parsed and lowered as a wrapped try-statement in the function body; free functions and member functions supported |
+| **Function-try-blocks** | ✅ | `int f() try { … } catch(…) { … }` parsed and lowered as a wrapped try-statement in the function body; free functions, member functions, template functions, and constructors (including the `try :` initializer form) supported. Lambdas do not support function-try-blocks per C++20 [expr.prim.lambda]. |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
@@ -358,6 +358,8 @@ Key test files:
 - `test_eh_return_scope_dtor_ret0.cpp` — local destructors called before `return` (function scope, loop scope, try scope)
 - `test_eh_goto_scope_dtor_ret0.cpp` — local destructors called before `goto` (forward and backward, scope-crossing)
 - `test_eh_function_try_block_ret0.cpp` — function-level try blocks: free functions and inline member functions with `f() try { … } catch { … }` syntax
+- `test_eh_function_try_block_template_ret0.cpp` — function-try-blocks in template free functions and template member functions
+- `test_eh_function_try_block_ctor_ret0.cpp` — constructor function-try-blocks including the `Ctor() try : m(v) { … } catch { … }` form (inline and out-of-line)
 
 ## References
 

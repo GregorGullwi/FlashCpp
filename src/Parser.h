@@ -935,6 +935,9 @@ public:  // Public methods for template instantiation
         // Parse one catch clause at the current token position into catch_clauses.
         // Returns an error ParseResult on failure, or an empty success otherwise.
         ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
+        // Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
+        // Both parse_function_body() and parse_delayed_function_body() use this.
+        ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token);
 
         // Windows SEH (Structured Exception Handling) parsers
         ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally

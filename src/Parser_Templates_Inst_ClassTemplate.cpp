@@ -2144,7 +2144,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
-					auto block_result = parse_block();
+					auto block_result = parse_function_body();
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						// Substitute template parameters in the parsed body
@@ -5117,8 +5117,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					// Parse the function body
-					auto block_result = parse_block();
+					// Parse the function body (handles function-try-blocks too)
+					auto block_result = parse_function_body();
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						body_to_substitute = block_result.node();
@@ -5786,19 +5786,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 					
-					// The current token should be '{'
-					if (peek() != "{"_tok) {
-						FLASH_LOG(Templates, Error, "Expected '{' at body_start position, got: ", 
-						          (!peek().is_eof() ? std::string(peek_info().value()) : "EOF"));
-						current_function_ = nullptr;
-						member_function_context_stack_.pop_back();
-						gSymbolTable.exit_scope();
-						restore_lexer_position_only(saved_pos);
-						continue;
-					}
 					
-					// Parse the function body
-					auto body_result = parse_block();
+					// Parse the function body (handles function-try-blocks too)
+					auto body_result = parse_function_body();
 					if (body_result.is_error() || !body_result.node().has_value()) {
 						FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ", 
 						          decl.identifier_token().value());
@@ -5868,16 +5858,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 					
-					if (peek() != "{"_tok) {
-						FLASH_LOG(Templates, Error, "Expected '{' at body_start position for constructor, got: ", 
-						          (!peek().is_eof() ? std::string(peek_info().value()) : "EOF"));
-						member_function_context_stack_.pop_back();
-						gSymbolTable.exit_scope();
-						restore_lexer_position_only(saved_pos);
-						continue;
-					}
-					
-					auto body_result = parse_block();
+					// Parse the function body (handles function-try-blocks too)
+					auto body_result = parse_function_body();
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
 					restore_lexer_position_only(saved_pos);

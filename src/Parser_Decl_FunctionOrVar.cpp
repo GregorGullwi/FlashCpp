@@ -1348,6 +1348,12 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// For constructors, parse member initializer list
+	// Handle function-try-block form: Foo() try : m(v) { ... } catch(...) { ... }
+	// The 'try' keyword may precede the ':' initializer list.
+	bool has_function_try = !is_destructor && peek() == "try"_tok;
+	if (has_function_try) {
+		advance();  // consume 'try'
+	}
 	if (!is_destructor && peek() == ":"_tok) {
 		advance();  // consume ':'
 		
@@ -1416,8 +1422,36 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		return ParseResult::error("Expected '{' in constructor/destructor definition", current_token_);
 	}
 	
-	// Parse function body (or function-try-block)
-	ParseResult body_result = parse_function_body();
+	// Parse function body.
+	// For the normal try-block form (no initializer list), parse_function_body() handles
+	// 'try' directly: it sees 'try', parses the body, then parses the catch clauses.
+	// For the 'try :' form (has_function_try && initializer list already consumed),
+	// peek() is now at '{', so parse just the block, then manually parse catch clauses.
+	ParseResult body_result;
+	if (has_function_try) {
+		// 'try' was already consumed above (before the ':' initializer list).
+		// parse_function_body() sees '{', parses the block.
+		body_result = parse_function_body();
+		// Now parse catch clauses and wrap in a TryStatementNode.
+		if (!body_result.is_error() && body_result.node().has_value()) {
+			std::vector<ASTNode> catch_clauses;
+			while (peek() == "catch"_tok) {
+				auto clause_result = parse_one_catch_clause(catch_clauses);
+				if (clause_result.is_error()) {
+					member_function_context_stack_.pop_back();
+					return clause_result;
+				}
+			}
+			if (catch_clauses.empty()) {
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
+			}
+			ASTNode try_block = make_try_block_body(*body_result.node(), std::move(catch_clauses), Token());
+			body_result = ParseResult::success(try_block);
+		}
+	} else {
+		body_result = parse_function_body();
+	}
 	
 	if (body_result.is_error()) {
 		member_function_context_stack_.pop_back();

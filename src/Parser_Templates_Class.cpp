@@ -1819,10 +1819,10 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Parse constructor body if present
-						if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
+						if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
 							// Parse the constructor body immediately rather than delaying
 							// This avoids pointer invalidation issues with delayed parsing
-							auto block_result = parse_block();
+							auto block_result = parse_function_body();  // handles function-try-blocks too
 							gSymbolTable.exit_scope();
 							
 							if (block_result.is_error()) {
@@ -2406,7 +2406,7 @@ ParseResult Parser::parse_template_declaration() {
 				// Destructors have no parameters
 
 				// Parse the function body
-				auto block_result = parse_block();
+				auto block_result = parse_function_body();  // handles function-try-blocks too
 
 				if (block_result.is_error()) {
 					member_function_context_stack_.pop_back();
@@ -3794,8 +3794,8 @@ if (struct_type_info.getStructInfo()) {
 					}
 				}
 				
-				// Parse the function body
-				auto block_result = parse_block();
+				// Parse the function body (handles function-try-blocks too)
+				auto block_result = parse_function_body();
 				if (block_result.is_error()) {
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
@@ -4211,7 +4211,7 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			// Parse the function body
-			auto body_result = parse_block();
+			auto body_result = parse_function_body();  // handles function-try-blocks too
 			gSymbolTable.exit_scope();
 			
 			if (body_result.is_error()) {

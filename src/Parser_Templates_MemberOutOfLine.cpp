@@ -846,10 +846,10 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	restore_lexer_position_only(body_pos);
 
 	// The current token should now be '{' (the token that was saved)
-	// parse_block() will consume it, so don't consume it here
+	// parse_function_body() will consume it, so don't consume it here
 
 	// Parse the block body
-	auto block_result = parse_block();
+	auto block_result = parse_function_body();
 
 	// Clean up member function context if we set it up
 	if (setup_member_context && !member_function_context_stack_.empty()) {
