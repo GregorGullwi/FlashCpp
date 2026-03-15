@@ -1836,7 +1836,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				// Regular parameter - substitute template parameters in the parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				ASTNode param_type;
-				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
+				if ((orig_param_type.type() == Type::Auto || orig_param_type.type() == Type::DeclTypeAuto) && arg_type_index < arg_types.size()) {
 					// Abbreviated function template parameter (concept auto / auto):
 					// use the deduced argument type as the concrete instantiated parameter type.
 					//

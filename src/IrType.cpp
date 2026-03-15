@@ -58,6 +58,8 @@ IrType toIrType(Type semantic_type) {
 		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
 		case Type::Auto:
 			return IrType::Integer;
+		case Type::DeclTypeAuto:
+			return IrType::Integer;  // Resolved before IR in supported paths; fallback for transition
 		case Type::Template:
 			return IrType::Void;
 		case Type::Function:

@@ -1820,7 +1820,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	FLASH_LOG(Parser, Debug, "deduce_and_update_auto_return_type called for function: ", 
 			  decl_node.identifier_token().value(), " return_type=", (int)return_type.type());
 	
-	if (return_type.type() != Type::Auto) {
+	if (return_type.type() != Type::Auto && return_type.type() != Type::DeclTypeAuto) {
 		return;  // Not an auto return type, nothing to do
 	}
 	
@@ -2093,6 +2093,7 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::Double: result += "double"; break;
 		case Type::LongDouble: result += "long double"; break;
 		case Type::Auto: result += "auto"; break;
+		case Type::DeclTypeAuto: result += "decltype(auto)"; break;
 		case Type::Struct:
 			if (type.type_index().value < gTypeInfo.size()) {
 				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index().value].name()));

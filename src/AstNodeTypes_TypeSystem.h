@@ -311,6 +311,7 @@ enum class Type : int_fast16_t {
 	MemberObjectPointer,  // Pointer to data member: int MyClass::*
 	UserDefined,
 	Auto,
+	DeclTypeAuto,         // decltype(auto) — preserves value category and cv-qualifiers
 	Function,
 	Struct,
 	Enum,
@@ -411,6 +412,7 @@ inline bool isSignedType(Type t) {
 		case Type::Void:
 		case Type::UserDefined:
 		case Type::Auto:
+		case Type::DeclTypeAuto:
 		case Type::Function:
 		case Type::Struct:
 		case Type::Enum:

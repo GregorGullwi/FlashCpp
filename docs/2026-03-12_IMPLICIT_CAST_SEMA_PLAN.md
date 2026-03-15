@@ -980,7 +980,63 @@ Exit criteria:
 - ordinary supported functions no longer depend on codegen to finalize `auto` return type
 - `decltype(auto)` has an explicit semantic-resolution path instead of reusing plain `auto` heuristics
 
-### Parallel rollout guidance
+#### Phase 5 implementation notes (2026-03-15)
+
+**Task 4 — `decltype(auto)` separation (complete)**
+
+- Added `Type::DeclTypeAuto` enum value after `Type::Auto` in `AstNodeTypes_TypeSystem.h`.
+- `Parser_TypeSpecifiers.cpp` now emits `Type::DeclTypeAuto` for `decltype(auto)` instead of reusing `Type::Auto`.
+- All switch/if statements were updated to handle `Type::DeclTypeAuto` alongside `Type::Auto` in the following files:
+  - `AstNodeTypes.cpp`
+  - `AstNodeTypes_TypeSystem.h`
+  - `NameMangling.h`
+  - `IrType.cpp`
+  - `Parser_Expr_QualLookup.cpp`
+  - `SemanticAnalysis.cpp`
+  - `LambdaHelpers.h`
+  - `IrGenerator_Lambdas.cpp`
+  - `IrGenerator_Expr_Primitives.cpp`
+  - `IrGenerator_Call_Direct.cpp`
+  - `IrGenerator_Expr_Operators.cpp`
+  - `IrGenerator_Stmt_Decl.cpp`
+  - `ExpressionSubstitutor.cpp`
+  - `Parser_Templates_Inst_Deduction.cpp`
+  - `Parser_Expr_PrimaryExpr.cpp`
+  - `Parser_Expr_ControlFlowStmt.cpp`
+  - `Parser_Decl_FunctionOrVar.cpp`
+  - `Parser_FunctionBodies.cpp`
+- `deduce_and_update_auto_return_type` now handles both `Type::Auto` and `Type::DeclTypeAuto`.
+- Native type entry for `decltype(auto)` added to `gNativeTypes` in `AstNodeTypes.cpp`.
+- Regression test: `tests/test_decltype_auto_forward_ret0.cpp`.
+
+**Task 1 — auto return-type semantic-pass finalisation (complete infrastructure; codegen fallback retained as transition)**
+
+- Added `SemanticAnalysis::resolveRemainingAutoReturns()` and `resolveAutoReturnNode()` in `SemanticAnalysis.cpp`.
+- After the main normalization pass, a second sweep iterates over all top-level function and struct-member declarations. Any function whose return type is still `Type::Auto` or `Type::DeclTypeAuto` after parser-time deduction gets a second call to `parser_.deduce_and_update_auto_return_type()`. This resolves cases like inline friend functions where the enclosing struct was incomplete at parse time.
+- `Parser::deduce_and_update_auto_return_type` was made accessible to `SemanticAnalysis` via a `friend class` declaration in `Parser.h`.
+- The codegen fallback in `IrGenerator_Visitors_Namespace.cpp` is retained with a `TODO` comment. It now covers both `Type::Auto` and `Type::DeclTypeAuto` and will become `InternalError` once the semantic pass resolution is validated as complete for all supported cases.
+- Regression test: `tests/test_phase5_auto_return_sema_ret0.cpp`.
+
+**Task 2 — generic lambda parameter normalization hook (complete)**
+
+- Added `resolved_param_nodes` (mutable `std::vector<ASTNode>`) to `LambdaInfo` in `IrGenerator.h`.
+- Added public `SemanticAnalysis::normalizeGenericLambdaParams(const LambdaInfo&) const` which pre-builds resolved declaration nodes for auto/DeclTypeAuto parameters, using the deduced types already stored in `lambda_info.deduced_auto_types`.
+- `IrGenerator_Lambdas.cpp::generateLambdaOperatorCallFunction` and `generateLambdaInvokeFunction` now call `sema_->normalizeGenericLambdaParams(lambda_info)` before the symbol-table registration loop, then use `resolved_param_nodes` when available. The inline creation of synthetic declarations (`makeSyntheticDeducedLambdaParamDecl`) is retained as a legacy fallback in case the semantic pass wasn't run.
+- Regression test: `tests/test_phase5_generic_lambda_sema_ret0.cpp`.
+
+**Task 3 — `Type::Auto` runtime guards (infrastructure updated; full promotion deferred)**
+
+- `applyTransitionalAutoRuntimeFallback` in `IrGenerator_Expr_Primitives.cpp` updated to also handle `Type::DeclTypeAuto` and annotated with a `TODO` comment for the future `InternalError` promotion.
+- All four `if (pointee_type == Type::Auto || pointee_size == 0)` guards updated to also check `Type::DeclTypeAuto`.
+- The full promotion to `InternalError` is deferred until Task 2 is verified to prevent all `Type::Auto` from reaching identifier lowering on supported code paths.
+
+**Known remaining limitations (Phase 5+):**
+
+- `decltype(auto)` does not yet preserve reference/value-category semantics (reference forwarding); it deduces the same as plain `auto` for now. Full `decltype(auto)` reference-preservation requires the semantic pass to inspect the value category of the return expression.
+- The codegen auto-return fallback is not yet an `InternalError`; it becomes one in a follow-up once all supported cases are covered by parser + sema second-pass.
+- `applyTransitionalAutoRuntimeFallback` is not yet an `InternalError`; will follow when generic lambda param deduction is guaranteed complete before body codegen.
+
+
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
 

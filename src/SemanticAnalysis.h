@@ -15,6 +15,7 @@ class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
 class FunctionCallNode;
+struct LambdaInfo;  // Phase 5 Task 2: generic lambda parameter normalization hook
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization. Phase 1 established the pipeline seam.
@@ -40,7 +41,20 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 
+	// Phase 5 Task 2: pre-build resolved parameter declaration nodes for generic lambda
+	// instantiation.  Called by IrGenerator just before generating the lambda body so
+	// that body identifier lowering sees concrete types rather than Type::Auto/DeclTypeAuto.
+	// Fills lambda_info.resolved_param_nodes in place.
+	void normalizeGenericLambdaParams(const LambdaInfo& lambda_info) const;
+
 private:
+	// Type::DeclTypeAuto after parser-time deduction, attempt a second deduction
+	// now that the full AST is available (e.g. friend functions whose struct was
+	// incomplete during initial parsing).  Mutates the AST node in place via
+	// parser_.deduce_and_update_auto_return_type().
+	void resolveRemainingAutoReturns();
+	void resolveAutoReturnNode(const ASTNode& node);
+
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
 

@@ -217,8 +217,13 @@
 				}
 			}
 
-			// If the current function has auto return type, deduce it from the return expression
-			if (current_function_return_type_ == Type::Auto) {
+			// Phase 5: Auto return type should have been resolved by the semantic pass.
+			// The check below is a transitional fallback for cases the parser and semantic
+			// pass could not resolve yet (e.g. complex initializers in friend functions).
+			// TODO: once all callers go through the semantic-pass resolution hook, replace
+			// this block with throw InternalError("unresolved auto return type at codegen").
+			if (current_function_return_type_ == Type::Auto ||
+			    current_function_return_type_ == Type::DeclTypeAuto) {
 				Type expr_type = operands.type;
 				int expr_size = operands.size_in_bits.value;
 

@@ -290,6 +290,10 @@ private:
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
 		const std::vector<ASTNode>& captured_var_decls);
+	// Register lambda parameters into the local symbol table, using sema-resolved
+	// declarations when available and falling back to inline deduction otherwise.
+	// Shared between generateLambdaOperatorCallFunction and generateLambdaInvokeFunction.
+	void addLambdaParamsToSymbolTable(const LambdaInfo& lambda_info);
 
 	// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.

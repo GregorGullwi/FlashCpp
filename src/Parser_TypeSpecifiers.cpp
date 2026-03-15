@@ -2368,10 +2368,13 @@ ParseResult Parser::parse_decltype_specifier()
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after 'decltype(auto)'", current_token_);
 		}
-		// Return Type::Auto to indicate deduced return type
-		// The semantics of decltype(auto) vs auto differ during instantiation,
-		// but for parsing purposes, we treat it as auto with special handling
-		TypeSpecifierNode auto_type(Type::Auto, TypeQualifier::None, 0);
+		// Return Type::DeclTypeAuto to indicate decltype(auto) deduced return type.
+		// decltype(auto) differs from plain auto: it preserves value category and
+		// cv-qualifiers (i.e., decltype(auto) may deduce a reference type while
+		// plain auto always strips them).  The distinct enum value gives the
+		// semantic pass an explicit resolution path instead of reusing plain-auto
+		// heuristics.  [Phase 5 – Task 4]
+		TypeSpecifierNode auto_type(Type::DeclTypeAuto, TypeQualifier::None, 0);
 		return saved_position.success(emplace_node<TypeSpecifierNode>(auto_type));
 	}
 

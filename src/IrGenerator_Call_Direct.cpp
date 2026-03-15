@@ -171,7 +171,7 @@
 			// Handle auto-typed callable (e.g., recursive lambda pattern: self(self, n-1))
 			// When an auto&& parameter is called like a function, it's a callable object
 			// We need to generate a member function call to its operator()
-			if (func_type.type() == Type::Auto) {
+			if (func_type.type() == Type::Auto || func_type.type() == Type::DeclTypeAuto) {
 				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
 				// We need to find the lambda's closure type and call its operator()
 

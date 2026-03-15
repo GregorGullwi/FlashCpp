@@ -263,11 +263,15 @@ struct BaseClassPostTemplateInfo {
     bool is_pack_expansion = false;
 };
 
+// Forward declaration for friend relationship (Phase 5: semantic pass).
+class SemanticAnalysis;
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
+	friend class SemanticAnalysis;  // Phase 5: semantic pass calls deduce_and_update_auto_return_type
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;

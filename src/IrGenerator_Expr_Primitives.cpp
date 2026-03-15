@@ -213,14 +213,16 @@
 		);
 	}
 
-	// Temporary migration helper: generic lambda local parameters can still reach
-	// identifier lowering as unresolved Type::Auto with size 0.  When that
-	// happens, this mutates both `type` and `size_bits` to the transitional
+	// Phase 5 – Task 3 migration helper: generic lambda local parameters can still reach
+	// identifier lowering as unresolved Type::Auto or Type::DeclTypeAuto with size 0.
+	// When that happens, this mutates both `type` and `size_bits` to the transitional
 	// int/32-bit fallback and returns true; otherwise it leaves them unchanged and
-	// returns false.  This can be removed once deduced lambda parameter types are
-	// threaded into lambda body codegen.
+	// returns false.
+	// TODO (Phase 5 Task 3): once Task 2 (generic lambda sema hook) is complete and
+	// Type::Auto no longer reaches this path, replace the body with:
+	//   throw InternalError("unresolved auto type reached identifier lowering");
 	static bool applyTransitionalAutoRuntimeFallback(Type& type, int& size_bits) {
-		if (type == Type::Auto && size_bits == 0) {
+		if ((type == Type::Auto || type == Type::DeclTypeAuto) && size_bits == 0) {
 			type = Type::Int;
 			size_bits = 32;
 			return true;
@@ -935,7 +937,7 @@
 					// For auto types, default to int (32 bits)
 					Type pointee_type = type_node.type();
 					int pointee_size = static_cast<int>(type_node.size_in_bits());
-					if (pointee_type == Type::Auto || pointee_size == 0) {
+					if (pointee_type == Type::Auto || pointee_type == Type::DeclTypeAuto || pointee_size == 0) {
 						pointee_type = Type::Int;
 						pointee_size = 32;
 					}
@@ -977,7 +979,7 @@
 				// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 				Type pointee_type = type_node.type();
 				int pointee_size = static_cast<int>(type_node.size_in_bits());
-				if (pointee_type == Type::Auto || pointee_size == 0) {
+				if (pointee_type == Type::Auto || pointee_type == Type::DeclTypeAuto || pointee_size == 0) {
 					pointee_type = Type::Int;
 					pointee_size = 32;
 				}
@@ -1125,7 +1127,7 @@
 						// For auto types, default to int (32 bits)
 						Type pointee_type = type_node.type();
 						int pointee_size = static_cast<int>(type_node.size_in_bits());
-						if (pointee_type == Type::Auto || pointee_size == 0) {
+						if (pointee_type == Type::Auto || pointee_type == Type::DeclTypeAuto || pointee_size == 0) {
 							pointee_type = Type::Int;
 							pointee_size = 32;
 						}
@@ -1163,7 +1165,7 @@
 					// This matches the behavior in NameMangling.h which falls through to 'H' (int)
 					Type pointee_type = type_node.type();
 					int pointee_size = static_cast<int>(type_node.size_in_bits());
-					if (pointee_type == Type::Auto || pointee_size == 0) {
+					if (pointee_type == Type::Auto || pointee_type == Type::DeclTypeAuto || pointee_size == 0) {
 						pointee_type = Type::Int;
 						pointee_size = 32;
 					}

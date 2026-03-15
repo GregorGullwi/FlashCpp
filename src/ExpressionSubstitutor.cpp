@@ -976,8 +976,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	FLASH_LOG_FORMAT(Templates, Debug, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
 	
 	// First, check if this is a template parameter type that needs substitution
-	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
-	if ((type.type() == Type::Template || type.type() == Type::Auto || type.type() == Type::UserDefined) 
+	// Template parameters can show up as Type::Template, Type::Auto, Type::DeclTypeAuto, or Type::UserDefined
+	if ((type.type() == Type::Template || type.type() == Type::Auto || type.type() == Type::DeclTypeAuto || type.type() == Type::UserDefined) 
 	    && type.type_index().value < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type.type_index().value];
 		std::string_view type_name = StringTable::getStringView(type_info.name());
