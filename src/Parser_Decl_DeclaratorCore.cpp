@@ -46,11 +46,11 @@ ParseResult Parser::parse_type_and_name() {
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
     if (type_spec.type() == Type::DeclTypeAuto) {
         if (type_spec.cv_qualifier() != CVQualifier::None) {
-            return ParseResult::error("'decltype(auto)' must be the sole constituent of the declared type", current_token_);
+            return ParseResult::error("'decltype(auto)' cannot have cv-qualifiers", current_token_);
         }
 
         if (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok) {
-            return ParseResult::error("'decltype(auto)' must be the sole constituent of the declared type", current_token_);
+            return ParseResult::error("'decltype(auto)' cannot be combined with pointer or reference declarators", current_token_);
         }
 
         // Peek ahead to see if '[' follows. Per C++20 [dcl.struct.bind], decltype(auto)

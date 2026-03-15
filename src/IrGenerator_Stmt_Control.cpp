@@ -979,7 +979,11 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 
 			const TypeSpecifierNode& placeholder_type = original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
 			if (isPlaceholderAutoType(placeholder_type.type())) {
-				throw InternalError("Could not deduce range-for element type from struct iterator operator*()");
+				throw InternalError(std::string(StringBuilder()
+					.append("Could not deduce range-for element type from iterator type '")
+					.append(begin_return_type.getReadableString())
+					.append("'")
+					.commit()));
 			}
 			return original_var_decl.declaration_node();
 		}();
