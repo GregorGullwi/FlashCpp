@@ -721,13 +721,17 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc   = type_context_.get(target_type_id);
 
-	// Only handle plain primitive conversions (no pointers, no arrays, no structs, no enums, no auto)
+	// Only handle plain numeric conversions (integer, bool, or floating-point).
+	// Non-numeric types (UserDefined, Struct, Enum, Void, Nullptr, etc.) are excluded
+	// because can_convert_type(UserDefined, UserDefined) returns ExactMatch for any two
+	// UserDefined types with the same enum value regardless of type_index, which would
+	// reach determineConversionKind with an unhandled type pair and throw.
+	auto is_numeric = [](Type t) {
+		return is_integer_type(t) || t == Type::Bool || is_floating_point_type(t);
+	};
+	if (!is_numeric(from_desc.base_type) || !is_numeric(to_desc.base_type)) return false;
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
-	if (from_desc.base_type == Type::Struct || to_desc.base_type == Type::Struct) return false;
-	if (from_desc.base_type == Type::Enum   || to_desc.base_type == Type::Enum)   return false;
-	if (from_desc.base_type == Type::Invalid || to_desc.base_type == Type::Invalid) return false;
-	if (from_desc.base_type == Type::Auto    || to_desc.base_type == Type::Auto)    return false;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
@@ -776,13 +780,15 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
-	// Only handle plain primitive types (no pointers, no arrays, no structs, no enums)
+	// Only handle plain numeric types (integer, bool, floating-point).
+	// Non-numeric types (UserDefined, Struct, Enum, etc.) are excluded so that
+	// get_common_type never returns a non-numeric type that would reach determineConversionKind.
+	auto is_numeric = [](Type t) {
+		return is_integer_type(t) || t == Type::Bool || is_floating_point_type(t);
+	};
+	if (!is_numeric(lhs_desc.base_type) || !is_numeric(rhs_desc.base_type)) return;
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
-	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
-	if (lhs_desc.base_type == Type::Auto    || rhs_desc.base_type == Type::Auto)    return;
 
 	const Type common = get_common_type(lhs_desc.base_type, rhs_desc.base_type);
 	if (common == Type::Invalid) return;
