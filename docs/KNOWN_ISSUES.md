@@ -90,3 +90,42 @@ recover the parser-resolved overload, but when the argument value is `0L` and th
 overload was chosen by the parser the behaviour diverges from the standard.
 
 Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
+
+## Range-for `auto` deduction with struct iterators
+
+When a container's `begin()`/`end()` return a struct iterator (rather than a
+raw pointer), the range-for desugaring in `visitRangedForBeginEnd` incorrectly
+deduces the loop variable's type as the iterator struct itself instead of the
+element type that `operator*()` returns.
+
+```cpp
+struct IntIter {
+	int* ptr;
+	int& operator*() { return *ptr; }
+	IntIter& operator++() { ++ptr; return *this; }
+	bool operator!=(const IntIter& o) const { return ptr != o.ptr; }
+};
+
+struct Container {
+	int data[3];
+	IntIter begin() { /* ... */ }
+	IntIter end()   { /* ... */ }
+};
+
+Container c;
+for (auto x : c) { /* x is deduced as IntIter instead of int */ }
+```
+
+Root cause: `resolveRangedForLoopDecl` in `IrGenerator_Stmt_Control.cpp`
+receives `begin_return_type` as the deduced element type.  For pointer
+iterators (`pointer_depth() > 0`) one pointer level is correctly stripped to
+obtain the element type.  For struct iterators (`pointer_depth() == 0`) no
+stripping happens and the iterator type itself is used, which is wrong — the
+element type should come from the iterator's `operator*()` return type.
+
+The pre-Phase-5 code avoided this by leaving the declaration as `auto` and
+letting the `*__begin` initializer expression drive type deduction at
+variable-init time.  The fix is to fall back to the original declaration node
+when the iterator is not a pointer, restoring that behaviour.
+
+Tracking: `tests/test_range_for_auto_struct_iterator_ret0.cpp`
