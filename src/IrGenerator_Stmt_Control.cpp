@@ -1025,7 +1025,7 @@ ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_dec
 	}
 
 	void AstToIr::visitGotoStatementNode(const GotoStatementNode& node) {
-		StringHandle target_label = StringTable::getOrInternStringHandle(std::string(node.label_name()));
+		StringHandle target_label = StringTable::getOrInternStringHandle(node.label_name());
 		// Emit destructors for any local variables in scopes exited by the jump.
 		// prescanLabels() populated label_scope_depth_map_ for all labels in this function
 		// so both forward and backward gotos are handled.
