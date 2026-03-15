@@ -42,7 +42,21 @@ ParseResult Parser::parse_type_and_name() {
 
     // Check for structured binding: auto [a, b, c] = expr;
     // Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
+    // Per C++20 [dcl.struct.bind], decltype(auto) is not permitted in structured bindings.
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
+    if (type_spec.type() == Type::DeclTypeAuto) {
+        // Peek ahead past optional &/&& to see if '[' follows
+        SaveHandle sb_check = save_token_position();
+        if (peek() == "&"_tok) {
+            advance();
+            if (peek() == "&"_tok) advance();
+        }
+        bool is_structured_binding = (peek() == "["_tok);
+        restore_token_position(sb_check);
+        if (is_structured_binding) {
+            return ParseResult::error("'decltype(auto)' cannot be used in structured bindings", current_token_);
+        }
+    }
     if (type_spec.type() == Type::Auto) {
         // Check for optional reference qualifiers
         ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
