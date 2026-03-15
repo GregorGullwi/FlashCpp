@@ -6,48 +6,48 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~121ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~191ms |
-| `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~10ms |
-| `<version>` | `test_std_version.cpp` | ✅ Compiled | ~22ms |
-| `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~22ms |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~153ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~196ms |
+| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | Ambiguous constructor call in `weak_ordering` |
+| `<version>` | `test_std_version.cpp` | ✅ Compiled | ~15ms |
+| `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~3ms |
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
-| `<initializer_list>` | N/A | ✅ Compiled | ~15ms |
-| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~277ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | ~630ms |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~275ms |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~367ms |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~218ms |
-| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~264ms |
-| `<string_view>` | `test_std_string_view.cpp` | ✅ Compiled | ~1223ms |
-| `<string>` | `test_std_string.cpp` | ✅ Compiled | ~2118ms |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types (`std::array<int,5> arr = {1,2,3,4,5}`) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ✅ Compiled | ~1421ms |
-| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~941ms |
-| `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | ~904ms |
+| `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
+| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~281ms. ratio_equal works; ratio_less needs default parameter evaluation |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Unexpanded pack expansion |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~271ms |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
+| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Operator== not defined for operand types |
+| `<string>` | `test_std_string.cpp` | ❌ Codegen Error | Itanium mangling: FunctionPointer type missing function signature |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | member '_M_start' not found in struct '_Vector_impl' (base class member access) |
-| `<deque>` | `test_std_deque.cpp` | ✅ Compiled | ~1561ms |
+| `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
-| `<queue>` | `test_std_queue.cpp` | ✅ Compiled | ~2003ms |
-| `<stack>` | `test_std_stack.cpp` | ✅ Compiled | ~1574ms |
-| `<memory>` | `test_std_memory.cpp` | 💥 Crash | Stack overflow during template instantiation (6200+ templates) |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Forward type reference `__diff_type` in `__boyer_moore_array_base` constructor body (line 1294) |
+| `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<memory>` | `test_std_memory.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<functional>` | `test_std_functional.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
-| `<set>` | `test_std_set.cpp` | ✅ Compiled | ~1566ms |
+| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
-| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
-| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions (`eq`, `eq_int_type`) not found during deferred body codegen |
-| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates); previously parse error on brace-init |
-| `<atomic>` | `test_std_atomic.cpp` | ✅ Compiled | ~1091ms |
-| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~32ms |
-| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~251ms |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ✅ Compiled | ~2216ms |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
+| `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
+| `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
+| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Parse Error | non-dependent name `__w` not declared before template definition |
+| `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
+| `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Codegen Error | Itanium mangling: FunctionPointer type missing function signature |
 | `<typeinfo>` | N/A | ✅ Compiled | ~32ms |
 | `<typeindex>` | N/A | ✅ Compiled | ~284ms |
-| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~573ms |
+| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~632ms |
 | `<iterator>` | `test_std_iterator.cpp` | ✅ Compiled | ~1669ms (some codegen warnings) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parser fails to close `_Copy_assign_base` struct body (lambda/if-constexpr in template); variant:1137 |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parser fails to close `_Copy_assign_base` struct body |
 | `<csetjmp>` | N/A | ✅ Compiled | ~18ms |
 | `<csignal>` | N/A | ✅ Compiled | ~103ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~3ms (C++23) |
@@ -58,8 +58,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~25ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ✅ Compiled | ~658ms |
-| `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression (via `<chrono>`) |
+| `<latch>` | `test_std_latch.cpp` | ❌ Parse Error | non-dependent name `__w` not declared before template definition |
+| `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression |
 | `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~43ms |
 | `<cstring>` | N/A | ✅ Compiled | ~39ms |
@@ -99,33 +99,43 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### Summary (2026-03-03, updated)
+### Summary (2026-03-14, updated)
 
 **Total headers tested:** 96
-**Compiling successfully (parse + codegen):** 65 (68%)
-**Codegen errors (parsing succeeds but codegen fails):** 8 (vector, list, map, iostream, sstream, fstream, unordered_set, unordered_map)
-**Parse errors:** 16 (array, functional, ranges, variant, coroutine, shared_mutex, mutex, thread, semaphore, stop_token, bitset, execution, generator, complex, regex, format)
-**Crashes:** 4 (barrier, memory, chrono, condition_variable — all stack overflow during deep template instantiation)
+**Compiling successfully (parse + codegen):** 55 (57%)
+**Codegen errors (parsing succeeds but codegen fails):** 18 (including many headers now failing with Itanium mangling issues after alloc_traits.h fix unblocked parsing)
+**Parse errors:** 10
+**Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-1. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
+1. **Itanium name mangling: unresolved 'auto' type**: Many headers that now parse successfully fail during codegen because the Itanium mangler encounters an unresolved `auto` return type. The parser needs to propagate deduced return types to the mangler. Affects: `<algorithm>`, `<tuple>`, `<deque>`, `<set>`, `<queue>`, `<stack>`, `<memory>`, `<functional>`.
 
-2. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because the struct member `_M_elems` (from `typename __array_traits<_Tp,_Nm>::_Type`) is not resolved as an array type, so brace-elision doesn't apply. Affects: `<array>`.
+2. **Itanium name mangling: FunctionPointer type missing function signature**: The mangler fails on function pointer types that don't carry their full function signature. Affects: `<string>`, `<stdexcept>`.
 
-3. **Forward type references in class bodies**: Member type aliases declared later in a class body are not visible in constructor bodies parsed earlier (e.g., `__diff_type` used in `__boyer_moore_array_base` constructor before `using __diff_type = _Tp;`). In C++, all member declarations are visible throughout the class body. Affects: `<functional>`.
+3. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-4. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Everything after `_Copy_assign_base` gets registered as its members. Affects: `<variant>`.
+4. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because the struct member `_M_elems` (from `typename __array_traits<_Tp,_Nm>::_Type`) is not resolved as an array type, so brace-elision doesn't apply. Affects: `<array>`.
 
-5. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
+5. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
 
-6. **Stack overflow during deep template instantiation**: Headers like `<memory>`, `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<memory>`, `<barrier>`, `<chrono>`.
+6. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
 
-7. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). The parser correctly identifies base classes, but the code generator doesn't properly traverse the base class hierarchy for member lookup. Affects: `<vector>`, `<list>`, `<map>`.
+7. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
 
-8. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class (e.g., `char_traits::find` calling `char_traits::eq`) fail because the sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
+8. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
+
+9. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class fail because sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-03-14)
+
+1. **ExpressionSubstitutor: StaticCastNode handling**: Functional-style casts like `bool(P::value)` are parsed as `StaticCastNode` but the `ExpressionSubstitutor` didn't handle this variant type. Added `substituteStaticCast()` which recursively substitutes the inner expression and target type. This was the primary blocker for `__not_<X>::type` resolution used throughout `<type_traits>`. Regression tests: `tests/test_template_not_bool_cast_ret0.cpp`.
+
+2. **Dependent template placeholder detection in base class arguments**: When a template argument like `is_fundamental<T>` (where `T` is a template parameter) creates a hash-based dependent placeholder (e.g., `is_fundamental$00a3b7d5205981a7`), the base class dependency detection failed to recognize it as dependent because the hashed name doesn't contain the literal parameter name `T`. Added `isDependentTemplatePlaceholder()` check alongside the existing string-based heuristic. Regression test: `tests/test_template_dependent_placeholder_base_ret0.cpp`.
+
+3. **Template type parameter functional-style cast disambiguation**: Statements like `_Tp(args...).swap(c)` (from `alloc_traits.h:908`) failed with "Expected identifier token" because the parser treated `_Tp(...)` as a variable declaration when `_Tp` is a template type parameter. Added look-ahead in the template parameter check in `parse_statement_or_declaration()` to detect `.` or `->` after the closing `)`, routing to expression parsing instead. Uses `peek(1)` to look past the current identifier token. Regression test: `tests/test_template_type_param_functional_cast_ret0.cpp`.
 
 ### TODO: Friend class access control — move to TypeIndex-based resolution
 
