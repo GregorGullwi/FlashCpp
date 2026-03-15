@@ -397,7 +397,7 @@ private:
         // Delayed function body parsing for inline member functions
         struct DelayedFunctionBody {
                 FunctionDeclarationNode* func_node;      // The function node to attach body to
-                SaveHandle body_start;                   // Handle to saved position at '{'
+                SaveHandle body_start;                   // Handle to saved position at '{' (or 'try' for function-try-blocks)
                 SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
                 StringHandle struct_name;                // For member function context
                 TypeIndex struct_type_index;                // For member function context
@@ -411,6 +411,8 @@ private:
                 bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
                                                           // as opposed to a regular member of a template class
                 bool is_free_function = false;            // True for non-member friend functions defined inside a class body
+                bool has_function_try = false;            // True when body_start is at '{' inside a function-try-block
+                                                          // (i.e. 'try' was already consumed; catch clauses follow the body)
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
@@ -929,6 +931,10 @@ public:  // Public methods for template instantiation
         ParseResult parse_lambda_expression();  // Add lambda expression parser
         ParseResult parse_try_statement();  // Add try-catch statement parser
         ParseResult parse_throw_statement();  // Add throw statement parser
+        ParseResult parse_function_body();  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
+        // Parse one catch clause at the current token position into catch_clauses.
+        // Returns an error ParseResult on failure, or an empty success otherwise.
+        ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
 
         // Windows SEH (Structured Exception Handling) parsers
         ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
@@ -1450,6 +1456,7 @@ public:  // Public methods for template instantiation
         void skip_qualified_name_parts();  // Skip namespace-qualified name parts (e.g., ::Class after 'ns')
         std::string_view consume_qualified_name_suffix(std::string_view base_name);  // Same but builds and returns full qualified name
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
+        void skip_function_body();  // Skip over '{...}' or function-try-block 'try {...} catch...'
 
         // Finalize an out-of-line static member variable definition.
         // Sets the initializer on the member and returns a VariableDeclarationNode.

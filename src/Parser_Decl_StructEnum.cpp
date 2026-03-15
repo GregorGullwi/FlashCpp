@@ -1559,6 +1559,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// e.g. polymorphic_allocator(memory_resource* __r) noexcept __attribute__((__nonnull__)) : _M_resource(__r) { }
 				skip_gcc_attributes();
 
+				// Check for function-try-block constructor: 'try' before ':' or '{'
+				// e.g. Foo() try : m(1) { body } catch(...) { ... }
+				bool has_function_try = peek() == "try"_tok;
+				if (has_function_try) {
+					advance();  // consume 'try'
+				}
+
 				// Check for member initializer list (: Base(args), member(value), ...)
 				// For delayed parsing, save the position and skip it
 				SaveHandle initializer_list_start;
@@ -1691,8 +1698,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				// Parse constructor body if present (and not defaulted/deleted)
-				if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-					// DELAYED PARSING: Save the current position (start of '{')
+				if (!is_defaulted && !is_deleted && (peek() == "{"_tok || has_function_try)) {
+					// DELAYED PARSING: Save the current position.
+					// If has_function_try, 'try' was already consumed so peek() is at '{'.
+					// We save here at '{', then skip the body and any catch clauses.
 					SaveHandle body_start = save_token_position();
 
 					// Look up the struct type
@@ -1702,8 +1711,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						struct_type_index = type_it->second->type_index_;
 					}
 
-					// Skip over the constructor body by counting braces
+					// Skip over the constructor body
 					skip_balanced_braces();
+
+					// If a function-try-block, also skip all following catch clauses
+					if (has_function_try) {
+						while (peek() == "catch"_tok) {
+							advance();  // consume 'catch'
+							skip_balanced_parens();  // skip '(' exception-declaration ')'
+							skip_balanced_braces();  // skip catch body
+						}
+					}
 
 					// Dismiss the RAII scope guard - we'll re-enter when parsing the delayed body
 					ctor_scope.dismiss();
@@ -1722,7 +1740,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
 						nullptr,   // dtor_node
-						{}  // template_param_names (empty for non-template constructors)
+						{},  // template_param_names (empty for non-template constructors)
+						false,  // is_member_function_template
+						false,  // is_free_function
+						has_function_try,  // has_function_try
 					});
 				} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 					// No constructor body - ctor_scope automatically exits scope on return
@@ -1835,8 +1856,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Parse destructor body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-				// DELAYED PARSING: Save the current position (start of '{')
+			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type
@@ -1846,8 +1867,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				// Skip over the destructor body by counting braces
-				skip_balanced_braces();
+				// Skip over the destructor body (handles function-try-blocks too)
+				skip_function_body();
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
@@ -2089,8 +2110,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Parse function body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-				// DELAYED PARSING: Save the current position (start of '{')
+			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type to get its type index
@@ -2100,8 +2121,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				// Skip over the function body by counting braces
-				skip_balanced_braces();
+				// Skip over the function body (handles function-try-blocks too)
+				skip_function_body();
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
@@ -4102,7 +4123,7 @@ ParseResult Parser::parse_friend_declaration()
 	skip_trailing_requires_clause();
 
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
-	if (peek() == "{"_tok) {
+	if (peek() == "{"_tok || peek() == "try"_tok) {
 		// For non-member, non-operator friend functions with parsed parameters:
 		// register a FunctionDeclarationNode in the enclosing namespace so ADL can find it,
 		// and queue the body for delayed parsing (same mechanism as inline member functions).
@@ -4128,7 +4149,7 @@ ParseResult Parser::parse_friend_declaration()
 
 			// Save body position and skip the body; it will be parsed in the second pass
 			SaveHandle body_start = save_token_position();
-			skip_balanced_braces();
+			skip_function_body();
 
 			// Queue for delayed parsing (is_free_function = true: no 'this', no member context)
 			delayed_function_bodies_.push_back({
@@ -4161,8 +4182,8 @@ ParseResult Parser::parse_friend_declaration()
 			friend_node.as<FriendDeclarationNode>().set_function_declaration(func_decl_node);
 			return saved_position.success(friend_node);
 		} else {
-			// For qualified friends, operators, or fallback: just skip the body
-			skip_balanced_braces();
+			// For qualified friends, operators, or fallback: just skip the body (incl. try-blocks)
+			skip_function_body();
 		}
 	} else if (peek() == "="_tok) {
 		// Handle = default or = delete

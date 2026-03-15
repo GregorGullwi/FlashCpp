@@ -486,7 +486,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			// Parse function body
-			if (peek() != "{"_tok) {
+			if (peek() != "{"_tok && peek() != "try"_tok) {
 				FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 					(!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
@@ -526,9 +526,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 			}
 			
-			// Parse body using delayed parsing
+			// Parse body using delayed parsing (skip_function_body handles try-blocks too)
 			SaveHandle body_start = save_token_position();
-			skip_balanced_braces();
+			skip_function_body();
 			
 			delayed_function_bodies_.push_back({
 				&func_ref,                  // func_node
@@ -574,7 +574,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		// Parse function body
-		if (peek() != "{"_tok) {
+		if (peek() != "{"_tok && peek() != "try"_tok) {
 			FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 				(!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, peek_info());
@@ -617,7 +617,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		// Parse function body
-		ParseResult body_result = parse_block();
+		ParseResult body_result = parse_function_body();
 		
 		if (body_result.is_error()) {
 			member_function_context_stack_.pop_back();
@@ -872,7 +872,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to call parse_block. current_token={}, peek={}", 
 				std::string(current_token_.value()),
 				!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-			auto block_result = parse_block();
+			auto block_result = parse_function_body();
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
 				// func_scope automatically exits scope
@@ -1411,13 +1411,13 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// Parse function body
-	if (peek() != "{"_tok) {
+	if (peek() != "{"_tok && peek() != "try"_tok) {
 		member_function_context_stack_.pop_back();
 		return ParseResult::error("Expected '{' in constructor/destructor definition", current_token_);
 	}
 	
-	// Parse function body
-	ParseResult body_result = parse_block();
+	// Parse function body (or function-try-block)
+	ParseResult body_result = parse_function_body();
 	
 	if (body_result.is_error()) {
 		member_function_context_stack_.pop_back();

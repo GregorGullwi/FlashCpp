@@ -29,6 +29,7 @@ Basic and intermediate exception handling works end-to-end:
 | Local destructors before `break`/`continue`/`return` | ✅ | Fixed: `emitDestructorsForNonLocalExit` emits scope dtors before all non-local jumps |
 | **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info`; virtual base matching via vtable vbase offsets |
 | `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
+| **Function-try-blocks** | ✅ | `int f() try { … } catch(…) { … }` parsed and lowered as a wrapped try-statement in the function body; free functions and member functions supported |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
@@ -39,7 +40,7 @@ Basic and intermediate exception handling works end-to-end:
 | Catch funclets with establisher-frame model | ✅ | LEA RBP from RDX |
 | Catch continuation and return bridging | ✅ | Fixup stubs for catch-return flow |
 | Cross-function exception propagation | ✅ | Covered by the `test_eh_twofunc_*` Windows regression tests |
-| `__CxxFrameHandler3` compatibility | ⚠️ | Needs ThrowInfo for full type matching |
+| `__CxxFrameHandler3` compatibility | ✅ | ThrowInfo + full CatchableTypeArray generated via `get_or_create_exception_throw_info`; public-base hierarchy traversal for upcast matching |
 | `__try`/`__except`/`__finally` (Win32 SEH) | ✅ | `__C_specific_handler` integration |
 
 ---
@@ -86,8 +87,9 @@ This intentionally does **not** yet change `throw <expr>` lowering inside a catc
 
 ### Recommendation
 
-Steps 1 and 2 of the hardening roadmap are complete. The remaining open item
-is `__CxxFrameHandler3` full type-matching on Windows (step 3 is deferred).
+Steps 1 and 2 of the hardening roadmap are complete. `__CxxFrameHandler3` full type-matching
+on Windows is also implemented (ThrowInfo + full CatchableTypeArray generated for each thrown type).
+Function-try-blocks are now supported for free functions and member functions on both platforms.
 
 ### Explicit follow-ups still worth tracking
 
@@ -355,6 +357,7 @@ Key test files:
 - `test_eh_continue_scope_dtor_ret0.cpp` — local destructors called before `continue` in loops (with and without try)
 - `test_eh_return_scope_dtor_ret0.cpp` — local destructors called before `return` (function scope, loop scope, try scope)
 - `test_eh_goto_scope_dtor_ret0.cpp` — local destructors called before `goto` (forward and backward, scope-crossing)
+- `test_eh_function_try_block_ret0.cpp` — function-level try blocks: free functions and inline member functions with `f() try { … } catch { … }` syntax
 
 ## References
 
