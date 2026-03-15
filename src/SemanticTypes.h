@@ -2,6 +2,8 @@
 #include "AstNodeTypes_TypeSystem.h"
 #include "IRTypes_Registers.h"
 #include "InlineVector.h"
+#include <functional>
+#include <unordered_map>
 
 // --- Standard conversion kinds (C++20 [conv]) ---
 
@@ -110,6 +112,45 @@ struct CanonicalTypeDesc {
 	bool operator==(const CanonicalTypeDesc& other) const;
 };
 
+// --- Hash specialisation for CanonicalTypeDesc (enables O(1) TypeContext::intern) ---
+
+namespace std {
+template <>
+struct hash<CanonicalTypeDesc> {
+	size_t operator()(const CanonicalTypeDesc& d) const noexcept {
+		// Simple hash combiner: h = h * 31 + value
+		auto combine = [](size_t h, size_t v) -> size_t {
+			return h * 31u + v;
+		};
+		size_t h = 0;
+		h = combine(h, static_cast<size_t>(d.base_type));
+		h = combine(h, d.type_index.value);
+		h = combine(h, static_cast<size_t>(d.base_cv));
+		h = combine(h, static_cast<size_t>(d.ref_qualifier));
+		h = combine(h, d.pointer_levels.size());
+		for (const auto& pl : d.pointer_levels)
+			h = combine(h, static_cast<size_t>(pl.cv_qualifier));
+		h = combine(h, d.array_dimensions.size());
+		for (size_t dim : d.array_dimensions)
+			h = combine(h, dim);
+		h = combine(h, static_cast<size_t>(d.flags));
+		if (d.function_signature) {
+			const auto& fs = *d.function_signature;
+			h = combine(h, static_cast<size_t>(fs.return_type));
+			h = combine(h, fs.parameter_types.size());
+			for (Type pt : fs.parameter_types)
+				h = combine(h, static_cast<size_t>(pt));
+			h = combine(h, static_cast<size_t>(fs.linkage));
+			h = combine(h, fs.is_const ? 1u : 0u);
+			h = combine(h, fs.is_volatile ? 1u : 0u);
+			if (fs.class_name)
+				h = combine(h, std::hash<std::string>{}(*fs.class_name));
+		}
+		return h;
+	}
+};
+} // namespace std
+
 // --- Type interning context ---
 
 class TypeContext {
@@ -120,6 +161,7 @@ public:
 
 private:
 	std::vector<CanonicalTypeDesc> types_;  // 0-based storage; CanonicalTypeId value 0 is reserved as invalid sentinel
+	std::unordered_map<CanonicalTypeDesc, CanonicalTypeId> index_;  // O(1) dedup map
 };
 
 // --- Semantic expression info (returned from expression normalization) ---

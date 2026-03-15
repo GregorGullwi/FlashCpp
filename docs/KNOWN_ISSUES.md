@@ -68,3 +68,25 @@ The disambiguation routing in `parse_statement_or_declaration` is **correct**
 (`test_tparam_bracket_decl_ambig_fail.cpp`) documents the current parse error.
 The remaining work is to extend `parse_variable_declaration` (and the declarator
 parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
+
+## Overloaded function resolution with size-differing parameter types
+
+When two overloads differ only in integer width (e.g. `f(int)` vs `f(long)`),
+calling the `long` overload with a `0L` literal results in the `int` overload
+being selected at runtime.  For example:
+
+```cpp
+int f(int x)  { return x; }
+int f(long x) { return (int)x + 100; }
+
+int main() {
+    f(0L);   // Expected: 100 (long overload). Actual: 0 (int overload selected)
+}
+```
+
+This is a codegen-level limitation in overload dispatch for integer-width variants.
+The semantic pass (`tryAnnotateCallArgConversions`) uses pointer-identity matching to
+recover the parser-resolved overload, but when the argument value is `0L` and the int
+overload was chosen by the parser the behaviour diverges from the standard.
+
+Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.

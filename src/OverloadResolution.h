@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "SemanticTypes.h"
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "ChunkedString.h"
@@ -35,6 +36,14 @@ struct TypeConversionResult {
 // Check if a type is an integral type (includes bool, unlike is_integer_type)
 inline bool is_integral_type(Type type) {
 	return type == Type::Bool || is_integer_type(type);
+}
+
+// Check whether two canonical type IDs represent the same type for overload resolution
+// signature matching (C++20 [over.match]).  Because all types are interned, equality of
+// the handles implies equality of the descriptors — this helper exists so call sites can
+// express the intent without hardcoding the == operator on CanonicalTypeId.
+inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
+	return a == b;  // interned: equal IDs ⟺ equal canonical types
 }
 
 // Check if one type can be implicitly converted to another
