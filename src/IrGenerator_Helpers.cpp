@@ -347,6 +347,14 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
+int AstToIr::getPointerElementSize(Type type, TypeIndex type_index, int pointer_depth) const {
+	if (pointer_depth > 1) {
+		return 8;
+	}
+	int size = static_cast<int>(getSizeInBytes(type, type_index, get_type_size_bits(type)));
+	return size != 0 ? size : 1;
+}
+
 Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
 	if (pointer_depth.is_pointer()) {
 		return semantic_type;
