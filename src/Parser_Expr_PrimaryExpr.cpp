@@ -3233,8 +3233,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
-						result = emplace_node<ExpressionNode>(
+						auto function_call_node = emplace_node<ExpressionNode>(
 							FunctionCallNode(func.decl_node(), std::move(args), identifier_token));
+						// Set the mangled name so the IR generator emits the correct symbol.
+						if (func.has_mangled_name()) {
+							std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func.mangled_name());
+						}
+						result = function_call_node;
 						return ParseResult::success(*result);
 					} else {
 						FLASH_LOG(Parser, Error, "Template instantiation failed or didn't return FunctionDeclarationNode");

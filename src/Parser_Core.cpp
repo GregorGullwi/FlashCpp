@@ -731,6 +731,28 @@ void Parser::skip_balanced_parens() {
 	skip_balanced_delimiters("("_tok, ")"_tok);
 }
 
+// Skip one or more catch clauses: ('catch' '(' ... ')' '{' ... '}')+
+void Parser::skip_catch_clauses() {
+	while (peek() == "catch"_tok) {
+		advance();  // consume 'catch'
+		skip_balanced_parens();  // skip '(' exception-declaration ')'
+		skip_balanced_braces();  // skip catch body
+	}
+}
+
+// Skip a complete function body, which is either:
+//   '{' ... '}'  (normal block)
+//   'try' '{' ... '}' ('catch' '(' ... ')' '{' ... '}')+
+void Parser::skip_function_body() {
+	if (peek() == "{"_tok) {
+		skip_balanced_braces();
+	} else if (peek() == "try"_tok) {
+		advance();  // consume 'try'
+		skip_balanced_braces();  // skip the try body
+		skip_catch_clauses();
+	}
+}
+
 void Parser::skip_balanced_delimiters(TokenKind open, TokenKind close) {
 	if (peek() != open) {
 		return;

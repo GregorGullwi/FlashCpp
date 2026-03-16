@@ -1559,6 +1559,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// e.g. polymorphic_allocator(memory_resource* __r) noexcept __attribute__((__nonnull__)) : _M_resource(__r) { }
 				skip_gcc_attributes();
 
+				// Check for function-try-block constructor: 'try' before ':' or '{'
+				// e.g. Foo() try : m(1) { body } catch(...) { ... }
+				bool has_function_try = peek() == "try"_tok;
+				if (has_function_try) {
+					advance();  // consume 'try'
+				}
+
 				// Check for member initializer list (: Base(args), member(value), ...)
 				// For delayed parsing, save the position and skip it
 				SaveHandle initializer_list_start;
@@ -1691,8 +1698,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				// Parse constructor body if present (and not defaulted/deleted)
-				if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-					// DELAYED PARSING: Save the current position (start of '{')
+				if (!is_defaulted && !is_deleted && (peek() == "{"_tok || has_function_try)) {
+					// DELAYED PARSING: Save the current position.
+					// If has_function_try, 'try' was already consumed so peek() is at '{'.
+					// We save here at '{', then skip the body and any catch clauses.
 					SaveHandle body_start = save_token_position();
 
 					// Look up the struct type
@@ -1702,8 +1711,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						struct_type_index = type_it->second->type_index_;
 					}
 
-					// Skip over the constructor body by counting braces
+					// Skip over the constructor body
 					skip_balanced_braces();
+
+					// If a function-try-block, also skip all following catch clauses
+					if (has_function_try) {
+						skip_catch_clauses();
+					}
 
 					// Dismiss the RAII scope guard - we'll re-enter when parsing the delayed body
 					ctor_scope.dismiss();
@@ -1722,7 +1736,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
 						nullptr,   // dtor_node
-						{}  // template_param_names (empty for non-template constructors)
+						{},  // template_param_names (empty for non-template constructors)
+						false,  // is_member_function_template
+						false,  // is_free_function
+						has_function_try,  // has_function_try
 					});
 				} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 					// No constructor body - ctor_scope automatically exits scope on return
@@ -1835,8 +1852,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Parse destructor body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-				// DELAYED PARSING: Save the current position (start of '{')
+			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type
@@ -1846,8 +1863,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				// Skip over the destructor body by counting braces
-				skip_balanced_braces();
+				// Skip over the destructor body (handles function-try-blocks too)
+				skip_function_body();
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
@@ -2089,8 +2106,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Parse function body if present (and not defaulted/deleted)
-			if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
-				// DELAYED PARSING: Save the current position (start of '{')
+			if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+				// DELAYED PARSING: Save the current position (start of '{' or 'try')
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type to get its type index
@@ -2100,8 +2117,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 
-				// Skip over the function body by counting braces
-				skip_balanced_braces();
+				// Skip over the function body (handles function-try-blocks too)
+				skip_function_body();
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
@@ -4102,7 +4119,7 @@ ParseResult Parser::parse_friend_declaration()
 	skip_trailing_requires_clause();
 
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
-	if (peek() == "{"_tok) {
+	if (peek() == "{"_tok || peek() == "try"_tok) {
 		// For non-member, non-operator friend functions with parsed parameters:
 		// register a FunctionDeclarationNode in the enclosing namespace so ADL can find it,
 		// and queue the body for delayed parsing (same mechanism as inline member functions).
@@ -4128,7 +4145,7 @@ ParseResult Parser::parse_friend_declaration()
 
 			// Save body position and skip the body; it will be parsed in the second pass
 			SaveHandle body_start = save_token_position();
-			skip_balanced_braces();
+			skip_function_body();
 
 			// Queue for delayed parsing (is_free_function = true: no 'this', no member context)
 			delayed_function_bodies_.push_back({
@@ -4161,8 +4178,8 @@ ParseResult Parser::parse_friend_declaration()
 			friend_node.as<FriendDeclarationNode>().set_function_declaration(func_decl_node);
 			return saved_position.success(friend_node);
 		} else {
-			// For qualified friends, operators, or fallback: just skip the body
-			skip_balanced_braces();
+			// For qualified friends, operators, or fallback: just skip the body (incl. try-blocks)
+			skip_function_body();
 		}
 	} else if (peek() == "="_tok) {
 		// Handle = default or = delete
@@ -4208,30 +4225,56 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 	advance(); // consume '<'
 
-	// Skip template parameters - we don't need to parse them in detail for friend declarations
-	// Just consume everything until we find the matching '>'
-	int angle_bracket_depth = 1;
-	while (angle_bracket_depth > 0 && !peek().is_eof()) {
-		if (peek() == "<"_tok) {
-			angle_bracket_depth++;
-		} else if (peek() == ">"_tok) {
-			angle_bracket_depth--;
+	// Parse template parameters so type names like T are visible when parsing the function declaration.
+	InlineVector<ASTNode, 4> template_params;
+	auto param_list_result = parse_template_parameter_list(template_params);
+	// On error: fall back to raw skip of this declaration
+	if (param_list_result.is_error()) {
+		// Consume rest of the template friend declaration
+		while (!peek().is_eof() && peek() != ";"_tok) {
+			if (peek() == "{"_tok || peek() == "try"_tok) { skip_function_body(); break; }
+			advance();
 		}
-		advance();
+		if (peek() == ";"_tok) advance();
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+		struct_node.add_friend(friend_node);
+		return saved_position.success(friend_node);
+	}
+
+	// Consume '>' closing the template parameter list
+	if (!consume(">"_tok)) {
+		return ParseResult::error("Expected '>' after template parameter list", peek_info());
+	}
+
+	// Set up template parameter types in the type system so they are
+	// visible when parsing the friend function declaration (e.g. return type T, param type T).
+	FlashCpp::TemplateParameterScope template_scope;
+	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const auto& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = add_user_type(tparam.nameHandle(), 0);
+				gTypesByName.emplace(type_info.name(), &type_info);
+				template_scope.addParameter(&type_info);
+			}
+			current_template_param_names_.push_back(tparam.nameHandle());
+		}
 	}
 
 	// Parse optional requires clause between template parameters and 'friend'
 	// e.g., template<typename _It2, sentinel_for<_It> _Sent2>
 	//         requires sentinel_for<_Sent, _It2>
 	//         friend constexpr bool operator==(...) { ... }
+	std::optional<ASTNode> requires_clause;
 	if (peek() == "requires"_tok) {
 		advance(); // consume 'requires'
-		// Parse the constraint expression properly for compile-time evaluation
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			FLASH_LOG(Parser, Warning, "Failed to parse requires clause in friend template: ", constraint_result.error_message());
-		} else {
-			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template for compile-time evaluation");
+		} else if (constraint_result.node().has_value()) {
+			requires_clause = emplace_node<RequiresClauseNode>(*constraint_result.node(), peek_info());
+			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template");
 		}
 	}
 
@@ -4248,29 +4291,38 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	} else if (peek() == "class"_tok) {
 		advance(); // consume 'class'
 	} else {
-		// Not a template friend class/struct declaration - might be a friend function template
-		// We skip the declaration since friend function templates don't affect accessibility
-		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
-		// The empty name is acceptable because we only need to record that a friend 
-		// declaration exists; the actual function resolution happens at call sites.
-		
-		// Skip until ';' or '{' (for friend function templates with inline definitions)
-		while (!peek().is_eof() && peek() != ";"_tok && peek() != "{"_tok) {
-			advance();
+		// Template friend function: parse the full function declaration and register it
+		// so it can be found and instantiated at call sites.
+		ASTNode template_func_node;
+		auto func_result = parse_template_function_declaration_body(
+			template_params, requires_clause, template_func_node);
+		if (func_result.is_error()) {
+			// Fall back: skip remainder and return a minimal friend node
+			while (!peek().is_eof() && peek() != ";"_tok) {
+				if (peek() == "{"_tok || peek() == "try"_tok) { skip_function_body(); break; }
+				advance();
+			}
+			if (peek() == ";"_tok) advance();
+			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+			struct_node.add_friend(friend_node);
+			return saved_position.success(friend_node);
 		}
-		
-		// Handle inline friend function template body: { ... }
-		if (peek() == "{"_tok) {
-			skip_balanced_braces();
-		}
-		
-		// Skip trailing semicolon if present (for declarations without body)
-		if (peek() == ";"_tok) {
-			advance();
-		}
-		
-		// Create a minimal friend declaration node - name is empty since we skipped parsing
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+
+		// Extract the function name for registration and symbol lookup
+		const auto& tmpl = template_func_node.as<TemplateFunctionDeclarationNode>();
+		const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
+		StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
+
+		// Register in template registry so call sites can find and instantiate it
+		gTemplateRegistry.registerTemplate(func_name_handle, template_func_node);
+
+		// Register in template registry so call sites can find and instantiate it via ADL.
+		// Do NOT insert into the namespace symbol table — that would cause the IR generator
+		// to treat the template as a regular function and generate an unmangled forward-decl
+		// reference alongside the properly-mangled instantiation.
+
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
+		friend_node.as<FriendDeclarationNode>().set_function_declaration(template_func_node);
 		struct_node.add_friend(friend_node);
 		return saved_position.success(friend_node);
 	}

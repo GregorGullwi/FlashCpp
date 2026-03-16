@@ -183,7 +183,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after '= delete' or '= default'", current_token_);
 		}
-	} else if (peek() == "{"_tok) {
+	} else if (peek() == "{"_tok || peek() == "try"_tok) {
 		// Has a body - save positions for re-parsing during instantiation
 		SaveHandle body_start = save_token_position();
 		
@@ -193,8 +193,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 		func_decl.set_template_declaration_position(declaration_start);
 		func_decl.set_template_body_position(body_start);
 		
-		// Skip over the body (skip_balanced_braces consumes the '{' and everything up to the matching '}')
-		skip_balanced_braces();
+		// Skip over the body (handles both '{...}' and function-try-blocks 'try{...}catch...')
+		skip_function_body();
 	}
 
 	out_template_node = template_func_node;

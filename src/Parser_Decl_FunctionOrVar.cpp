@@ -486,7 +486,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			// Parse function body
-			if (peek() != "{"_tok) {
+			if (peek() != "{"_tok && peek() != "try"_tok) {
 				FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 					(!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
@@ -526,9 +526,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 			}
 			
-			// Parse body using delayed parsing
+			// Parse body using delayed parsing (skip_function_body handles try-blocks too)
 			SaveHandle body_start = save_token_position();
-			skip_balanced_braces();
+			skip_function_body();
 			
 			delayed_function_bodies_.push_back({
 				&func_ref,                  // func_node
@@ -574,7 +574,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		// Parse function body
-		if (peek() != "{"_tok) {
+		if (peek() != "{"_tok && peek() != "try"_tok) {
 			FLASH_LOG(Parser, Error, "Expected '{' or ';' after function declaration, got: '",
 				(!peek().is_eof() ? std::string(peek_info().value()) : "<EOF>"), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, peek_info());
@@ -617,7 +617,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		// Parse function body
-		ParseResult body_result = parse_block();
+		ParseResult body_result = parse_function_body();
 		
 		if (body_result.is_error()) {
 			member_function_context_stack_.pop_back();
@@ -811,14 +811,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					return saved_position.success(template_func_node);
 				}
 				
-				// Has a body - save position at the '{' for delayed parsing during instantiation
+				// Has a body - save position at the '{' or 'try' for delayed parsing during instantiation
 				// Note: set_template_body_position is on FunctionDeclarationNode, which is the
 				// underlying node inside TemplateFunctionDeclarationNode - this is consistent
 				// with how regular template functions store their body position
-				if (peek() == "{"_tok) {
+				if (peek() == "{"_tok || peek() == "try"_tok) {
 					SaveHandle body_start = save_token_position();
 					func_decl.set_template_body_position(body_start);
-					skip_balanced_braces();
+					skip_function_body();  // handles both '{' and 'try{...}catch...'
 				}
 				
 				current_template_param_names_.clear();
@@ -874,7 +874,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to call parse_block. current_token={}, peek={}", 
 				std::string(current_token_.value()),
 				!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-			auto block_result = parse_block();
+			auto block_result = parse_function_body();
 			if (block_result.is_error()) {
 				current_function_ = nullptr;
 				// func_scope automatically exits scope
@@ -1350,6 +1350,12 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// For constructors, parse member initializer list
+	// Handle function-try-block form: Foo() try : m(v) { ... } catch(...) { ... }
+	// The 'try' keyword may precede the ':' initializer list.
+	bool has_function_try = !is_destructor && peek() == "try"_tok;
+	if (has_function_try) {
+		advance();  // consume 'try'
+	}
 	if (!is_destructor && peek() == ":"_tok) {
 		advance();  // consume ':'
 		
@@ -1413,13 +1419,45 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// Parse function body
-	if (peek() != "{"_tok) {
+	if (peek() != "{"_tok && peek() != "try"_tok) {
 		member_function_context_stack_.pop_back();
 		return ParseResult::error("Expected '{' in constructor/destructor definition", current_token_);
 	}
 	
-	// Parse function body
-	ParseResult body_result = parse_block();
+	// Parse function body.
+	// For the normal try-block form (no initializer list), parse_function_body() handles
+	// 'try' directly: it sees 'try', parses the body, then parses the catch clauses.
+	// For the 'try :' form (has_function_try && initializer list already consumed),
+	// peek() is now at '{', so parse just the block, then manually parse catch clauses.
+	// In both cases this is a constructor/destructor, so the TryStatementNode is marked with
+	// is_ctor_dtor_function_try so the IR generator emits the C++20 implicit rethrow.
+	ParseResult body_result;
+	if (has_function_try) {
+		// 'try' was already consumed above (before the ':' initializer list).
+		// parse_function_body() sees '{', parses the block. Passing true for is_ctor_or_dtor
+		// is a no-op here (peek is '{', so parse_block is called) but makes intent explicit.
+		body_result = parse_function_body(true /* is_ctor_or_dtor */);
+		// Now parse catch clauses and wrap in a TryStatementNode (marked ctor/dtor).
+		if (!body_result.is_error() && body_result.node().has_value()) {
+			std::vector<ASTNode> catch_clauses;
+			while (peek() == "catch"_tok) {
+				auto clause_result = parse_one_catch_clause(catch_clauses);
+				if (clause_result.is_error()) {
+					member_function_context_stack_.pop_back();
+					return clause_result;
+				}
+			}
+			if (catch_clauses.empty()) {
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
+			}
+			ASTNode try_block = make_try_block_body(*body_result.node(), std::move(catch_clauses), Token(), true /* is_ctor_or_dtor */);
+			body_result = ParseResult::success(try_block);
+		}
+	} else {
+		// Always a ctor/dtor, so pass true so any function-try-block gets the implicit-rethrow flag.
+		body_result = parse_function_body(true /* is_ctor_or_dtor */);
+	}
 	
 	if (body_result.is_error()) {
 		member_function_context_stack_.pop_back();

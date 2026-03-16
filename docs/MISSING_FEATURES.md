@@ -412,6 +412,65 @@ When implementing a missing feature:
 
 ---
 
+## Known Issues
+
+### Destructors are not implicitly `noexcept(true)` and `noexcept(false)` has no effect
+
+**Severity**: Medium (conformance issue, may cause incorrect exception propagation)
+
+In C++11 and later, destructors are implicitly `noexcept(true)` unless explicitly marked `noexcept(false)`. FlashCpp does not implement this rule: `DestructorDeclarationNode::is_noexcept_` defaults to `false` (`src/AstNodeTypes.h`), and the parser only sets it to `true` when an explicit `noexcept` specifier is present (`src/Parser.cpp` in the destructor trailing specifiers path). This means:
+
+1. **Implicit `noexcept(true)` not applied** — A destructor without any exception specifier is treated as potentially throwing, when per the standard it should be `noexcept(true)`. If an exception escapes such a destructor, `std::terminate` should be called but currently is not.
+
+2. **`noexcept(false)` parsed but has no semantic effect** — While the parser recognizes `noexcept(false)` via `parse_function_trailing_specifiers()`, it leaves `is_noexcept_` as `false` (the default), which happens to be the correct state. However, the code generator (`src/CodeGen.h`, `visitDestructorDeclarationNode`) does not check `is_noexcept()` at all — no implicit `catch(...) { std::terminate(); }` wrapper is generated for `noexcept(true)` destructors, so the distinction between `noexcept(true)` and `noexcept(false)` is moot at the codegen level.
+
+3. **`TypeTraitEvaluator` hardcodes the answer** — `IsNothrowDestructible` at `src/TypeTraitEvaluator.h` unconditionally returns `true` for struct types with a comment "Most destructors are noexcept by default since C++11", rather than checking the actual `is_noexcept()` flag. This gives the correct answer for the common case but would be wrong for a destructor explicitly marked `noexcept(false)`.
+
+**Example** (should call `std::terminate` but currently propagates the exception):
+```cpp
+struct Bad {
+    ~Bad() { throw 42; }  // implicitly noexcept(true) — should terminate
+};
+
+struct Explicit {
+    ~Explicit() noexcept(false) { throw 42; }  // explicitly may throw — should propagate
+};
+```
+
+**Impact**: Code that throws from a destructor without `noexcept(false)` will propagate the exception instead of calling `std::terminate`, which violates the C++11+ standard and can cause unexpected behavior during stack unwinding.
+
+**Fix**:
+1. Set `is_noexcept_ = true` by default in `DestructorDeclarationNode`, or apply it after parsing trailing specifiers when no explicit `noexcept(false)` is present.
+2. In `visitDestructorDeclarationNode`, wrap the destructor body in an implicit `catch(...) { std::terminate(); }` when `is_noexcept()` is true (same treatment as noexcept functions).
+3. In `TypeTraitEvaluator`, check the actual `is_noexcept()` flag on the destructor node instead of hardcoding `true`.
+
+---
+
+### Hidden friend functions are visible to ordinary unqualified lookup
+
+**Severity**: Low (conformance issue, not a crash)
+
+In standard C++, a friend function defined inline inside a class is a *hidden friend* — it should only be found via argument-dependent lookup (ADL), not via ordinary unqualified lookup. FlashCpp currently registers hidden friends into the enclosing namespace's symbol table unconditionally (`gSymbolTable.insert_into_namespace` at `src/Parser_Decl_StructEnum.cpp` in `parse_friend_declaration`), making them visible to all callers regardless of argument types.
+
+**Example** (should fail to compile but currently passes parsing):
+```cpp
+struct Widget {
+    friend int get_value(Widget& w) { return w.value; }
+    int value;
+};
+int main() {
+    // This should fail: get_value is a hidden friend, only findable via ADL
+    // when at least one argument has type Widget. But flashcpp finds it anyway.
+    int x = get_value(/* no Widget argument */);  // should be an error
+}
+```
+
+**Impact**: Code that accidentally calls hidden friends without the associated class type in the arguments will parse and compile when it shouldn't. The generated code may also fail at link time if the template friend body was skipped rather than fully parsed.
+
+**Fix**: `insert_into_namespace` should tag the symbol as ADL-only, and normal unqualified lookup should skip ADL-only symbols. Only `lookup_adl()` (which checks associated classes of the arguments) should find them.
+
+---
+
 ## References
 
 **Parser Code**: `src/Parser.cpp` - Main parsing logic

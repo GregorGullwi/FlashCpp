@@ -147,8 +147,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				// Restore to the body position
 				restore_lexer_position_only(spec_func.template_body_position());
 				
-				// Parse the function body
-				auto body_result = parse_block();
+				// Parse the function body (handles function-try-blocks too)
+				auto body_result = parse_function_body();
 				
 				// Clean up member function context
 				if (!member_function_context_stack_.empty()) {
@@ -491,7 +491,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	// Set up template parameter substitutions for body parsing so that non-type
-	// parameters (e.g., N in "return N;") are resolved during parse_block().
+	// parameters (e.g., N in "return N;") are resolved during parse_function_body().
 	// This mirrors the setup performed by try_instantiate_single_template and
 	// try_instantiate_template_explicit for free function templates.
 	{
@@ -505,7 +505,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				current_template_param_names_.push_back(pn);
 			}
 
-			auto block_result = parse_block();
+			auto block_result = parse_function_body();  // handles function-try-blocks
 			if (!block_result.is_error() && block_result.node().has_value()) {
 				// Substitute template parameters in the body (handles sizeof..., fold expressions, etc.)
 				ASTNode substituted_body = substituteTemplateParameters(

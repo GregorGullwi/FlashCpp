@@ -173,6 +173,17 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			// Visit catch block body
 			catch_scope_stack_.push_back({scope_stack_.size(), active_try_statement_depth_});
 			visit(catch_clause.body());
+
+			// C++20 [except.handle]/15: in a constructor or destructor function-try-block,
+			// if control reaches the end of a catch handler without an explicit throw or
+			// return, the current exception is implicitly rethrown.  Emit Rethrow here while
+			// the catch scope is still on the stack so emitActiveCatchScopeDestructors works.
+			// When the body already ends with throw/return the Rethrow is dead code but harmless.
+			if (node.is_ctor_dtor_function_try()) {
+				emitActiveCatchScopeDestructors();
+				ir_.addInstruction(IrOpcode::Rethrow, {}, catch_clause.catch_token());
+			}
+
 			catch_scope_stack_.pop_back();
 
 			// Emit CatchEnd marker

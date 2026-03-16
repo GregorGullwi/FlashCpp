@@ -50,8 +50,8 @@ ParseResult Parser::parse_function_body_with_context(
 		return ParseResult::success();  // Declaration only, no body
 	}
 
-	// Expect function body with '{'
-	if (peek() != "{"_tok) {
+	// Expect function body with '{' or 'try' (function-try-block)
+	if (peek() != "{"_tok && peek() != "try"_tok) {
 		return ParseResult::error("Expected '{' or ';' after function declaration", current_token_);
 	}
 
@@ -91,8 +91,10 @@ ParseResult Parser::parse_function_body_with_context(
 		}
 	}
 
-	// Parse the block
-	auto block_result = parse_block();
+	// Parse the block (or function-try-block)
+	const bool is_ctor_or_dtor = ctx.kind == FlashCpp::FunctionKind::Constructor ||
+	                              ctx.kind == FlashCpp::FunctionKind::Destructor;
+	auto block_result = parse_function_body(is_ctor_or_dtor);
 	if (block_result.is_error()) {
 		return block_result;
 	}
@@ -353,8 +355,18 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		restore_token_position(delayed.body_start);
 	}
 	
-	// Parse the function body
-	auto block_result = parse_block();
+	// Parse the function body.  For normal functions or member functions with body_start at 'try',
+	// parse_function_body() handles everything.  For constructors/destructors with has_function_try
+	// set, the 'try' was already consumed during the first pass so body_start is at '{'; in that
+	// case we parse the block then parse the catch clauses ourselves and wrap everything in a try.
+	const bool is_ctor_or_dtor = delayed.is_constructor || delayed.is_destructor;
+	ParseResult block_result;
+	if (delayed.has_function_try) {
+		// 'try' already consumed; body_start is at '{'
+		block_result = parse_block();
+	} else {
+		block_result = parse_function_body(is_ctor_or_dtor);
+	}
 	if (block_result.is_error()) {
 		// Clean up
 		current_function_ = nullptr;
@@ -363,6 +375,39 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		}
 		gSymbolTable.exit_scope();
 		return block_result;
+	}
+
+	// When has_function_try: parse catch clauses and wrap the body in a TryStatementNode
+	if (delayed.has_function_try && block_result.node().has_value()) {
+		// The 'try' keyword was already consumed during the first (skip) pass, so no token
+		// is available here.  Token() (the default) is fine because the token is only used
+		// for error-reporting inside TryStatementNode and the 'try' location is already past.
+		Token try_token;
+		ASTNode try_body = *block_result.node();
+		std::vector<ASTNode> catch_clauses;
+
+		// Helper lambda to clean up context before returning an error
+		auto cleanup = [&]() {
+			current_function_ = nullptr;
+			if (!delayed.is_free_function) member_function_context_stack_.pop_back();
+			gSymbolTable.exit_scope();
+		};
+
+		while (peek() == "catch"_tok) {
+			auto clause_result = parse_one_catch_clause(catch_clauses);
+			if (clause_result.is_error()) {
+				cleanup();
+				return clause_result;
+			}
+		}
+
+		if (catch_clauses.empty()) {
+			cleanup();
+			return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
+		}
+
+		ASTNode try_stmt_block = make_try_block_body(try_body, std::move(catch_clauses), try_token, is_ctor_or_dtor);
+		block_result = ParseResult::success(try_stmt_block);
 	}
 	
 	// Set the body on the appropriate node
@@ -388,8 +433,114 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	return ParseResult::success();
 }
 
-// Phase 7: Unified signature validation for out-of-line definitions
-// Compares a declaration's signature with a definition's signature and returns detailed mismatch information
+// Parse a function body.  This handles both the normal case:
+//   '{' statement* '}'
+// and function-try-blocks (C++11 [dcl.fct.def.general]):
+//   'try' '{' statement* '}' catch-clause+
+// In the latter case the result is a BlockNode containing a single TryStatementNode,
+// which is semantically equivalent for non-constructor functions.
+ParseResult Parser::parse_function_body(bool is_ctor_or_dtor) {
+	// Normal block
+	if (peek() == "{"_tok) {
+		return parse_block();
+	}
+
+	// Function-try-block
+	if (peek() == "try"_tok) {
+		Token try_token = peek_info();
+		advance();  // consume 'try'
+
+		// Parse the try body
+		auto try_block_result = parse_block();
+		if (try_block_result.is_error()) {
+			return try_block_result;
+		}
+		ASTNode try_block = *try_block_result.node();
+
+		// Parse catch clauses (at least one required)
+		std::vector<ASTNode> catch_clauses;
+		while (peek() == "catch"_tok) {
+			auto clause_result = parse_one_catch_clause(catch_clauses);
+			if (clause_result.is_error()) {
+				return clause_result;
+			}
+		}
+
+		if (catch_clauses.empty()) {
+			return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
+		}
+
+		return ParseResult::success(make_try_block_body(try_block, std::move(catch_clauses), try_token, is_ctor_or_dtor));
+	}
+
+	return ParseResult::error("Expected '{' or 'try' for function body", current_token_);
+}
+
+// Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
+// Both parse_function_body() and parse_delayed_function_body() use this common helper.
+// Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so the IR generator
+// can emit the C++20 [except.handle]/15 implicit rethrow at the end of each catch handler.
+ASTNode Parser::make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token, bool is_ctor_or_dtor) {
+	ASTNode try_stmt = emplace_node<TryStatementNode>(try_body, std::move(catch_clauses), try_token);
+	if (is_ctor_or_dtor) {
+		try_stmt.as<TryStatementNode>().set_is_ctor_dtor_function_try();
+	}
+	auto [block_node, block_ref] = create_node_ref(BlockNode());
+	block_ref.add_statement_node(try_stmt);
+	return block_node;
+}
+
+// Parse one catch clause at the current token position and append it to catch_clauses.
+// Expects to be called when peek() == "catch"_tok.
+// Returns an error ParseResult on failure, or an empty success otherwise.
+ParseResult Parser::parse_one_catch_clause(std::vector<ASTNode>& catch_clauses) {
+	Token catch_token = peek_info();
+	advance();  // consume 'catch'
+
+	if (!consume("("_tok)) {
+		return ParseResult::error("Expected '(' after 'catch'", current_token_);
+	}
+
+	std::optional<ASTNode> exception_declaration;
+	bool is_catch_all = false;
+
+	if (peek() == "..."_tok) {
+		advance();
+		is_catch_all = true;
+	} else {
+		auto type_result = parse_type_and_name();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+		exception_declaration = type_result.node();
+	}
+
+	if (!consume(")"_tok)) {
+		return ParseResult::error("Expected ')' after catch declaration", current_token_);
+	}
+
+	gSymbolTable.enter_scope(ScopeType::Block);
+	if (!is_catch_all && exception_declaration.has_value()) {
+		const auto& decl = exception_declaration->as<DeclarationNode>();
+		if (!decl.identifier_token().value().empty()) {
+			gSymbolTable.insert(decl.identifier_token().value(), *exception_declaration);
+		}
+	}
+	auto catch_block_result = parse_block();
+	gSymbolTable.exit_scope();
+
+	if (catch_block_result.is_error()) {
+		return catch_block_result;
+	}
+
+	ASTNode catch_block = *catch_block_result.node();
+	if (is_catch_all) {
+		catch_clauses.push_back(emplace_node<CatchClauseNode>(catch_block, catch_token, true));
+	} else {
+		catch_clauses.push_back(emplace_node<CatchClauseNode>(exception_declaration, catch_block, catch_token));
+	}
+	return ParseResult::success();
+}
 FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	const FunctionDeclarationNode& declaration,
 	const FunctionDeclarationNode& definition)

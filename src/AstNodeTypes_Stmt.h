@@ -389,10 +389,16 @@ public:
 	const std::vector<ASTNode>& catch_clauses() const { return catch_clauses_; }
 	const Token& try_token() const { return try_token_; }
 
+	// C++20 [except.handle]/15: in a constructor/destructor function-try-block,
+	// control reaching the end of a catch handler implicitly rethrows.
+	void set_is_ctor_dtor_function_try() { is_ctor_dtor_function_try_ = true; }
+	bool is_ctor_dtor_function_try() const { return is_ctor_dtor_function_try_; }
+
 private:
 	ASTNode try_block_;                   // BlockNode for the try block
 	std::vector<ASTNode> catch_clauses_;  // Vector of CatchClauseNode
 	Token try_token_;                     // For error reporting
+	bool is_ctor_dtor_function_try_ = false;  // True for ctor/dtor function-try-blocks
 };
 
 // ============================================================================
