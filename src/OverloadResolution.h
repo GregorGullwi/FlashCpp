@@ -396,7 +396,10 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				if (from_resolved == Type::Struct &&
 					from.type_index().is_valid() && to.type_index().is_valid() &&
 					from.type_index() != to.type_index()) {
-					return TypeConversionResult::no_match();
+					// Different struct types — not an exact match, but a converting
+					// constructor in the target type may allow a user-defined conversion
+					// (e.g. Target(const Source&) allows Source& → Target).
+					return TypeConversionResult{ConversionRank::UserDefined, true};
 				}
 				return TypeConversionResult::exact_match();
 			}
