@@ -1590,11 +1590,11 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 		}
 	}
 
-	if (!best_match && !explicitly_ambiguous && !all_types_known) {
-		// Fall back to the arity-only heuristic only when argument types could not
-		// be inferred (e.g. dependent expressions).  When resolve_overload
-		// explicitly reported ambiguity the call is ill-formed and must not be
-		// silently resolved by declaration order.
+	if (!best_match && !explicitly_ambiguous) {
+		// Fall back to the arity-only heuristic when argument types could not
+		// be inferred (e.g. dependent expressions, template operator() overloads).
+		// When resolve_overload explicitly reported ambiguity the call is
+		// ill-formed and must not be silently resolved by declaration order.
 		const FunctionDeclarationNode* default_argument_match = nullptr;
 		bool default_argument_match_ambiguous = false;
 		for (const auto& candidate_node : candidates) {

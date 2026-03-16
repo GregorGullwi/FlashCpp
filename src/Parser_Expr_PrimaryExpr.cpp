@@ -4840,11 +4840,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 
-						if (!operator_call_func && !op_explicitly_ambiguous && !all_op_types_known) {
-							// Fall back to arity-only heuristic only when type inference
-							// fails.  When resolve_overload explicitly reported ambiguity
-							// the call is ill-formed and must not be silently resolved by
-							// declaration order.
+						if (!operator_call_func && !op_explicitly_ambiguous) {
+							// Fall back to arity-only heuristic when type inference fails
+							// or when resolve_overload found no match (e.g. template/generic
+							// lambda operator()). When resolve_overload explicitly reported
+							// ambiguity, the call is ill-formed.
 							const FunctionDeclarationNode* sole_op_candidate = nullptr;
 							size_t op_candidate_count = 0;
 							for (const auto& candidate_node : op_candidates) {

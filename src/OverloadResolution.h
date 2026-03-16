@@ -317,9 +317,17 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
-						if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
-							return TypeConversionResult::no_match();
-						}
+					// For struct types, "same base type" requires the same type_index.
+					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
+					// Type::Struct, so we must also compare type_index.
+					if (from_base == Type::Struct &&
+						from.type_index().is_valid() && to.type_index().is_valid() &&
+						from.type_index() != to.type_index()) {
+						return TypeConversionResult::no_match();
+					}
+					if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
+						return TypeConversionResult::no_match();
+					}
 					return TypeConversionResult::exact_match();
 				}
 				
@@ -337,6 +345,12 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
 				bool types_match = (from_base == to_base);
+				// For struct types, "same base type" requires the same type_index.
+				if (types_match && from_base == Type::Struct &&
+					from.type_index().is_valid() && to.type_index().is_valid() &&
+					from.type_index() != to.type_index()) {
+					types_match = false;
+				}
 				if (!types_match) {
 					// Allow conversions for const lvalue refs only
 					auto conversion = can_convert_type(from_base, to_base);
