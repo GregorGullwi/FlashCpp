@@ -4840,7 +4840,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 
-						if (!operator_call_func && !op_explicitly_ambiguous) {
+						if (!operator_call_func && !op_explicitly_ambiguous && !all_op_types_known) {
 							// Fall back to arity-only heuristic only when type inference
 							// fails.  When resolve_overload explicitly reported ambiguity
 							// the call is ill-formed and must not be silently resolved by
