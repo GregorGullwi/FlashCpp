@@ -236,6 +236,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
 				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else if (known_member_func) {
+					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
 					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, member_name_token);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
@@ -314,6 +316,8 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
 				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+				} else if (known_member_func) {
+					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
 					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, member_name_token);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
@@ -1401,6 +1405,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			FunctionDeclarationNode* func_ref_ptr = nullptr;
 			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 				func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+			} else if (known_member_func) {
+				func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 			} else {
 				// Create a temporary function declaration node for the member function
 				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
@@ -1433,4 +1439,3 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 	// No result was produced - this should not happen in a well-formed expression
 	return ParseResult();  // Return monostate instead of empty success
 }
-

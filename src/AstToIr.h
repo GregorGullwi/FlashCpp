@@ -158,7 +158,7 @@ private:
 	const DeclarationNode& array_decl, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter);
-	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	void visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode range_object_expr,
 	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter);

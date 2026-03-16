@@ -502,41 +502,87 @@
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
 
-		// C++11+ standard: The range expression is bound to a reference for lifetime extension
-		// This ensures temporary objects live for the entire loop duration
-		// For now, we only support simple identifiers (not temporaries), so lifetime is already correct
-
-		// Check what kind of range expression we have
+		// C++11+ standard: the range expression is materialized into a hidden
+		// `__range` binding before begin/end are formed. Reuse the original
+		// identifier when available; otherwise synthesize a hidden variable so
+		// member-access and temporary-producing expressions are evaluated once.
 		if (!range_expr.is<ExpressionNode>()) {
 			FLASH_LOG(Codegen, Error, "Range expression must be an expression");
 			return;
 		}
 
 		auto& expr_variant = range_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_variant)) {
-			FLASH_LOG(Codegen, Error, "Currently only identifiers are supported as range expressions");
-			return;
-		}
-
-		const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
-		std::string_view range_name = range_ident.name();
-
-		// Look up the range object in the symbol table
-		const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
-		if (!range_symbol.has_value()) {
-			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
-			return;
-		}
-
-		// Extract the DeclarationNode from either DeclarationNode or VariableDeclarationNode
+		std::string_view range_name;
 		const DeclarationNode* range_decl_ptr = nullptr;
-		if (range_symbol->is<DeclarationNode>()) {
-			range_decl_ptr = &range_symbol->as<DeclarationNode>();
-		} else if (range_symbol->is<VariableDeclarationNode>()) {
-			range_decl_ptr = &range_symbol->as<VariableDeclarationNode>().declaration();
+		ASTNode range_object_expr = range_expr;
+
+		if (std::holds_alternative<IdentifierNode>(expr_variant)) {
+			const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
+			range_name = range_ident.name();
+
+			// Look up the range object in the symbol table
+			const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
+			if (!range_symbol.has_value()) {
+				FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
+				return;
+			}
+
+			// Extract the DeclarationNode from either DeclarationNode or VariableDeclarationNode
+			if (range_symbol->is<DeclarationNode>()) {
+				range_decl_ptr = &range_symbol->as<DeclarationNode>();
+			} else if (range_symbol->is<VariableDeclarationNode>()) {
+				range_decl_ptr = &range_symbol->as<VariableDeclarationNode>().declaration();
+			} else {
+				FLASH_LOG(Codegen, Error, "Range object '", range_name, "' is not a variable declaration");
+				return;
+			}
 		} else {
-			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' is not a variable declaration");
-			return;
+			std::optional<TypeSpecifierNode> inferred_range_type;
+			if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
+				const StructTypeInfo* resolved_struct_info = nullptr;
+				const StructMember* resolved_member = nullptr;
+				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
+					resolved_member) {
+					inferred_range_type.emplace(
+						(resolved_member->type == Type::UserDefined || resolved_member->type == Type::Struct)
+							? Type::Struct
+							: resolved_member->type,
+						resolved_member->type_index,
+						static_cast<int>(resolved_member->size * 8),
+						Token()
+					);
+					if (resolved_member->pointer_depth > 0) {
+						inferred_range_type->add_pointer_levels(resolved_member->pointer_depth);
+					}
+					if (resolved_member->reference_qualifier != ReferenceQualifier::None) {
+						inferred_range_type->set_reference_qualifier(resolved_member->reference_qualifier);
+					}
+				}
+			}
+			if (!inferred_range_type.has_value()) {
+				if (!parser_) {
+					FLASH_LOG(Codegen, Error, "Parser is required to infer non-identifier range expression types");
+					return;
+				}
+				inferred_range_type = parser_->get_expression_type(range_expr);
+			}
+			if (!inferred_range_type.has_value()) {
+				FLASH_LOG(Codegen, Error, "Could not infer type of non-identifier range expression");
+				return;
+			}
+
+			StringBuilder sb_range;
+			sb_range.append("__range_");
+			sb_range.append(ranged_for_counter - 1);
+			range_name = sb_range.commit();
+
+			Token range_token(Token::Type::Identifier, range_name, 0, 0, 0);
+			ASTNode range_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*inferred_range_type);
+			ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
+			ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
+			visit(range_var_decl_node);
+			range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+			range_decl_ptr = &range_decl_node.as<DeclarationNode>();
 		}
 
 		const DeclarationNode& range_decl = *range_decl_ptr;
@@ -556,8 +602,8 @@
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
-		else if (range_type.type() == Type::Struct) {
-			visitRangedForBeginEnd(node, range_name, range_type, loop_start_label, loop_body_label,
+		else if (range_type.type() == Type::Struct || range_type.type() == Type::UserDefined) {
+			visitRangedForBeginEnd(node, range_object_expr, range_type, loop_start_label, loop_body_label,
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		else {
@@ -783,7 +829,7 @@
 		popLoopSehDepth();
 	}
 
-	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode range_object_expr,
 	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter) {
@@ -848,13 +894,9 @@
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
 		// Create member function calls: range.begin() and range.end()
-		auto range_expr_for_begin = ASTNode::emplace_node<ExpressionNode>(
-			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
-		);
-
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_expr_for_begin,
+			MemberFunctionCallNode(range_object_expr,
 			begin_func_decl,
 			std::move(empty_args), Token())
 		);
@@ -864,13 +906,9 @@
 
 		// Similarly for end()
 		const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
-		auto range_expr_for_end = ASTNode::emplace_node<ExpressionNode>(
-			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
-		);
-
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_expr_for_end,
+			MemberFunctionCallNode(range_object_expr,
 			end_func_decl,
 			std::move(empty_args2), Token())
 		);

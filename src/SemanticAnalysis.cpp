@@ -119,6 +119,26 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	type_node.set_size_in_bits(size_bits);
 	return type_node;
 }
+
+CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
+	CanonicalTypeDesc desc;
+	desc.base_type = member.type;
+	desc.type_index = member.type_index;
+	desc.ref_qualifier = member.reference_qualifier;
+	if (member.is_array) {
+		desc.array_dimensions = member.array_dimensions;
+	}
+	if (member.function_signature.has_value()) {
+		desc.function_signature = member.function_signature;
+	}
+	for (int i = 0; i < member.pointer_depth; ++i) {
+		desc.pointer_levels.push_back(PointerLevel{});
+	}
+	if (member.reference_qualifier == ReferenceQualifier::None) {
+		desc.base_cv = object_cv;
+	}
+	return desc;
+}
 }
 
 // --- CanonicalTypeDesc::operator== ---
@@ -386,7 +406,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 		.commit()));
 }
 
-ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const {
+ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) {
 	const ASTNode loop_var_decl = stmt.get_loop_variable_decl();
 	if (!loop_var_decl.is<VariableDeclarationNode>()) {
 		return loop_var_decl;
@@ -394,36 +414,37 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 
 	const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 	const ASTNode range_expr = stmt.get_range_expression();
-	if (!range_expr.is<ExpressionNode>() ||
-		!std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
+	std::optional<TypeSpecifierNode> range_type;
+	if (range_expr.is<ExpressionNode>() &&
+		std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
+		const auto& range_ident = std::get<IdentifierNode>(range_expr.as<ExpressionNode>());
+		const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
+		if (range_symbol.has_value()) {
+			if (const DeclarationNode* range_decl_ptr = get_decl_from_symbol(*range_symbol)) {
+				range_type = range_decl_ptr->type_node().as<TypeSpecifierNode>();
+			}
+		}
+	}
+	if (!range_type.has_value()) {
+		const CanonicalTypeId range_type_id = inferExpressionType(range_expr);
+		if (!range_type_id) {
+			return original_var_decl.declaration_node();
+		}
+		range_type = materializeTypeSpecifier(type_context_.get(range_type_id));
+	}
+
+	if (range_type->is_array()) {
+		const_cast<RangedForStatementNode&>(stmt).set_resolved_dereference_function(nullptr);
+		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
+	}
+
+	if (range_type->type() != Type::Struct ||
+		!range_type->type_index().is_valid() ||
+		range_type->type_index().value >= gTypeInfo.size()) {
 		return original_var_decl.declaration_node();
 	}
 
-	const auto& range_ident = std::get<IdentifierNode>(range_expr.as<ExpressionNode>());
-	const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
-	if (!range_symbol.has_value()) {
-		return original_var_decl.declaration_node();
-	}
-
-	const DeclarationNode* range_decl_ptr = get_decl_from_symbol(*range_symbol);
-	if (!range_decl_ptr) {
-		return original_var_decl.declaration_node();
-	}
-
-	const DeclarationNode& range_decl = *range_decl_ptr;
-	const TypeSpecifierNode& range_type = range_decl.type_node().as<TypeSpecifierNode>();
-
-	if (range_decl.is_array()) {
-		return resolveRangedForLoopDeclNode(original_var_decl, range_type);
-	}
-
-	if (range_type.type() != Type::Struct ||
-		!range_type.type_index().is_valid() ||
-		range_type.type_index().value >= gTypeInfo.size()) {
-		return original_var_decl.declaration_node();
-	}
-
-	const StructTypeInfo* struct_info = gTypeInfo[range_type.type_index().value].getStructInfo();
+	const StructTypeInfo* struct_info = gTypeInfo[range_type->type_index().value].getStructInfo();
 	if (!struct_info) {
 		return original_var_decl.declaration_node();
 	}
@@ -435,13 +456,13 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-	const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+	const bool prefer_const_deref = range_type->is_const() || begin_func->is_const();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
 		dereference_func = resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
 	}
 	const_cast<RangedForStatementNode&>(stmt).set_resolved_dereference_function(dereference_func);
-	return normalizeRangedForLoopDecl(original_var_decl, range_type, begin_return_type, dereference_func);
+	return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::resolveRangedForIteratorDereference(
@@ -1207,6 +1228,30 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			}
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return lookupLocalType(e.nameHandle());
+			}
+			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
+				if (!object_type_id) {
+					return {};
+				}
+				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
+				if (object_desc.base_type != Type::Struct ||
+					!object_desc.type_index.is_valid() ||
+					object_desc.type_index.value >= gTypeInfo.size()) {
+					return {};
+				}
+				const StructTypeInfo* struct_info = gTypeInfo[object_desc.type_index.value].getStructInfo();
+				if (!struct_info) {
+					return {};
+				}
+				const StringHandle member_name = e.member_token().handle();
+				for (const auto& member : struct_info->members) {
+					if (member.name != member_name) {
+						continue;
+					}
+					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
+				}
+				return {};
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				// Unary + and - apply integral promotion: types with rank < int become int.

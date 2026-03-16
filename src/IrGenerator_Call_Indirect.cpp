@@ -383,6 +383,7 @@
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 			const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
 			std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
+			bool resolved_member_object_type = false;
 
 			// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
 			const StructTypeInfo* resolved_struct_info = nullptr;
@@ -453,40 +454,13 @@
 							// Not a function pointer member - set object_type for regular member function lookup
 							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
 							resolved_member->size * 8, Token());  // size in bits
+							resolved_member_object_type = true;
 						}
 					}
 				}
 			}
 
-			// Fall back to simple base object handling for "this->member" pattern
-			const ASTNode& base_node = member_access.object();
-			if (base_node.is<ExpressionNode>()) {
-				const ExpressionNode& base_expr = base_node.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(base_expr)) {
-					const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-					std::string_view base_name = base_ident.name();
-
-					// Look up the base object (e.g., "this")
-					const std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
-					if (symbol.has_value()) {
-						const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
-						if (base_decl) {
-							TypeSpecifierNode base_type_spec = base_decl->type_node().as<TypeSpecifierNode>();
-
-							// If this is a pointer (like "this"), dereference it
-							if (base_type_spec.pointer_levels().size() > 0) {
-								base_type_spec.remove_pointer_level();
-							}
-
-							// Now base_type_spec should be the struct type
-							if (isIrStructType(toIrType(base_type_spec.type()))) {
-								object_type = base_type_spec;
-								object_name = base_name;  // Use the base name for the call
-							}
-						}
-					}
-				}
-			}
+			(void)resolved_member_object_type;
 		}
 
 		// For immediate lambda invocation, object_decl can be nullptr

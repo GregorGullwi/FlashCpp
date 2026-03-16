@@ -54,7 +54,7 @@ public:
 		const TypeSpecifierNode& range_type,
 		const TypeSpecifierNode& begin_return_type,
 		const FunctionDeclarationNode* dereference_func) const;
-	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const;
+	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt);
 	const FunctionDeclarationNode* resolveRangedForIteratorDereference(
 		const TypeSpecifierNode& iterator_type,
 		bool prefer_const) const;
