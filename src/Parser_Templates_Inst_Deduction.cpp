@@ -1114,6 +1114,36 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 		}
+
+		// Handle the case where a function parameter IS directly a template type parameter
+		// (e.g., template<typename T> T func(Widget& w, T b) — T is the 2nd param, not the 1st).
+		// Without this, the main loop would naively consume the 1st call argument for T.
+		for (size_t i = 0; i < func_params.size() && i < arg_types.size(); ++i) {
+			if (!func_params[i].is<DeclarationNode>()) continue;
+			const TypeSpecifierNode& fp_type =
+				func_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			const TypeSpecifierNode& ca_type = arg_types[i];
+
+			// Only handle directly-typed params (pointer_depth 0 covers both T and T&/const T&).
+			// Pointer-to-template (T*) cases are handled via substitution elsewhere.
+			if (fp_type.pointer_depth() != 0) continue;
+
+			TypeIndex fp_idx = fp_type.type_index();
+			if (!fp_idx.is_valid() || fp_idx.value >= gTypeInfo.size()) continue;
+
+			StringHandle fp_name = gTypeInfo[fp_idx.value].name();
+			if (!tparam_name_set.count(fp_name)) continue;  // not a template parameter
+			if (param_name_to_arg.count(fp_name)) continue;  // already deduced
+
+			// Deduce: fp_name -> ca_type (call argument type for this parameter slot)
+			TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+			param_name_to_arg.emplace(fp_name, new_arg);
+			pre_deduced_arg_indices.insert(i);
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: Direct-param pre-deduced type param '{}' = type {} from func param {}",
+				recursion_depth, StringTable::getStringView(fp_name),
+				static_cast<int>(ca_type.type()), i);
+		}
 	}
 
 	// Deduce template parameters in order from function arguments

@@ -1665,6 +1665,14 @@ ParseResult Parser::parse_template_declaration() {
 						// Skip GCC __attribute__ between specifiers and initializer list
 						skip_gcc_attributes();
 						
+						// Check for function-try-block with member initializer list: "try : member(val) { ... }"
+						// Per [dcl.fct.def.general]: consume "try" before the ":" initializer list
+						bool has_function_try = false;
+						if (peek() == "try"_tok && peek(1) == ":"_tok) {
+							advance();  // consume 'try'
+							has_function_try = true;
+						}
+						
 						// Parse member initializer list if present
 						if (peek() == ":"_tok) {
 							advance();  // consume ':'
@@ -1818,11 +1826,36 @@ ParseResult Parser::parse_template_declaration() {
 							}
 						}
 						
-						// Parse constructor body if present
-						if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok)) {
+						// Parse constructor body if present.
+						// has_function_try: "try :" form was detected above — "try" already consumed, peek is "{".
+						// Normal: peek is "{" or "try" (try-block without init list).
+						if (!is_defaulted && !is_deleted && (peek() == "{"_tok || peek() == "try"_tok || has_function_try)) {
 							// Parse the constructor body immediately rather than delaying
 							// This avoids pointer invalidation issues with delayed parsing
-							auto block_result = parse_function_body(true /* is_ctor_or_dtor */);
+							ParseResult block_result;
+							if (has_function_try) {
+								// "try" was already consumed; peek is now "{". Parse the body block,
+								// then catch clauses, and wrap in a TryStatementNode (ctor implicit rethrow).
+								block_result = parse_block();
+								if (!block_result.is_error() && block_result.node().has_value()) {
+									std::vector<ASTNode> catch_clauses;
+									while (peek() == "catch"_tok) {
+										auto clause_result = parse_one_catch_clause(catch_clauses);
+										if (clause_result.is_error()) {
+											gSymbolTable.exit_scope();
+											return clause_result;
+										}
+									}
+									if (catch_clauses.empty()) {
+										gSymbolTable.exit_scope();
+										return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
+									}
+									ASTNode try_node = make_try_block_body(*block_result.node(), std::move(catch_clauses), Token(), true /* is_ctor_or_dtor */);
+									block_result = ParseResult::success(try_node);
+								}
+							} else {
+								block_result = parse_function_body(true /* is_ctor_or_dtor */);
+							}
 							gSymbolTable.exit_scope();
 							
 							if (block_result.is_error()) {
@@ -1923,10 +1956,10 @@ ParseResult Parser::parse_template_declaration() {
 						continue;
 					}
 					
-					// Parse function body if present
-					if (peek() == "{"_tok) {
+					// Parse function body if present (handles both '{...}' and function-try-blocks 'try{...}catch...').
+					if (peek() == "{"_tok || peek() == "try"_tok) {
 						SaveHandle body_start = save_token_position();
-						skip_balanced_braces();
+						skip_function_body();  // skip '{...}' or 'try{...}catch(...){...}'
 						
 						delayed_function_bodies_.push_back({
 							nullptr,  // member_func_ref
@@ -1943,7 +1976,7 @@ ParseResult Parser::parse_template_declaration() {
 							{}  // no template parameter names for specializations
 						});
 					} else if (!consume(";"_tok)) {
-						return ParseResult::error("Expected '{' or ';' after destructor declaration", peek_info());
+						return ParseResult::error("Expected '{', 'try', or ';' after destructor declaration", peek_info());
 					}
 					
 					struct_ref.add_destructor(dtor_node, current_access, dtor_is_virtual);
@@ -2364,6 +2397,9 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			// Parse delayed function bodies for specialization member functions
+			// Destructor nodes must be pushed to ast_nodes_ AFTER restore_token_position
+			// (restore_token_position erases non-function/struct nodes added after the save point).
+			std::vector<ASTNode> pending_dtor_ast_nodes;
 			SaveHandle position_after_struct = save_token_position();
 			for (auto& delayed : delayed_function_bodies_) {
 				// Restore token position to the start of the function body
@@ -2420,6 +2456,9 @@ ParseResult Parser::parse_template_declaration() {
 						delayed.ctor_node->set_definition(*block);
 					} else if (delayed.is_destructor && delayed.dtor_node) {
 						delayed.dtor_node->set_definition(*block);
+						// Collect for ast_nodes_ push AFTER restore_token_position (see below);
+						// restore_token_position() would otherwise erase the node immediately.
+						pending_dtor_ast_nodes.push_back(ASTNode(delayed.dtor_node));
 					} else if (delayed.func_node) {
 						delayed.func_node->set_definition(*block);
 						finalize_function_after_definition(*delayed.func_node);
@@ -2435,6 +2474,11 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Restore position after struct
 			restore_token_position(position_after_struct);
+
+			// Push destructor bodies to ast_nodes_ now (after restore, so they won't be erased).
+			for (auto& dtor_ast : pending_dtor_ast_nodes) {
+				ast_nodes_.push_back(std::move(dtor_ast));
+			}
 
 			// Register the specialization
 			// NOTE:

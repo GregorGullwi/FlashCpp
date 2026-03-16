@@ -4229,30 +4229,56 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 	advance(); // consume '<'
 
-	// Skip template parameters - we don't need to parse them in detail for friend declarations
-	// Just consume everything until we find the matching '>'
-	int angle_bracket_depth = 1;
-	while (angle_bracket_depth > 0 && !peek().is_eof()) {
-		if (peek() == "<"_tok) {
-			angle_bracket_depth++;
-		} else if (peek() == ">"_tok) {
-			angle_bracket_depth--;
+	// Parse template parameters so type names like T are visible when parsing the function declaration.
+	InlineVector<ASTNode, 4> template_params;
+	auto param_list_result = parse_template_parameter_list(template_params);
+	// On error: fall back to raw skip of this declaration
+	if (param_list_result.is_error()) {
+		// Consume rest of the template friend declaration
+		while (!peek().is_eof() && peek() != ";"_tok) {
+			if (peek() == "{"_tok || peek() == "try"_tok) { skip_function_body(); break; }
+			advance();
 		}
-		advance();
+		if (peek() == ";"_tok) advance();
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+		struct_node.add_friend(friend_node);
+		return saved_position.success(friend_node);
+	}
+
+	// Consume '>' closing the template parameter list
+	if (!consume(">"_tok)) {
+		return ParseResult::error("Expected '>' after template parameter list", peek_info());
+	}
+
+	// Set up template parameter types in the type system so they are
+	// visible when parsing the friend function declaration (e.g. return type T, param type T).
+	FlashCpp::TemplateParameterScope template_scope;
+	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const auto& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = add_user_type(tparam.nameHandle(), 0);
+				gTypesByName.emplace(type_info.name(), &type_info);
+				template_scope.addParameter(&type_info);
+			}
+			current_template_param_names_.push_back(tparam.nameHandle());
+		}
 	}
 
 	// Parse optional requires clause between template parameters and 'friend'
 	// e.g., template<typename _It2, sentinel_for<_It> _Sent2>
 	//         requires sentinel_for<_Sent, _It2>
 	//         friend constexpr bool operator==(...) { ... }
+	std::optional<ASTNode> requires_clause;
 	if (peek() == "requires"_tok) {
 		advance(); // consume 'requires'
-		// Parse the constraint expression properly for compile-time evaluation
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			FLASH_LOG(Parser, Warning, "Failed to parse requires clause in friend template: ", constraint_result.error_message());
-		} else {
-			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template for compile-time evaluation");
+		} else if (constraint_result.node().has_value()) {
+			requires_clause = emplace_node<RequiresClauseNode>(*constraint_result.node(), peek_info());
+			FLASH_LOG(Parser, Debug, "Parsed requires clause in friend template");
 		}
 	}
 
@@ -4269,30 +4295,42 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	} else if (peek() == "class"_tok) {
 		advance(); // consume 'class'
 	} else {
-		// Not a template friend class/struct declaration - might be a friend function template
-		// We skip the declaration since friend function templates don't affect accessibility
-		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
-		// The empty name is acceptable because we only need to record that a friend 
-		// declaration exists; the actual function resolution happens at call sites.
-		
-		// Skip until ';', '{', or 'try' (for friend function templates with inline definitions,
-		// including function-try-blocks: try { ... } catch(...) { ... })
-		while (!peek().is_eof() && peek() != ";"_tok && peek() != "{"_tok && peek() != "try"_tok) {
-			advance();
+		// Template friend function: parse the full function declaration and register it
+		// so it can be found and instantiated at call sites.
+		ASTNode template_func_node;
+		auto func_result = parse_template_function_declaration_body(
+			template_params, requires_clause, template_func_node);
+		if (func_result.is_error()) {
+			// Fall back: skip remainder and return a minimal friend node
+			while (!peek().is_eof() && peek() != ";"_tok) {
+				if (peek() == "{"_tok || peek() == "try"_tok) { skip_function_body(); break; }
+				advance();
+			}
+			if (peek() == ";"_tok) advance();
+			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+			struct_node.add_friend(friend_node);
+			return saved_position.success(friend_node);
 		}
-		
-		// Handle inline friend function template body: { ... } or try { ... } catch(...) { ... }
-		if (peek() == "{"_tok || peek() == "try"_tok) {
-			skip_function_body();
-		}
-		
-		// Skip trailing semicolon if present (for declarations without body)
-		if (peek() == ";"_tok) {
-			advance();
-		}
-		
-		// Create a minimal friend declaration node - name is empty since we skipped parsing
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+
+		// Extract the function name for registration and symbol lookup
+		const auto& tmpl = template_func_node.as<TemplateFunctionDeclarationNode>();
+		const auto& inner_func = tmpl.function_declaration().as<FunctionDeclarationNode>();
+		StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
+
+		// Register in template registry so call sites can find and instantiate it
+		gTemplateRegistry.registerTemplate(func_name_handle, template_func_node);
+
+		// Register in namespace symbol table so unqualified lookup finds it
+		// (FlashCpp currently makes hidden friends visible to ordinary lookup)
+		NamespaceHandle enclosing_ns = gSymbolTable.get_current_namespace_handle();
+		gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, template_func_node);
+
+		// Note: do NOT push template functions to pending_hidden_friend_defs_.
+		// Templates produce no IR directly; code is generated when the template
+		// is instantiated at each call site via the template registry.
+
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
+		friend_node.as<FriendDeclarationNode>().set_function_declaration(template_func_node);
 		struct_node.add_friend(friend_node);
 		return saved_position.success(friend_node);
 	}
