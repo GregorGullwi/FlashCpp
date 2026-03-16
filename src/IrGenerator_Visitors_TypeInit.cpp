@@ -237,8 +237,9 @@
 					// ready later (e.g., a call site in a subsequently generated
 					// lambda body populates their deduced types), so they must
 					// remain in the scan window.
-					if (di == deferred_scan_start && !stored_lambda_info.is_generic) {
+					if (di == deferred_scan_start && (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty())) {
 						deferred_scan_start = di + 1;
+					}
 					}
 					continue;
 				}
