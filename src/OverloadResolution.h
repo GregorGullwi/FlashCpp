@@ -607,12 +607,51 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		}
 
 		if (this_is_better && !this_is_worse) {
+			// This constructor is strictly better than the current best.
+			// Re-evaluate all previously accumulated tied/incomparable
+			// candidates against the new best ranks — any that are not
+			// strictly worse must be kept so that ambiguity is detected.
+			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
 			best_match = &ctor_decl;
 			best_ranks = conversion_ranks;
 			num_best_matches = 1;
 			tied_candidates.clear();
 			tied_candidates.push_back(&ctor_decl);
-		} else if (!this_is_better && !this_is_worse) {
+			for (const auto* prev : old_tied) {
+				if (prev == &ctor_decl) continue;
+				const auto& prev_params = prev->parameter_nodes();
+				std::vector<ConversionRank> prev_ranks;
+				bool prev_valid = true;
+				for (size_t k = 0; k < argument_types.size(); ++k) {
+					if (!prev_params[k].is<DeclarationNode>() ||
+						!prev_params[k].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+						prev_valid = false; break;
+					}
+					const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					auto conv = can_convert_type(argument_types[k], pt);
+					if (!conv.is_valid) { prev_valid = false; break; }
+					prev_ranks.push_back(conv.rank);
+				}
+				if (!prev_valid) continue;
+				bool prev_better = false, prev_worse = false;
+				for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
+					if (prev_ranks[k] < best_ranks[k]) prev_better = true;
+					else if (prev_ranks[k] > best_ranks[k]) prev_worse = true;
+				}
+				if (!prev_better && prev_worse) {
+					// Strictly worse than new best — discard.
+				} else {
+					// Tied or incomparable — keep for ambiguity detection.
+					num_best_matches++;
+					tied_candidates.push_back(prev);
+				}
+			}
+		} else if (!this_is_better && this_is_worse) {
+			// This constructor is strictly worse — skip it
+		} else {
+			// Equally good on every argument (exact tie) OR better on some
+			// arguments and worse on others (incomparable).  In both cases
+			// neither candidate dominates the other — potentially ambiguous.
 			num_best_matches++;
 			tied_candidates.push_back(&ctor_decl);
 		}
