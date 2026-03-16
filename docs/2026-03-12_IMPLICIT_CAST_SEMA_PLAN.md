@@ -984,11 +984,12 @@ Implementation notes:
 
 - Added `Type::DeclTypeAuto` so `decltype(auto)` no longer reuses plain `Type::Auto` placeholder handling.
 - `SemanticAnalysis::resolveRemainingAutoReturns()` now finalizes unresolved ordinary function placeholder returns before codegen and forces mangled-name recomputation after rewriting the return annotation.
-- Generic lambda parameter normalization now runs through a semantic hook that rewrites instantiated parameter declarations with the deduced `TypeSpecifierNode`s before lambda IR generation; `IrGenerator_Lambdas.cpp` no longer synthesizes replacement declarations locally.
+- `SemanticAnalysis::normalizeInstantiatedLambdaBody()` now owns instantiated generic-lambda placeholder normalization: it rewrites deduced parameter declarations, re-runs semantic normalization on the instantiated body, and finalizes placeholder return types (including callable-parameter cases) before lambda IR generation.
 - Identifier/reference lowering now treats unresolved placeholder types in codegen as an internal error instead of silently falling back to `int`.
 - Regression coverage added for ordinary `auto` return finalization, generic lambda parameter normalization, and `decltype(auto)` reference-preserving returns.
 - Deferred generic lambdas are re-scanned after the main collection pass so call-site deduction discovered from later-generated lambda bodies still triggers operator()/`__invoke` emission for previously skipped entries.
-- Range-for placeholder deduction now uses struct iterator `operator*()` return types instead of letting unresolved placeholder loop variables reach codegen.
+- Range-for placeholder deduction now runs through semantic analysis for array/pointer-style and struct-iterator loops before lowering, so codegen receives already-concrete loop-variable declarations.
+- Placeholder `auto` return deduction now also handles top-level function-try-block bodies, covering the previously unresolved ordinary `auto` + function-try-block path.
 - Remaining placeholder checks in codegen/template plumbing now use `isPlaceholderAutoType()` where `DeclTypeAuto` should follow plain `auto`, while parser paths that only support plain `auto` keep explicit handling.
 - Parser-side `decltype(auto)` variable handling now preserves deduced size information and rejects declarators that add extra `*`, `&`, or `&&` around `decltype(auto)`.
 

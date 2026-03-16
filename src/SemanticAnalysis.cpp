@@ -7,6 +7,7 @@
 #include "AstNodeTypes_Expr.h"
 #include "OverloadResolution.h"
 #include "Log.h"
+#include "IrGenerator.h"
 
 namespace {
 // Placeholder return-type finalization requires every return statement in the
@@ -30,6 +31,104 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	}
 
 	return true;
+}
+
+ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
+	const DeclarationNode& original_decl = original_var_decl.declaration();
+	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
+	if (!isPlaceholderAutoType(placeholder_type.type())) {
+		return original_var_decl.declaration_node();
+	}
+
+	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
+	if (placeholder_type.type() == Type::Auto) {
+		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
+		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
+			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
+		}
+	}
+
+	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
+	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
+	resolved_decl.set_type_node(resolved_type_node);
+	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
+}
+
+const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const TypeSpecifierNode& iterator_type, bool prefer_const) {
+	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
+		return nullptr;
+	}
+
+	const StructTypeInfo* struct_info = gTypeInfo[iterator_type.type_index().value].getStructInfo();
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	const FunctionDeclarationNode* fallback = nullptr;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Multiply ||
+			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (!func.parameter_nodes().empty()) {
+			continue;
+		}
+
+		if (prefer_const && member_func.is_const()) {
+			return &func;
+		}
+		if (!prefer_const && !member_func.is_const()) {
+			return &func;
+		}
+		if (!fallback) {
+			fallback = &func;
+		}
+	}
+
+	return fallback;
+}
+
+std::optional<TypeSpecifierNode> getRangeIteratorElementTypeForSema(const TypeSpecifierNode& iterator_type, bool prefer_const) {
+	if (const auto* dereference_func = getRangeIteratorDereferenceFunctionForSema(iterator_type, prefer_const)) {
+		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		element_type.set_reference_qualifier(ReferenceQualifier::None);
+		return element_type;
+	}
+
+	return std::nullopt;
+}
+
+TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
+	TypeSpecifierNode type_node(desc.base_type, desc.type_index, 0);
+	type_node.set_cv_qualifier(desc.base_cv);
+	type_node.set_reference_qualifier(desc.ref_qualifier);
+	type_node.copy_pointer_levels_from(TypeSpecifierNode(desc.base_type, desc.type_index, 0));
+	for (const auto& pointer_level : desc.pointer_levels) {
+		type_node.add_pointer_level(pointer_level.cv_qualifier);
+	}
+	if (!desc.array_dimensions.empty()) {
+		type_node.set_array(true);
+		type_node.set_array_dimensions(desc.array_dimensions);
+	}
+	if (desc.function_signature.has_value()) {
+		type_node.set_function_signature(*desc.function_signature);
+	}
+
+	int size_bits = 0;
+	if (desc.ref_qualifier != ReferenceQualifier::None || !desc.pointer_levels.empty()) {
+		size_bits = 64;
+	} else if (desc.base_type == Type::Invalid) {
+		size_bits = 0;
+	} else {
+		size_bits = getTypeSpecSizeBits(type_node);
+		if (size_bits == 0) {
+			size_bits = get_type_size_bits(desc.base_type);
+		}
+	}
+	type_node.set_size_in_bits(size_bits);
+	return type_node;
 }
 }
 
@@ -179,6 +278,165 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 	return resolved_nodes;
 }
 
+void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
+	if (!lambda_info.is_generic || lambda_info.deduced_auto_types.empty()) {
+		return;
+	}
+
+	if (lambda_info.resolved_param_nodes.empty()) {
+		lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
+			lambda_info.parameter_nodes,
+			lambda_info.deduced_auto_types);
+	}
+
+	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+		? lambda_info.parameter_nodes
+		: lambda_info.resolved_param_nodes;
+
+	symbols_.enter_scope(ScopeType::Function);
+	pushScope();
+	auto cleanup = ScopeGuard([&]() {
+		popScope();
+		symbols_.exit_scope();
+	});
+
+	for (const auto& param_node : param_nodes) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+
+		const auto& param_decl = param_node.as<DeclarationNode>();
+		symbols_.insert(param_decl.identifier_token().value(), param_node);
+
+		const ASTNode& param_type_node = param_decl.type_node();
+		if (param_type_node.is<TypeSpecifierNode>()) {
+			const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+			const StringHandle pname = param_decl.identifier_token().handle();
+			if (pname.isValid()) {
+				addLocalType(pname, tid);
+			}
+		}
+	}
+
+	for (const auto& capture_decl_node : lambda_info.captured_var_decls) {
+		if (const DeclarationNode* capture_decl = get_decl_from_symbol(capture_decl_node)) {
+			ASTNode symbol_node = capture_decl_node.is<DeclarationNode>()
+				? capture_decl_node
+				: ASTNode::emplace_node<DeclarationNode>(*capture_decl);
+			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
+			if (capture_decl->type_node().is<TypeSpecifierNode>()) {
+				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_node().as<TypeSpecifierNode>());
+				const StringHandle name = capture_decl->identifier_token().handle();
+				if (name.isValid()) {
+					addLocalType(name, tid);
+				}
+			}
+		}
+	}
+
+	if (isPlaceholderAutoType(lambda_info.return_type)) {
+		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.return_type);
+			deduced_type.has_value()) {
+			lambda_info.return_type = deduced_type->type();
+			lambda_info.return_type_index = deduced_type->type_index();
+			lambda_info.returns_reference =
+				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
+			lambda_info.return_size = lambda_info.returns_reference
+				? 64
+				: getTypeSpecSizeBits(*deduced_type);
+		}
+	}
+
+	SemanticContext lambda_ctx;
+	if (!isPlaceholderAutoType(lambda_info.return_type)) {
+		TypeSpecifierNode lambda_return_type(
+			lambda_info.return_type,
+			lambda_info.return_type_index,
+			lambda_info.return_size,
+			lambda_info.lambda_token);
+		if (lambda_info.returns_reference) {
+			lambda_return_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			lambda_return_type.set_size_in_bits(64);
+		}
+		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
+	}
+	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
+}
+
+ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const {
+	const ASTNode loop_var_decl = stmt.get_loop_variable_decl();
+	if (!loop_var_decl.is<VariableDeclarationNode>()) {
+		return loop_var_decl;
+	}
+
+	const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
+	const TypeSpecifierNode& placeholder_type =
+		original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
+	if (!isPlaceholderAutoType(placeholder_type.type())) {
+		return original_var_decl.declaration_node();
+	}
+
+	const ASTNode range_expr = stmt.get_range_expression();
+	if (!range_expr.is<ExpressionNode>() ||
+		!std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
+		return original_var_decl.declaration_node();
+	}
+
+	const auto& range_ident = std::get<IdentifierNode>(range_expr.as<ExpressionNode>());
+	const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
+	if (!range_symbol.has_value()) {
+		return original_var_decl.declaration_node();
+	}
+
+	const DeclarationNode* range_decl_ptr = get_decl_from_symbol(*range_symbol);
+	if (!range_decl_ptr) {
+		return original_var_decl.declaration_node();
+	}
+
+	const DeclarationNode& range_decl = *range_decl_ptr;
+	const TypeSpecifierNode& range_type = range_decl.type_node().as<TypeSpecifierNode>();
+
+	if (range_decl.is_array()) {
+		return resolveRangedForLoopDeclNode(original_var_decl, range_type);
+	}
+
+	if (range_type.type() != Type::Struct ||
+		!range_type.type_index().is_valid() ||
+		range_type.type_index().value >= gTypeInfo.size()) {
+		return original_var_decl.declaration_node();
+	}
+
+	const StructTypeInfo* struct_info = gTypeInfo[range_type.type_index().value].getStructInfo();
+	if (!struct_info) {
+		return original_var_decl.declaration_node();
+	}
+
+	const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
+	if (!begin_func || !begin_func->function_decl.is<FunctionDeclarationNode>()) {
+		return original_var_decl.declaration_node();
+	}
+
+	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
+	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+	if (begin_return_type.pointer_depth() > 0) {
+		TypeSpecifierNode deduced_loop_type = begin_return_type;
+		deduced_loop_type.remove_pointer_level();
+		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
+	}
+
+	const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+	if (auto deduced_loop_type = getRangeIteratorElementTypeForSema(begin_return_type, prefer_const_deref);
+		deduced_loop_type.has_value()) {
+		return resolveRangedForLoopDeclNode(original_var_decl, *deduced_loop_type);
+	}
+
+	throw InternalError(std::string(StringBuilder()
+		.append("Could not deduce range-for element type from iterator type '")
+		.append(begin_return_type.getReadableString())
+		.append("'")
+		.commit()));
+}
+
 void SemanticAnalysis::resolveRemainingAutoReturns() {
 	auto& nodes = const_cast<std::vector<ASTNode>&>(parser_.get_nodes());
 	for (auto& node : nodes) {
@@ -231,11 +489,24 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type) {
-	if (!body.has_value() || !body.is<BlockNode>()) {
+	if (!body.has_value()) {
 		return std::nullopt;
 	}
 
 	std::optional<TypeSpecifierNode> deduced_type;
+
+	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
+		auto expr_type = parser_.get_expression_type(expr_node);
+		if (expr_type.has_value() && !isPlaceholderAutoType(expr_type->type())) {
+			return expr_type;
+		}
+
+		const CanonicalTypeId inferred_type_id = inferExpressionType(expr_node);
+		if (!inferred_type_id) {
+			return std::nullopt;
+		}
+		return materializeTypeSpecifier(type_context_.get(inferred_type_id));
+	};
 
 	std::function<bool(const ASTNode&)> visit_returns = [&](const ASTNode& node) -> bool {
 		if (!node.has_value()) {
@@ -246,7 +517,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
 			TypeSpecifierNode current_type(Type::Void, TypeQualifier::None, 0, ret.return_token());
 			if (ret.expression().has_value()) {
-				auto expr_type = parser_.get_expression_type(*ret.expression());
+				auto expr_type = get_expression_type_for_return(*ret.expression());
 				if (!expr_type.has_value()) {
 					return false;
 				}
@@ -262,7 +533,19 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		}
 
 		if (node.is<BlockNode>()) {
+			pushScope();
+			auto guard = ScopeGuard([this]() { popScope(); });
 			for (const auto& stmt : node.as<BlockNode>().get_statements()) {
+				if (stmt.is<VariableDeclarationNode>()) {
+					const auto& var = stmt.as<VariableDeclarationNode>();
+					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+						const CanonicalTypeId tid = canonicalizeType(var.declaration().type_node().as<TypeSpecifierNode>());
+						const StringHandle name = var.declaration().identifier_token().handle();
+						if (name.isValid()) {
+							addLocalType(name, tid);
+						}
+					}
+				}
 				if (!visit_returns(stmt)) {
 					return false;
 				}
@@ -272,12 +555,23 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 
 		if (node.is<IfStatementNode>()) {
 			const auto& stmt = node.as<IfStatementNode>();
+			pushScope();
+			auto guard = ScopeGuard([this]() { popScope(); });
+			if (stmt.has_init() && !visit_returns(stmt.get_init_statement().value())) {
+				return false;
+			}
 			return visit_returns(stmt.get_then_statement()) &&
 				(!stmt.has_else() || visit_returns(stmt.get_else_statement().value()));
 		}
 
 		if (node.is<ForStatementNode>()) {
-			return visit_returns(node.as<ForStatementNode>().get_body_statement());
+			const auto& stmt = node.as<ForStatementNode>();
+			pushScope();
+			auto guard = ScopeGuard([this]() { popScope(); });
+			if (stmt.has_init() && !visit_returns(stmt.get_init_statement().value())) {
+				return false;
+			}
+			return visit_returns(stmt.get_body_statement());
 		}
 
 		if (node.is<WhileStatementNode>()) {
@@ -289,7 +583,24 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		}
 
 		if (node.is<RangedForStatementNode>()) {
-			return visit_returns(node.as<RangedForStatementNode>().get_body_statement());
+			const auto& stmt = node.as<RangedForStatementNode>();
+			pushScope();
+			auto guard = ScopeGuard([this]() { popScope(); });
+			if (stmt.has_init_statement() && !visit_returns(*stmt.get_init_statement())) {
+				return false;
+			}
+			ASTNode loop_decl_node = normalizeRangedForLoopDecl(stmt);
+			if (loop_decl_node.is<DeclarationNode>()) {
+				const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
+				if (loop_decl.type_node().is<TypeSpecifierNode>()) {
+					const CanonicalTypeId tid = canonicalizeType(loop_decl.type_node().as<TypeSpecifierNode>());
+					const StringHandle name = loop_decl.identifier_token().handle();
+					if (name.isValid()) {
+						addLocalType(name, tid);
+					}
+				}
+			}
+			return visit_returns(stmt.get_body_statement());
 		}
 
 		if (node.is<SwitchStatementNode>()) {
@@ -312,9 +623,24 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 				return false;
 			}
 			for (const auto& handler : try_node.catch_clauses()) {
-				if (handler.is<CatchClauseNode>() &&
-					!visit_returns(handler.as<CatchClauseNode>().body())) {
-					return false;
+				if (handler.is<CatchClauseNode>()) {
+					pushScope();
+					auto guard = ScopeGuard([this]() { popScope(); });
+					const auto& catch_clause = handler.as<CatchClauseNode>();
+					if (catch_clause.exception_declaration().has_value() &&
+						catch_clause.exception_declaration()->is<DeclarationNode>()) {
+						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
+						if (catch_decl.type_node().is<TypeSpecifierNode>()) {
+							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_node().as<TypeSpecifierNode>());
+							const StringHandle name = catch_decl.identifier_token().handle();
+							if (name.isValid()) {
+								addLocalType(name, tid);
+							}
+						}
+					}
+					if (!visit_returns(catch_clause.body())) {
+						return false;
+					}
 				}
 			}
 			return true;
@@ -537,8 +863,25 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	}
 	else if (node.is<RangedForStatementNode>()) {
 		const auto& stmt = node.as<RangedForStatementNode>();
+		pushScope();
+		if (stmt.has_init_statement()) {
+			normalizeStatement(*stmt.get_init_statement(), ctx);
+		}
 		normalizeExpression(stmt.get_range_expression(), ctx);
+		ASTNode loop_decl_node = normalizeRangedForLoopDecl(stmt);
+		if (loop_decl_node.is<DeclarationNode>()) {
+			const auto& loop_decl = loop_decl_node.as<DeclarationNode>();
+			const ASTNode loop_type_node = loop_decl.type_node();
+			if (loop_type_node.is<TypeSpecifierNode>()) {
+				const CanonicalTypeId tid = canonicalizeType(loop_type_node.as<TypeSpecifierNode>());
+				const StringHandle name = loop_decl.identifier_token().handle();
+				if (name.isValid()) {
+					addLocalType(name, tid);
+				}
+			}
+		}
 		normalizeStatement(stmt.get_body_statement(), ctx);
+		popScope();
 	}
 	else if (node.is<TryStatementNode>()) {
 		const auto& stmt = node.as<TryStatementNode>();
@@ -909,8 +1252,39 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Infer result type from the resolved function declaration's return type.
 				const DeclarationNode& decl = e.function_declaration();
 				const ASTNode ret_type_node = decl.type_node();
-				if (!ret_type_node.has_value() || !ret_type_node.is<TypeSpecifierNode>()) return {};
-				return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+				if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_node = ret_type_node.as<TypeSpecifierNode>();
+					if (!isPlaceholderAutoType(type_node.type())) {
+						return canonicalizeType(type_node);
+					}
+				}
+
+				const StringHandle callee_name = decl.identifier_token().handle();
+				const CanonicalTypeId callee_type_id = callee_name.isValid() ? lookupLocalType(callee_name) : CanonicalTypeId{};
+				if (!callee_type_id) return {};
+
+				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+				if (callee_desc.base_type == Type::Struct &&
+					callee_desc.type_index.is_valid() &&
+					callee_desc.type_index.value < gTypeInfo.size()) {
+					const StructTypeInfo* struct_info = gTypeInfo[callee_desc.type_index.value].getStructInfo();
+					if (!struct_info) {
+						return {};
+					}
+
+					for (const auto& member_func : struct_info->member_functions) {
+						if (member_func.operator_kind == OverloadableOperator::Call &&
+							member_func.function_decl.is<FunctionDeclarationNode>()) {
+							return canonicalizeType(
+								member_func.function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>());
+						}
+					}
+				}
+
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+				return canonicalizeType(e.function_declaration().decl_node().type_node().template as<TypeSpecifierNode>());
 			}
 			else if constexpr (std::is_same_v<T, StaticCastNode> ||
 			                   std::is_same_v<T, ConstCastNode> ||

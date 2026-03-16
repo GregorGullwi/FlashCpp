@@ -34,7 +34,7 @@ public:
 
 	// Wire in semantic-analysis results so that IR lowering can consume
 	// pre-computed implicit-cast annotations instead of recomputing them.
-	void setSemanticData(const SemanticAnalysis* sema) { sema_ = sema; }
+	void setSemanticData(SemanticAnalysis* sema) { sema_ = sema; }
 
 private:
 	struct MultiDimArrayAccess {
@@ -288,7 +288,6 @@ private:
 	void generateLambdaFunctions(LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
-	void normalizeGenericLambdaParams(LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
 		const std::vector<ASTNode>& captured_var_decls);
 
@@ -626,7 +625,7 @@ private:
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
-	const SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
+	SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;

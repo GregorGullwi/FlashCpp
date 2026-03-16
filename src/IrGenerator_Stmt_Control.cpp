@@ -2,34 +2,6 @@
 #include "IrGenerator.h"
 
 namespace {
-// Ranged-for desugaring synthesizes a fresh variable declaration for each loop
-// iteration. When the source declaration used `auto` or `decltype(auto)`,
-// replace the placeholder with the deduced element type while preserving the
-// original declaration's cv/reference spelling.
-ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
-	const DeclarationNode& original_decl = original_var_decl.declaration();
-	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
-	if (!isPlaceholderAutoType(placeholder_type.type())) {
-		return original_var_decl.declaration_node();
-	}
-
-	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	// Plain `auto` strips references during deduction, so re-apply the user's
-	// explicit qualifier (e.g. `auto&`).  `decltype(auto)` preserves the exact
-	// type category from the deduced expression — do not overwrite.
-	if (placeholder_type.type() == Type::Auto) {
-		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
-		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
-			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
-		}
-	}
-
-	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
-	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
-	resolved_decl.set_type_node(resolved_type_node);
-	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
-}
-
 const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type, bool prefer_const) {
 	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
 		return nullptr;
@@ -67,15 +39,6 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 	return fallback;
 }
 
-std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
-		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-		element_type.set_reference_qualifier(ReferenceQualifier::None);
-		return element_type;
-	}
-
-	return std::nullopt;
-}
 }
 
 	void AstToIr::visitBlockNode(const BlockNode& node) {
@@ -804,7 +767,12 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-		ASTNode loop_decl_node = resolveRangedForLoopDecl(original_var_decl, array_type);
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		if (sema_) {
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(node);
+		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+			throw InternalError("Range-for placeholder loop variable reached array lowering without semantic normalization");
+		}
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
@@ -815,10 +783,12 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
 		);
 
+		symbol_table.enter_scope(ScopeType::Block);
+		auto loop_scope_guard = ScopeGuard([this]() { symbol_table.exit_scope(); });
+
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
-		// Note: visitVariableDeclarationNode will add it to the symbol table
 		visit(loop_var_with_init);
 
 		// Visit loop body - use visit() to properly handle block scopes
@@ -983,28 +953,12 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		// For pointer-based iterators (e.g. int*), stripping one pointer level
 		// gives the element type directly. For struct iterators, use the declared
 		// operator*() return type as the range element type.
-		ASTNode loop_decl_node = [&]() -> ASTNode {
-			if (begin_return_type.pointer_depth() > 0) {
-				TypeSpecifierNode deduced_loop_type = begin_return_type;
-				deduced_loop_type.remove_pointer_level();
-				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
-			}
-
-			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-			if (auto deduced_loop_type = getRangeIteratorElementType(begin_return_type, prefer_const_deref); deduced_loop_type.has_value()) {
-				return resolveRangedForLoopDecl(original_var_decl, *deduced_loop_type);
-			}
-
-			const TypeSpecifierNode& placeholder_type = original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if (isPlaceholderAutoType(placeholder_type.type())) {
-				throw InternalError(std::string(StringBuilder()
-					.append("Could not deduce range-for element type from iterator type '")
-					.append(begin_return_type.getReadableString())
-					.append("'")
-					.commit()));
-			}
-			return original_var_decl.declaration_node();
-		}();
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		if (sema_) {
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(node);
+		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+			throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
+		}
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 
@@ -1052,6 +1006,9 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 				init_expr = dereference_call;
 			}
 		}
+
+		symbol_table.enter_scope(ScopeType::Block);
+		auto loop_scope_guard = ScopeGuard([this]() { symbol_table.exit_scope(); });
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 

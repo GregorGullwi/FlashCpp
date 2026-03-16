@@ -195,10 +195,9 @@
 				// Process from the end (newly added lambdas) backwards
 				size_t current_size = collected_lambdas_.size();
 				for (size_t i = current_size; i > processed_count; --i) {
-					// Normalize in-place via index. normalizeGenericLambdaParams
-					// currently cannot grow collected_lambdas_, but using the index
-					// keeps this robust if that ever changes.
-					normalizeGenericLambdaParams(collected_lambdas_[i - 1]);
+					if (sema_) {
+						sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
+					}
 
 					// Re-access via index after normalization to avoid any stale-
 					// reference risk (the vector could theoretically reallocate).
@@ -227,8 +226,9 @@
 
 			bool generated_deferred_lambda = false;
 			for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
-				// Normalize in-place via index, then re-read to avoid stale references.
-				normalizeGenericLambdaParams(collected_lambdas_[di]);
+				if (sema_) {
+					sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
+				}
 				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {

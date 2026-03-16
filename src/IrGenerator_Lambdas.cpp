@@ -488,23 +488,7 @@
 		);
 	}
 
-	void AstToIr::normalizeGenericLambdaParams(LambdaInfo& lambda_info) {
-		// Lambda generation can revisit the same LambdaInfo when deferred passes
-		// copy entries out of collected_lambdas_. Keep this idempotent so we only
-		// rewrite the parameter nodes once per instantiated generic lambda.
-		if (!sema_ || !lambda_info.is_generic || !lambda_info.resolved_param_nodes.empty() ||
-			lambda_info.deduced_auto_types.empty()) {
-			return;
-		}
-
-		lambda_info.resolved_param_nodes = sema_->normalizeGenericLambdaParams(
-			lambda_info.parameter_nodes,
-			lambda_info.deduced_auto_types);
-	}
-
 	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
-		normalizeGenericLambdaParams(lambda_info);
-
 		// Following Clang's approach, we generate:
 		// 1. operator() - member function with lambda body
 		// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
@@ -692,9 +676,8 @@
 		pushLambdaContext(lambda_info);
 
 		// Add lambda parameters to symbol table as function parameters (operator() context).
-		// For instantiated generic lambdas, register synthetic declarations carrying the
-		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
-		// concrete parameter type instead of the original unresolved `auto`.
+		// Instantiation-time semantic normalization has already rewritten generic
+		// lambda placeholder parameters to their deduced concrete declarations.
 		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
@@ -828,9 +811,8 @@
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context).
-		// For instantiated generic lambdas, register synthetic declarations carrying the
-		// deduced TypeSpecifierNode so identifier lowering inside the body sees the
-		// concrete parameter type instead of the original unresolved `auto`.
+		// Instantiation-time semantic normalization has already rewritten generic
+		// lambda placeholder parameters to their deduced concrete declarations.
 		for (const auto& param_node : param_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
