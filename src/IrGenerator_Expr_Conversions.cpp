@@ -2202,12 +2202,28 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Integer types: the backend's TEST instruction already implements the
 		// correct "nonzero → true, zero → false" semantics.  No conversion needed.
 		//
-		// Floating-point types: the backend uses TEST on integer bit patterns,
-		// which mishandles -0.0 (bit pattern 0x8000000000000000 is nonzero but
-		// semantically false).  Emit an explicit FloatToInt conversion so the
-		// backend receives a proper integer zero/one.
-		// We convert to int32 (not bool8) to avoid register-flush size mismatches
-		// in the backend, then let the TEST instruction handle the zero check.
+		// Floating-point types: we emit a FloatNotEqual comparison against 0.0.
+		// This correctly handles:
+		//   - -0.0: UCOMISD/UCOMISS treats -0.0 == +0.0, so SETNE → 0 (false). ✓
+		//   - Fractional values (e.g. 0.5): 0.5 != 0.0 → SETNE → 1 (true). ✓
+		//   - NaN: unordered comparison → PF=1, SETNE → 1 (truthy per C++20). ✓
+		// The previous FloatToInt (cvttsd2si) truncation was wrong because it
+		// mapped fractional values like 0.5 to integer 0 (false).
+
+		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
+			// Materialize a 0.0 constant with the same float type as the condition.
+			ExprResult zero = makeExprResult(cond.type, cond.size_in_bits, IrOperand{0.0});
+			// Emit: result = (cond != 0.0)
+			TempVar result_var = var_counter.next();
+			BinaryOp bin_op{
+				.lhs = toTypedValue(cond),
+				.rhs = toTypedValue(zero),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
+			// FloatNotEqual returns bool8; promote to Int32 for backend TEST compatibility.
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
+		};
 
 		// 1. Try sema annotation (Phase 6 contextual bool).
 		if (sema_ && cond_node.is<ExpressionNode>()) {
@@ -2220,7 +2236,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				// Only emit an explicit conversion for float/double → bool.
 				// Integer → bool is already handled correctly by the backend (TEST).
 				if (is_floating_point_type(from_type)) {
-					return generateTypeConversion(condition, condition.type, Type::Int, source_token);
+					return emitFloatNonZeroTest(condition);
 				}
 			}
 		}
@@ -2228,7 +2244,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    the backend's TEST instruction operates on integer bit patterns and
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
 		if (is_floating_point_type(condition.type)) {
-			return generateTypeConversion(condition, condition.type, Type::Int, source_token);
+			return emitFloatNonZeroTest(condition);
 		}
 		return condition;
 	}
