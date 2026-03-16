@@ -1009,7 +1009,7 @@ The arity-only heuristic has been replaced by the compiler's real `resolve_overl
 **What is now correct:**
 - Same-arity overloads discriminated by argument type (e.g. `int` vs `double` parameter)
 - Default-argument and variadic candidates ranked by conversion quality
-- Ambiguous calls (no unique best match) leave the call unresolved, letting the existing codegen fallback handle it gracefully
+- Ambiguous calls — where one overload is better on some arguments but worse on others (e.g. `operator()(int,double)` vs `operator()(double,int)` called as `f(1,2)`) — are now detected and reported as a compile error. The fix was in `OverloadResolution.h::resolve_overload`: the "incomparable" case (`this_is_better && this_is_worse`) was previously falling through silently, leaving the first-declared overload as the winner. It is now counted as a tied candidate, causing `num_best_matches > 1` and triggering the ambiguity path.
 
 **Remaining gaps:**
 - Ref/rvalue-reference qualification: `inferExpressionType` does not propagate value-category (lvalue/rvalue) onto the inferred `TypeSpecifierNode`, so overloads distinguished only by `T&` vs `T&&` still score identically. Full lvalue/rvalue tracking in sema type inference would close this gap.
@@ -1018,6 +1018,7 @@ The arity-only heuristic has been replaced by the compiler's real `resolve_overl
 
 **Test coverage added:**
 - `tests/test_operator_call_ret30.cpp` updated: the `int` and `double` overloads now return distinct values (`x` vs `x*5`), so the expected return of 30 is only achievable when `adder(5.0)` correctly selects the `double` overload.
+- `tests/test_operator_call_ambiguous_fail.cpp` added: verifies that cross-wise overloads like `operator()(int,double)` / `operator()(double,int)` called with `f(1,2)` are rejected with a compile error rather than silently resolved.
 
 ### Parallel rollout guidance
 

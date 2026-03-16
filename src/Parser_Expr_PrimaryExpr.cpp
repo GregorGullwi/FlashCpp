@@ -4805,6 +4805,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Find the best operator() overload using type-based overload resolution.
 					// Falls back to arity-only selection when argument types cannot be determined.
 					const FunctionDeclarationNode* operator_call_func = nullptr;
+					bool op_explicitly_ambiguous = false;
 
 					// Build candidate list for resolve_overload.
 					std::vector<ASTNode> op_candidates;
@@ -4819,7 +4820,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Try type-based overload resolution first.
 						std::vector<TypeSpecifierNode> op_arg_types;
 						bool all_op_types_known = true;
-						bool op_explicitly_ambiguous = false;
 						for (const auto& arg : args) {
 							auto arg_type = get_expression_type(arg);
 							if (arg_type.has_value()) {
@@ -4862,7 +4862,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 
 					if (!operator_call_func) {
-						return ParseResult::error("operator() not found in struct", identifier_token);
+						const char* err_msg = op_explicitly_ambiguous
+							? "call to overloaded operator() is ambiguous"
+							: "operator() not found in struct";
+						return ParseResult::error(err_msg, identifier_token);
 					}
 
 					Token operator_token(Token::Type::Identifier, "operator()"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());

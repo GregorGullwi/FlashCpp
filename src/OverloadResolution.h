@@ -735,12 +735,16 @@ inline OverloadResolutionResult resolve_overload(
 				num_best_matches = 1;
 				tied_candidates.clear();
 				tied_candidates.push_back(&overload);
-			} else if (!this_is_better && !this_is_worse) {
-				// This overload is equally good - ambiguous
+			} else if (!this_is_better && this_is_worse) {
+				// This overload is strictly worse — skip it
+			} else {
+				// This overload is equally good on every argument (exact tie) OR
+				// better on some arguments and worse on others (incomparable).
+				// In both cases neither this candidate nor the current best dominates
+				// the other, so the call is potentially ambiguous.
 				num_best_matches++;
 				tied_candidates.push_back(&overload);
 			}
-			// If this_is_worse, ignore this overload
 		}
 	}
 	
