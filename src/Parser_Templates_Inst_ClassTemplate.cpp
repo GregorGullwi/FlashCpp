@@ -5859,7 +5859,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					restore_lexer_position_only(out_of_line_member.body_start);
 					
 					// Parse the function body (handles function-try-blocks too)
-					auto body_result = parse_function_body();
+					// Pass true for is_ctor_or_dtor so constructor function-try-blocks
+					// get the C++20 [except.handle]/15 implicit rethrow at catch handler ends.
+					auto body_result = parse_function_body(true /* is_ctor_or_dtor */);
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
 					restore_lexer_position_only(saved_pos);
