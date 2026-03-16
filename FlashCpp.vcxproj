@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -21,7 +21,11 @@
       <Configuration>Modular</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
-  <ProjectConfiguration Include="Sharded|x64"><Configuration>Sharded</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
+    <ProjectConfiguration Include="Sharded|x64">
+      <Configuration>Sharded</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{3AB9F4D0-719E-42DD-80A0-5297FE82E5AE}</ProjectGuid>
@@ -59,7 +63,13 @@
     <PlatformToolset>ClangCL</PlatformToolset>
     <ClangToolsetVersion>19</ClangToolsetVersion>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>ClangCL</PlatformToolset><ClangToolsetVersion>19</ClangToolsetVersion></PropertyGroup><Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>ClangCL</PlatformToolset>
+    <ClangToolsetVersion>19</ClangToolsetVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
   <ImportGroup Label="Shared" />
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -77,7 +87,10 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Modular|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup><PropertyGroup Label="UserMacros">
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros">
     <LLVMInstallDir>C:\Program Files\LLVM</LLVMInstallDir>
     <BenchmarkOutputFile>$(OutDir)benchmark.exe</BenchmarkOutputFile>
   </PropertyGroup>
@@ -104,7 +117,13 @@
     <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
     <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath><LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath><UseMultiToolTask>true</UseMultiToolTask><MultiProcMaxCount>4</MultiProcMaxCount></PropertyGroup><PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'">
+    <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
+    <UseMultiToolTask>true</UseMultiToolTask>
+    <MultiProcMaxCount>4</MultiProcMaxCount>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
     <IncludePath>$(LLVMInstallDir)\llvm\include;$(LLVMInstallDir)\clang\include;$(LLVMInstallDir)\build\include;$(IncludePath)</IncludePath>
     <LibraryPath>$(LLVMInstallDir)\build\Release\lib;$(LibraryPath)</LibraryPath>
     <TargetName>test</TargetName>
@@ -197,7 +216,24 @@
       <StackReserveSize>8388608</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'"><ClCompile><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><DebugInformationFormat>ProgramDatabase</DebugInformationFormat><AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions><UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions><Optimization>Disabled</Optimization><WarningLevel>Level3</WarningLevel></ClCompile><Link><AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies><AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories><StackReserveSize>8388608</StackReserveSize></Link></ItemDefinitionGroup><ItemGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'">
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>external;src;tests\external\doctest;$(LLVMInstallDir)\include;$(LLVMInstallDir)\lib\clang\19.1.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalOptions>-fms-compatibility -fms-extensions /clang:-Wno-unused-variable %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>USE_LLVM;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions>
+      <Optimization>Disabled</Optimization>
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <StackReserveSize>8388608</StackReserveSize>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
     <ClCompile Include="src\AstNodeTypes.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -509,6 +545,8 @@
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <LanguageStandard Condition="'$(Configuration)|$(Platform)'=='Release|x64'">stdcpp20</LanguageStandard>
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Test|x64'">Disabled</Optimization>
+      <MultiProcessorCompilation Condition="'$(Configuration)|$(Platform)'=='Modular|x64'">true</MultiProcessorCompilation>
+      <MultiProcessorCompilation Condition="'$(Configuration)|$(Platform)'=='Sharded|x64'">true</MultiProcessorCompilation>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -527,4 +565,24 @@
       <AdditionalLibraryDirectories>$(LLVMInstallDir)\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
-<ItemGroup><ClCompile Include="src\UnitySupport.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityParser.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityParserTemplates.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup><ItemGroup><ClCompile Include="src\UnityBackend.cpp"><ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild></ClCompile></ItemGroup></Project>
+  <ItemGroup>
+    <ClCompile Include="src\UnitySupport.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\UnityParser.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\UnityParserTemplates.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\UnityBackend.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Sharded'">true</ExcludedFromBuild>
+    </ClCompile>
+  </ItemGroup>
+</Project>
