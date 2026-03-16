@@ -232,7 +232,12 @@
 				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
-					if (di == deferred_scan_start) {
+					// Only advance the scan window past non-generic lambdas.
+					// Generic lambdas with empty deduced_auto_types may become
+					// ready later (e.g., a call site in a subsequently generated
+					// lambda body populates their deduced types), so they must
+					// remain in the scan window.
+					if (di == deferred_scan_start && !stored_lambda_info.is_generic) {
 						deferred_scan_start = di + 1;
 					}
 					continue;
