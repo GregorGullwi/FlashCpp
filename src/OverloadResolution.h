@@ -49,8 +49,10 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 // Check if one type can be implicitly converted to another
 // Returns the conversion rank
 inline TypeConversionResult can_convert_type(Type from, Type to) {
-	// Exact match
-	if (from == to) {
+	// Exact match — but NOT for Struct==Struct, because the Type-only overload
+	// has no type_index and cannot distinguish same-struct from different-struct.
+	// Struct==Struct is handled below as UserDefined (optimistic).
+	if (from == to && from != Type::Struct) {
 		return TypeConversionResult::exact_match();
 	}
 	
@@ -123,6 +125,19 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 	
 	// User-defined conversions: primitive-to-struct (converting constructors)
 	if (to == Type::Struct && from != Type::Struct) {
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+
+	// Struct-to-struct: the Type-only overload has no type_index, so when
+	// both are Type::Struct we don't know whether they're the same struct.
+	// The from==to check at line 53 already returned exact_match for the
+	// same-type case, but callers from the reference paths (lines 356, 412)
+	// strip references and pass resolved Type enums — losing type_index.
+	// Return UserDefined so that overload resolution ranks same-struct
+	// (ExactMatch via the TypeSpecifierNode overload) above different-struct.
+	// NOTE: this is still optimistic — sema/codegen must verify the
+	// converting constructor actually exists.
+	if (from == Type::Struct && to == Type::Struct) {
 		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
 	
