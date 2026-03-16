@@ -784,7 +784,13 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		);
 
 		symbol_table.enter_scope(ScopeType::Block);
-		auto loop_scope_guard = ScopeGuard([this]() { symbol_table.exit_scope(); });
+		enterScope();
+		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+		auto loop_scope_guard = ScopeGuard([this]() {
+			exitScope();
+			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+			symbol_table.exit_scope();
+		});
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
@@ -1013,7 +1019,13 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		}
 
 		symbol_table.enter_scope(ScopeType::Block);
-		auto loop_scope_guard = ScopeGuard([this]() { symbol_table.exit_scope(); });
+		enterScope();
+		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+		auto loop_scope_guard = ScopeGuard([this]() {
+			exitScope();
+			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+			symbol_table.exit_scope();
+		});
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
