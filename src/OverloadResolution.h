@@ -729,12 +729,49 @@ inline OverloadResolutionResult resolve_overload(
 			}
 			
 			if (this_is_better && !this_is_worse) {
-				// This overload is strictly better
+				// This overload is strictly better than the current best.
+				// Re-evaluate all previously accumulated tied/incomparable
+				// candidates against the new best ranks — any that are not
+				// strictly worse must be kept so that ambiguity is detected.
+				std::vector<const ASTNode*> old_tied = std::move(tied_candidates);
 				best_match = &overload;
 				best_ranks = conversion_ranks;
 				num_best_matches = 1;
 				tied_candidates.clear();
 				tied_candidates.push_back(&overload);
+				for (const auto* prev : old_tied) {
+					if (prev == &overload) continue;
+					// We need the conversion ranks for prev — recompute them.
+					const FunctionDeclarationNode* prev_func = &prev->as<FunctionDeclarationNode>();
+					const auto& prev_params = prev_func->parameter_nodes();
+					size_t prev_params_to_check = std::min(prev_params.size(), argument_types.size());
+					std::vector<ConversionRank> prev_ranks;
+					bool prev_valid = true;
+					for (size_t k = 0; k < prev_params_to_check; ++k) {
+						const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						auto conv = can_convert_type(argument_types[k], pt);
+						if (!conv.is_valid) { prev_valid = false; break; }
+						prev_ranks.push_back(conv.rank);
+					}
+					if (prev_func->is_variadic()) {
+						for (size_t k = prev_params_to_check; k < argument_types.size(); ++k)
+							prev_ranks.push_back(ConversionRank::ExactMatch);
+					}
+					if (!prev_valid) continue;
+					// Compare prev against the new best.
+					bool prev_better = false, prev_worse = false;
+					for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
+						if (prev_ranks[k] < best_ranks[k]) prev_better = true;
+						else if (prev_ranks[k] > best_ranks[k]) prev_worse = true;
+					}
+					if (!prev_better && prev_worse) {
+						// Strictly worse than new best — discard.
+					} else {
+						// Tied or incomparable — keep for ambiguity detection.
+						num_best_matches++;
+						tied_candidates.push_back(prev);
+					}
+				}
 			} else if (!this_is_better && this_is_worse) {
 				// This overload is strictly worse — skip it
 			} else {
