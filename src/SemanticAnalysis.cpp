@@ -983,6 +983,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				tryAnnotateCallArgConversions(e);
+				tryResolveCallableOperator(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
@@ -1168,6 +1169,11 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	if (it != semantic_slots_.end())
 		return it->second;
 	return std::nullopt;
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
+	auto it = op_call_table_.find(key);
+	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
 void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
@@ -1463,6 +1469,64 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Callable operator() resolution ---
+
+void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_node) {
+	// Identify the callee: use the identifier token stored in the call's function_declaration.
+	// For a callable object `f(args)`, function_declaration() holds the DeclarationNode of
+	// the variable `f`; its identifier token gives us the lookup name.
+	const DeclarationNode& callee_decl = call_node.function_declaration();
+	const StringHandle callee_name = callee_decl.identifier_token().handle();
+	if (!callee_name.isValid()) return;
+
+	// Look up the callee's canonical type from the current scope stack.
+	// This correctly handles shadowed names: if a local variable `apply` of struct type
+	// shadows a free function `apply`, lookupLocalType returns the struct type.
+	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+	if (!callee_type_id) return;
+
+	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+	if (callee_desc.base_type != Type::Struct) return;
+	if (!callee_desc.type_index.is_valid()) return;
+	if (callee_desc.type_index.value >= gTypeInfo.size()) return;
+
+	const StructTypeInfo* struct_info = gTypeInfo[callee_desc.type_index.value].getStructInfo();
+	if (!struct_info) return;
+
+	const size_t arg_count = call_node.arguments().size();
+
+	// Select the best operator() overload: exact arity match first, sole candidate as fallback.
+	const FunctionDeclarationNode* best_match = nullptr;
+	const FunctionDeclarationNode* sole_candidate = nullptr;
+	size_t candidate_count = 0;
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Call) continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+		++candidate_count;
+		if (!sole_candidate) sole_candidate = &candidate;
+		if (candidate.parameter_nodes().size() == arg_count) {
+			best_match = &candidate;
+			break;
+		}
+	}
+
+	// Fall back to the sole overload only when no exact arity match was found.
+	if (!best_match && candidate_count == 1)
+		best_match = sole_candidate;
+
+	if (!best_match) return;
+
+	op_call_table_[&call_node] = best_match;
+	stats_.op_calls_resolved++;
+
+	FLASH_LOG_FORMAT(General, Debug,
+		"SemanticAnalysis: resolved operator() for '{}' → {} params",
+		callee_decl.identifier_token().value(),
+		best_match->parameter_nodes().size());
 }
 
 // --- Function call argument conversion annotation ---

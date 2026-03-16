@@ -43,6 +43,10 @@ public:
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
 
+	// Look up the pre-resolved callable operator() for a FunctionCallNode.
+	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
+	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
+
 	// Instantiation-time semantic hook for generic lambda parameter normalization.
 	std::vector<ASTNode> normalizeGenericLambdaParams(
 		const std::vector<ASTNode>& parameter_nodes,
@@ -109,6 +113,11 @@ private:
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
 
+	// Resolve the callable operator() for a FunctionCallNode whose callee is a struct-typed
+	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
+	// consume it without performing its own member-function lookup.
+	void tryResolveCallableOperator(const FunctionCallNode& call_node);
+
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).
 	void pushScope();
@@ -126,6 +135,10 @@ private:
 
 	// Side table: expression node pointer → semantic slot.
 	std::unordered_map<const void*, SemanticSlot> semantic_slots_;
+
+	// Side table: FunctionCallNode pointer → resolved operator() declaration.
+	// Populated by tryResolveCallableOperator for struct-typed callable objects.
+	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;

@@ -4799,14 +4799,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					TypeIndex type_index = type_node.type_index();
 					const TypeInfo& type_info = gTypeInfo[type_index.value];
 
-					// Find operator() in member functions
+					// Find the best operator() overload: prefer exact arity match, fall back to sole candidate.
 					const FunctionDeclarationNode* operator_call_func = nullptr;
+					const FunctionDeclarationNode* sole_op_candidate = nullptr;
+					size_t op_candidate_count = 0;
 					for (const auto& member_func : type_info.struct_info_->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Call) {
-							operator_call_func = &member_func.function_decl.as<FunctionDeclarationNode>();
-							break;
+						if (member_func.operator_kind == OverloadableOperator::Call &&
+							member_func.function_decl.is<FunctionDeclarationNode>()) {
+							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+							++op_candidate_count;
+							if (!sole_op_candidate) sole_op_candidate = &candidate;
+							if (candidate.parameter_nodes().size() == args.size()) {
+								operator_call_func = &candidate;
+								break;
+							}
 						}
 					}
+					if (!operator_call_func && op_candidate_count == 1)
+						operator_call_func = sole_op_candidate;
 
 					if (!operator_call_func) {
 						return ParseResult::error("operator() not found in struct", identifier_token);

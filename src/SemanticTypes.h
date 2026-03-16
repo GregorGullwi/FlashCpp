@@ -266,4 +266,5 @@ struct SemanticPassStats {
 	size_t structural_rewrites = 0;
 	size_t cast_infos_allocated = 0;
 	size_t canonical_types_interned = 0;
+	size_t op_calls_resolved = 0;  // callable-object operator() calls pre-resolved by sema
 };
