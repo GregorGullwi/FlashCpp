@@ -998,6 +998,14 @@ Implementation notes:
 - Instantiated generic-lambda callable mangling now consumes the sema-normalized lambda return type instead of the template-pattern `operator()` return type, fixing MSVC unresolved-placeholder mangling on callable-parameter cases.
 - Range-for struct-iterator dereference lookup is now sema-owned and cached on `RangedForStatementNode`, so lowering reuses the resolved `operator*()` target instead of re-deriving it independently.
 
+#### Remaining follow-up: callable-object `operator()` resolution
+
+`inferExpressionType` for `FunctionCallNode` (in `SemanticAnalysis.cpp`) currently picks the **first** `operator()` it finds on a callable struct. This is incorrect when the struct has multiple overloaded `operator()`s with different return types — it should match by argument arity, mirroring the logic already present in `IrGenerator_Call_Direct.cpp:176-197` (exact arity match wins, single-candidate fallback otherwise).
+
+**Short-term fix:** add arity-based `operator()` selection to `inferExpressionType` so sema and codegen agree on the resolved overload.
+
+**Long-term goal:** move callable-object `operator()` resolution entirely into semantic analysis. Sema should annotate the `FunctionCallNode` (or rewrite it to a `MemberFunctionCallNode`) with the resolved `operator()` target and its return type, so codegen at `IrGenerator_Call_Direct.cpp:171-215` can consume the annotation instead of performing its own `gTypeInfo` lookup and overload iteration. This eliminates a REVIEW.md-flagged architectural violation where codegen owns semantic resolution logic.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
