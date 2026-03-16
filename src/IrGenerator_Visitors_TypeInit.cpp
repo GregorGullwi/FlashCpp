@@ -240,7 +240,6 @@
 					if (di == deferred_scan_start && (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty())) {
 						deferred_scan_start = di + 1;
 					}
-					}
 					continue;
 				}
 				if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {
