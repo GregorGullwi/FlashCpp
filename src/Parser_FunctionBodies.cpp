@@ -679,6 +679,35 @@ void Parser::finalize_function_after_definition(FunctionDeclarationNode& func_no
 	compute_and_set_mangled_name(func_node, force_recompute_mangled_name);
 }
 
+namespace {
+bool functionSignatureHasUnresolvedPlaceholder(const FunctionDeclarationNode& func_node) {
+	const DeclarationNode& decl_node = func_node.decl_node();
+	if (decl_node.type_node().is<TypeSpecifierNode>() &&
+		isPlaceholderAutoType(decl_node.type_node().as<TypeSpecifierNode>().type())) {
+		return true;
+	}
+
+	for (const auto& param_node : func_node.parameter_nodes()) {
+		const DeclarationNode* param_decl = nullptr;
+		if (param_node.is<DeclarationNode>()) {
+			param_decl = &param_node.as<DeclarationNode>();
+		} else if (param_node.is<VariableDeclarationNode>()) {
+			param_decl = &param_node.as<VariableDeclarationNode>().declaration();
+		}
+
+		if (!param_decl || !param_decl->type_node().is<TypeSpecifierNode>()) {
+			continue;
+		}
+
+		if (isPlaceholderAutoType(param_decl->type_node().as<TypeSpecifierNode>().type())) {
+			return true;
+		}
+	}
+
+	return false;
+}
+}
+
 // Phase 6 (mangling): Generate and set mangled name on a FunctionDeclarationNode
 // This should be called after all function properties are set (parameters, variadic flag, etc.)
 // Note: The mangled name is stored as a string_view pointing to ChunkedStringAllocator storage
@@ -690,15 +719,14 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 		return;
 	}
 
-	const DeclarationNode& decl_node = func_node.decl_node();
-	if (decl_node.type_node().is<TypeSpecifierNode>()) {
-		const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
-		if (isPlaceholderAutoType(return_type.type()) && !func_node.get_definition().has_value()) {
-			// A declaration-only function with placeholder return type cannot be mangled yet.
-			// Wait until a definition/body is attached and the signature is finalized.
-			return;
-		}
+	if (functionSignatureHasUnresolvedPlaceholder(func_node)) {
+		// Placeholder auto normalization now completes after parsing on some paths
+		// (for example, function-try-block bodies and generic-lambda instantiations).
+		// Defer mangling until the full signature is concrete.
+		return;
 	}
+
+	const DeclarationNode& decl_node = func_node.decl_node();
 	
 	// C linkage functions don't get mangled - just use the function name as-is
 	if (func_node.linkage() == Linkage::C) {

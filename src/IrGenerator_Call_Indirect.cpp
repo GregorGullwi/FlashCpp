@@ -1014,6 +1014,7 @@
 
 			// Vector to hold deduced parameter types (populated for generic lambdas)
 			std::vector<TypeSpecifierNode> param_types;
+			std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
 			// Check if this is an instantiated template function
 			std::string_view func_name = func_decl_node.identifier_token().value();
@@ -1070,8 +1071,10 @@
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
 
-					// Get return type and parameter types from the function declaration
-					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
+					// Get return type and parameter types from the function declaration.
+					// Generic lambda calls can refine this below once sema has normalized
+					// the instantiated lambda body with concrete argument types.
+					const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
 
 					// Check if this is a generic lambda call (lambda with auto parameters)
 					bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
@@ -1131,6 +1134,8 @@
 							}
 						});
 
+						LambdaInfo* matched_lambda_info = nullptr;
+
 						// Now build param_types with deduced types for auto parameters
 						size_t arg_idx = 0;
 						for (const auto& param_node : func_for_mangling->parameter_nodes()) {
@@ -1147,6 +1152,7 @@
 									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
 									for (auto& lambda_info : collected_lambdas_) {
 										if (lambda_info.closure_type_name == struct_name) {
+											matched_lambda_info = &lambda_info;
 											lambda_info.setDeducedType(arg_idx, deduced_type);
 											break;
 										}
@@ -1156,6 +1162,22 @@
 								}
 							}
 							arg_idx++;
+						}
+
+						if (matched_lambda_info && sema_) {
+							sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
+							if (!isPlaceholderAutoType(matched_lambda_info->return_type)) {
+								resolved_generic_return_type.emplace(
+									matched_lambda_info->return_type,
+									matched_lambda_info->return_type_index,
+									matched_lambda_info->return_size,
+									matched_lambda_info->lambda_token);
+								if (matched_lambda_info->returns_reference) {
+									resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
+									resolved_generic_return_type->set_size_in_bits(64);
+								}
+								mangling_return_type = &*resolved_generic_return_type;
+							}
 						}
 					} else {
 						// Non-lambda: use parameter types directly from declaration
@@ -1181,7 +1203,7 @@
 					// Generate proper mangled name including parameter types
 					std::string_view mangled = generateMangledNameForCall(
 						func_name,
-						return_type_node,
+						*mangling_return_type,
 						param_types,
 						func_for_mangling->is_variadic(),
 						struct_name_view,
@@ -1203,7 +1225,9 @@
 			// Use called_member_func if available (has the substituted template types)
 			// Otherwise fall back to func_decl or func_decl_node
 			const TypeSpecifierNode* return_type_ptr = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			if (resolved_generic_return_type.has_value()) {
+				return_type_ptr = &*resolved_generic_return_type;
+			} else if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>();
 			} else {
 				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();

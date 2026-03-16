@@ -1846,18 +1846,18 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	
 	// Get the function body
 	const std::optional<ASTNode>& body_opt = func_decl.get_definition();
-	if (!body_opt.has_value() || !body_opt->is<BlockNode>()) {
+	if (!body_opt.has_value()) {
 		FLASH_LOG(Parser, Debug, "  No body or invalid body");
-		return;  // No body or invalid body
+		return;  // No body
 	}
 	
 	// Walk through the function body to find return statements
-	const BlockNode& body = body_opt->as<BlockNode>();
+	const ASTNode& body = *body_opt;
 	std::optional<TypeSpecifierNode> deduced_type;
 	std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
 	
 	// Recursive lambda to search for return statements
-	std::function<void(const ASTNode&)> find_return_statements = [&](const ASTNode& node) {
+	auto find_return_statements = [&](const auto& self, const ASTNode& node) -> void {
 		if (node.is<ReturnStatementNode>()) {
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
 			if (ret.expression().has_value()) {
@@ -1880,54 +1880,63 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			// Recursively search nested blocks
 			const BlockNode& block = node.as<BlockNode>();
 			block.get_statements().visit([&](const ASTNode& stmt) {
-				find_return_statements(stmt);
+				self(self, stmt);
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 			if (if_stmt.get_then_statement().has_value()) {
-				find_return_statements(if_stmt.get_then_statement());
+				self(self, if_stmt.get_then_statement());
 			}
 			if (if_stmt.get_else_statement().has_value()) {
-				find_return_statements(*if_stmt.get_else_statement());
+				self(self, *if_stmt.get_else_statement());
 			}
 		} else if (node.is<ForStatementNode>()) {
 			const ForStatementNode& for_stmt = node.as<ForStatementNode>();
 			if (for_stmt.get_body_statement().has_value()) {
-				find_return_statements(for_stmt.get_body_statement());
+				self(self, for_stmt.get_body_statement());
 			}
 		} else if (node.is<WhileStatementNode>()) {
 			const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
 			if (while_stmt.get_body_statement().has_value()) {
-				find_return_statements(while_stmt.get_body_statement());
+				self(self, while_stmt.get_body_statement());
 			}
 		} else if (node.is<DoWhileStatementNode>()) {
 			const DoWhileStatementNode& do_while = node.as<DoWhileStatementNode>();
 			if (do_while.get_body_statement().has_value()) {
-				find_return_statements(do_while.get_body_statement());
+				self(self, do_while.get_body_statement());
 			}
 		} else if (node.is<SwitchStatementNode>()) {
 			const SwitchStatementNode& switch_stmt = node.as<SwitchStatementNode>();
 			if (switch_stmt.get_body().has_value()) {
-				find_return_statements(switch_stmt.get_body());
+				self(self, switch_stmt.get_body());
 			}
 		} else if (node.is<CaseLabelNode>()) {
 			const CaseLabelNode& case_node = node.as<CaseLabelNode>();
 			if (case_node.has_statement()) {
-				find_return_statements(*case_node.get_statement());
+				self(self, *case_node.get_statement());
 			}
 		} else if (node.is<DefaultLabelNode>()) {
 			const DefaultLabelNode& default_node = node.as<DefaultLabelNode>();
 			if (default_node.has_statement()) {
-				find_return_statements(*default_node.get_statement());
+				self(self, *default_node.get_statement());
 			}
+		} else if (node.is<TryStatementNode>()) {
+			const auto& try_stmt = node.as<TryStatementNode>();
+			self(self, try_stmt.try_block());
+			for (const auto& handler : try_stmt.catch_clauses()) {
+				if (handler.is<CatchClauseNode>()) {
+					self(self, handler.as<CatchClauseNode>().body());
+				}
+			}
+		} else if (node.is<RangedForStatementNode>()) {
+			const auto& ranged_for = node.as<RangedForStatementNode>();
+			self(self, ranged_for.get_body_statement());
 		}
 		// Add more statement types as needed
 	};
 	
 	// Search the function body
-	body.get_statements().visit([&](const ASTNode& stmt) {
-		find_return_statements(stmt);
-	});
+	find_return_statements(find_return_statements, body);
 	
 	// Validate that all return statements have compatible types
 	if (all_return_types.size() > 1) {
