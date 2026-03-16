@@ -2220,7 +2220,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				// Only emit an explicit conversion for float/double → bool.
 				// Integer → bool is already handled correctly by the backend (TEST).
 				if (is_floating_point_type(from_type)) {
-					return generateTypeConversion(condition, from_type, Type::Int, source_token);
+					return generateTypeConversion(condition, condition.type, Type::Int, source_token);
 				}
 			}
 		}
