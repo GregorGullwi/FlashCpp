@@ -710,7 +710,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 		}
 		
-		if (type_specifier.type() == Type::Auto) {
+		if (isPlaceholderAutoType(type_specifier.type())) {
 			const bool is_trailing_return_type = (peek() == "->"_tok);
 			if (is_trailing_return_type) {
 				// Build param list for the helper
@@ -748,6 +748,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				if (params[i].is<DeclarationNode>()) {
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					// Only plain `auto` forms abbreviated function template parameters.
+					// `decltype(auto)` is not permitted here by C++20 [dcl.spec.auto]/3.
 					if (param_type.type() == Type::Auto) {
 						std::string_view concept_constraint = param_type.has_concept_constraint() ? param_type.concept_constraint() : std::string_view{};
 						auto_params.push_back({i, param_decl.identifier_token(), concept_constraint});

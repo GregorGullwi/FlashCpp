@@ -84,7 +84,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	} else {
 		FLASH_LOG(Templates, Debug, "Template instantiation: no token after params");
 	}
-	if (return_type.type() == Type::Auto && peek() == "->"_tok) {
+	if (isPlaceholderAutoType(return_type.type()) && peek() == "->"_tok) {
 		// Save position of '->' for SFINAE re-parsing of trailing return type
 		SaveHandle trailing_pos = save_token_position();
 		func_decl.set_trailing_return_type_position(trailing_pos);

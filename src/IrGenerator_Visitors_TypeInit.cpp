@@ -189,6 +189,7 @@
 
 		// Process until no new lambdas are added
 		size_t processed_count = 0;
+		size_t deferred_scan_start = 0;
 		while (true) {
 			while (processed_count < collected_lambdas_.size()) {
 				// Process from the end (newly added lambdas) backwards
@@ -225,12 +226,20 @@
 			}
 
 			bool generated_deferred_lambda = false;
-			for (size_t di = 0; di < collected_lambdas_.size(); ++di) {
+			for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
 				// Normalize in-place via index, then re-read to avoid stale references.
 				normalizeGenericLambdaParams(collected_lambdas_[di]);
 				LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 				if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
+					// Only advance the scan window past non-generic lambdas.
+					// Generic lambdas with empty deduced_auto_types may become
+					// ready later (e.g., a call site in a subsequently generated
+					// lambda body populates their deduced types), so they must
+					// remain in the scan window.
+					if (di == deferred_scan_start && (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty())) {
+						deferred_scan_start = di + 1;
+					}
 					continue;
 				}
 				if (generated_lambda_ids_.find(stored_lambda_info.lambda_id) != generated_lambda_ids_.end()) {

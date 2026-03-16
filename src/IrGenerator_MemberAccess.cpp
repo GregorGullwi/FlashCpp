@@ -841,12 +841,13 @@
 		return true;
 	}
 
-	ExprResult AstToIr::makeMemberResult(Type type, int size_bits, TempVar result_var, TypeIndex type_index) {
+	ExprResult AstToIr::makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth) {
 		ExprResult result;
 		result.type = type;
 		result.ir_type = toIrType(type);
-		result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
+		result.size_in_bits = size_bits;
 		result.value = result_var;
+		result.pointer_depth = pointer_depth;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
 		if (type == Type::Struct ||
@@ -1203,7 +1204,8 @@
 
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
-			return makeMemberResult(static_member->type, sm_size_bits, result_var, static_member->type_index);
+			return makeMemberResult(static_member->type, SizeInBits{sm_size_bits}, result_var, static_member->type_index,
+				PointerDepth{static_cast<int>(static_member->pointer_depth)});
 		}
 
 		// Use recursive lookup to find instance members in base classes as well
@@ -1309,7 +1311,8 @@
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
 		if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
-			return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
+			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+				PointerDepth{member->pointer_depth});
 		}
 
 		// Add the member access instruction (Load context - default)
@@ -1327,7 +1330,8 @@
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
 		}
 
-		return makeMemberResult(member->type, member_size_bits, result_var, member->type_index);
+		return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+			PointerDepth{member->pointer_depth});
 	}
 
 	std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
