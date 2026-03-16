@@ -62,6 +62,10 @@ Repeated registration of function parameters:
 | Parser_Templates_Function.cpp | 136-137 |
 | Parser_Templates_Function.cpp | 382-389 |
 
+Note: this area already has a shared helper (`register_parameters_in_scope()` in
+`Parser_FunctionBodies.cpp`). The duplication problem is not lack of infrastructure,
+but inconsistent adoption across parsing paths.
+
 ### 4. Member Function Lookup
 
 Similar iteration to find matching member function:
@@ -80,6 +84,11 @@ Two separate functions with overlapping logic:
 |----------|----------|---------|
 | parse_function_body() | Parser_FunctionBodies.cpp:442 | Block, try-block, initializer list |
 | parse_delayed_function_body() | Parser_FunctionBodies.cpp:185 | Same patterns |
+
+This duplication is more important than it first appears: body/scope setup
+divergence has already been a source of behavior bugs. Because
+`parse_function_body_with_context()` already exists, finishing that unification is
+the most leverage-per-change item in this plan.
 
 ## Existing Shared Infrastructure
 
@@ -101,16 +110,54 @@ The codebase already contains unifying constructs:
 
 ## Proposed Refactoring
 
-### Priority 1: Extract 'this' Pointer Setup
+### Priority 1: Unify Delayed Function Body Entry
 
-Create helper function:
+Refactor `parse_delayed_function_body()` so it reuses
+`parse_function_body_with_context()` (or a shared lower-level helper directly under
+it) for scope setup, `this` injection, parameter registration, and body parsing.
+
+Why first:
+- This is the highest-value behavior-preserving cleanup already supported by
+  existing infrastructure.
+- It reduces the chance of scope/context drift between immediate and delayed
+  parsing paths.
+- It creates the right seam for the smaller extractions below instead of
+  introducing one-off helpers first.
+
+**Affected locations:** `Parser_FunctionBodies.cpp` primary, with follow-up call-site
+cleanup in declaration/template entry points.
+
+### Priority 2: Replace Standalone 'this' Setup with a Unified Function-Entry Helper
+
+Instead of a narrow helper that only injects `this`, create one shared helper or
+RAII object that owns **all** per-function parser entry work:
+
+- enter function scope
+- inject `this` when appropriate
+- register parameters
+- push/pop member-function context
+- set/restore `current_function_`
+
+Suggested shape:
 ```cpp
-void setup_this_pointer(StringHandle class_name, TypeIndex type_index);
+class FunctionParsingScopeGuard {
+public:
+    FunctionParsingScopeGuard(Parser& parser,
+                             const FunctionParsingContext& ctx,
+                             const ParsedFunctionHeader& header,
+                             FunctionDeclarationNode* current_function);
+    ~FunctionParsingScopeGuard();
+};
 ```
 
-**Affected locations:** 4 (estimated 60 lines total)
+If a full guard is too much for one PR, a helper function returning a small
+state/cleanup object is still preferable to a `setup_this_pointer(...)` helper,
+because the current duplication is about **entry protocol**, not just one symbol.
 
-### Priority 2: Extract Constructor Detection
+**Affected locations:** all current ad-hoc function scope setup blocks, including
+`Parser_Decl_FunctionOrVar.cpp` and `Parser_FunctionBodies.cpp`.
+
+### Priority 3: Extract Constructor Detection
 
 Create helper function:
 ```cpp
@@ -121,24 +168,29 @@ std::optional<ConstructorInfo> detect_constructor_or_destructor_pattern(
 
 **Affected locations:** 2 (estimated 80 lines total)
 
-### Priority 3: Member Function Lookup Helper
+### Priority 4: Member Function Lookup Helper
 
 Create helper function:
 ```cpp
 const StructMemberFunction* find_member_function_by_signature(
-    const StructDeclarationNode& struct_decl,
+    TypeIndex struct_type_index,
     StringHandle name,
     const MemberQualifiers& quals,
     size_t param_count);
 ```
 
-**Affected locations:** 3 (estimated 120 lines total)
+Prefer a `TypeIndex` / `StructTypeInfo`-based API over a
+`StructDeclarationNode`-only API, so the helper works for:
 
-### Priority 4: Unified Body Parsing
+- template instantiations
+- inherited members
+- delayed/lazy member materialization paths
+- code that no longer has a convenient AST declaration node
 
-Refactor `parse_delayed_function_body()` to use `parse_function_body_with_context()`.
+If signature matching grows beyond simple arity/qualifier checks, consider passing
+the already-parsed header or a small comparison struct instead of only `param_count`.
 
-**Affected locations:** 2 functions, estimated 200 lines
+**Affected locations:** 3 primary call sites, with likely follow-up reuse elsewhere.
 
 ### Priority 5: Consistent Function Header Parsing
 
@@ -173,9 +225,22 @@ Member function pointers are **types**, handled in declarator parsing:
 - **Location:** `Parser_Decl_DeclaratorCore.cpp:244-289`
 - **Status:** Already shared - same declarator system
 
+### Expression/Postfix Call Parsing Refactors
+
+Do **not** mix expression-call parsing cleanup into this PR series.
+
+The duplication around callable-object `operator()` resolution, function-pointer
+call classification, and postfix/member-call construction overlaps current
+semantic-analysis / codegen cleanup work and should remain a separate PR stream.
+Keeping that out of scope reduces behavior risk and makes this plan a true parser
+code-sharing refactor rather than a semantic behavior change.
+
 ### Summary
 
-This code sharing plan addresses **function definition parsing** (constructors, destructors, member functions, templates). Variadic parameters and function pointers fall under **type declaration parsing**, which already uses shared declarator infrastructure.
+This code sharing plan addresses **function definition parsing** (constructors,
+destructors, member functions, templates). Variadic parameters and function
+pointers fall under **type declaration parsing**, which already uses shared
+declarator infrastructure. Expression/postfix call parsing should stay separate.
 
 ## Metrics
 
@@ -185,6 +250,17 @@ This code sharing plan addresses **function definition parsing** (constructors, 
 | Duplicate constructor lookahead | 2 | 1 |
 | Duplicate parameter registration | 7 | 1 |
 | Shared infrastructure utilization | Partial | Consistent |
+
+## Exit Criteria
+
+The refactor is complete when:
+
+- all function-definition entry paths use the same scope/body entry mechanism
+- no function-definition path open-codes `this` injection
+- no function-definition path open-codes parameter registration
+- delayed and non-delayed function body parsing share the same core body setup flow
+- helper APIs are based on the data actually available in template/delayed paths
+  (`TypeIndex` / `StructTypeInfo`), not only on convenient AST forms
 
 ## Notes
 
