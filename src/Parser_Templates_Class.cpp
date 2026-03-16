@@ -4191,7 +4191,7 @@ if (struct_type_info.getStructInfo()) {
 
 				return saved_position.success(*func_result.node());
 			}
-			if (peek() != "{"_tok) {
+			if (peek() != "{"_tok && peek() != "try"_tok) {
 				std::string error_msg = "Template specializations must have a definition (body)";
 				if (!peek().is_eof()) {
 					error_msg += ", found '" + std::string(peek_info().value()) + "'";
