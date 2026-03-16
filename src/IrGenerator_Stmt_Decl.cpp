@@ -856,6 +856,59 @@
 
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
+								// Try type-based constructor overload resolution first.
+								// Infer argument types: try parser first (handles literals,
+								// member access, etc.), then fall back to the IR generator's
+								// own symbol table for local variable identifiers whose type
+								// may not be available through the parser at IR-generation time.
+								{
+									std::vector<TypeSpecifierNode> arg_types;
+									bool all_arg_types_known = true;
+									for (const auto& init_arg : initializers) {
+										std::optional<TypeSpecifierNode> arg_type_opt;
+										if (parser_) {
+											arg_type_opt = parser_->get_expression_type(init_arg);
+										}
+										// If parser couldn't infer the type, try symbol table lookup
+										// for simple identifier expressions (e.g., local variables).
+										if (!arg_type_opt.has_value() && init_arg.is<ExpressionNode>()) {
+											const auto& arg_expr = init_arg.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+												const auto& ident = std::get<IdentifierNode>(arg_expr);
+												auto sym = symbol_table.lookup(ident.name());
+												if (sym.has_value()) {
+													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
+														if (arg_decl->type_node().is<TypeSpecifierNode>())
+															arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
+													} else if (sym->is<VariableDeclarationNode>()) {
+														const auto& vd = sym->as<VariableDeclarationNode>();
+														if (vd.declaration().type_node().is<TypeSpecifierNode>())
+															arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
+													}
+												}
+											}
+										}
+										if (!arg_type_opt.has_value()) { all_arg_types_known = false; break; }
+										TypeSpecifierNode arg_type = *arg_type_opt;
+										adjust_argument_type_for_overload_resolution(init_arg, arg_type);
+										arg_types.push_back(std::move(arg_type));
+									}
+									if (all_arg_types_known) {
+										// skip_implicit=true: avoid false ambiguity when an explicit
+										// copy/move ctor coexists with a compiler-generated implicit one
+										// having the same signature.
+										auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+										if (resolution.is_ambiguous) {
+											throw CompileError("Ambiguous constructor call");
+										}
+										if (resolution.has_match) {
+											has_matching_constructor = true;
+											matching_ctor = resolution.selected_overload;
+										}
+									}
+								}
+								}
+								if (!has_matching_constructor) {
 								for (const auto& func : struct_info.member_functions) {
 									if (func.is_constructor) {
 										// Get parameter count from the function declaration

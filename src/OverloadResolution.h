@@ -49,7 +49,8 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 // Check if one type can be implicitly converted to another
 // Returns the conversion rank
 inline TypeConversionResult can_convert_type(Type from, Type to) {
-	// Exact match
+	// Exact match (including Struct==Struct — same type, different struct variants
+	// are handled by the TypeSpecifierNode overload which has type_index).
 	if (from == to) {
 		return TypeConversionResult::exact_match();
 	}
@@ -125,7 +126,7 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 	if (to == Type::Struct && from != Type::Struct) {
 		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
-	
+
 	// No valid conversion
 	return TypeConversionResult::no_match();
 }
@@ -199,6 +200,44 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 		}
 	}
 	
+	return false;
+}
+
+// Check if target_struct has a single-arg converting constructor that accepts source_type,
+// OR if source derives from target (implicit derived-to-base conversion).
+// Used to determine if struct-to-struct conversions are viable.
+// Only checks gTypeInfo (populated at or before IR-gen time).
+// Returns false both when struct info is genuinely absent (caller should then check
+// getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
+inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
+	if (!target_idx.is_valid() || !source_idx.is_valid()) return false;
+	if (target_idx.value >= gTypeInfo.size() || source_idx.value >= gTypeInfo.size()) return false;
+	const StructTypeInfo* target = gTypeInfo[target_idx.value].getStructInfo();
+	if (!target) return false;
+	// Check if source is a derived class of target (implicit derived-to-base conversion)
+	const StructTypeInfo* source = gTypeInfo[source_idx.value].getStructInfo();
+	if (source) {
+		for (const auto& base : source->base_classes) {
+			if (base.type_index == target_idx) return true;
+		}
+	}
+	// Check single-arg user-defined constructors
+	for (const auto& mf : target->member_functions) {
+		if (!mf.is_constructor) continue;
+		// Constructors may be FunctionDeclarationNode or ConstructorDeclarationNode
+		const std::vector<ASTNode>* params_ptr = nullptr;
+		if (mf.function_decl.is<FunctionDeclarationNode>()) {
+			params_ptr = &mf.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+			params_ptr = &mf.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+		}
+		if (!params_ptr || params_ptr->size() != 1) continue;
+		if (!(*params_ptr)[0].is<DeclarationNode>()) continue;
+		const auto& param_type = (*params_ptr)[0].as<DeclarationNode>().type_node();
+		if (!param_type.is<TypeSpecifierNode>()) continue;
+		TypeIndex param_idx = param_type.as<TypeSpecifierNode>().type_index();
+		if (param_idx == source_idx) return true;
+	}
 	return false;
 }
 
@@ -317,9 +356,17 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
-						if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
-							return TypeConversionResult::no_match();
-						}
+					// For struct types, "same base type" requires the same type_index.
+					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
+					// Type::Struct, so we must also compare type_index.
+					if (from_base == Type::Struct &&
+						from.type_index().is_valid() && to.type_index().is_valid() &&
+						from.type_index() != to.type_index()) {
+						return TypeConversionResult::no_match();
+					}
+					if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
+						return TypeConversionResult::no_match();
+					}
 					return TypeConversionResult::exact_match();
 				}
 				
@@ -337,6 +384,12 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
 				bool types_match = (from_base == to_base);
+				// For struct types, "same base type" requires the same type_index.
+				if (types_match && from_base == Type::Struct &&
+					from.type_index().is_valid() && to.type_index().is_valid() &&
+					from.type_index() != to.type_index()) {
+					types_match = false;
+				}
 				if (!types_match) {
 					// Allow conversions for const lvalue refs only
 					auto conversion = can_convert_type(from_base, to_base);
@@ -376,6 +429,24 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			Type to_resolved = resolve_type_alias(to.type(), to.type_index());
 			
 			if (from_resolved == to_resolved) {
+				// For struct types, "same base type" requires the same type_index.
+				// Two different struct types (e.g. Bar& → Foo) both resolve to
+				// Type::Struct, so we must also compare type_index.
+				if (from_resolved == Type::Struct &&
+					from.type_index().is_valid() && to.type_index().is_valid() &&
+					from.type_index() != to.type_index()) {
+					// Different struct types: a converting constructor (e.g. Target(const Source&))
+					// may allow this conversion. Check gTypeInfo if available.
+					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
+						return TypeConversionResult{ConversionRank::UserDefined, true};
+					}
+					// Struct info not yet finalized (parse-time): optimistically allow.
+					if (to.type_index().value >= gTypeInfo.size() ||
+						!gTypeInfo[to.type_index().value].getStructInfo()) {
+						return TypeConversionResult{ConversionRank::UserDefined, true};
+					}
+					return TypeConversionResult::no_match();
+				}
 				return TypeConversionResult::exact_match();
 			}
 			// If one type is still UserDefined after resolution attempt, accept as conversion
@@ -427,7 +498,25 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		}
 	}
 
-	// Non-pointer, non-reference types: use basic type conversion with resolved types
+	// Non-pointer, non-reference types: use basic type conversion with resolved types.
+	// For struct-to-struct, use type_index to distinguish same struct (ExactMatch) from
+	// different struct (UserDefined if a converting constructor exists, else no_match).
+	if (from_type == Type::Struct && to_type == Type::Struct &&
+		from.type_index().is_valid() && to.type_index().is_valid()) {
+		if (from.type_index() == to.type_index()) {
+			return TypeConversionResult::exact_match();
+		}
+		// Different struct types: check for a converting constructor
+		if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
+			return TypeConversionResult{ConversionRank::UserDefined, true};
+		}
+		// Struct info not yet finalized (parse-time): optimistically allow.
+		if (to.type_index().value >= gTypeInfo.size() ||
+			!gTypeInfo[to.type_index().value].getStructInfo()) {
+			return TypeConversionResult{ConversionRank::UserDefined, true};
+		}
+		return TypeConversionResult::no_match();
+	}
 	return can_convert_type(from_type, to_type);
 }
 
@@ -607,12 +696,51 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		}
 
 		if (this_is_better && !this_is_worse) {
+			// This constructor is strictly better than the current best.
+			// Re-evaluate all previously accumulated tied/incomparable
+			// candidates against the new best ranks — any that are not
+			// strictly worse must be kept so that ambiguity is detected.
+			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
 			best_match = &ctor_decl;
 			best_ranks = conversion_ranks;
 			num_best_matches = 1;
 			tied_candidates.clear();
 			tied_candidates.push_back(&ctor_decl);
-		} else if (!this_is_better && !this_is_worse) {
+			for (const auto* prev : old_tied) {
+				if (prev == &ctor_decl) continue;
+				const auto& prev_params = prev->parameter_nodes();
+				std::vector<ConversionRank> prev_ranks;
+				bool prev_valid = true;
+				for (size_t k = 0; k < argument_types.size(); ++k) {
+					if (!prev_params[k].is<DeclarationNode>() ||
+						!prev_params[k].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+						prev_valid = false; break;
+					}
+					const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					auto conv = can_convert_type(argument_types[k], pt);
+					if (!conv.is_valid) { prev_valid = false; break; }
+					prev_ranks.push_back(conv.rank);
+				}
+				if (!prev_valid) continue;
+				bool prev_better = false, prev_worse = false;
+				for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
+					if (prev_ranks[k] < best_ranks[k]) prev_better = true;
+					else if (prev_ranks[k] > best_ranks[k]) prev_worse = true;
+				}
+				if (!prev_better && prev_worse) {
+					// Strictly worse than new best — discard.
+				} else {
+					// Tied or incomparable — keep for ambiguity detection.
+					num_best_matches++;
+					tied_candidates.push_back(prev);
+				}
+			}
+		} else if (!this_is_better && this_is_worse) {
+			// This constructor is strictly worse — skip it
+		} else {
+			// Equally good on every argument (exact tie) OR better on some
+			// arguments and worse on others (incomparable).  In both cases
+			// neither candidate dominates the other — potentially ambiguous.
 			num_best_matches++;
 			tied_candidates.push_back(&ctor_decl);
 		}
@@ -729,18 +857,59 @@ inline OverloadResolutionResult resolve_overload(
 			}
 			
 			if (this_is_better && !this_is_worse) {
-				// This overload is strictly better
+				// This overload is strictly better than the current best.
+				// Re-evaluate all previously accumulated tied/incomparable
+				// candidates against the new best ranks — any that are not
+				// strictly worse must be kept so that ambiguity is detected.
+				std::vector<const ASTNode*> old_tied = std::move(tied_candidates);
 				best_match = &overload;
 				best_ranks = conversion_ranks;
 				num_best_matches = 1;
 				tied_candidates.clear();
 				tied_candidates.push_back(&overload);
-			} else if (!this_is_better && !this_is_worse) {
-				// This overload is equally good - ambiguous
+				for (const auto* prev : old_tied) {
+					if (prev == &overload) continue;
+					// We need the conversion ranks for prev — recompute them.
+					const FunctionDeclarationNode* prev_func = &prev->as<FunctionDeclarationNode>();
+					const auto& prev_params = prev_func->parameter_nodes();
+					size_t prev_params_to_check = std::min(prev_params.size(), argument_types.size());
+					std::vector<ConversionRank> prev_ranks;
+					bool prev_valid = true;
+					for (size_t k = 0; k < prev_params_to_check; ++k) {
+						const auto& pt = prev_params[k].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+						auto conv = can_convert_type(argument_types[k], pt);
+						if (!conv.is_valid) { prev_valid = false; break; }
+						prev_ranks.push_back(conv.rank);
+					}
+					if (prev_func->is_variadic()) {
+						for (size_t k = prev_params_to_check; k < argument_types.size(); ++k)
+							prev_ranks.push_back(ConversionRank::ExactMatch);
+					}
+					if (!prev_valid) continue;
+					// Compare prev against the new best.
+					bool prev_better = false, prev_worse = false;
+					for (size_t k = 0; k < prev_ranks.size() && k < best_ranks.size(); ++k) {
+						if (prev_ranks[k] < best_ranks[k]) prev_better = true;
+						else if (prev_ranks[k] > best_ranks[k]) prev_worse = true;
+					}
+					if (!prev_better && prev_worse) {
+						// Strictly worse than new best — discard.
+					} else {
+						// Tied or incomparable — keep for ambiguity detection.
+						num_best_matches++;
+						tied_candidates.push_back(prev);
+					}
+				}
+			} else if (!this_is_better && this_is_worse) {
+				// This overload is strictly worse — skip it
+			} else {
+				// This overload is equally good on every argument (exact tie) OR
+				// better on some arguments and worse on others (incomparable).
+				// In both cases neither this candidate nor the current best dominates
+				// the other, so the call is potentially ambiguous.
 				num_best_matches++;
 				tied_candidates.push_back(&overload);
 			}
-			// If this_is_worse, ignore this overload
 		}
 	}
 	

@@ -998,21 +998,27 @@ Implementation notes:
 - Instantiated generic-lambda callable mangling now consumes the sema-normalized lambda return type instead of the template-pattern `operator()` return type, fixing MSVC unresolved-placeholder mangling on callable-parameter cases.
 - Range-for struct-iterator dereference lookup is now sema-owned and cached on `RangedForStatementNode`, so lowering reuses the resolved `operator*()` target instead of re-deriving it independently.
 
-#### Remaining follow-up: callable-object `operator()` resolution
+#### Callable-object `operator()` resolution ✅ COMPLETED
 
-`inferExpressionType` for `FunctionCallNode` (in `SemanticAnalysis.cpp`) currently picks the **first** `operator()` it finds on a callable struct. This is incorrect when the struct has multiple overloaded `operator()`s with different return types — it should match by argument arity, mirroring the logic already present in `IrGenerator_Call_Direct.cpp:176-197` (exact arity match wins, single-candidate fallback otherwise).
+The arity-only heuristic has been replaced by the compiler's real `resolve_overload` logic at both resolution sites:
 
-**Short-term fix:** add sema-owned `operator()` selection so `inferExpressionType`, return deduction, and codegen agree on the resolved overload.
+1. **Parser** (`Parser_Expr_PrimaryExpr.cpp`): When constructing a `MemberFunctionCallNode` for a callable-object call (`f(args)` where `f` has a struct type), the parser now builds the candidate set from `gTypeInfo`, infers argument types via `get_expression_type`, and calls `resolve_overload`. The old arity-only loop (which broke on the first arity match, wrongly selecting `operator()(int)` for a `double` argument) is retained only as a fallback when argument types cannot be determined.
 
-**Important standards note:** an arity/default-argument based selector is only an
-intermediate hardening step. It is **not full C++20 overload resolution** because it
-does not rank candidates using the normal overload machinery (conversion ranking,
-ref/cv qualification, constraints, deleted candidates, etc.). That heuristic is
-acceptable as a bug-fix bridge, but the standards-compliant end state is to reuse
-the compiler's real overload-resolution logic for callable-object `operator()`
-candidates in semantic analysis.
+2. **Semantic analysis** (`SemanticAnalysis.cpp::tryResolveCallableOperator`): The same pattern is applied for `FunctionCallNode` callable-object calls that are created after parse time (e.g. template instantiation paths). `inferExpressionType` is the primary type source; `parser_.get_expression_type` is the fallback; arity-only is the last resort.
 
-**Long-term goal:** move callable-object `operator()` resolution entirely into semantic analysis. Sema should annotate the `FunctionCallNode` (or rewrite it to a `MemberFunctionCallNode`) with the resolved `operator()` target and its return type, so codegen at `IrGenerator_Call_Direct.cpp:171-215` can consume the annotation instead of performing its own `gTypeInfo` lookup and overload iteration. This eliminates a REVIEW.md-flagged architectural violation where codegen owns semantic resolution logic.
+**What is now correct:**
+- Same-arity overloads discriminated by argument type (e.g. `int` vs `double` parameter)
+- Default-argument and variadic candidates ranked by conversion quality
+- Ambiguous calls — where one overload is better on some arguments but worse on others (e.g. `operator()(int,double)` vs `operator()(double,int)` called as `f(1,2)`) — are now detected and reported as a compile error. The fix was in `OverloadResolution.h::resolve_overload`: the "incomparable" case (`this_is_better && this_is_worse`) was previously falling through silently, leaving the first-declared overload as the winner. It is now counted as a tied candidate, causing `num_best_matches > 1` and triggering the ambiguity path.
+
+**Remaining gaps:**
+- Ref/rvalue-reference qualification: `inferExpressionType` does not propagate value-category (lvalue/rvalue) onto the inferred `TypeSpecifierNode`, so overloads distinguished only by `T&` vs `T&&` still score identically. Full lvalue/rvalue tracking in sema type inference would close this gap.
+- Template/concept constraints: `resolve_overload` does not evaluate `requires` clauses; constrained overloads are treated as unconstrained candidates.
+- Codegen fallback in `IrGenerator_Call_Direct.cpp:171-215` still uses arity-only selection for `FunctionCallNode` paths not covered by sema; this is now rare but still present for deeply template-instantiated paths.
+
+**Test coverage added:**
+- `tests/test_operator_call_ret30.cpp` updated: the `int` and `double` overloads now return distinct values (`x` vs `x*5`), so the expected return of 30 is only achievable when `adder(5.0)` correctly selects the `double` overload.
+- `tests/test_operator_call_ambiguous_fail.cpp` added: verifies that cross-wise overloads like `operator()(int,double)` / `operator()(double,int)` called with `f(1,2)` are rejected with a compile error rather than silently resolved.
 
 ### Parallel rollout guidance
 
