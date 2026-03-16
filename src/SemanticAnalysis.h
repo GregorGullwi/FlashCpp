@@ -108,6 +108,7 @@ private:
 
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+	const FunctionDeclarationNode* resolveCallableObjectOperator(const FunctionCallNode& call_node);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).

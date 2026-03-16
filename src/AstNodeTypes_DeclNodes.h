@@ -1768,6 +1768,12 @@ public:
 	void set_indirect_call(bool indirect) { is_indirect_call_ = indirect; }
 	bool is_indirect_call() const { return is_indirect_call_; }
 
+	void set_resolved_callable_operator(const FunctionDeclarationNode* resolved_callable_operator) {
+		resolved_callable_operator_ = resolved_callable_operator;
+	}
+	const FunctionDeclarationNode* resolved_callable_operator() const { return resolved_callable_operator_; }
+	bool has_resolved_callable_operator() const { return resolved_callable_operator_ != nullptr; }
+
 private:
 	const DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
@@ -1776,6 +1782,7 @@ private:
 	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
 	bool is_indirect_call_ = false;  // True for function pointer/reference calls
+	const FunctionDeclarationNode* resolved_callable_operator_ = nullptr;
 };
 
 // Constructor call node - represents constructor calls like T(args)

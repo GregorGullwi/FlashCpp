@@ -565,31 +565,6 @@
 			}
 			return true;
 		};
-		const size_t explicit_arg_count = memberFunctionCallNode.arguments().size();
-		auto isViableMemberOverload = [&](const FunctionDeclarationNode& candidate) {
-			const auto& params = candidate.parameter_nodes();
-			if (explicit_arg_count > params.size()) {
-				if (params.empty()) {
-					return false;
-				}
-				const DeclarationNode* last_param = getParamDecl(params.back());
-				return last_param && last_param->is_parameter_pack();
-			}
-			for (size_t i = explicit_arg_count; i < params.size(); ++i) {
-				const DeclarationNode* param_decl = getParamDecl(params[i]);
-				if (!param_decl) {
-					return false;
-				}
-				if (param_decl->is_parameter_pack()) {
-					return true;
-				}
-				if (!param_decl->has_default_value()) {
-					return false;
-				}
-			}
-			return true;
-		};
-
 		// Check if this is a virtual function call
 		// Look up the struct type to check if the function is virtual
 		bool is_virtual_call = false;
@@ -619,21 +594,6 @@
 						break;
 					}
 				}
-					if (!called_member_func) {
-						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.getName() == func_name_handle &&
-								member_func.function_decl.is<FunctionDeclarationNode>() &&
-								isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
-								called_member_func = &member_func;
-								if (member_func.is_virtual) {
-									is_virtual_call = true;
-									vtable_index = member_func.vtable_index;
-								}
-								break;
-							}
-						}
-					}
-
 				// If not found in the current class, search base classes
 				const StructTypeInfo* declaring_struct = struct_info;
 				if (!called_member_func && !struct_info->base_classes.empty()) {
@@ -658,19 +618,6 @@
 												return; // Stop searching once found
 											}
 										}
-											for (const auto& member_func : base_struct_info->member_functions) {
-												if (member_func.getName() == func_name_handle &&
-													member_func.function_decl.is<FunctionDeclarationNode>() &&
-													isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
-													called_member_func = &member_func;
-													declaring_struct = base_struct_info;
-													if (member_func.is_virtual) {
-														is_virtual_call = true;
-														vtable_index = member_func.vtable_index;
-													}
-													return;
-												}
-											}
 										// Recursively search base classes of this base class
 										if (!called_member_func) {
 											self(self, base_struct_info);

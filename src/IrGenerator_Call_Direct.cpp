@@ -171,47 +171,23 @@
 			if (func_type.type() == Type::Struct &&
 				func_type.type_index().is_valid() &&
 				func_type.type_index().value < gTypeInfo.size()) {
-				const StructTypeInfo* struct_info = gTypeInfo[func_type.type_index().value].getStructInfo();
-				if (struct_info) {
-					const FunctionDeclarationNode* operator_call = nullptr;
-					const FunctionDeclarationNode* sole_operator_call = nullptr;
-					size_t operator_call_count = 0;
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Call &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-							++operator_call_count;
-							if (!sole_operator_call) {
-								sole_operator_call = &candidate;
-							}
-							if (candidate.parameter_nodes().size() == functionCallNode.arguments().size()) {
-								operator_call = &candidate;
-								break;
-							}
-						}
-					}
-					if (!operator_call && operator_call_count == 1) {
-						// Only fall back when the callable object exposes a single
-						// operator(); this avoids silently choosing an arbitrary overload.
-						operator_call = sole_operator_call;
-					}
-
-					if (operator_call) {
-						ChunkedVector<ASTNode> member_args;
-						functionCallNode.arguments().visit([&](ASTNode argument) {
-							member_args.push_back(argument);
-						});
-
-						ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
-							IdentifierNode(func_ptr_decl->identifier_token()));
-						MemberFunctionCallNode member_call(
-							object_expr,
-							*operator_call,
-							std::move(member_args),
-							functionCallNode.called_from());
-						return generateMemberFunctionCallIr(member_call);
-					}
+				if (!functionCallNode.has_resolved_callable_operator()) {
+					throw CompileError("Callable object operator() was not resolved during semantic analysis");
 				}
+
+				ChunkedVector<ASTNode> member_args;
+				functionCallNode.arguments().visit([&](ASTNode argument) {
+					member_args.push_back(argument);
+				});
+
+				ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
+					IdentifierNode(func_ptr_decl->identifier_token()));
+				MemberFunctionCallNode member_call(
+					object_expr,
+					*functionCallNode.resolved_callable_operator(),
+					std::move(member_args),
+					functionCallNode.called_from());
+				return generateMemberFunctionCallIr(member_call);
 			}
 
 			// decltype(auto) is not a valid parameter type; reject it before
