@@ -885,6 +885,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		if (stmt.has_init()) {
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
+		// C++20 [stmt.select]: the condition is contextually converted to bool.
+		tryAnnotateContextualBool(stmt.get_condition());
 		normalizeExpression(stmt.get_condition(), ctx);
 		normalizeStatement(stmt.get_then_statement(), ctx);
 		if (stmt.has_else()) {
@@ -901,6 +903,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
 		if (stmt.has_condition()) {
+			// C++20 [stmt.for]: the condition is contextually converted to bool.
+			tryAnnotateContextualBool(stmt.get_condition().value());
 			normalizeExpression(stmt.get_condition().value(), ctx);
 		}
 		if (stmt.has_update()) {
@@ -911,12 +915,16 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	}
 	else if (node.is<WhileStatementNode>()) {
 		const auto& stmt = node.as<WhileStatementNode>();
+		// C++20 [stmt.while]: the condition is contextually converted to bool.
+		tryAnnotateContextualBool(stmt.get_condition());
 		normalizeExpression(stmt.get_condition(), ctx);
 		normalizeStatement(stmt.get_body_statement(), ctx);
 	}
 	else if (node.is<DoWhileStatementNode>()) {
 		const auto& stmt = node.as<DoWhileStatementNode>();
 		normalizeStatement(stmt.get_body_statement(), ctx);
+		// C++20 [stmt.do]: the condition is contextually converted to bool.
+		tryAnnotateContextualBool(stmt.get_condition());
 		normalizeExpression(stmt.get_condition(), ctx);
 	}
 	else if (node.is<SwitchStatementNode>()) {
@@ -987,10 +995,17 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				const bool is_comparison =
 					op == "<" || op == ">" || op == "<=" || op == ">=" ||
 					op == "==" || op == "!=";
+				const bool is_logical = op == "&&" || op == "||";
 				if ((is_arithmetic || is_comparison) &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
 					tryAnnotateBinaryOperandConversions(e);
+				}
+				// C++20 [expr.log.and], [expr.log.or]: each operand is
+				// contextually converted to bool.
+				if (is_logical) {
+					tryAnnotateContextualBool(e.get_lhs());
+					tryAnnotateContextualBool(e.get_rhs());
 				}
 				// For simple assignment, annotate the RHS with the LHS type.
 				if (op == "=" &&
@@ -1004,9 +1019,16 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.get_rhs(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				// C++20 [expr.unary.op]/9: the operand of ! is contextually
+				// converted to bool.
+				if (e.op() == "!") {
+					tryAnnotateContextualBool(e.get_operand());
+				}
 				normalizeExpression(e.get_operand(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
+				tryAnnotateContextualBool(e.condition());
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
@@ -1514,6 +1536,18 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Contextual bool annotation ---
+// C++20 [conv.bool]: A prvalue of arithmetic, unscoped enumeration, pointer, or
+// pointer-to-member type can be converted to a prvalue of type bool.
+// Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
+
+void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
+	CanonicalTypeDesc bool_desc;
+	bool_desc.base_type = Type::Bool;
+	const CanonicalTypeId bool_type_id = type_context_.intern(bool_desc);
+	tryAnnotateConversion(expr_node, bool_type_id);
 }
 
 // --- Callable operator() resolution ---

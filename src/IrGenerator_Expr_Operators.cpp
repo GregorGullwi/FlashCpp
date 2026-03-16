@@ -1850,7 +1850,36 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Check for logical operations BEFORE type promotions
 		// Logical operations should preserve boolean types without promotion
+		// C++20 [expr.log.and], [expr.log.or]: each operand is contextually
+		// converted to bool.
 		if (op == "&&" || op == "||") {
+			// Convert operands to bool when they are not already bool-compatible.
+			// Prefer sema annotation (Phase 6); fall back to local conversion when
+			// the operand is a floating-point or non-bool integer type.
+			auto convertToBool = [&](ExprResult& operand, const ASTNode& operand_node, Type operand_type) {
+				// Try sema annotation first
+				if (sema_ && operand_node.is<ExpressionNode>()) {
+					const void* key = &operand_node.as<ExpressionNode>();
+					const auto slot = sema_->getSlot(key);
+					if (slot.has_value() && slot->has_cast()) {
+						const ImplicitCastInfo& cast_info =
+							sema_->castInfoTable()[slot->cast_info_index.value - 1];
+						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						if (to_type == Type::Bool && from_type != Type::Bool) {
+							operand = generateTypeConversion(operand, from_type, to_type, binaryOperatorNode.get_token());
+							return;
+						}
+					}
+				}
+				// Fallback: float/double operands need explicit FloatToInt(bool) conversion.
+				if (is_floating_point_type(operand_type)) {
+					operand = generateTypeConversion(operand, operand_type, Type::Bool, binaryOperatorNode.get_token());
+				}
+			};
+			convertToBool(lhsExprResult, binaryOperatorNode.get_lhs(), lhsType);
+			convertToBool(rhsExprResult, binaryOperatorNode.get_rhs(), rhsType);
+
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = { Type::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value) },
