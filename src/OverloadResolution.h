@@ -49,10 +49,9 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 // Check if one type can be implicitly converted to another
 // Returns the conversion rank
 inline TypeConversionResult can_convert_type(Type from, Type to) {
-	// Exact match — but NOT for Struct==Struct, because the Type-only overload
-	// has no type_index and cannot distinguish same-struct from different-struct.
-	// Struct==Struct is handled below as UserDefined (optimistic).
-	if (from == to && from != Type::Struct) {
+	// Exact match (including Struct==Struct — same type, different struct variants
+	// are handled by the TypeSpecifierNode overload which has type_index).
+	if (from == to) {
 		return TypeConversionResult::exact_match();
 	}
 	
@@ -128,19 +127,6 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
 
-	// Struct-to-struct: the Type-only overload has no type_index, so when
-	// both are Type::Struct we don't know whether they're the same struct.
-	// The from==to check at line 53 already returned exact_match for the
-	// same-type case, but callers from the reference paths (lines 356, 412)
-	// strip references and pass resolved Type enums — losing type_index.
-	// Return UserDefined so that overload resolution ranks same-struct
-	// (ExactMatch via the TypeSpecifierNode overload) above different-struct.
-	// NOTE: this is still optimistic — sema/codegen must verify the
-	// converting constructor actually exists.
-	if (from == Type::Struct && to == Type::Struct) {
-		return TypeConversionResult{ConversionRank::UserDefined, true};
-	}
-	
 	// No valid conversion
 	return TypeConversionResult::no_match();
 }
@@ -214,6 +200,44 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 		}
 	}
 	
+	return false;
+}
+
+// Check if target_struct has a single-arg converting constructor that accepts source_type,
+// OR if source derives from target (implicit derived-to-base conversion).
+// Used to determine if struct-to-struct conversions are viable.
+// Only checks gTypeInfo (populated at or before IR-gen time).
+// Returns false both when struct info is genuinely absent (caller should then check
+// getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
+inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
+	if (!target_idx.is_valid() || !source_idx.is_valid()) return false;
+	if (target_idx.value >= gTypeInfo.size() || source_idx.value >= gTypeInfo.size()) return false;
+	const StructTypeInfo* target = gTypeInfo[target_idx.value].getStructInfo();
+	if (!target) return false;
+	// Check if source is a derived class of target (implicit derived-to-base conversion)
+	const StructTypeInfo* source = gTypeInfo[source_idx.value].getStructInfo();
+	if (source) {
+		for (const auto& base : source->base_classes) {
+			if (base.type_index == target_idx) return true;
+		}
+	}
+	// Check single-arg user-defined constructors
+	for (const auto& mf : target->member_functions) {
+		if (!mf.is_constructor) continue;
+		// Constructors may be FunctionDeclarationNode or ConstructorDeclarationNode
+		const std::vector<ASTNode>* params_ptr = nullptr;
+		if (mf.function_decl.is<FunctionDeclarationNode>()) {
+			params_ptr = &mf.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+			params_ptr = &mf.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+		}
+		if (!params_ptr || params_ptr->size() != 1) continue;
+		if (!(*params_ptr)[0].is<DeclarationNode>()) continue;
+		const auto& param_type = (*params_ptr)[0].as<DeclarationNode>().type_node();
+		if (!param_type.is<TypeSpecifierNode>()) continue;
+		TypeIndex param_idx = param_type.as<TypeSpecifierNode>().type_index();
+		if (param_idx == source_idx) return true;
+	}
 	return false;
 }
 
@@ -411,10 +435,17 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				if (from_resolved == Type::Struct &&
 					from.type_index().is_valid() && to.type_index().is_valid() &&
 					from.type_index() != to.type_index()) {
-					// Different struct types — not an exact match, but a converting
-					// constructor in the target type may allow a user-defined conversion
-					// (e.g. Target(const Source&) allows Source& → Target).
-					return TypeConversionResult{ConversionRank::UserDefined, true};
+					// Different struct types: a converting constructor (e.g. Target(const Source&))
+					// may allow this conversion. Check gTypeInfo if available.
+					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
+						return TypeConversionResult{ConversionRank::UserDefined, true};
+					}
+					// Struct info not yet finalized (parse-time): optimistically allow.
+					if (to.type_index().value >= gTypeInfo.size() ||
+						!gTypeInfo[to.type_index().value].getStructInfo()) {
+						return TypeConversionResult{ConversionRank::UserDefined, true};
+					}
+					return TypeConversionResult::no_match();
 				}
 				return TypeConversionResult::exact_match();
 			}
@@ -467,7 +498,25 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		}
 	}
 
-	// Non-pointer, non-reference types: use basic type conversion with resolved types
+	// Non-pointer, non-reference types: use basic type conversion with resolved types.
+	// For struct-to-struct, use type_index to distinguish same struct (ExactMatch) from
+	// different struct (UserDefined if a converting constructor exists, else no_match).
+	if (from_type == Type::Struct && to_type == Type::Struct &&
+		from.type_index().is_valid() && to.type_index().is_valid()) {
+		if (from.type_index() == to.type_index()) {
+			return TypeConversionResult::exact_match();
+		}
+		// Different struct types: check for a converting constructor
+		if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
+			return TypeConversionResult{ConversionRank::UserDefined, true};
+		}
+		// Struct info not yet finalized (parse-time): optimistically allow.
+		if (to.type_index().value >= gTypeInfo.size() ||
+			!gTypeInfo[to.type_index().value].getStructInfo()) {
+			return TypeConversionResult{ConversionRank::UserDefined, true};
+		}
+		return TypeConversionResult::no_match();
+	}
 	return can_convert_type(from_type, to_type);
 }
 
