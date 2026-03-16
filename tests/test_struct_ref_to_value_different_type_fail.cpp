@@ -1,13 +1,4 @@
-// Test that can_convert_type rejects Bar& → Foo (different struct types)
-// in the "from is reference, to is non-reference" path.
-//
-// Bug: OverloadResolution.h line ~392 compares from_resolved == to_resolved
-// using only the Type enum. Since both Bar and Foo resolve to Type::Struct,
-// the check incorrectly returns exact_match(). The type_index is not compared,
-// unlike the ref→ref and value→ref sub-cases which were fixed by this PR.
-//
-// The only overload takes Foo by value, but the argument is Bar&.
-// There is no valid conversion from Bar to Foo, so this must fail.
+// Foo has no constructor taking Bar, so f(b) should be rejected.
 
 struct Foo {
 	int value;
