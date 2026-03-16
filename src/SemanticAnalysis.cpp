@@ -363,6 +363,39 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
 }
 
+ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+	const TypeSpecifierNode& deduced_type) const {
+	return resolveRangedForLoopDeclNode(original_var_decl, deduced_type);
+}
+
+ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+	const TypeSpecifierNode& range_type,
+	const TypeSpecifierNode& begin_return_type,
+	bool prefer_const_deref) const {
+	if (!isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+		return original_var_decl.declaration_node();
+	}
+
+	if (begin_return_type.pointer_depth() > 0) {
+		TypeSpecifierNode deduced_loop_type = begin_return_type;
+		deduced_loop_type.remove_pointer_level();
+		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
+	}
+
+	if (auto deduced_loop_type = getRangeIteratorElementTypeForSema(begin_return_type, prefer_const_deref);
+		deduced_loop_type.has_value()) {
+		return resolveRangedForLoopDeclNode(original_var_decl, *deduced_loop_type);
+	}
+
+	throw InternalError(std::string(StringBuilder()
+		.append("Could not deduce range-for element type from iterator type '")
+		.append(begin_return_type.getReadableString())
+		.append("' for range type '")
+		.append(range_type.getReadableString())
+		.append("'")
+		.commit()));
+}
+
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const {
 	const ASTNode loop_var_decl = stmt.get_loop_variable_decl();
 	if (!loop_var_decl.is<VariableDeclarationNode>()) {
@@ -418,23 +451,8 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-	if (begin_return_type.pointer_depth() > 0) {
-		TypeSpecifierNode deduced_loop_type = begin_return_type;
-		deduced_loop_type.remove_pointer_level();
-		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
-	}
-
 	const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-	if (auto deduced_loop_type = getRangeIteratorElementTypeForSema(begin_return_type, prefer_const_deref);
-		deduced_loop_type.has_value()) {
-		return resolveRangedForLoopDeclNode(original_var_decl, *deduced_loop_type);
-	}
-
-	throw InternalError(std::string(StringBuilder()
-		.append("Could not deduce range-for element type from iterator type '")
-		.append(begin_return_type.getReadableString())
-		.append("'")
-		.commit()));
+	return normalizeRangedForLoopDecl(original_var_decl, range_type, begin_return_type, prefer_const_deref);
 }
 
 void SemanticAnalysis::resolveRemainingAutoReturns() {

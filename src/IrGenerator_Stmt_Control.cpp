@@ -769,7 +769,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
 		if (sema_) {
-			loop_decl_node = sema_->normalizeRangedForLoopDecl(node);
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
 		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
 			throw InternalError("Range-for placeholder loop variable reached array lowering without semantic normalization");
 		}
@@ -955,7 +955,12 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		// operator*() return type as the range element type.
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
 		if (sema_) {
-			loop_decl_node = sema_->normalizeRangedForLoopDecl(node);
+			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(
+				original_var_decl,
+				range_type,
+				begin_return_type,
+				prefer_const_deref);
 		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
 			throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
 		}

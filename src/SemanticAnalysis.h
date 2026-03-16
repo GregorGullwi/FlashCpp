@@ -16,6 +16,7 @@ class NamespaceDeclarationNode;
 class BinaryOperatorNode;
 class FunctionCallNode;
 class RangedForStatementNode;
+class VariableDeclarationNode;
 struct LambdaInfo;
 
 // --- Semantic analysis pass ---
@@ -47,6 +48,12 @@ public:
 		const std::vector<ASTNode>& parameter_nodes,
 		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
+	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+		const TypeSpecifierNode& deduced_type) const;
+	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+		const TypeSpecifierNode& range_type,
+		const TypeSpecifierNode& begin_return_type,
+		bool prefer_const_deref) const;
 	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const;
 
 private:

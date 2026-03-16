@@ -168,6 +168,44 @@
 				}
 			}
 
+			if (func_type.type() == Type::Struct &&
+				func_type.type_index().is_valid() &&
+				func_type.type_index().value < gTypeInfo.size()) {
+				const StructTypeInfo* struct_info = gTypeInfo[func_type.type_index().value].getStructInfo();
+				if (struct_info) {
+					const FunctionDeclarationNode* operator_call = nullptr;
+					for (const auto& member_func : struct_info->member_functions) {
+						if (member_func.operator_kind == OverloadableOperator::Call &&
+							member_func.function_decl.is<FunctionDeclarationNode>()) {
+							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+							if (candidate.parameter_nodes().size() == functionCallNode.arguments().size()) {
+								operator_call = &candidate;
+								break;
+							}
+							if (!operator_call) {
+								operator_call = &candidate;
+							}
+						}
+					}
+
+					if (operator_call) {
+						ChunkedVector<ASTNode> member_args;
+						functionCallNode.arguments().visit([&](ASTNode argument) {
+							member_args.push_back(argument);
+						});
+
+						ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
+							IdentifierNode(decl_node.identifier_token()));
+						MemberFunctionCallNode member_call(
+							object_expr,
+							*operator_call,
+							std::move(member_args),
+							functionCallNode.called_from());
+						return generateMemberFunctionCallIr(member_call);
+					}
+				}
+			}
+
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
 			if (func_type.type() == Type::DeclTypeAuto) {
