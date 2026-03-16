@@ -53,8 +53,11 @@ public:
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 		const TypeSpecifierNode& range_type,
 		const TypeSpecifierNode& begin_return_type,
-		bool prefer_const_deref) const;
+		const FunctionDeclarationNode* dereference_func) const;
 	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) const;
+	const FunctionDeclarationNode* resolveRangedForIteratorDereference(
+		const TypeSpecifierNode& iterator_type,
+		bool prefer_const) const;
 
 private:
 	// Top-level dispatch

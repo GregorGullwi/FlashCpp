@@ -1,46 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-namespace {
-const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
-		return nullptr;
-	}
-
-	const StructTypeInfo* struct_info = gTypeInfo[iterator_type.type_index().value].getStructInfo();
-	if (!struct_info) {
-		return nullptr;
-	}
-
-	const FunctionDeclarationNode* fallback = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Multiply ||
-			!member_func.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-
-		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
-		// Unary operator*() (dereference) has 0 parameters; binary operator*(rhs) has 1.
-		if (func.parameter_nodes().size() != 0) {
-			continue;
-		}
-
-		if (prefer_const && member_func.is_const()) {
-			return &func;
-		}
-		if (!prefer_const && !member_func.is_const()) {
-			return &func;
-		}
-		if (!fallback) {
-			fallback = &func;
-		}
-	}
-
-	return fallback;
-}
-
-}
-
 	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
 		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
@@ -962,12 +922,11 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		// operator*() return type as the range element type.
 		ASTNode loop_decl_node = original_var_decl.declaration_node();
 		if (sema_) {
-			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
 			loop_decl_node = sema_->normalizeRangedForLoopDecl(
 				original_var_decl,
 				range_type,
 				begin_return_type,
-				prefer_const_deref);
+				node.resolved_dereference_function());
 		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
 			throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
 		}
@@ -994,8 +953,10 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 			);
 		} else {
 			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-			const FunctionDeclarationNode* dereference_func =
-				getRangeIteratorDereferenceFunction(begin_return_type, prefer_const_deref);
+			const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
+			if (!dereference_func && sema_) {
+				dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
+			}
 			if (!dereference_func) {
 				throw InternalError("Range-for struct iterator missing operator*() during lowering");
 			}

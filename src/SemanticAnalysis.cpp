@@ -90,16 +90,6 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 	return fallback;
 }
 
-std::optional<TypeSpecifierNode> getRangeIteratorElementTypeForSema(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (const auto* dereference_func = getRangeIteratorDereferenceFunctionForSema(iterator_type, prefer_const)) {
-		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-		element_type.set_reference_qualifier(ReferenceQualifier::None);
-		return element_type;
-	}
-
-	return std::nullopt;
-}
-
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.base_type, desc.type_index, 0);
 	type_node.set_cv_qualifier(desc.base_cv);
@@ -370,7 +360,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 	const TypeSpecifierNode& range_type,
 	const TypeSpecifierNode& begin_return_type,
-	bool prefer_const_deref) const {
+	const FunctionDeclarationNode* dereference_func) const {
 	if (!isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
 		return original_var_decl.declaration_node();
 	}
@@ -381,9 +371,10 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
 	}
 
-	if (auto deduced_loop_type = getRangeIteratorElementTypeForSema(begin_return_type, prefer_const_deref);
-		deduced_loop_type.has_value()) {
-		return resolveRangedForLoopDeclNode(original_var_decl, *deduced_loop_type);
+	if (dereference_func) {
+		TypeSpecifierNode deduced_loop_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		deduced_loop_type.set_reference_qualifier(ReferenceQualifier::None);
+		return resolveRangedForLoopDeclNode(original_var_decl, deduced_loop_type);
 	}
 
 	throw InternalError(std::string(StringBuilder()
@@ -402,12 +393,6 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	}
 
 	const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-	const TypeSpecifierNode& placeholder_type =
-		original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
-	if (!isPlaceholderAutoType(placeholder_type.type())) {
-		return original_var_decl.declaration_node();
-	}
-
 	const ASTNode range_expr = stmt.get_range_expression();
 	if (!range_expr.is<ExpressionNode>() ||
 		!std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
@@ -451,7 +436,18 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-	return normalizeRangedForLoopDecl(original_var_decl, range_type, begin_return_type, prefer_const_deref);
+	const FunctionDeclarationNode* dereference_func = nullptr;
+	if (begin_return_type.pointer_depth() == 0) {
+		dereference_func = resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
+	}
+	const_cast<RangedForStatementNode&>(stmt).set_resolved_dereference_function(dereference_func);
+	return normalizeRangedForLoopDecl(original_var_decl, range_type, begin_return_type, dereference_func);
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::resolveRangedForIteratorDereference(
+	const TypeSpecifierNode& iterator_type,
+	bool prefer_const) const {
+	return getRangeIteratorDereferenceFunctionForSema(iterator_type, prefer_const);
 }
 
 void SemanticAnalysis::resolveRemainingAutoReturns() {
