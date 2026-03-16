@@ -786,11 +786,6 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		symbol_table.enter_scope(ScopeType::Block);
 		enterScope();
 		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
-		auto loop_scope_guard = ScopeGuard([this]() {
-			exitScope();
-			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-			symbol_table.exit_scope();
-		});
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
@@ -800,6 +795,12 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
 		visit(body_stmt);
+
+		// Exit the loop variable scope so destructors fire each iteration,
+		// before the increment and branch-back.
+		exitScope();
+		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+		symbol_table.exit_scope();
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
@@ -1021,11 +1022,6 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		symbol_table.enter_scope(ScopeType::Block);
 		enterScope();
 		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
-		auto loop_scope_guard = ScopeGuard([this]() {
-			exitScope();
-			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
-			symbol_table.exit_scope();
-		});
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
@@ -1035,6 +1031,12 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
 		visit(body_stmt);
+
+		// Exit the loop variable scope so destructors fire each iteration,
+		// before the increment and branch-back.
+		exitScope();
+		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+		symbol_table.exit_scope();
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
