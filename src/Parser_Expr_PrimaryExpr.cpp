@@ -4798,6 +4798,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					TypeIndex type_index = type_node.type_index();
 					const TypeInfo& type_info = gTypeInfo[type_index.value];
+					if (!type_info.struct_info_) {
+						return ParseResult::error("operator() not found in struct", identifier_token);
+					}
 
 					// Find the best operator() overload: prefer exact arity match, fall back to sole candidate.
 					const FunctionDeclarationNode* operator_call_func = nullptr;
