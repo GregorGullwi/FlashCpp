@@ -148,7 +148,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				restore_lexer_position_only(spec_func.template_body_position());
 				
 				// Parse the function body (handles function-try-blocks too)
-			auto body_result = parse_function_body();
+				auto body_result = parse_function_body();
 				
 				// Clean up member function context
 				if (!member_function_context_stack_.empty()) {
