@@ -1020,6 +1020,87 @@ The arity-only heuristic has been replaced by the compiler's real `resolve_overl
 - `tests/test_operator_call_ret30.cpp` updated: the `int` and `double` overloads now return distinct values (`x` vs `x*5`), so the expected return of 30 is only achievable when `adder(5.0)` correctly selects the `double` overload.
 - `tests/test_operator_call_ambiguous_fail.cpp` added: verifies that cross-wise overloads like `operator()(int,double)` / `operator()(double,int)` called with `f(1,2)` are rejected with a compile error rather than silently resolved.
 
+### Phase 6: contextual bool conversion ✅ COMPLETED
+
+Goal:
+
+- move contextual bool conversion out of implicit backend behavior into explicit semantic annotation + codegen consumption
+- fix float/double condition bugs (e.g. `-0.0` mishandled by backend `TEST` instruction)
+
+Work:
+
+- ✅ semantic annotation: `tryAnnotateContextualBool` annotates conditions and logical operands with `BooleanConversion`
+- ✅ if/while/for/do-while condition annotation
+- ✅ ternary operator condition annotation
+- ✅ `&&` / `||` operand annotation (C++20 [expr.log.and], [expr.log.or])
+- ✅ `!` operand annotation (C++20 [expr.unary.op]/9)
+- ✅ codegen: `applyConditionBoolConversion` helper in AstToIr wired into all condition sites
+- ✅ codegen: `&&` / `||` operand conversion for float/double types
+- ✅ bug fix: float/double `-0.0` no longer misidentified as truthy
+
+Exit criteria:
+
+- `ConversionContext::Condition` from `SemanticTypes.h` is now actively used via `tryAnnotateContextualBool`
+- all float/double conditions produce correct boolean semantics including `-0.0`
+- integer conditions continue to use the backend `TEST` instruction (no unnecessary conversion)
+- no test regressions
+
+#### Implementation notes (Phase 6)
+
+**Semantic annotation infrastructure:**
+
+- `SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node)` — interns `Type::Bool` as a canonical type and calls `tryAnnotateConversion(expr, bool_type_id)`. The annotation is informational for integer types (backend handles them correctly) and actionable for float/double types (codegen emits explicit conversion).
+- `normalizeStatement` now calls `tryAnnotateContextualBool` before `normalizeExpression` for:
+  - `IfStatementNode::get_condition()` — C++20 [stmt.select]
+  - `ForStatementNode::get_condition()` — C++20 [stmt.for]
+  - `WhileStatementNode::get_condition()` — C++20 [stmt.while]
+  - `DoWhileStatementNode::get_condition()` — C++20 [stmt.do]
+- `normalizeExpression` now calls `tryAnnotateContextualBool` for:
+  - `TernaryOperatorNode::condition()` — C++20 [expr.cond]/1
+  - `BinaryOperatorNode` operands when `op == "&&"` or `op == "||"` — C++20 [expr.log.and], [expr.log.or]
+  - `UnaryOperatorNode` operand when `op == "!"` — C++20 [expr.unary.op]/9
+
+**AstToIr condition conversion:**
+
+- `AstToIr::applyConditionBoolConversion(ExprResult, ASTNode, Token)` — new helper method:
+  1. Checks for sema annotation: if a `BooleanConversion` annotation exists for a float/double source type, emits `generateTypeConversion(condition, float/double, Int, token)`.
+  2. Fallback: if no annotation but the condition is float/double, emits the same conversion.
+  3. Integer conditions are passed through unchanged (backend `TEST reg, reg` already handles them).
+  4. The target type is `Int` (32-bit), not `Bool` (8-bit), to avoid register-flush size mismatches in the backend.
+- Wired into `visitIfStatementNode`, `visitForStatementNode`, `visitWhileStatementNode`, `visitDoWhileStatementNode`, and `generateTernaryOperatorIr`.
+
+**Logical operator conversion:**
+
+- `IrGenerator_Expr_Operators.cpp`: `&&` / `||` handling now includes a `convertToBool` lambda that:
+  1. Checks sema annotations for float/double operands.
+  2. Falls back to local `generateTypeConversion(operand, float/double, Int, token)`.
+  3. Leaves integer operands unchanged (backend bitwise AND/OR works correctly for integer truth values).
+
+**Bug fix — floating-point `-0.0` condition:**
+
+- IEEE 754 `-0.0` has bit pattern `0x8000000000000000` (double) or `0x80000000` (float).
+- The backend's `handleConditionalBranch` uses `TEST reg, reg` on the raw integer representation. For `-0.0`, the bit pattern is nonzero, so the backend incorrectly treated it as `true`.
+- The fix emits `cvttsd2si` / `cvttss2si` to convert the float to an integer `0` or `1` before the `TEST` instruction.
+- This is a pre-existing bug exposed by Phase 6 work; it now has a regression test.
+
+**New tests:**
+
+- `tests/test_contextual_bool_int_ret0.cpp` — int conditions in if/while/for/do-while/ternary
+- `tests/test_contextual_bool_float_ret0.cpp` — float/double conditions with zero and nonzero values
+- `tests/test_contextual_bool_char_ret0.cpp` — char conditions with null and non-null values
+- `tests/test_contextual_bool_logical_ret0.cpp` — logical operators (&&, ||, !) with mixed types including float/double
+- `tests/test_contextual_bool_neg_zero_ret0.cpp` — `-0.0` edge case regression test
+
+Test results: 1531 pass / 0 fail / 49 expected-fail (5 new tests added)
+
+**Remaining known limitations (carried forward to Phase 7+):**
+
+- Pointer conditions are not annotated (backend `TEST` handles them correctly for non-null-pointer cases)
+- Enum conditions are not annotated (backend `TEST` handles them correctly)
+- User-defined `operator bool()` / contextual conversion operators are not handled by the sema pass
+- Integer-to-bool contextual conversion annotation is informational only; the backend does not read it. A future phase could add a proper `CMP reg, 0; SETNE` sequence for full C++20 compliance, but the backend `TEST` instruction is semantically equivalent for integer types.
+- `ConversionContext::Condition` enum value is used implicitly through `tryAnnotateContextualBool` but is not explicitly set on the `SemanticContext` (would require threading context into the annotation call)
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
