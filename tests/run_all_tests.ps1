@@ -4,8 +4,15 @@
 # OPTIMIZED VERSION - uses call operator instead of Start-Process for better performance
 
 param(
-	[string]$TestFile = $null,
+	[Parameter(Position = 0, ValueFromRemainingArguments = $true)]
+	[string[]]$TestFile = @(),
 	[int]$Jobs = 0
+)
+
+$requestedTestNames = @(
+	$TestFile |
+		Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+		ForEach-Object { Split-Path $_ -Leaf }
 )
 
 # Default to number of logical processors
@@ -152,12 +159,15 @@ foreach ($file in $allTestFiles) {
 $referenceFiles = $filesWithMain
 $totalFailFiles = $failFiles.Count
 
-# Filter to specific test file if provided
-if ($TestFile) {
-	$referenceFiles = $referenceFiles | Where-Object { $_.Name -eq $TestFile }
-	$failFiles = $failFiles | Where-Object { $_.Name -eq $TestFile }
-	if ($referenceFiles.Count -eq 0 -and $failFiles.Count -eq 0) {
-		Write-Host "ERROR: Test file '$TestFile' not found in tests/" -ForegroundColor Red
+# Filter to specific test files if provided
+if ($requestedTestNames.Count -gt 0) {
+	$referenceFiles = $referenceFiles | Where-Object { $requestedTestNames -contains $_.Name }
+	$failFiles = $failFiles | Where-Object { $requestedTestNames -contains $_.Name }
+
+	$matchedNames = @($referenceFiles.Name) + @($failFiles.Name)
+	$missingNames = @($requestedTestNames | Where-Object { $matchedNames -notcontains $_ } | Select-Object -Unique)
+	if ($missingNames.Count -gt 0) {
+		Write-Host "ERROR: Test file(s) not found in tests/: $($missingNames -join ', ')" -ForegroundColor Red
 		exit 1
 	}
 }
@@ -206,7 +216,7 @@ New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 # ──────────────────────────────────────────────────────
 # Determine whether to run in parallel (PS 7+) or sequential
 # ──────────────────────────────────────────────────────
-$useParallel = ($PSVersionTable.PSVersion.Major -ge 7) -and ($Jobs -gt 1) -and (-not $TestFile)
+$useParallel = ($PSVersionTable.PSVersion.Major -ge 7) -and ($Jobs -gt 1) -and ($requestedTestNames.Count -eq 0)
 
 function Get-ResultDetail {
 	param(

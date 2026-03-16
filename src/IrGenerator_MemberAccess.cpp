@@ -3368,15 +3368,24 @@ const StructMember*& out_member) const {
 	if (std::holds_alternative<IdentifierNode>(base_expr)) {
 		// Simple identifier - look it up in the symbol table
 		const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-		std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
-		if (!symbol.has_value()) {
-			return false;
+		if (base_ident.name() == "this" && current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it == gTypesByName.end() || !type_it->second) {
+				return false;
+			}
+			const TypeInfo& type_info = *type_it->second;
+			base_type = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+		} else {
+			std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
+			if (!symbol.has_value()) {
+				return false;
+			}
+			const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
+			if (!base_decl) {
+				return false;
+			}
+			base_type = base_decl->type_node().as<TypeSpecifierNode>();
 		}
-		const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
-		if (!base_decl) {
-			return false;
-		}
-		base_type = base_decl->type_node().as<TypeSpecifierNode>();
 	} else if (std::holds_alternative<MemberAccessNode>(base_expr)) {
 		// Nested member access - recursively resolve
 		const MemberAccessNode& nested_access = std::get<MemberAccessNode>(base_expr);

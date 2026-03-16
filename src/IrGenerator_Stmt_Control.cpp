@@ -1,83 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-namespace {
-// Ranged-for desugaring synthesizes a fresh variable declaration for each loop
-// iteration. When the source declaration used `auto` or `decltype(auto)`,
-// replace the placeholder with the deduced element type while preserving the
-// original declaration's cv/reference spelling.
-ASTNode resolveRangedForLoopDecl(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
-	const DeclarationNode& original_decl = original_var_decl.declaration();
-	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
-	if (!isPlaceholderAutoType(placeholder_type.type())) {
-		return original_var_decl.declaration_node();
-	}
-
-	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	// Plain `auto` strips references during deduction, so re-apply the user's
-	// explicit qualifier (e.g. `auto&`).  `decltype(auto)` preserves the exact
-	// type category from the deduced expression — do not overwrite.
-	if (placeholder_type.type() == Type::Auto) {
-		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
-		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
-			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
-		}
-	}
-
-	ASTNode resolved_type_node = ASTNode::emplace_node<TypeSpecifierNode>(resolved_type);
-	DeclarationNode& resolved_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(original_decl);
-	resolved_decl.set_type_node(resolved_type_node);
-	return ASTNode::emplace_node<DeclarationNode>(resolved_decl);
-}
-
-const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
-		return nullptr;
-	}
-
-	const StructTypeInfo* struct_info = gTypeInfo[iterator_type.type_index().value].getStructInfo();
-	if (!struct_info) {
-		return nullptr;
-	}
-
-	const FunctionDeclarationNode* fallback = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Multiply ||
-			!member_func.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-
-		const auto& func = member_func.function_decl.as<FunctionDeclarationNode>();
-		// Unary operator*() (dereference) has 0 parameters; binary operator*(rhs) has 1.
-		if (func.parameter_nodes().size() != 0) {
-			continue;
-		}
-
-		if (prefer_const && member_func.is_const()) {
-			return &func;
-		}
-		if (!prefer_const && !member_func.is_const()) {
-			return &func;
-		}
-		if (!fallback) {
-			fallback = &func;
-		}
-	}
-
-	return fallback;
-}
-
-std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
-		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-		element_type.set_reference_qualifier(ReferenceQualifier::None);
-		return element_type;
-	}
-
-	return std::nullopt;
-}
-}
-
 	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
 		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
@@ -579,41 +502,87 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		auto loop_var_decl = node.get_loop_variable_decl();
 		auto range_expr = node.get_range_expression();
 
-		// C++11+ standard: The range expression is bound to a reference for lifetime extension
-		// This ensures temporary objects live for the entire loop duration
-		// For now, we only support simple identifiers (not temporaries), so lifetime is already correct
-
-		// Check what kind of range expression we have
+		// C++11+ standard: the range expression is materialized into a hidden
+		// `__range` binding before begin/end are formed. Reuse the original
+		// identifier when available; otherwise synthesize a hidden variable so
+		// member-access and temporary-producing expressions are evaluated once.
 		if (!range_expr.is<ExpressionNode>()) {
 			FLASH_LOG(Codegen, Error, "Range expression must be an expression");
 			return;
 		}
 
 		auto& expr_variant = range_expr.as<ExpressionNode>();
-		if (!std::holds_alternative<IdentifierNode>(expr_variant)) {
-			FLASH_LOG(Codegen, Error, "Currently only identifiers are supported as range expressions");
-			return;
-		}
-
-		const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
-		std::string_view range_name = range_ident.name();
-
-		// Look up the range object in the symbol table
-		const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
-		if (!range_symbol.has_value()) {
-			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
-			return;
-		}
-
-		// Extract the DeclarationNode from either DeclarationNode or VariableDeclarationNode
+		std::string_view range_name;
 		const DeclarationNode* range_decl_ptr = nullptr;
-		if (range_symbol->is<DeclarationNode>()) {
-			range_decl_ptr = &range_symbol->as<DeclarationNode>();
-		} else if (range_symbol->is<VariableDeclarationNode>()) {
-			range_decl_ptr = &range_symbol->as<VariableDeclarationNode>().declaration();
+		ASTNode range_object_expr = range_expr;
+
+		if (std::holds_alternative<IdentifierNode>(expr_variant)) {
+			const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
+			range_name = range_ident.name();
+
+			// Look up the range object in the symbol table
+			const std::optional<ASTNode> range_symbol = symbol_table.lookup(range_name);
+			if (!range_symbol.has_value()) {
+				FLASH_LOG(Codegen, Error, "Range object '", range_name, "' not found in symbol table");
+				return;
+			}
+
+			// Extract the DeclarationNode from either DeclarationNode or VariableDeclarationNode
+			if (range_symbol->is<DeclarationNode>()) {
+				range_decl_ptr = &range_symbol->as<DeclarationNode>();
+			} else if (range_symbol->is<VariableDeclarationNode>()) {
+				range_decl_ptr = &range_symbol->as<VariableDeclarationNode>().declaration();
+			} else {
+				FLASH_LOG(Codegen, Error, "Range object '", range_name, "' is not a variable declaration");
+				return;
+			}
 		} else {
-			FLASH_LOG(Codegen, Error, "Range object '", range_name, "' is not a variable declaration");
-			return;
+			std::optional<TypeSpecifierNode> inferred_range_type;
+			if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
+				const StructTypeInfo* resolved_struct_info = nullptr;
+				const StructMember* resolved_member = nullptr;
+				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
+					resolved_member) {
+					inferred_range_type.emplace(
+						(resolved_member->type == Type::UserDefined || resolved_member->type == Type::Struct)
+							? Type::Struct
+							: resolved_member->type,
+						resolved_member->type_index,
+						static_cast<int>(resolved_member->size * 8),
+						Token()
+					);
+					if (resolved_member->pointer_depth > 0) {
+						inferred_range_type->add_pointer_levels(resolved_member->pointer_depth);
+					}
+					if (resolved_member->reference_qualifier != ReferenceQualifier::None) {
+						inferred_range_type->set_reference_qualifier(resolved_member->reference_qualifier);
+					}
+				}
+			}
+			if (!inferred_range_type.has_value()) {
+				if (!parser_) {
+					FLASH_LOG(Codegen, Error, "Parser is required to infer non-identifier range expression types");
+					return;
+				}
+				inferred_range_type = parser_->get_expression_type(range_expr);
+			}
+			if (!inferred_range_type.has_value()) {
+				FLASH_LOG(Codegen, Error, "Could not infer type of non-identifier range expression");
+				return;
+			}
+
+			StringBuilder sb_range;
+			sb_range.append("__range_");
+			sb_range.append(ranged_for_counter - 1);
+			range_name = sb_range.commit();
+
+			Token range_token(Token::Type::Identifier, range_name, 0, 0, 0);
+			ASTNode range_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*inferred_range_type);
+			ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
+			ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
+			visit(range_var_decl_node);
+			range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+			range_decl_ptr = &range_decl_node.as<DeclarationNode>();
 		}
 
 		const DeclarationNode& range_decl = *range_decl_ptr;
@@ -633,8 +602,8 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
-		else if (range_type.type() == Type::Struct) {
-			visitRangedForBeginEnd(node, range_name, range_type, loop_start_label, loop_body_label,
+		else if (range_type.type() == Type::Struct || range_type.type() == Type::UserDefined) {
+			visitRangedForBeginEnd(node, range_object_expr, range_type, loop_start_label, loop_body_label,
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		else {
@@ -804,7 +773,12 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			return;
 		}
 		const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
-		ASTNode loop_decl_node = resolveRangedForLoopDecl(original_var_decl, array_type);
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		if (sema_) {
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
+		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+			throw InternalError("Range-for placeholder loop variable reached array lowering without semantic normalization");
+		}
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
@@ -815,15 +789,24 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
 		);
 
+		symbol_table.enter_scope(ScopeType::Block);
+		enterScope();
+		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
-		// Note: visitVariableDeclarationNode will add it to the symbol table
 		visit(loop_var_with_init);
 
 		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
 		visit(body_stmt);
+
+		// Exit the loop variable scope so destructors fire each iteration,
+		// before the increment and branch-back.
+		exitScope();
+		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+		symbol_table.exit_scope();
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
@@ -846,7 +829,7 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		popLoopSehDepth();
 	}
 
-	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode range_object_expr,
 	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter) {
@@ -911,13 +894,9 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
 		// Create member function calls: range.begin() and range.end()
-		auto range_expr_for_begin = ASTNode::emplace_node<ExpressionNode>(
-			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
-		);
-
 		ChunkedVector<ASTNode> empty_args;
 		auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_expr_for_begin,
+			MemberFunctionCallNode(range_object_expr,
 			begin_func_decl,
 			std::move(empty_args), Token())
 		);
@@ -927,13 +906,9 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 
 		// Similarly for end()
 		const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
-		auto range_expr_for_end = ASTNode::emplace_node<ExpressionNode>(
-			IdentifierNode(Token(Token::Type::Identifier, range_name, 0, 0, 0))
-		);
-
 		ChunkedVector<ASTNode> empty_args2;
 		auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_expr_for_end,
+			MemberFunctionCallNode(range_object_expr,
 			end_func_decl,
 			std::move(empty_args2), Token())
 		);
@@ -983,28 +958,16 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		// For pointer-based iterators (e.g. int*), stripping one pointer level
 		// gives the element type directly. For struct iterators, use the declared
 		// operator*() return type as the range element type.
-		ASTNode loop_decl_node = [&]() -> ASTNode {
-			if (begin_return_type.pointer_depth() > 0) {
-				TypeSpecifierNode deduced_loop_type = begin_return_type;
-				deduced_loop_type.remove_pointer_level();
-				return resolveRangedForLoopDecl(original_var_decl, deduced_loop_type);
-			}
-
-			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-			if (auto deduced_loop_type = getRangeIteratorElementType(begin_return_type, prefer_const_deref); deduced_loop_type.has_value()) {
-				return resolveRangedForLoopDecl(original_var_decl, *deduced_loop_type);
-			}
-
-			const TypeSpecifierNode& placeholder_type = original_var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if (isPlaceholderAutoType(placeholder_type.type())) {
-				throw InternalError(std::string(StringBuilder()
-					.append("Could not deduce range-for element type from iterator type '")
-					.append(begin_return_type.getReadableString())
-					.append("'")
-					.commit()));
-			}
-			return original_var_decl.declaration_node();
-		}();
+		ASTNode loop_decl_node = original_var_decl.declaration_node();
+		if (sema_) {
+			loop_decl_node = sema_->normalizeRangedForLoopDecl(
+				original_var_decl,
+				range_type,
+				begin_return_type,
+				node.resolved_dereference_function());
+		} else if (isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
+			throw InternalError("Range-for placeholder loop variable reached iterator lowering without semantic normalization");
+		}
 		const DeclarationNode& loop_decl = loop_decl_node.as<DeclarationNode>();
 		const TypeSpecifierNode& loop_type = loop_decl.type_node().as<TypeSpecifierNode>();
 
@@ -1028,8 +991,10 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			);
 		} else {
 			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
-			const FunctionDeclarationNode* dereference_func =
-				getRangeIteratorDereferenceFunction(begin_return_type, prefer_const_deref);
+			const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
+			if (!dereference_func && sema_) {
+				dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
+			}
 			if (!dereference_func) {
 				throw InternalError("Range-for struct iterator missing operator*() during lowering");
 			}
@@ -1053,6 +1018,10 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 			}
 		}
 
+		symbol_table.enter_scope(ScopeType::Block);
+		enterScope();
+		ir_.addInstruction(IrOpcode::ScopeBegin, {}, Token());
+
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
 
 		// Generate IR for loop variable declaration
@@ -1061,6 +1030,12 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
 		visit(body_stmt);
+
+		// Exit the loop variable scope so destructors fire each iteration,
+		// before the increment and branch-back.
+		exitScope();
+		ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
+		symbol_table.exit_scope();
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));

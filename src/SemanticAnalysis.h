@@ -15,6 +15,9 @@ class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
 class FunctionCallNode;
+class RangedForStatementNode;
+class VariableDeclarationNode;
+struct LambdaInfo;
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization. Phase 1 established the pipeline seam.
@@ -44,6 +47,17 @@ public:
 	std::vector<ASTNode> normalizeGenericLambdaParams(
 		const std::vector<ASTNode>& parameter_nodes,
 		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
+	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
+	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+		const TypeSpecifierNode& deduced_type) const;
+	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
+		const TypeSpecifierNode& range_type,
+		const TypeSpecifierNode& begin_return_type,
+		const FunctionDeclarationNode* dereference_func) const;
+	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt);
+	const FunctionDeclarationNode* resolveRangedForIteratorDereference(
+		const TypeSpecifierNode& iterator_type,
+		bool prefer_const) const;
 
 private:
 	// Top-level dispatch

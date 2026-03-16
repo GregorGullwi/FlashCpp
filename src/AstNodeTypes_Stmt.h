@@ -199,12 +199,17 @@ public:
 	auto get_body_statement() const { return body_statement_; }
 	auto get_init_statement() const { return init_statement_; }
 	bool has_init_statement() const { return init_statement_.has_value(); }
+	const FunctionDeclarationNode* resolved_dereference_function() const { return resolved_dereference_function_; }
+	void set_resolved_dereference_function(const FunctionDeclarationNode* func) {
+		resolved_dereference_function_ = func;
+	}
 
 private:
 	ASTNode loop_variable_decl_;  // for (int x : range)
 	ASTNode range_expression_;     // the array or container to iterate over
 	ASTNode body_statement_;
 	std::optional<ASTNode> init_statement_;  // C++20: for (init; decl : range)
+	const FunctionDeclarationNode* resolved_dereference_function_ = nullptr;
 };
 
 class BreakStatementNode {

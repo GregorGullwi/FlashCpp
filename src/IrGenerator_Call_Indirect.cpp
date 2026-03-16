@@ -383,11 +383,45 @@
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
 			const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
 			std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
+			bool resolved_member_object_type = false;
 
 			// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
+				if (resolved_member && resolved_member->type == Type::FunctionPointer) {
+					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
+					std::variant<StringHandle, TempVar> function_pointer;
+					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
+						function_pointer = std::get<TempVar>(func_ptr_result.value);
+					} else if (std::holds_alternative<StringHandle>(func_ptr_result.value)) {
+						function_pointer = std::get<StringHandle>(func_ptr_result.value);
+					} else {
+						throw InternalError("Function pointer member access did not produce a valid call target");
+					}
+
+					TempVar ret_var = var_counter.next();
+					std::vector<TypedValue> arguments;
+					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+						arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+					});
+
+					IndirectCallOp op{
+						.result = ret_var,
+						.function_pointer = std::move(function_pointer),
+						.arguments = std::move(arguments)
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+
+					if (!resolved_member->function_signature) {
+						throw InternalError("Function pointer member missing function_signature for indirect call return type");
+					}
+					Type ret_type = resolved_member->function_signature->return_type;
+					int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var});
+				}
+
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
 					// Get the struct info for the member's type
@@ -453,40 +487,13 @@
 							// Not a function pointer member - set object_type for regular member function lookup
 							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
 							resolved_member->size * 8, Token());  // size in bits
+							resolved_member_object_type = true;
 						}
 					}
 				}
 			}
 
-			// Fall back to simple base object handling for "this->member" pattern
-			const ASTNode& base_node = member_access.object();
-			if (base_node.is<ExpressionNode>()) {
-				const ExpressionNode& base_expr = base_node.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(base_expr)) {
-					const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-					std::string_view base_name = base_ident.name();
-
-					// Look up the base object (e.g., "this")
-					const std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
-					if (symbol.has_value()) {
-						const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
-						if (base_decl) {
-							TypeSpecifierNode base_type_spec = base_decl->type_node().as<TypeSpecifierNode>();
-
-							// If this is a pointer (like "this"), dereference it
-							if (base_type_spec.pointer_levels().size() > 0) {
-								base_type_spec.remove_pointer_level();
-							}
-
-							// Now base_type_spec should be the struct type
-							if (isIrStructType(toIrType(base_type_spec.type()))) {
-								object_type = base_type_spec;
-								object_name = base_name;  // Use the base name for the call
-							}
-						}
-					}
-				}
-			}
+			(void)resolved_member_object_type;
 		}
 
 		// For immediate lambda invocation, object_decl can be nullptr
@@ -1014,6 +1021,7 @@
 
 			// Vector to hold deduced parameter types (populated for generic lambdas)
 			std::vector<TypeSpecifierNode> param_types;
+			std::optional<TypeSpecifierNode> resolved_generic_return_type;
 
 			// Check if this is an instantiated template function
 			std::string_view func_name = func_decl_node.identifier_token().value();
@@ -1070,8 +1078,10 @@
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
 
-					// Get return type and parameter types from the function declaration
-					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
+					// Get return type and parameter types from the function declaration.
+					// Generic lambda calls can refine this below once sema has normalized
+					// the instantiated lambda body with concrete argument types.
+					const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
 
 					// Check if this is a generic lambda call (lambda with auto parameters)
 					bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
@@ -1131,6 +1141,8 @@
 							}
 						});
 
+						LambdaInfo* matched_lambda_info = nullptr;
+
 						// Now build param_types with deduced types for auto parameters
 						size_t arg_idx = 0;
 						for (const auto& param_node : func_for_mangling->parameter_nodes()) {
@@ -1147,6 +1159,7 @@
 									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
 									for (auto& lambda_info : collected_lambdas_) {
 										if (lambda_info.closure_type_name == struct_name) {
+											matched_lambda_info = &lambda_info;
 											lambda_info.setDeducedType(arg_idx, deduced_type);
 											break;
 										}
@@ -1156,6 +1169,22 @@
 								}
 							}
 							arg_idx++;
+						}
+
+						if (matched_lambda_info && sema_) {
+							sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
+							if (!isPlaceholderAutoType(matched_lambda_info->return_type)) {
+								resolved_generic_return_type.emplace(
+									matched_lambda_info->return_type,
+									matched_lambda_info->return_type_index,
+									matched_lambda_info->return_size,
+									matched_lambda_info->lambda_token);
+								if (matched_lambda_info->returns_reference) {
+									resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
+									resolved_generic_return_type->set_size_in_bits(64);
+								}
+								mangling_return_type = &*resolved_generic_return_type;
+							}
 						}
 					} else {
 						// Non-lambda: use parameter types directly from declaration
@@ -1181,7 +1210,7 @@
 					// Generate proper mangled name including parameter types
 					std::string_view mangled = generateMangledNameForCall(
 						func_name,
-						return_type_node,
+						*mangling_return_type,
 						param_types,
 						func_for_mangling->is_variadic(),
 						struct_name_view,
@@ -1203,7 +1232,9 @@
 			// Use called_member_func if available (has the substituted template types)
 			// Otherwise fall back to func_decl or func_decl_node
 			const TypeSpecifierNode* return_type_ptr = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			if (resolved_generic_return_type.has_value()) {
+				return_type_ptr = &*resolved_generic_return_type;
+			} else if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>();
 			} else {
 				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();

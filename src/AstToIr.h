@@ -34,7 +34,7 @@ public:
 
 	// Wire in semantic-analysis results so that IR lowering can consume
 	// pre-computed implicit-cast annotations instead of recomputing them.
-	void setSemanticData(const SemanticAnalysis* sema) { sema_ = sema; }
+	void setSemanticData(SemanticAnalysis* sema) { sema_ = sema; }
 
 private:
 	struct MultiDimArrayAccess {
@@ -158,7 +158,7 @@ private:
 	const DeclarationNode& array_decl, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter);
-	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
+	void visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode range_object_expr,
 	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
 	StringHandle loop_body_label, StringHandle loop_increment_label,
 	StringHandle loop_end_label, size_t counter);
@@ -288,7 +288,6 @@ private:
 	void generateLambdaFunctions(LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
-	void normalizeGenericLambdaParams(LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
 		const std::vector<ASTNode>& captured_var_decls);
 
@@ -626,7 +625,7 @@ private:
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
-	const SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
+	SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;
