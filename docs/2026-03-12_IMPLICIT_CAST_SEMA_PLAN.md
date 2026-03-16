@@ -1080,8 +1080,12 @@ Exit criteria:
 
 - IEEE 754 `-0.0` has bit pattern `0x8000000000000000` (double) or `0x80000000` (float).
 - The backend's `handleConditionalBranch` uses `TEST reg, reg` on the raw integer representation. For `-0.0`, the bit pattern is nonzero, so the backend incorrectly treated it as `true`.
-- The fix emits `cvttsd2si` / `cvttss2si` to convert the float to an integer `0` or `1` before the `TEST` instruction.
-- This is a pre-existing bug exposed by Phase 6 work; it now has a regression test.
+- The fix emits `FloatNotEqual` (UCOMISD/UCOMISS + SETNE) to compare the float against `0.0`, producing a proper boolean result.
+  - `-0.0 == +0.0` per IEEE 754 semantics → SETNE → 0 (false) ✓
+  - Fractional values like `0.5` → `0.5 != 0.0` → SETNE → 1 (true) ✓
+  - NaN → unordered → SETNE → 1 (truthy per C++20 [conv.bool]) ✓
+- The initial approach used `cvttsd2si`/`cvttss2si` (FloatToInt), but this was wrong because it truncated fractional values like 0.5 to integer 0.
+- This is a pre-existing bug exposed by Phase 6 work; it now has regression tests.
 
 **New tests:**
 
@@ -1090,8 +1094,10 @@ Exit criteria:
 - `tests/test_contextual_bool_char_ret0.cpp` — char conditions with null and non-null values
 - `tests/test_contextual_bool_logical_ret0.cpp` — logical operators (&&, ||, !) with mixed types including float/double
 - `tests/test_contextual_bool_neg_zero_ret0.cpp` — `-0.0` edge case regression test
+- `tests/test_contextual_bool_not_neg_zero_ret0.cpp` — `!` operator with float `-0.0`
+- `tests/test_contextual_bool_fractional_float_ret0.cpp` — fractional float conditions (0.5, 0.1f, 0.99)
 
-Test results: 1531 pass / 0 fail / 49 expected-fail (5 new tests added)
+Test results: 1533 pass / 0 fail / 49 expected-fail (7 new tests added)
 
 **Remaining known limitations (carried forward to Phase 7+):**
 

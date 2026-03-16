@@ -2212,6 +2212,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 			// Materialize a 0.0 constant with the same float type as the condition.
+			// The caller guarantees cond.type is Float or Double.
 			ExprResult zero = makeExprResult(cond.type, cond.size_in_bits, IrOperand{0.0});
 			// Emit: result = (cond != 0.0)
 			TempVar result_var = var_counter.next();
@@ -2221,7 +2222,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
-			// FloatNotEqual returns bool8; promote to Int32 for backend TEST compatibility.
+			// FloatNotEqual produces a bool8 result via SETNE; the backend's
+			// conditional branch already handles bool8 values correctly.
 			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 		};
 
