@@ -174,21 +174,26 @@
 				const StructTypeInfo* struct_info = gTypeInfo[func_type.type_index().value].getStructInfo();
 				if (struct_info) {
 					const FunctionDeclarationNode* operator_call = nullptr;
+					const FunctionDeclarationNode* sole_operator_call = nullptr;
+					size_t operator_call_count = 0;
 					for (const auto& member_func : struct_info->member_functions) {
 						if (member_func.operator_kind == OverloadableOperator::Call &&
 							member_func.function_decl.is<FunctionDeclarationNode>()) {
 							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+							++operator_call_count;
+							if (!sole_operator_call) {
+								sole_operator_call = &candidate;
+							}
 							if (candidate.parameter_nodes().size() == functionCallNode.arguments().size()) {
 								operator_call = &candidate;
 								break;
 							}
-							// Keep the first operator() as a fallback so normalized callable
-							// objects without a perfect arity match still route through member
-							// call lowering instead of falling through as a free-function call.
-							if (!operator_call) {
-								operator_call = &candidate;
-							}
 						}
+					}
+					if (!operator_call && operator_call_count == 1) {
+						// Only fall back when the callable object exposes a single
+						// operator(); this avoids silently choosing an arbitrary overload.
+						operator_call = sole_operator_call;
 					}
 
 					if (operator_call) {
