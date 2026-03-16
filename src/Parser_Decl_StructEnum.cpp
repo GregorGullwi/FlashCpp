@@ -4316,14 +4316,10 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		// Register in template registry so call sites can find and instantiate it
 		gTemplateRegistry.registerTemplate(func_name_handle, template_func_node);
 
-		// Register in namespace symbol table so unqualified lookup finds it
-		// (FlashCpp currently makes hidden friends visible to ordinary lookup)
-		NamespaceHandle enclosing_ns = gSymbolTable.get_current_namespace_handle();
-		gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, template_func_node);
-
-		// Note: do NOT push template functions to pending_hidden_friend_defs_.
-		// Templates produce no IR directly; code is generated when the template
-		// is instantiated at each call site via the template registry.
+		// Register in template registry so call sites can find and instantiate it via ADL.
+		// Do NOT insert into the namespace symbol table — that would cause the IR generator
+		// to treat the template as a regular function and generate an unmangled forward-decl
+		// reference alongside the properly-mangled instantiation.
 
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
 		friend_node.as<FriendDeclarationNode>().set_function_declaration(template_func_node);
