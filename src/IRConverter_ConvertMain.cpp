@@ -6267,7 +6267,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 			auto dst_offset = var_it->second.offset;
 			const TypedValue& init = op.initializer.value();
 			auto loadReferenceSourceIntoRegister = [&](X64Register dest_reg, int32_t source_stack_offset, bool is_float) {
-				X64Register ptr_reg = allocateRegisterWithSpilling();
+				X64Register ptr_reg = allocateRegisterWithSpilling(dest_reg);
 				emitMovFromFrame(ptr_reg, source_stack_offset);
 				if (is_float) {
 					emitFloatMovFromMemory(dest_reg, ptr_reg, 0, var_type == Type::Float);
