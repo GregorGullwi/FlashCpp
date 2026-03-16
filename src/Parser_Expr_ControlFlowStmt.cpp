@@ -429,61 +429,9 @@ ParseResult Parser::parse_try_statement() {
     std::vector<ASTNode> catch_clauses;
 
     while (peek() == "catch"_tok) {
-        Token catch_token = peek_info();
-        advance(); // Consume the 'catch' keyword
-
-        if (!consume("("_tok)) {
-            return ParseResult::error("Expected '(' after 'catch'", current_token_);
-        }
-
-        std::optional<ASTNode> exception_declaration;
-        bool is_catch_all = false;
-
-        // Check for catch(...)
-        if (peek() == "..."_tok) {
-            advance(); // Consume '...'
-            is_catch_all = true;
-        } else {
-            // Parse exception type and optional identifier
-            auto type_result = parse_type_and_name();
-            if (type_result.is_error()) {
-                return type_result;
-            }
-            exception_declaration = type_result.node();
-        }
-
-        if (!consume(")"_tok)) {
-            return ParseResult::error("Expected ')' after catch declaration", current_token_);
-        }
-
-        // Enter a new scope for the catch block and add the exception parameter to the symbol table
-        gSymbolTable.enter_scope(ScopeType::Block);
-        
-        // Add exception parameter to symbol table (if it's not catch(...))
-        if (!is_catch_all && exception_declaration.has_value()) {
-            const auto& decl = exception_declaration->as<DeclarationNode>();
-            if (!decl.identifier_token().value().empty()) {
-                gSymbolTable.insert(decl.identifier_token().value(), *exception_declaration);
-            }
-        }
-
-        // Parse the catch block
-        auto catch_block_result = parse_block();
-        
-        // Exit the catch block scope
-        gSymbolTable.exit_scope();
-        
-        if (catch_block_result.is_error()) {
-            return catch_block_result;
-        }
-
-        ASTNode catch_block = *catch_block_result.node();
-
-        // Create the catch clause node
-        if (is_catch_all) {
-            catch_clauses.push_back(emplace_node<CatchClauseNode>(catch_block, catch_token, true));
-        } else {
-            catch_clauses.push_back(emplace_node<CatchClauseNode>(exception_declaration, catch_block, catch_token));
+        auto clause_result = parse_one_catch_clause(catch_clauses);
+        if (clause_result.is_error()) {
+            return clause_result;
         }
     }
 
