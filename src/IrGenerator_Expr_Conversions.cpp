@@ -974,6 +974,8 @@
 		const StructMember* member, bool is_reference_capture,
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
+			int increment_amount = (member->pointer_depth > 0) ?
+				getPointerElementSize(member->type, member->type_index, member->pointer_depth) : 1;
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -997,7 +999,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, 1ULL },
+					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1032,7 +1034,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, 1ULL },
+					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1736,12 +1738,23 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	int element_size = 1;
 	if (operand_pointer_depth > 0) {
 		is_pointer = true;
-		if (operand_pointer_depth > 1) {
-			element_size = 8;
-		} else {
-			element_size = getSizeInBytes(operandType, operandIrResult.type_index, get_type_size_bits(operandType));
-			if (element_size == 0) {
-				element_size = 1;
+		element_size = getPointerElementSize(operandType, operandIrResult.type_index, operand_pointer_depth);
+	}
+	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
+		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);
+		if (auto lvalue_info = getTempVarLValueInfo(operand_temp);
+			lvalue_info.has_value() && lvalue_info->kind == LValueInfo::Kind::Member &&
+			lvalue_info->member_name.has_value() && current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it != gTypesByName.end() && type_it->second && type_it->second->getStructInfo()) {
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+					TypeIndex{type_it->second->type_index_},
+					lvalue_info->member_name.value());
+					member_result && member_result.member->pointer_depth > 0) {
+					is_pointer = true;
+					operand_pointer_depth = member_result.member->pointer_depth;
+					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+				}
 			}
 		}
 	}
@@ -1755,24 +1768,101 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), type_node.size_in_bits());
+			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.type()));
+			if (element_size == 0) {
+				element_size = 1;
+			}
 		}
 	};
 	auto tryApplyPointerInfoFromIdentifier = [&](const IdentifierNode& identifier, size_t consumed_dereferences = 0) -> bool {
+		auto tryApplyCurrentStructMemberPointerInfo = [&](StringHandle member_name) -> bool {
+			if (!current_struct_name_.isValid()) {
+				return false;
+			}
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it == gTypesByName.end() || !type_it->second || !type_it->second->getStructInfo()) {
+				return false;
+			}
+			auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+				TypeIndex{type_it->second->type_index_},
+				member_name);
+			if (!member_result || member_result.member->pointer_depth <= 0) {
+				return false;
+			}
+			int resolved_pointer_depth = member_result.member->pointer_depth - static_cast<int>(consumed_dereferences);
+			if (resolved_pointer_depth <= 0) {
+				return false;
+			}
+			is_pointer = true;
+			operand_pointer_depth = resolved_pointer_depth;
+			element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+			return true;
+		};
+
+		if (identifier.binding() == IdentifierBinding::NonStaticMember &&
+			tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle())) {
+			return true;
+		}
+
 		auto symbol = symbol_table.lookup(identifier.name());
 		if (!symbol.has_value()) {
-			return false;
+			return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 		}
 		if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 			applyPointerTypeInfo(decl->type_node().as<TypeSpecifierNode>(), consumed_dereferences);
+			if (!is_pointer && !operand_pointer_depth) {
+				return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
+			}
 			return true;
 		}
-		return false;
+		return tryApplyCurrentStructMemberPointerInfo(identifier.nameHandle());
 	};
+	if (unaryOperatorNode.get_operand().is<IdentifierNode>()) {
+		tryApplyPointerInfoFromIdentifier(unaryOperatorNode.get_operand().as<IdentifierNode>());
+	}
 	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+		if (parser_ && operand_pointer_depth == 0) {
+			if (auto operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand()); operand_type_opt.has_value()) {
+				applyPointerTypeInfo(*operand_type_opt);
+			}
+		}
 		if (operandHandledAsIdentifier && std::holds_alternative<IdentifierNode>(operandExpr)) {
 			tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(operandExpr));
+		} else if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
+			const auto& member_access = std::get<MemberAccessNode>(operandExpr);
+			std::optional<TypeSpecifierNode> object_type_opt;
+			if (member_access.object().is<ExpressionNode>()) {
+				const ExpressionNode& object_expr = member_access.object().as<ExpressionNode>();
+				if (const auto* identifier = std::get_if<IdentifierNode>(&object_expr)) {
+					if (identifier->name() == "this" && current_struct_name_.isValid()) {
+						auto type_it = gTypesByName.find(current_struct_name_);
+						if (type_it != gTypesByName.end() && type_it->second) {
+							const TypeInfo& type_info = *type_it->second;
+							object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+						}
+					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
+						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+							object_type_opt = decl->type_node().as<TypeSpecifierNode>();
+						}
+					}
+				}
+			}
+			if (!object_type_opt.has_value() && parser_) {
+				object_type_opt = parser_->get_expression_type(member_access.object());
+			}
+			if (object_type_opt.has_value() &&
+				(object_type_opt->type() == Type::Struct || object_type_opt->type() == Type::UserDefined) &&
+				object_type_opt->type_index().is_valid() && object_type_opt->type_index().value < gTypeInfo.size()) {
+				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+					object_type_opt->type_index(),
+					StringTable::getOrInternStringHandle(member_access.member_name()));
+				if (member_result && member_result.member->pointer_depth > 0) {
+					is_pointer = true;
+					operand_pointer_depth = member_result.member->pointer_depth;
+					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+				}
+			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {
 			const UnaryOperatorNode& deref_expr = std::get<UnaryOperatorNode>(operandExpr);
 			if (deref_expr.op() == "*" && deref_expr.get_operand().is<ExpressionNode>()) {

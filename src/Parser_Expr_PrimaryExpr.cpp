@@ -4670,11 +4670,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG_FORMAT(Parser, Debug, "is_function_pointer={} (is_fp={}, has_sig={}) for '{}'", 
 						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), identifier_token.value());
 
-					// Check if this is a struct with operator()
-					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+					// Check if this is a struct with operator(). Placeholder-auto lambda
+					// variables may still carry Type::Auto here while already pointing at
+					// the synthesized closure type via type_index().
+					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined ||
+						isPlaceholderAutoType(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
-						if (type_index.value < gTypeInfo.size()) {
+						if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_index.value];
 							if (type_info.struct_info_) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions", 
@@ -4694,7 +4697,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					// Treat unresolved placeholder types as callable when parsing generic
 					// lambda parameters such as [](auto&& func) { func(); }.
-					else if (isPlaceholderAutoType(type_node.type())) {
+					if (!has_operator_call && isPlaceholderAutoType(type_node.type())) {
 						is_function_pointer = true;
 					}
 				}

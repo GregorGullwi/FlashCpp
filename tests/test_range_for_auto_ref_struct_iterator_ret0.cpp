@@ -38,9 +38,9 @@ IntIter Container::end() {
 
 int main() {
 	Container c{{10, 20, 30}};
-	int sum = 0;
-	for (auto value : c) {
-		sum += value;
+	for (auto& value : c) {
+		value += 1;
 	}
-	return sum == 60 ? 0 : 1;
+
+	return 63 - (c.data[0] + c.data[1] + c.data[2]);
 }

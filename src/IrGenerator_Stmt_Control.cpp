@@ -69,7 +69,9 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunction(const TypeSpe
 
 std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifierNode& iterator_type, bool prefer_const) {
 	if (const auto* dereference_func = getRangeIteratorDereferenceFunction(iterator_type, prefer_const)) {
-		return dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeSpecifierNode element_type = dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+		element_type.set_reference_qualifier(ReferenceQualifier::None);
+		return element_type;
 	}
 
 	return std::nullopt;
@@ -1025,12 +1027,30 @@ std::optional<TypeSpecifierNode> getRangeIteratorElementType(const TypeSpecifier
 				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true)
 			);
 		} else {
-			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(
-					Token(Token::Type::Operator, "*"sv, 0, 0, 0),
+			const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+			const FunctionDeclarationNode* dereference_func =
+				getRangeIteratorDereferenceFunction(begin_return_type, prefer_const_deref);
+			if (!dereference_func) {
+				throw InternalError("Range-for struct iterator missing operator*() during lowering");
+			}
+			ChunkedVector<ASTNode> dereference_args;
+			ASTNode dereference_call = ASTNode::emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(
 					ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token)),
-					true)
+					*dereference_func,
+					std::move(dereference_args),
+					Token(Token::Type::Identifier, "operator*"sv, 0, 0, 0))
 			);
+			const TypeSpecifierNode& dereference_return_type =
+				dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
+			if (loop_type.reference_qualifier() == ReferenceQualifier::None &&
+				(dereference_return_type.is_reference() || dereference_return_type.is_rvalue_reference())) {
+				init_expr = ASTNode::emplace_node<ExpressionNode>(
+					UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), dereference_call, true)
+				);
+			} else {
+				init_expr = dereference_call;
+			}
 		}
 
 		auto loop_var_with_init = ASTNode::emplace_node<VariableDeclarationNode>(loop_decl_node, init_expr);
