@@ -4275,14 +4275,15 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		// The empty name is acceptable because we only need to record that a friend 
 		// declaration exists; the actual function resolution happens at call sites.
 		
-		// Skip until ';' or '{' (for friend function templates with inline definitions)
-		while (!peek().is_eof() && peek() != ";"_tok && peek() != "{"_tok) {
+		// Skip until ';', '{', or 'try' (for friend function templates with inline definitions,
+		// including function-try-blocks: try { ... } catch(...) { ... })
+		while (!peek().is_eof() && peek() != ";"_tok && peek() != "{"_tok && peek() != "try"_tok) {
 			advance();
 		}
 		
-		// Handle inline friend function template body: { ... }
-		if (peek() == "{"_tok) {
-			skip_balanced_braces();
+		// Handle inline friend function template body: { ... } or try { ... } catch(...) { ... }
+		if (peek() == "{"_tok || peek() == "try"_tok) {
+			skip_function_body();
 		}
 		
 		// Skip trailing semicolon if present (for declarations without body)
