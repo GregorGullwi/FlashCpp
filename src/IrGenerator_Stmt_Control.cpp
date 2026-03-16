@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
@@ -109,6 +110,8 @@
 		} else {
 			condition_result = visitExpressionNode(cond_node.as<ExpressionNode>());
 		}
+		// C++20 [stmt.select]: contextual bool conversion.
+		condition_result = applyConditionBoolConversion(condition_result, cond_node, Token());
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
@@ -183,6 +186,8 @@
 		// Evaluate condition (if present, otherwise infinite loop)
 		if (node.has_condition()) {
 			ExprResult condition_result = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
+			// C++20 [stmt.for]: contextual bool conversion.
+			condition_result = applyConditionBoolConversion(condition_result, *node.get_condition(), Token());
 
 			// Generate conditional branch: if true goto body, else goto end
 			CondBranchOp cond_branch;
@@ -249,6 +254,8 @@
 
 		// Evaluate condition
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		// C++20 [stmt.while]: contextual bool conversion.
+		condition_result = applyConditionBoolConversion(condition_result, node.get_condition(), Token());
 
 		// Generate conditional branch: if true goto body, else goto end
 		CondBranchOp cond_branch;
@@ -310,6 +317,8 @@
 
 		// Evaluate condition
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		// C++20 [stmt.do]: contextual bool conversion.
+		condition_result = applyConditionBoolConversion(condition_result, node.get_condition(), Token());
 
 		// Generate conditional branch: if true goto start, else goto end
 		CondBranchOp cond_branch;

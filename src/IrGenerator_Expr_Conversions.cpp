@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
+#include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
@@ -2190,3 +2191,40 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	// Default: conservatively assume may throw
 	return false;
 }
+
+	ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
+		// C++20 [conv.bool]: convert condition to bool for control-flow statements.
+		//
+		// Integer types: the backend's TEST instruction already implements the
+		// correct "nonzero → true, zero → false" semantics.  No conversion needed.
+		//
+		// Floating-point types: the backend uses TEST on integer bit patterns,
+		// which mishandles -0.0 (bit pattern 0x8000000000000000 is nonzero but
+		// semantically false).  Emit an explicit FloatToInt conversion so the
+		// backend receives a proper integer zero/one.
+		// We convert to int32 (not bool8) to avoid register-flush size mismatches
+		// in the backend, then let the TEST instruction handle the zero check.
+
+		// 1. Try sema annotation (Phase 6 contextual bool).
+		if (sema_ && cond_node.is<ExpressionNode>()) {
+			const void* key = &cond_node.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (slot.has_value() && slot->has_cast()) {
+				const ImplicitCastInfo& cast_info =
+					sema_->castInfoTable()[slot->cast_info_index.value - 1];
+				const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+				// Only emit an explicit conversion for float/double → bool.
+				// Integer → bool is already handled correctly by the backend (TEST).
+				if (is_floating_point_type(from_type)) {
+					return generateTypeConversion(condition, from_type, Type::Int, source_token);
+				}
+			}
+		}
+		// 2. Fallback: floating-point conditions need explicit conversion because
+		//    the backend's TEST instruction operates on integer bit patterns and
+		//    would mishandle -0.0, which has nonzero bits but is semantically false.
+		if (is_floating_point_type(condition.type)) {
+			return generateTypeConversion(condition, condition.type, Type::Int, source_token);
+		}
+		return condition;
+	}

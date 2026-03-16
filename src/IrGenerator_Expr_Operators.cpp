@@ -384,6 +384,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Evaluate the condition
 		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
+		// C++20 [expr.cond]: contextual bool conversion.
+		condition_operands = applyConditionBoolConversion(condition_operands, ternaryNode.condition(), ternaryNode.get_token());
 
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
 		CondBranchOp cond_branch;
@@ -1857,6 +1859,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Prefer sema annotation (Phase 6); fall back to local conversion when
 			// the operand is a floating-point or non-bool integer type.
 			auto convertToBool = [&](ExprResult& operand, const ASTNode& operand_node, Type operand_type) {
+				// Only floating-point operands need explicit conversion.
+				// Integer operands are handled correctly by the backend's bitwise
+				// AND/OR (all nonzero patterns are truthy for integers).
+				// Convert float → int32 (not bool8) to avoid register-flush size
+				// mismatches, then let the backend's bitwise op handle truth.
 				// Try sema annotation first
 				if (sema_ && operand_node.is<ExpressionNode>()) {
 					const void* key = &operand_node.as<ExpressionNode>();
@@ -1865,16 +1872,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
 						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-						if (to_type == Type::Bool && from_type != Type::Bool) {
-							operand = generateTypeConversion(operand, from_type, to_type, binaryOperatorNode.get_token());
+						if (is_floating_point_type(from_type)) {
+							operand = generateTypeConversion(operand, from_type, Type::Int, binaryOperatorNode.get_token());
 							return;
 						}
 					}
 				}
-				// Fallback: float/double operands need explicit FloatToInt(bool) conversion.
+				// Fallback: float/double operands need explicit FloatToInt conversion.
 				if (is_floating_point_type(operand_type)) {
-					operand = generateTypeConversion(operand, operand_type, Type::Bool, binaryOperatorNode.get_token());
+					operand = generateTypeConversion(operand, operand_type, Type::Int, binaryOperatorNode.get_token());
 				}
 			};
 			convertToBool(lhsExprResult, binaryOperatorNode.get_lhs(), lhsType);

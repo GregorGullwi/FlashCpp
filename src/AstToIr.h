@@ -185,6 +185,11 @@ private:
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
 	ExprResult generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token);
+	// Apply sema-annotated contextual bool conversion to a condition expression.
+	// If the sema pass annotated the condition with BooleanConversion (e.g. float→bool),
+	// emit the proper type conversion.  Falls back to a local conversion for
+	// floating-point types when no annotation is present.
+	ExprResult applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token);
 	ExprResult generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
