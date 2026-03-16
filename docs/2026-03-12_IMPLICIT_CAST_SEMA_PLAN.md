@@ -590,7 +590,7 @@ This should be treated as a **follow-up phase**, not phase 1.
 Reason:
 
 - some `auto` deduction already happens during parsing
-- generic lambdas currently rely on `LambdaInfo` deduced types and codegen-local fixes
+- generic lambdas still rely on `LambdaInfo`-carried deduced types, but instantiated-body placeholder normalization now runs through `SemanticAnalysis::normalizeInstantiatedLambdaBody(...)` instead of codegen-local synthetic declarations
 - instantiated bodies may need a semantic hook after instantiation, not only once per translation unit
 
 Recommended target:
@@ -625,9 +625,10 @@ Longer term:
 Current state:
 
 - call-site deduction is stored through `LambdaInfo::setDeducedType(...)`
-- codegen re-reads deduced types in multiple places
-- codegen also synthesizes replacement parameter declarations so lambda bodies do not see unresolved `Type::Auto`
-- there is still a backend fallback from unresolved `Type::Auto` + size 0 to `int`/32-bit
+- semantic normalization now rewrites instantiated generic-lambda parameter declarations from placeholder `Type::Auto` to the deduced concrete `TypeSpecifierNode` before lowering
+- generic-lambda return-type finalization for instantiated bodies also runs in that semantic hook
+- unresolved placeholder types that still reach codegen are now treated as internal errors instead of silently falling back to `int`/32-bit
+- remaining risk is stale parser/mangling consumers reading pre-normalized signature data instead of the sema-normalized instantiated lambda state
 
 Architectural fit:
 
@@ -672,7 +673,8 @@ Recommendation:
 Current state:
 
 - parser has `deduce_and_update_auto_return_type(...)` in `Parser_Expr_QualLookup.cpp`
-- codegen still has a fallback path in `IrGenerator_Visitors_Namespace.cpp` that deduces from return expressions if `current_function_return_type_` is still `Type::Auto`
+- `SemanticAnalysis::resolveRemainingAutoReturns()` now finalizes unresolved ordinary function placeholder returns before lowering
+- parser-side mangling still needs to defer while any part of the function signature contains unresolved placeholder `auto` / `decltype(auto)` so downstream consumers do not see stale mangled names
 
 Architectural fit:
 
@@ -693,8 +695,8 @@ Longer term:
 
 Current state:
 
-- parser currently uses `Type::Auto` as a placeholder for `decltype(auto)` as well
-- this collapses two semantically different forms into one temporary representation
+- `Type::DeclTypeAuto` now distinguishes `decltype(auto)` from plain `auto`
+- parser-side declarator handling preserves the deduced size/category information and rejects extra declarator wrappers (`*`, `&`, `&&`) around `decltype(auto)`
 
 Architectural fit:
 
@@ -957,7 +959,7 @@ Test results: 1486 pass / 0 fail / 36 expected-fail (2 new tests added)
 - `DynamicCastNode` target type not inferred (always pointer/reference; not needed for scalar annotation)
 - `SymbolTable::lookup_function` still uses syntax-node comparison; full migration to canonical type IDs deferred to Phase 5
 
-### Phase 5: `auto` / generic lambda cleanup
+### Phase 5: `auto` / generic lambda cleanup ✅ COMPLETED (with PR928 follow-up hardening)
 
 Goal:
 
@@ -992,6 +994,9 @@ Implementation notes:
 - Placeholder `auto` return deduction now also handles top-level function-try-block bodies, covering the previously unresolved ordinary `auto` + function-try-block path.
 - Remaining placeholder checks in codegen/template plumbing now use `isPlaceholderAutoType()` where `DeclTypeAuto` should follow plain `auto`, while parser paths that only support plain `auto` keep explicit handling.
 - Parser-side `decltype(auto)` variable handling now preserves deduced size information and rejects declarators that add extra `*`, `&`, or `&&` around `decltype(auto)`.
+- Parser-side mangling now defers whenever any part of a function signature still contains unresolved placeholder `auto` / `decltype(auto)`, which avoids MSVC-side mangling failures on still-normalizing signatures.
+- Instantiated generic-lambda callable mangling now consumes the sema-normalized lambda return type instead of the template-pattern `operator()` return type, fixing MSVC unresolved-placeholder mangling on callable-parameter cases.
+- Range-for struct-iterator dereference lookup is now sema-owned and cached on `RangedForStatementNode`, so lowering reuses the resolved `operator*()` target instead of re-deriving it independently.
 
 ### Parallel rollout guidance
 
