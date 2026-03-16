@@ -112,9 +112,6 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 		size_bits = 0;
 	} else {
 		size_bits = getTypeSpecSizeBits(type_node);
-		if (size_bits == 0) {
-			size_bits = get_type_size_bits(desc.base_type);
-		}
 	}
 	type_node.set_size_in_bits(size_bits);
 	return type_node;
@@ -353,9 +350,6 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);
-			if (deduced_size == 0 && !lambda_info.returns_reference) {
-				deduced_size = get_type_size_bits(deduced_type->type());
-			}
 			lambda_info.return_size = lambda_info.returns_reference ? 64 : deduced_size;
 		}
 	}
