@@ -809,14 +809,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					return saved_position.success(template_func_node);
 				}
 				
-				// Has a body - save position at the '{' for delayed parsing during instantiation
+				// Has a body - save position at the '{' or 'try' for delayed parsing during instantiation
 				// Note: set_template_body_position is on FunctionDeclarationNode, which is the
 				// underlying node inside TemplateFunctionDeclarationNode - this is consistent
 				// with how regular template functions store their body position
-				if (peek() == "{"_tok) {
+				if (peek() == "{"_tok || peek() == "try"_tok) {
 					SaveHandle body_start = save_token_position();
 					func_decl.set_template_body_position(body_start);
-					skip_balanced_braces();
+					skip_function_body();  // handles both '{' and 'try{...}catch...'
 				}
 				
 				current_template_param_names_.clear();
@@ -1427,12 +1427,15 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// 'try' directly: it sees 'try', parses the body, then parses the catch clauses.
 	// For the 'try :' form (has_function_try && initializer list already consumed),
 	// peek() is now at '{', so parse just the block, then manually parse catch clauses.
+	// In both cases this is a constructor/destructor, so the TryStatementNode is marked with
+	// is_ctor_dtor_function_try so the IR generator emits the C++20 implicit rethrow.
 	ParseResult body_result;
 	if (has_function_try) {
 		// 'try' was already consumed above (before the ':' initializer list).
-		// parse_function_body() sees '{', parses the block.
-		body_result = parse_function_body();
-		// Now parse catch clauses and wrap in a TryStatementNode.
+		// parse_function_body() sees '{', parses the block. Passing true for is_ctor_or_dtor
+		// is a no-op here (peek is '{', so parse_block is called) but makes intent explicit.
+		body_result = parse_function_body(true /* is_ctor_or_dtor */);
+		// Now parse catch clauses and wrap in a TryStatementNode (marked ctor/dtor).
 		if (!body_result.is_error() && body_result.node().has_value()) {
 			std::vector<ASTNode> catch_clauses;
 			while (peek() == "catch"_tok) {
@@ -1446,11 +1449,12 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				member_function_context_stack_.pop_back();
 				return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 			}
-			ASTNode try_block = make_try_block_body(*body_result.node(), std::move(catch_clauses), Token());
+			ASTNode try_block = make_try_block_body(*body_result.node(), std::move(catch_clauses), Token(), true /* is_ctor_or_dtor */);
 			body_result = ParseResult::success(try_block);
 		}
 	} else {
-		body_result = parse_function_body();
+		// Always a ctor/dtor, so pass true so any function-try-block gets the implicit-rethrow flag.
+		body_result = parse_function_body(true /* is_ctor_or_dtor */);
 	}
 	
 	if (body_result.is_error()) {

@@ -931,13 +931,15 @@ public:  // Public methods for template instantiation
         ParseResult parse_lambda_expression();  // Add lambda expression parser
         ParseResult parse_try_statement();  // Add try-catch statement parser
         ParseResult parse_throw_statement();  // Add throw statement parser
-        ParseResult parse_function_body();  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
+        ParseResult parse_function_body(bool is_ctor_or_dtor = false);  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
         // Parse one catch clause at the current token position into catch_clauses.
         // Returns an error ParseResult on failure, or an empty success otherwise.
         ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
         // Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
         // Both parse_function_body() and parse_delayed_function_body() use this.
-        ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token);
+        // Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so that the IR
+        // generator can emit the C++20 [except.handle]/15 implicit rethrow at each handler end.
+        ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token, bool is_ctor_or_dtor = false);
 
         // Windows SEH (Structured Exception Handling) parsers
         ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
