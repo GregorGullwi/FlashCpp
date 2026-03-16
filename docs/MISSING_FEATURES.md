@@ -412,6 +412,33 @@ When implementing a missing feature:
 
 ---
 
+## Known Issues
+
+### Hidden friend functions are visible to ordinary unqualified lookup
+
+**Severity**: Low (conformance issue, not a crash)
+
+In standard C++, a friend function defined inline inside a class is a *hidden friend* — it should only be found via argument-dependent lookup (ADL), not via ordinary unqualified lookup. FlashCpp currently registers hidden friends into the enclosing namespace's symbol table unconditionally (`gSymbolTable.insert_into_namespace` at `src/Parser_Decl_StructEnum.cpp` in `parse_friend_declaration`), making them visible to all callers regardless of argument types.
+
+**Example** (should fail to compile but currently passes parsing):
+```cpp
+struct Widget {
+    friend int get_value(Widget& w) { return w.value; }
+    int value;
+};
+int main() {
+    // This should fail: get_value is a hidden friend, only findable via ADL
+    // when at least one argument has type Widget. But flashcpp finds it anyway.
+    int x = get_value(/* no Widget argument */);  // should be an error
+}
+```
+
+**Impact**: Code that accidentally calls hidden friends without the associated class type in the arguments will parse and compile when it shouldn't. The generated code may also fail at link time if the template friend body was skipped rather than fully parsed.
+
+**Fix**: `insert_into_namespace` should tag the symbol as ADL-only, and normal unqualified lookup should skip ADL-only symbols. Only `lookup_adl()` (which checks associated classes of the arguments) should find them.
+
+---
+
 ## References
 
 **Parser Code**: `src/Parser.cpp` - Main parsing logic
