@@ -172,7 +172,10 @@
 				func_type.type_index().is_valid() &&
 				func_type.type_index().value < gTypeInfo.size()) {
 				if (!functionCallNode.has_resolved_callable_operator()) {
-					throw CompileError("Callable object operator() was not resolved during semantic analysis");
+					const std::string_view callable_type_name = StringTable::getStringView(gTypeInfo[func_type.type_index().value].name());
+					throw CompileError("Callable object operator() was not resolved during semantic analysis for type '" +
+						std::string(callable_type_name) +
+						"'. This may indicate missing semantic analysis or an internal compiler error.");
 				}
 
 				ChunkedVector<ASTNode> member_args;

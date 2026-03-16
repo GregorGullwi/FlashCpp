@@ -557,6 +557,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	std::optional<TypeSpecifierNode> deduced_type;
 
 	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
+		// Prefer semantic inference over parser-side expression typing so callable
+		// operator() return deduction uses the sema-resolved target when available.
 		const CanonicalTypeId inferred_type_id = inferExpressionType(expr_node);
 		if (!inferred_type_id) {
 			auto expr_type = parser_.get_expression_type(expr_node);
@@ -974,8 +976,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 	if (node.is<ExpressionNode>()) {
 		// Walk into variant-based expression nodes to count children
-		const auto& expr = node.as<ExpressionNode>();
-		std::visit([&](const auto& e) {
+		auto& expr = const_cast<ExpressionNode&>(node.as<ExpressionNode>());
+		std::visit([&](auto& e) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
@@ -1009,7 +1011,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.false_expr(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				tryAnnotateCallArgConversions(e);
+				tryAnnotateCallArgConversions(const_cast<FunctionCallNode&>(e));
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
@@ -1333,7 +1335,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				if (const FunctionDeclarationNode* resolved_callable = resolveCallableObjectOperator(e)) {
+				if (const FunctionDeclarationNode* resolved_callable = findCallableObjectOperator(e)) {
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
 					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
 						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
@@ -1358,7 +1360,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (callee_desc.base_type == Type::Struct &&
 					callee_desc.type_index.is_valid() &&
 					callee_desc.type_index.value < gTypeInfo.size()) {
-					if (const FunctionDeclarationNode* resolved_callable = resolveCallableObjectOperator(e)) {
+					if (const FunctionDeclarationNode* resolved_callable = findCallableObjectOperator(e)) {
 						const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
 						if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
 							return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
@@ -1495,11 +1497,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 // --- Function call argument conversion annotation ---
 
-const FunctionDeclarationNode* SemanticAnalysis::resolveCallableObjectOperator(const FunctionCallNode& call_node) {
-	if (call_node.has_resolved_callable_operator()) {
-		return call_node.resolved_callable_operator();
-	}
-
+const FunctionDeclarationNode* SemanticAnalysis::findCallableObjectOperator(const FunctionCallNode& call_node) const {
 	const DeclarationNode& decl = call_node.function_declaration();
 	const StringHandle callee_name = decl.identifier_token().handle();
 	if (!callee_name.isValid()) {
@@ -1528,6 +1526,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallableObjectOperator(c
 	const FunctionDeclarationNode* default_argument_match = nullptr;
 	bool default_argument_match_ambiguous = false;
 
+	// Exact-arity operator() overloads win. If no exact match exists, allow a
+	// unique overload that is callable only because trailing parameters are
+	// defaulted or variadic; otherwise leave the call unresolved.
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.operator_kind != OverloadableOperator::Call ||
 			!member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -1549,20 +1550,25 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallableObjectOperator(c
 		}
 	}
 
-	const FunctionDeclarationNode* resolved_callable =
-		exact_arity_match ? exact_arity_match :
+	return exact_arity_match ? exact_arity_match :
 		(default_argument_match_ambiguous ? nullptr : default_argument_match);
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::resolveCallableObjectOperator(FunctionCallNode& call_node) {
+	if (call_node.has_resolved_callable_operator()) {
+		return call_node.resolved_callable_operator();
+	}
+
+	const FunctionDeclarationNode* resolved_callable =
+		findCallableObjectOperator(call_node);
 	if (resolved_callable) {
-		const_cast<FunctionCallNode&>(call_node).set_resolved_callable_operator(resolved_callable);
+		call_node.set_resolved_callable_operator(resolved_callable);
 	}
 	return resolved_callable;
 }
 
-void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
-	const FunctionDeclarationNode* func_decl = nullptr;
-	if (!func_decl) {
-		func_decl = resolveCallableObjectOperator(call_node);
-	}
+void SemanticAnalysis::tryAnnotateCallArgConversions(FunctionCallNode& call_node) {
+	const FunctionDeclarationNode* func_decl = resolveCallableObjectOperator(call_node);
 
 	const auto& arguments = call_node.arguments();
 	if (!func_decl) {
@@ -1593,7 +1599,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 				for (const auto& overload : overloads) {
 					if (!overload.is<FunctionDeclarationNode>()) continue;
 					const auto& candidate = overload.as<FunctionDeclarationNode>();
-					if (callableOperatorAcceptsArgumentCount(candidate, arguments.size()))
+					if (arguments.size() == candidate.parameter_nodes().size())
 						return &candidate;
 				}
 				return nullptr;
