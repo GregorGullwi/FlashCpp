@@ -2046,6 +2046,12 @@
 
 		// Visit the constructor body
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
+		// constructor body emits the correct scope-exit destructors.
+		label_scope_depth_map_.clear();
+		block.get_statements().visit([&](const ASTNode& stmt) {
+			prescanLabels(stmt, scope_stack_.size());
+		});
 		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
@@ -2121,6 +2127,12 @@
 
 		// Step 1: Visit the destructor body
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
+		// Pre-scan: populate label_scope_depth_map_ so that any goto inside the
+		// destructor body emits the correct scope-exit destructors.
+		label_scope_depth_map_.clear();
+		block.get_statements().visit([&](const ASTNode& stmt) {
+			prescanLabels(stmt, scope_stack_.size());
+		});
 		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
