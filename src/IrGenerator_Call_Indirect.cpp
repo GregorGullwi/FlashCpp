@@ -389,6 +389,39 @@
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
+				if (resolved_member && resolved_member->type == Type::FunctionPointer) {
+					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
+					std::variant<StringHandle, TempVar> function_pointer;
+					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
+						function_pointer = std::get<TempVar>(func_ptr_result.value);
+					} else if (std::holds_alternative<StringHandle>(func_ptr_result.value)) {
+						function_pointer = std::get<StringHandle>(func_ptr_result.value);
+					} else {
+						throw InternalError("Function pointer member access did not produce a valid call target");
+					}
+
+					TempVar ret_var = var_counter.next();
+					std::vector<TypedValue> arguments;
+					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+						arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+					});
+
+					IndirectCallOp op{
+						.result = ret_var,
+						.function_pointer = std::move(function_pointer),
+						.arguments = std::move(arguments)
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+
+					if (!resolved_member->function_signature) {
+						throw InternalError("Function pointer member missing function_signature for indirect call return type");
+					}
+					Type ret_type = resolved_member->function_signature->return_type;
+					int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var});
+				}
+
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
 					// Get the struct info for the member's type
