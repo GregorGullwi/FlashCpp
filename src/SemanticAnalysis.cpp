@@ -104,7 +104,6 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.base_type, desc.type_index, 0);
 	type_node.set_cv_qualifier(desc.base_cv);
 	type_node.set_reference_qualifier(desc.ref_qualifier);
-	type_node.copy_pointer_levels_from(TypeSpecifierNode(desc.base_type, desc.type_index, 0));
 	for (const auto& pointer_level : desc.pointer_levels) {
 		type_node.add_pointer_level(pointer_level.cv_qualifier);
 	}

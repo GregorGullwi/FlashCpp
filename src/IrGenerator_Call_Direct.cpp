@@ -182,6 +182,9 @@
 								operator_call = &candidate;
 								break;
 							}
+							// Keep the first operator() as a fallback so normalized callable
+							// objects without a perfect arity match still route through member
+							// call lowering instead of falling through as a free-function call.
 							if (!operator_call) {
 								operator_call = &candidate;
 							}
