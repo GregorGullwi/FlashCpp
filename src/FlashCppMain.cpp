@@ -460,6 +460,7 @@ int main_impl(int argc, char *argv[]) {
             FLASH_LOG(General, Info, "  Unique canonical types: ", sema.typeContext().size());
             FLASH_LOG(General, Info, "  Slots filled: ", stats.slots_filled);
             FLASH_LOG(General, Info, "  Cast infos allocated: ", stats.cast_infos_allocated);
+            FLASH_LOG(General, Info, "  Op calls resolved: ", stats.op_calls_resolved);
         }
     }
 

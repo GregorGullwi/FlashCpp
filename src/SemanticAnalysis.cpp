@@ -33,6 +33,17 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 	return true;
 }
 
+bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
+	const size_t min_required = countMinRequiredArgs(candidate);
+	if (argument_count < min_required) {
+		return false;
+	}
+	if (candidate.is_variadic()) {
+		return true;
+	}
+	return argument_count <= candidate.parameter_nodes().size();
+}
+
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
 	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
@@ -488,6 +499,23 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
 			if (isPlaceholderAutoType(return_type.type())) {
+				pushScope();
+				auto cleanup = ScopeGuard([this]() { popScope(); });
+				for (const auto& param_node : func.parameter_nodes()) {
+					if (!param_node.is<DeclarationNode>()) {
+						continue;
+					}
+					const auto& param_decl = param_node.as<DeclarationNode>();
+					const ASTNode param_type_node = param_decl.type_node();
+					if (!param_type_node.is<TypeSpecifierNode>()) {
+						continue;
+					}
+					const CanonicalTypeId tid = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+					const StringHandle name = param_decl.identifier_token().handle();
+					if (name.isValid()) {
+						addLocalType(name, tid);
+					}
+				}
 				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
 					deduced_type.has_value()) {
 					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
@@ -529,16 +557,18 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	std::optional<TypeSpecifierNode> deduced_type;
 
 	auto get_expression_type_for_return = [&](const ASTNode& expr_node) -> std::optional<TypeSpecifierNode> {
+		// Prefer semantic inference so callable-object return deduction uses the
+		// sema-resolved operator() target when available.
+		const CanonicalTypeId inferred_type_id = inferExpressionType(expr_node);
+		if (inferred_type_id) {
+			return materializeTypeSpecifier(type_context_.get(inferred_type_id));
+		}
+
 		auto expr_type = parser_.get_expression_type(expr_node);
 		if (expr_type.has_value() && !isPlaceholderAutoType(expr_type->type())) {
 			return expr_type;
 		}
-
-		const CanonicalTypeId inferred_type_id = inferExpressionType(expr_node);
-		if (!inferred_type_id) {
-			return std::nullopt;
-		}
-		return materializeTypeSpecifier(type_context_.get(inferred_type_id));
+		return std::nullopt;
 	};
 
 	std::function<bool(const ASTNode&)> visit_returns = [&](const ASTNode& node) -> bool {
@@ -983,6 +1013,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				tryAnnotateCallArgConversions(e);
+				tryResolveCallableOperator(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
@@ -1170,6 +1201,11 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	return std::nullopt;
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
+	auto it = op_call_table_.find(key);
+	return it != op_call_table_.end() ? it->second : nullptr;
+}
+
 void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
 	semantic_slots_[key] = slot;
 }
@@ -1306,6 +1342,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
+					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
+					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+					}
+				}
+
+				tryResolveCallableOperator(e);
+				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
+					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
+					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+					}
+				}
+
 				// Infer result type from the resolved function declaration's return type.
 				const DeclarationNode& decl = e.function_declaration();
 				const ASTNode ret_type_node = decl.type_node();
@@ -1465,57 +1516,129 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
 }
 
+// --- Callable operator() resolution ---
+
+void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_node) {
+	// Identify the callee: use the identifier token stored in the call's function_declaration.
+	// For a callable object `f(args)`, function_declaration() holds the DeclarationNode of
+	// the variable `f`; its identifier token gives us the lookup name.
+	const DeclarationNode& callee_decl = call_node.function_declaration();
+	const StringHandle callee_name = callee_decl.identifier_token().handle();
+	if (!callee_name.isValid()) return;
+
+	// Look up the callee's canonical type from the current scope stack.
+	// This correctly handles shadowed names: if a local variable `apply` of struct type
+	// shadows a free function `apply`, lookupLocalType returns the struct type.
+	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+	if (!callee_type_id) return;
+
+	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+	if (callee_desc.base_type != Type::Struct) return;
+	if (!callee_desc.type_index.is_valid()) return;
+	if (callee_desc.type_index.value >= gTypeInfo.size()) return;
+
+	const StructTypeInfo* struct_info = gTypeInfo[callee_desc.type_index.value].getStructInfo();
+	if (!struct_info) return;
+
+	const size_t arg_count = call_node.arguments().size();
+
+	// Exact-arity operator() overloads win. If no exact match exists, allow a
+	// unique overload that is callable only because trailing parameters are
+	// defaulted or variadic; otherwise leave the call unresolved.
+	const FunctionDeclarationNode* best_match = nullptr;
+	const FunctionDeclarationNode* default_argument_match = nullptr;
+	bool default_argument_match_ambiguous = false;
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Call) continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (!candidate.is_variadic() && candidate.parameter_nodes().size() == arg_count) {
+			best_match = &candidate;
+			break;
+		}
+		if (!callableOperatorAcceptsArgumentCount(candidate, arg_count)) {
+			continue;
+		}
+		if (!default_argument_match) {
+			default_argument_match = &candidate;
+		} else {
+			default_argument_match_ambiguous = true;
+		}
+	}
+
+	if (!best_match) {
+		best_match = default_argument_match_ambiguous ? nullptr : default_argument_match;
+	}
+
+	if (!best_match) return;
+
+	op_call_table_[&call_node] = best_match;
+	stats_.op_calls_resolved++;
+
+	FLASH_LOG_FORMAT(General, Debug,
+		"SemanticAnalysis: resolved operator() for '{}' → {} params",
+		callee_decl.identifier_token().value(),
+		best_match->parameter_nodes().size());
+}
+
 // --- Function call argument conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
-	const auto& decl = call_node.function_declaration();
-	const std::string_view name = call_node.has_qualified_name()
-		? call_node.qualified_name()
-		: decl.identifier_token().value();
-
 	const auto& arguments = call_node.arguments();
-
-	// Collect all overloads from the symbol table.
-	const auto overloads = symbols_.lookup_all(name);
-	if (overloads.empty()) return;
-
-	// Find the overload whose DeclarationNode address matches the one stored in the call.
-	// The parser resolved the overload at parse time; we just need to recover the
-	// FunctionDeclarationNode that wraps it so we can read the parameter types.
-	const FunctionDeclarationNode* func_decl = nullptr;
-	for (const auto& overload : overloads) {
-		if (!overload.is<FunctionDeclarationNode>()) continue;
-		const auto& candidate = overload.as<FunctionDeclarationNode>();
-		// Match by DeclarationNode address — the call stores a reference to the same object.
-		if (&candidate.decl_node() == &decl)
-			func_decl = &candidate;
+	const FunctionDeclarationNode* func_decl = getResolvedOpCall(&call_node);
+	if (!func_decl) {
+		tryResolveCallableOperator(call_node);
+		func_decl = getResolvedOpCall(&call_node);
 	}
 
-	// If pointer match failed (e.g. indirect call or template instance), fall back to
-	// picking the sole overload or the first one whose parameter count fits.
 	if (!func_decl) {
-		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
-			for (const auto& overload : overloads) {
-				if (!overload.is<FunctionDeclarationNode>()) continue;
-				const auto& candidate = overload.as<FunctionDeclarationNode>();
-				if (arguments.size() == candidate.parameter_nodes().size())
-					return &candidate;
+		const auto& decl = call_node.function_declaration();
+		const std::string_view name = call_node.has_qualified_name()
+			? call_node.qualified_name()
+			: decl.identifier_token().value();
+
+		// Collect all overloads from the symbol table.
+		const auto overloads = symbols_.lookup_all(name);
+		if (overloads.empty()) return;
+
+		// Find the overload whose DeclarationNode address matches the one stored in the call.
+		// The parser resolved the overload at parse time; we just need to recover the
+		// FunctionDeclarationNode that wraps it so we can read the parameter types.
+		for (const auto& overload : overloads) {
+			if (!overload.is<FunctionDeclarationNode>()) continue;
+			const auto& candidate = overload.as<FunctionDeclarationNode>();
+			if (&candidate.decl_node() == &decl) {
+				func_decl = &candidate;
+				break;
 			}
-			return nullptr;
-		};
-		if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>())
-			func_decl = &overloads[0].as<FunctionDeclarationNode>();
-		else
-			func_decl = find_by_arg_count();
-		if (!func_decl) return;
+		}
+
+		// If pointer match failed (e.g. indirect call or template instance), fall back to
+		// picking the sole overload or the first one whose parameter count fits.
+		if (!func_decl) {
+			auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
+				for (const auto& overload : overloads) {
+					if (!overload.is<FunctionDeclarationNode>()) continue;
+					const auto& candidate = overload.as<FunctionDeclarationNode>();
+					if (arguments.size() == candidate.parameter_nodes().size())
+						return &candidate;
+				}
+				return nullptr;
+			};
+			if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>())
+				func_decl = &overloads[0].as<FunctionDeclarationNode>();
+			else
+				func_decl = find_by_arg_count();
+			if (!func_decl) return;
+		}
 	}
 
 	if (func_decl->is_variadic()) return;  // can't annotate variadic calls
 
 	const auto& param_nodes = func_decl->parameter_nodes();
 
-	// Only annotate when argument count matches parameter count (no default args or packs)
-	if (arguments.size() != param_nodes.size()) return;
+	if (arguments.size() < countMinRequiredArgs(*func_decl) || arguments.size() > param_nodes.size()) return;
 
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];

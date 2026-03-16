@@ -1002,7 +1002,15 @@ Implementation notes:
 
 `inferExpressionType` for `FunctionCallNode` (in `SemanticAnalysis.cpp`) currently picks the **first** `operator()` it finds on a callable struct. This is incorrect when the struct has multiple overloaded `operator()`s with different return types — it should match by argument arity, mirroring the logic already present in `IrGenerator_Call_Direct.cpp:176-197` (exact arity match wins, single-candidate fallback otherwise).
 
-**Short-term fix:** add arity-based `operator()` selection to `inferExpressionType` so sema and codegen agree on the resolved overload.
+**Short-term fix:** add sema-owned `operator()` selection so `inferExpressionType`, return deduction, and codegen agree on the resolved overload.
+
+**Important standards note:** an arity/default-argument based selector is only an
+intermediate hardening step. It is **not full C++20 overload resolution** because it
+does not rank candidates using the normal overload machinery (conversion ranking,
+ref/cv qualification, constraints, deleted candidates, etc.). That heuristic is
+acceptable as a bug-fix bridge, but the standards-compliant end state is to reuse
+the compiler's real overload-resolution logic for callable-object `operator()`
+candidates in semantic analysis.
 
 **Long-term goal:** move callable-object `operator()` resolution entirely into semantic analysis. Sema should annotate the `FunctionCallNode` (or rewrite it to a `MemberFunctionCallNode`) with the resolved `operator()` target and its return type, so codegen at `IrGenerator_Call_Direct.cpp:171-215` can consume the annotation instead of performing its own `gTypeInfo` lookup and overload iteration. This eliminates a REVIEW.md-flagged architectural violation where codegen owns semantic resolution logic.
 
