@@ -1462,6 +1462,7 @@ public:  // Public methods for template instantiation
         std::string_view consume_qualified_name_suffix(std::string_view base_name);  // Same but builds and returns full qualified name
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
         void skip_function_body();  // Skip over '{...}' or function-try-block 'try {...} catch...'
+        void skip_catch_clauses();  // Skip over one or more 'catch(...){}' clauses
 
         // Finalize an out-of-line static member variable definition.
         // Sets the initializer on the member and returns a VariableDeclarationNode.

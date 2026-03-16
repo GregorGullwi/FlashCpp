@@ -101,7 +101,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			{
 				FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 				populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
-				auto block_result = parse_function_body();  // handles function-try-blocks
+				auto block_result = parse_function_body(true /* is_ctor_or_dtor: constructor */);  // handles function-try-blocks
 				if (!block_result.is_error() && block_result.node().has_value()) {
 					body_to_substitute = block_result.node();
 				}

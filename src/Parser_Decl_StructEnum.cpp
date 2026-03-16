@@ -1716,11 +1716,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// If a function-try-block, also skip all following catch clauses
 					if (has_function_try) {
-						while (peek() == "catch"_tok) {
-							advance();  // consume 'catch'
-							skip_balanced_parens();  // skip '(' exception-declaration ')'
-							skip_balanced_braces();  // skip catch body
-						}
+						skip_catch_clauses();
 					}
 
 					// Dismiss the RAII scope guard - we'll re-enter when parsing the delayed body
