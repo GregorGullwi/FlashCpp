@@ -292,11 +292,13 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		return;
 	}
 
-	if (lambda_info.resolved_param_nodes.empty()) {
-		lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
-			lambda_info.parameter_nodes,
-			lambda_info.deduced_auto_types);
+	if (lambda_info.normalized_deduced_auto_types_generation == lambda_info.deduced_auto_types_generation) {
+		return;
 	}
+
+	lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
+		lambda_info.parameter_nodes,
+		lambda_info.deduced_auto_types);
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
 		? lambda_info.parameter_nodes
@@ -350,9 +352,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			lambda_info.return_type_index = deduced_type->type_index();
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
-			lambda_info.return_size = lambda_info.returns_reference
-				? 64
-				: getTypeSpecSizeBits(*deduced_type);
+			int deduced_size = getTypeSpecSizeBits(*deduced_type);
+			if (deduced_size == 0 && !lambda_info.returns_reference) {
+				deduced_size = get_type_size_bits(deduced_type->type());
+			}
+			lambda_info.return_size = lambda_info.returns_reference ? 64 : deduced_size;
 		}
 	}
 
@@ -370,6 +374,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
 	}
 	normalizeStatement(lambda_info.lambda_body, lambda_ctx);
+	lambda_info.normalized_deduced_auto_types_generation = lambda_info.deduced_auto_types_generation;
 }
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,

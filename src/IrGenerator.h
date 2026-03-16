@@ -111,6 +111,8 @@ struct LambdaInfo {
 	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
 	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
 	std::vector<ASTNode> resolved_param_nodes;
+	mutable uint32_t deduced_auto_types_generation = 0;
+	mutable uint32_t normalized_deduced_auto_types_generation = 0;
 	
 	// Get deduced type for a parameter at given index, returns nullopt if not deduced
 	std::optional<TypeSpecifierNode> getDeducedType(size_t param_index) const {
@@ -127,11 +129,20 @@ struct LambdaInfo {
 		// Check if already set
 		for (auto& [idx, stored_type] : deduced_auto_types) {
 			if (idx == param_index) {
+				if (stored_type.matches_signature(type_node) &&
+					stored_type.cv_qualifier() == type_node.cv_qualifier() &&
+					stored_type.reference_qualifier() == type_node.reference_qualifier() &&
+					stored_type.array_dimensions() == type_node.array_dimensions() &&
+					stored_type.pointer_depth() == type_node.pointer_depth()) {
+					return;
+				}
 				stored_type = type_node;
+				++deduced_auto_types_generation;
 				return;
 			}
 		}
 		deduced_auto_types.push_back({param_index, type_node});
+		++deduced_auto_types_generation;
 	}
 };
 
