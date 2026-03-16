@@ -1576,6 +1576,7 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	}
 
 	const FunctionDeclarationNode* best_match = nullptr;
+	bool explicitly_ambiguous = false;
 
 	if (all_types_known) {
 		// Use the compiler's real overload-resolution logic (conversion ranking,
@@ -1584,13 +1585,16 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 		if (result.has_match && !result.is_ambiguous) {
 			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
 		}
+		if (result.is_ambiguous) {
+			explicitly_ambiguous = true;
+		}
 	}
 
-	if (!best_match) {
-		// Fall back to the arity-only heuristic when argument types could not be
-		// inferred (e.g. dependent expressions) or when resolve_overload found no
-		// unique winner.  Exact-arity match wins; a single default-argument match
-		// is accepted as long as there is no ambiguity.
+	if (!best_match && !explicitly_ambiguous) {
+		// Fall back to the arity-only heuristic only when argument types could not
+		// be inferred (e.g. dependent expressions).  When resolve_overload
+		// explicitly reported ambiguity the call is ill-formed and must not be
+		// silently resolved by declaration order.
 		const FunctionDeclarationNode* default_argument_match = nullptr;
 		bool default_argument_match_ambiguous = false;
 		for (const auto& candidate_node : candidates) {

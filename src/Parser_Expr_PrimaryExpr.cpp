@@ -4819,6 +4819,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Try type-based overload resolution first.
 						std::vector<TypeSpecifierNode> op_arg_types;
 						bool all_op_types_known = true;
+						bool op_explicitly_ambiguous = false;
 						for (const auto& arg : args) {
 							auto arg_type = get_expression_type(arg);
 							if (arg_type.has_value()) {
@@ -4834,11 +4835,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (op_result.has_match && !op_result.is_ambiguous) {
 								operator_call_func = &op_result.selected_overload->as<FunctionDeclarationNode>();
 							}
+							if (op_result.is_ambiguous) {
+								op_explicitly_ambiguous = true;
+							}
 						}
 
-						if (!operator_call_func) {
-							// Fall back to arity-only heuristic when type inference fails, resolve_overload
-							// returns no unique winner, or there is genuine ambiguity.
+						if (!operator_call_func && !op_explicitly_ambiguous) {
+							// Fall back to arity-only heuristic only when type inference
+							// fails.  When resolve_overload explicitly reported ambiguity
+							// the call is ill-formed and must not be silently resolved by
+							// declaration order.
 							const FunctionDeclarationNode* sole_op_candidate = nullptr;
 							size_t op_candidate_count = 0;
 							for (const auto& candidate_node : op_candidates) {
