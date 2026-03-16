@@ -390,6 +390,14 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			Type to_resolved = resolve_type_alias(to.type(), to.type_index());
 			
 			if (from_resolved == to_resolved) {
+				// For struct types, "same base type" requires the same type_index.
+				// Two different struct types (e.g. Bar& → Foo) both resolve to
+				// Type::Struct, so we must also compare type_index.
+				if (from_resolved == Type::Struct &&
+					from.type_index().is_valid() && to.type_index().is_valid() &&
+					from.type_index() != to.type_index()) {
+					return TypeConversionResult::no_match();
+				}
 				return TypeConversionResult::exact_match();
 			}
 			// If one type is still UserDefined after resolution attempt, accept as conversion
