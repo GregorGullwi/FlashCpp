@@ -203,7 +203,7 @@
 						});
 
 						ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
-							IdentifierNode(decl_node.identifier_token()));
+							IdentifierNode(func_ptr_decl->identifier_token()));
 						MemberFunctionCallNode member_call(
 							object_expr,
 							*operator_call,
