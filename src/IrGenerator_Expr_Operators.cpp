@@ -1856,35 +1856,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// converted to bool.
 		if (op == "&&" || op == "||") {
 			// Convert operands to bool when they are not already bool-compatible.
-			// Prefer sema annotation (Phase 6); fall back to local conversion when
-			// the operand is a floating-point or non-bool integer type.
-			auto convertToBool = [&](ExprResult& operand, const ASTNode& operand_node, Type operand_type) {
-				// Only floating-point operands need explicit conversion.
-				// Integer operands are handled correctly by the backend's bitwise
-				// AND/OR (all nonzero patterns are truthy for integers).
-				// Convert float → int32 (not bool8) to avoid register-flush size
-				// mismatches, then let the backend's bitwise op handle truth.
-				// Try sema annotation first
-				if (sema_ && operand_node.is<ExpressionNode>()) {
-					const void* key = &operand_node.as<ExpressionNode>();
-					const auto slot = sema_->getSlot(key);
-					if (slot.has_value() && slot->has_cast()) {
-						const ImplicitCastInfo& cast_info =
-							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						if (is_floating_point_type(from_type)) {
-							operand = generateTypeConversion(operand, from_type, Type::Int, binaryOperatorNode.get_token());
-							return;
-						}
-					}
-				}
-				// Fallback: float/double operands need explicit FloatToInt conversion.
-				if (is_floating_point_type(operand_type)) {
-					operand = generateTypeConversion(operand, operand_type, Type::Int, binaryOperatorNode.get_token());
-				}
-			};
-			convertToBool(lhsExprResult, binaryOperatorNode.get_lhs(), lhsType);
-			convertToBool(rhsExprResult, binaryOperatorNode.get_rhs(), rhsType);
+			// Reuse applyConditionBoolConversion which checks sema annotations and
+			// falls back to local float→int conversion when needed.
+			lhsExprResult = applyConditionBoolConversion(lhsExprResult, binaryOperatorNode.get_lhs(), binaryOperatorNode.get_token());
+			rhsExprResult = applyConditionBoolConversion(rhsExprResult, binaryOperatorNode.get_rhs(), binaryOperatorNode.get_token());
 
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{

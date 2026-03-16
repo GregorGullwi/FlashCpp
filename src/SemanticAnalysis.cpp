@@ -234,6 +234,12 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 	: parser_(parser), context_(context), symbols_(symbols) {
 	(void)context_;
 	(void)symbols_;
+
+	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
+	// repeated interning on every call.
+	CanonicalTypeDesc bool_desc;
+	bool_desc.base_type = Type::Bool;
+	bool_type_id_ = type_context_.intern(bool_desc);
 }
 
 void SemanticAnalysis::run() {
@@ -1544,10 +1550,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 // Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
 
 void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
-	CanonicalTypeDesc bool_desc;
-	bool_desc.base_type = Type::Bool;
-	const CanonicalTypeId bool_type_id = type_context_.intern(bool_desc);
-	tryAnnotateConversion(expr_node, bool_type_id);
+	tryAnnotateConversion(expr_node, bool_type_id_);
 }
 
 // --- Callable operator() resolution ---

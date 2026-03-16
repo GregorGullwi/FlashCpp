@@ -1265,6 +1265,10 @@
 
 		// Generate the IR for the operation based on the operator
 		if (unaryOperatorNode.op() == "!") {
+			// C++20 [expr.unary.op]/9: the operand of ! is contextually converted
+			// to bool. For float/double operands this requires an explicit
+			// FloatToInt conversion (same -0.0 fix as conditions / && / ||).
+			operandIrOperands = applyConditionBoolConversion(operandIrOperands, unaryOperatorNode.get_operand(), Token());
 			// Logical NOT - use UnaryOp struct
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),

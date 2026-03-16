@@ -135,6 +135,7 @@ private:
 	CompileContext& context_;
 	SymbolTable& symbols_;
 	TypeContext type_context_;
+	CanonicalTypeId bool_type_id_{};  // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
 
