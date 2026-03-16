@@ -1542,33 +1542,73 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 
 	const size_t arg_count = call_node.arguments().size();
 
-	// Exact-arity operator() overloads win. If no exact match exists, allow a
-	// unique overload that is callable only because trailing parameters are
-	// defaulted or variadic; otherwise leave the call unresolved.
-	const FunctionDeclarationNode* best_match = nullptr;
-	const FunctionDeclarationNode* default_argument_match = nullptr;
-	bool default_argument_match_ambiguous = false;
-
+	// Collect all operator() candidates as ASTNodes for overload resolution.
+	std::vector<ASTNode> candidates;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.operator_kind != OverloadableOperator::Call) continue;
 		if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
-		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-		if (!candidate.is_variadic() && candidate.parameter_nodes().size() == arg_count) {
-			best_match = &candidate;
-			break;
-		}
-		if (!callableOperatorAcceptsArgumentCount(candidate, arg_count)) {
-			continue;
-		}
-		if (!default_argument_match) {
-			default_argument_match = &candidate;
+		candidates.push_back(member_func.function_decl);
+	}
+	if (candidates.empty()) return;
+
+	// Try to build argument type specifiers for the real overload-resolution path.
+	// inferExpressionType handles most expression forms (numeric/bool literals, identifiers,
+	// member access, binary ops, sub-calls); parser_.get_expression_type is the fallback for
+	// expression kinds not yet covered (e.g. cast expressions, initializer lists).
+	// If neither can supply a type for any argument, all_types_known is set to false and
+	// the arity-only heuristic is used instead.
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arg_count);
+	bool all_types_known = true;
+	for (const ASTNode& arg : call_node.arguments()) {
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id) {
+			arg_types.push_back(materializeTypeSpecifier(type_context_.get(arg_type_id)));
 		} else {
-			default_argument_match_ambiguous = true;
+			auto parser_type = parser_.get_expression_type(arg);
+			if (parser_type.has_value()) {
+				arg_types.push_back(*parser_type);
+			} else {
+				all_types_known = false;
+				break;
+			}
+		}
+	}
+
+	const FunctionDeclarationNode* best_match = nullptr;
+
+	if (all_types_known) {
+		// Use the compiler's real overload-resolution logic (conversion ranking,
+		// default arguments, cv/ref qualification, ambiguity detection).
+		const OverloadResolutionResult result = resolve_overload(candidates, arg_types);
+		if (result.has_match && !result.is_ambiguous) {
+			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
 		}
 	}
 
 	if (!best_match) {
-		best_match = default_argument_match_ambiguous ? nullptr : default_argument_match;
+		// Fall back to the arity-only heuristic when argument types could not be
+		// inferred (e.g. dependent expressions) or when resolve_overload found no
+		// unique winner.  Exact-arity match wins; a single default-argument match
+		// is accepted as long as there is no ambiguity.
+		const FunctionDeclarationNode* default_argument_match = nullptr;
+		bool default_argument_match_ambiguous = false;
+		for (const auto& candidate_node : candidates) {
+			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
+			if (!candidate.is_variadic() && candidate.parameter_nodes().size() == arg_count) {
+				best_match = &candidate;
+				break;
+			}
+			if (!callableOperatorAcceptsArgumentCount(candidate, arg_count)) continue;
+			if (!default_argument_match) {
+				default_argument_match = &candidate;
+			} else {
+				default_argument_match_ambiguous = true;
+			}
+		}
+		if (!best_match) {
+			best_match = default_argument_match_ambiguous ? nullptr : default_argument_match;
+		}
 	}
 
 	if (!best_match) return;

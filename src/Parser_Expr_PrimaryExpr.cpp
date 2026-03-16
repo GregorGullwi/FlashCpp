@@ -4802,24 +4802,58 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("operator() not found in struct", identifier_token);
 					}
 
-					// Find the best operator() overload: prefer exact arity match, fall back to sole candidate.
+					// Find the best operator() overload using type-based overload resolution.
+					// Falls back to arity-only selection when argument types cannot be determined.
 					const FunctionDeclarationNode* operator_call_func = nullptr;
-					const FunctionDeclarationNode* sole_op_candidate = nullptr;
-					size_t op_candidate_count = 0;
+
+					// Build candidate list for resolve_overload.
+					std::vector<ASTNode> op_candidates;
 					for (const auto& member_func : type_info.struct_info_->member_functions) {
 						if (member_func.operator_kind == OverloadableOperator::Call &&
 							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-							++op_candidate_count;
-							if (!sole_op_candidate) sole_op_candidate = &candidate;
-							if (candidate.parameter_nodes().size() == args.size()) {
-								operator_call_func = &candidate;
+							op_candidates.push_back(member_func.function_decl);
+						}
+					}
+
+					if (!op_candidates.empty()) {
+						// Try type-based overload resolution first.
+						std::vector<TypeSpecifierNode> op_arg_types;
+						bool all_op_types_known = true;
+						for (const auto& arg : args) {
+							auto arg_type = get_expression_type(arg);
+							if (arg_type.has_value()) {
+								op_arg_types.push_back(*arg_type);
+							} else {
+								all_op_types_known = false;
 								break;
 							}
 						}
+
+						if (all_op_types_known) {
+							auto op_result = resolve_overload(op_candidates, op_arg_types);
+							if (op_result.has_match && !op_result.is_ambiguous) {
+								operator_call_func = &op_result.selected_overload->as<FunctionDeclarationNode>();
+							}
+						}
+
+						if (!operator_call_func) {
+							// Fall back to arity-only heuristic when type inference fails, resolve_overload
+							// returns no unique winner, or there is genuine ambiguity.
+							const FunctionDeclarationNode* sole_op_candidate = nullptr;
+							size_t op_candidate_count = 0;
+							for (const auto& candidate_node : op_candidates) {
+								const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
+								++op_candidate_count;
+								if (!sole_op_candidate) sole_op_candidate = &candidate;
+								if (candidate.parameter_nodes().size() == args.size()) {
+									operator_call_func = &candidate;
+									break;
+								}
+							}
+							if (!operator_call_func && op_candidate_count == 1)
+								operator_call_func = sole_op_candidate;
+						}
 					}
-					if (!operator_call_func && op_candidate_count == 1)
-						operator_call_func = sole_op_candidate;
 
 					if (!operator_call_func) {
 						return ParseResult::error("operator() not found in struct", identifier_token);
