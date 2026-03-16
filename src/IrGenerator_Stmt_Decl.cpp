@@ -857,10 +857,10 @@
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
 								// Try type-based constructor overload resolution first.
-								// Infer argument types — try parser first (handles literals, member
-								// access, etc.), then fall back to the IR generator's symbol table
-								// (needed for local variable identifiers whose type may not be in
-								// the parser's table at IR-generation time).
+								// Infer argument types: try parser first (handles literals,
+								// member access, etc.), then fall back to the IR generator's
+								// own symbol table for local variable identifiers whose type
+								// may not be available through the parser at IR-generation time.
 								{
 									std::vector<TypeSpecifierNode> arg_types;
 									bool all_arg_types_known = true;
@@ -893,11 +893,10 @@
 										adjust_argument_type_for_overload_resolution(init_arg, arg_type);
 										arg_types.push_back(std::move(arg_type));
 									}
-									if (all_arg_types_known && arg_types.size() == num_initializers) {
-										// skip_implicit=true: implicit copy/move ctors are not
-										// considered; they are handled by the arity fallback below.
-										// This avoids false ambiguity when an explicit copy ctor
-										// coexists with a compiler-generated implicit one.
+									if (all_arg_types_known) {
+										// skip_implicit=true: avoid false ambiguity when an explicit
+										// copy/move ctor coexists with a compiler-generated implicit one
+										// having the same signature.
 										auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 										if (resolution.is_ambiguous) {
 											throw CompileError("Ambiguous constructor call");
