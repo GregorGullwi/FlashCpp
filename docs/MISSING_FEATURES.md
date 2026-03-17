@@ -414,22 +414,6 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### ~~Destructors are not implicitly `noexcept(true)` and `noexcept(false)` has no effect~~ ✅ FIXED
-
-**Status**: Fixed (2026-03-17)
-
-Destructors now default to `noexcept(true)` per C++11 [class.dtor]/3:
-
-1. `DestructorDeclarationNode::is_noexcept_` defaults to `true`.
-2. Explicit `noexcept(false)` is stored as an expression and evaluated in the IR generator (same pattern as regular functions).
-3. `visitDestructorDeclarationNode` propagates the evaluated flag to `FunctionDeclOp::is_noexcept`, which enables the terminate landing pad on Linux ELF.
-4. `TypeTraitEvaluator::IsNothrowDestructible` checks the actual destructor's flag instead of hardcoding `true`.
-5. The `noexcept` operator (`noexcept(obj.~Type())`) correctly evaluates the destructor's noexcept status in both the IR generator and constexpr evaluator paths.
-
-Tests: `test_eh_dtor_implicit_noexcept_ret0.cpp`, `test_eh_dtor_noexcept_false_ret0.cpp`.
-
----
-
 ### Hidden friend functions are visible to ordinary unqualified lookup
 
 **Severity**: Low (conformance issue, not a crash)
