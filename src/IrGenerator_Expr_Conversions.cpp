@@ -2181,9 +2181,32 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return false;
 	}
 
-	// Pseudo-destructor calls are noexcept
-	if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
-		return true;
+	// Pseudo-destructor calls: noexcept iff the type's destructor is noexcept.
+	// Scalar pseudo-destructor calls are always no-ops (noexcept), but class
+	// types may have a destructor marked noexcept(false).
+	if (const auto* pseudo_dtor = std::get_if<PseudoDestructorCallNode>(&expr)) {
+		std::string_view type_name = pseudo_dtor->type_name();
+		auto it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
+		if (it != gTypesByName.end()) {
+			const StructTypeInfo* struct_info = it->second->getStructInfo();
+			if (struct_info) {
+				const auto* dtor = struct_info->findDestructor();
+				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
+					const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
+					bool is_nothrow = dtor_node.is_noexcept();
+					// Evaluate noexcept(expr) to handle explicit noexcept(false)
+					if (is_nothrow && dtor_node.has_noexcept_expression()) {
+						ConstExpr::EvaluationContext ctx(symbol_table);
+						if (global_symbol_table_) ctx.global_symbols = global_symbol_table_;
+						ctx.parser = parser_;
+						auto eval_result = ConstExpr::Evaluator::evaluate(*dtor_node.noexcept_expression(), ctx);
+						is_nothrow = eval_result.success() && eval_result.as_bool();
+					}
+					return is_nothrow;
+				}
+			}
+		}
+		return true;  // Scalar types: pseudo-destructor is a no-op, always noexcept
 	}
 
 	// Nested noexcept expression

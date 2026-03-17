@@ -1925,9 +1925,12 @@ ParseResult Parser::parse_template_declaration() {
 						return dtor_specs_result;
 					}
 					
-					// Apply specifiers
+					// Apply specifiers (default is already noexcept(true) per C++11)
 					if (dtor_func_specs.is_noexcept) {
 						dtor_ref.set_noexcept(true);
+						if (dtor_func_specs.noexcept_expr.has_value()) {
+							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+						}
 					}
 					
 					bool is_defaulted = dtor_func_specs.is_defaulted();
@@ -3325,9 +3328,12 @@ ParseResult Parser::parse_template_declaration() {
 						return dtor_specs_result;
 					}
 					
-					// Apply specifiers
+					// Apply specifiers (default is already noexcept(true) per C++11)
 					if (dtor_func_specs.is_noexcept) {
 						dtor_ref.set_noexcept(true);
+						if (dtor_func_specs.noexcept_expr.has_value()) {
+							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+						}
 					}
 					
 					bool is_defaulted = dtor_func_specs.is_defaulted();

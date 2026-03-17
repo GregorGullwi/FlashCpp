@@ -350,7 +350,15 @@ TypeTraitResult evaluateTypeTrait(
 			if (isScalarType(base_type, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
-				result = true;  // Most destructors are noexcept by default since C++11
+				// Check the actual destructor's noexcept flag.  If there is no
+				// user-defined destructor the implicit destructor is noexcept(true)
+				// per C++11 [class.dtor]/3.
+				const auto* dtor = struct_info->findDestructor();
+				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
+					result = dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
+				} else {
+					result = true;  // Implicit destructor is noexcept
+				}
 			}
 			break;
 			

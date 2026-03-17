@@ -2088,6 +2088,25 @@
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
+	// Evaluate the noexcept specifier:
+	// C++11 [class.dtor]/3: destructors are implicitly noexcept(true) unless
+	// explicitly marked noexcept(false).  DestructorDeclarationNode defaults
+	// to true; honour an explicit noexcept(expr) by evaluating it.
+	{
+		bool is_truly_noexcept = node.is_noexcept();
+		if (is_truly_noexcept && node.has_noexcept_expression()) {
+			ConstExpr::EvaluationContext ctx(symbol_table);
+			if (global_symbol_table_) {
+				ctx.global_symbols = global_symbol_table_;
+			}
+			ctx.parser = parser_;
+
+			auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
+			is_truly_noexcept = eval_result.success() && eval_result.as_bool();
+		}
+		dtor_decl_op.is_noexcept = is_truly_noexcept;
+	}
+
 	// Generate mangled name for destructor
 	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
 	// (e.g., MSVC uses ??1ClassName@... format)

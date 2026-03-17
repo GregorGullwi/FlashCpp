@@ -1798,8 +1798,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Apply specifiers
 			bool is_override = dtor_func_specs.is_override;
 			bool is_final = dtor_func_specs.is_final;
+			// C++11 [class.dtor]/3: destructors are implicitly noexcept(true).
+			// The default on DestructorDeclarationNode is already true; we only
+			// need to store an explicit noexcept expression so the IR generator
+			// can evaluate noexcept(false) and clear the flag.
 			if (dtor_func_specs.is_noexcept) {
 				dtor_ref.set_noexcept(true);
+				if (dtor_func_specs.noexcept_expr.has_value()) {
+					dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+				}
 			}
 
 			// In C++, 'override' or 'final' on destructor implies 'virtual'
