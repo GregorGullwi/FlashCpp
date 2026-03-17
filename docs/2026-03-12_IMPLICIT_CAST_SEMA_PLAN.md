@@ -1107,6 +1107,84 @@ Test results: 1533 pass / 0 fail / 49 expected-fail (7 new tests added)
 - Integer-to-bool contextual conversion annotation is informational only; the backend does not read it. A future phase could add a proper `CMP reg, 0; SETNE` sequence for full C++20 compliance, but the backend `TEST` instruction is semantically equivalent for integer types.
 - `ConversionContext::Condition` enum value is used implicitly through `tryAnnotateContextualBool` but is not explicitly set on the `SemanticContext` (would require threading context into the annotation call)
 
+---
+
+## Phase 7: Ternary/compound-assignment conversion + assignment sema consumption ✅ COMPLETED
+
+### 7a. Ternary operator common-type branch conversions (C++20 [expr.cond]/7)
+
+**Bug fixed:** Mixed-type ternary operators (e.g. `(cond) ? int_var : double_var`) previously took the result type from the true branch only. When the false branch had a wider type (e.g. `double`), the false-branch value was truncated or corrupted.
+
+**Sema changes:**
+
+- Added `tryAnnotateTernaryBranchConversions(const TernaryOperatorNode&)` to `SemanticAnalysis`.
+- The method infers both branch types via `inferExpressionType`, computes the common type via `get_common_type`, and annotates each branch expression with a conversion to the common type using `tryAnnotateConversion`.
+- Called from `normalizeExpression` in the `TernaryOperatorNode` visitor, after contextual-bool annotation of the condition.
+
+**Codegen changes (`generateTernaryOperatorIr`):**
+
+- Before emitting true-branch IR, reads sema annotations from both branch expressions to determine the common type.
+- Falls back to parser `get_expression_type` inference if sema annotations are unavailable.
+- Converts each branch result to the common type before storing into the result variable.
+- Result type is always the common type, not the true-branch type.
+
+**Files changed:**
+
+- `src/SemanticAnalysis.h` — new `tryAnnotateTernaryBranchConversions` declaration
+- `src/SemanticAnalysis.cpp` — implementation + call from normalizeExpression
+- `src/IrGenerator_Expr_Operators.cpp` — rewritten `generateTernaryOperatorIr`
+
+### 7b. Compound assignment cross-type conversion fix (C++20 [expr.ass]/7)
+
+**Bug fixed:** Compound assignment with different types (e.g. `int i; double d; i -= d;`) previously lost the LHS variable binding after type promotion. The result was stored into a temporary variable instead of back to the original LHS variable, making the assignment have no effect.
+
+**Root cause:** When the LHS value was promoted from `int` to `double` for the arithmetic, `lhsExprResult.value` changed from a `StringHandle` (the variable name "i") to a `TempVar`. The compound-assign opcodes (`SubAssign`, etc.) then stored the result into the temporary, not back to "i".
+
+**Fix:** When a compound assignment has `lhsType != commonType`:
+
+1. Save the original LHS value binding (StringHandle or TempVar) before type conversion.
+2. Perform the binary arithmetic explicitly in the common type (using float opcodes when the common type is floating-point).
+3. Convert the result back to the original LHS type via `generateTypeConversion`.
+4. Store the converted result back to the original LHS variable via an `Assignment` instruction.
+
+This implements C++20 [expr.ass]/7: `E1 op= E2` is equivalent to `E1 = static_cast<T1>(E1 op E2)`.
+
+**Sema changes:**
+
+- Extended the `BinaryOperatorNode` visitor in `normalizeExpression` to include compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) in the set of operators that trigger `tryAnnotateBinaryOperandConversions`.
+
+**Files changed:**
+
+- `src/SemanticAnalysis.cpp` — compound assignment operators included in sema annotation
+- `src/IrGenerator_Expr_Operators.cpp` — new cross-type compound assignment handling
+
+### 7c. Assignment RHS sema consumption
+
+**Change:** The simple assignment path (`op == "="`) in `generateBinaryOperatorIr` now checks sema annotations on the RHS expression before falling back to ad-hoc `generateTypeConversion`. This follows the same dual-path pattern used by binary arithmetic, return conversions, and declaration initializers.
+
+**Files changed:**
+
+- `src/IrGenerator_Expr_Operators.cpp` — sema annotation check in assignment RHS conversion
+
+### Phase 7 tests
+
+- `tests/test_ternary_conv_ret0.cpp` — mixed-type ternary (int/long, int/double) with true and false branches
+- `tests/test_compound_assign_implicit_cast_ret0.cpp` — compound assignment with type promotion (long+=int, double+=int, int-=double, int*=int)
+- `tests/test_assign_implicit_cast_ret0.cpp` — simple assignment implicit conversions (int→long, int→double, float→int, double→int)
+
+Test results: 1536 pass / 0 fail / 49 expected-fail (3 new tests added)
+
+**Remaining known limitations (carried forward to Phase 8+):**
+
+- Pointer conditions are not annotated (backend `TEST` handles them correctly for non-null-pointer cases)
+- Enum conditions are not annotated (backend `TEST` handles them correctly)
+- User-defined `operator bool()` / contextual conversion operators are not handled by the sema pass
+- User-defined conversion materialization (converting constructors, conversion operators) remains in codegen
+- Global/static variable assignment RHS does not consume sema annotations (early-return path in `generateBinaryOperatorIr`)
+- `handleLValueCompoundAssignment` still fails for simple local variables (StringHandle LHS); the new cross-type path provides a correct fallback
+- Constructor call argument conversions are not annotated by sema
+- Reference binding, temporary materialization, and lifetime extension remain in codegen
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
