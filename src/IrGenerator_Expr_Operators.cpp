@@ -737,6 +737,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						? promote_integer_type(gsi.type)
 						: get_common_type(gsi.type, rhs_result.type);
 
+					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
+					if (is_shift_op && is_floating_point_type(gsi.type))
+						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs()))
