@@ -1930,6 +1930,9 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 						if (dtor_func_specs.noexcept_expr.has_value()) {
 							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+							if (eval.success()) dtor_ref.set_noexcept(eval.as_bool());
 						}
 					}
 					
@@ -3333,6 +3336,9 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_noexcept(true);
 						if (dtor_func_specs.noexcept_expr.has_value()) {
 							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+							if (eval.success()) dtor_ref.set_noexcept(eval.as_bool());
 						}
 					}
 					
