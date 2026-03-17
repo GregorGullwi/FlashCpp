@@ -604,25 +604,37 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	}
 
 	// Check for integer suffixes
+	// Valid C++20 integer suffixes per [lex.icon]: u, l, ul, lu, ll, ull, llu
+	// (case-insensitive; already lowercased above)
+	// Constexpr lookup table stores the resolved type directly to avoid redundant counting.
+	struct IntSuffixInfo {
+		std::string_view text;
+		Type signed_type;
+		Type unsigned_type;
+	};
+	static constexpr IntSuffixInfo int_suffix_table[] = {
+		{"u",   Type::UnsignedInt,      Type::UnsignedInt},
+		{"l",   Type::Long,             Type::UnsignedLong},
+		{"ul",  Type::UnsignedLong,     Type::UnsignedLong},
+		{"lu",  Type::UnsignedLong,     Type::UnsignedLong},
+		{"ll",  Type::LongLong,         Type::UnsignedLongLong},
+		{"ull", Type::UnsignedLongLong, Type::UnsignedLongLong},
+		{"llu", Type::UnsignedLongLong, Type::UnsignedLongLong},
+	};
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
-	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
+	auto suffix_it = std::ranges::find_if(int_suffix_table,
+		[&](const IntSuffixInfo& info) { return info.text == suffix; });
+	if (suffix_it != std::end(int_suffix_table)) {
 		bool hasUnsigned = suffix.find('u') != std::string_view::npos;
 		typeInfo.typeQualifier = hasUnsigned ? TypeQualifier::Unsigned : TypeQualifier::Signed;
-
-		// Count the number of 'l' characters to determine type
-		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
-		if (l_count >= 2) {
-			// 'll' suffix: long long (always 64 bits)
-			typeInfo.type = hasUnsigned ? Type::UnsignedLongLong : Type::LongLong;
-		} else if (l_count == 1) {
-			// 'l' suffix: long (size depends on target)
-			typeInfo.type = hasUnsigned ? Type::UnsignedLong : Type::Long;
-		} else {
-			typeInfo.type = hasUnsigned ? Type::UnsignedInt : Type::Int;
-		}
+		typeInfo.type = hasUnsigned ? suffix_it->unsigned_type : suffix_it->signed_type;
+	} else if (!suffix.empty() &&
+		suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
+		// All chars are u/l but not a valid combination (e.g., "lul", "lll", "uu")
+		return std::nullopt;
 	} else {
-		// Default for literals without suffix: signed int
+		// No suffix or non-suffix trailing text: default signed int
 		typeInfo.typeQualifier = TypeQualifier::Signed;
 		typeInfo.type = Type::Int;
 	}
