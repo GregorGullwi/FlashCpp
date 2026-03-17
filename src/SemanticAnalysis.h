@@ -15,13 +15,24 @@ class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
 class FunctionCallNode;
+class ConstructorCallNode;
+class InitializerListNode;
 class RangedForStatementNode;
 class VariableDeclarationNode;
+struct StructTypeInfo;
 struct LambdaInfo;
 
 // --- Semantic analysis pass ---
-// Post-parse semantic normalization. Phase 1 established the pipeline seam.
-// Phase 2 migrates standard return-value conversions into the semantic pass.
+// Post-parse semantic normalization.  See docs/IMPLICIT_CAST_SEMA_PLAN.md for
+// the full phase history.  Summary of completed phases:
+//   Phase 1: Pipeline seam (AST walk, auto-return deduction)
+//   Phase 2: Return-value conversions
+//   Phase 3: Binary operand conversions (usual arithmetic conversions)
+//   Phase 4: Shift operand promotions (independent integral promotions)
+//   Phase 5: Contextual bool for primitives (if/while/for/ternary/&&/||)
+//   Phase 6: Function call argument conversions + callable operator() resolution
+//   Phase 7: Ternary branch conversions, assignment RHS, variable initialiser
+//   Phase 8: Constructor arg conversions, enum/pointer contextual bool, float→int folding
 
 class SemanticAnalysis {
 public:
@@ -122,6 +133,13 @@ private:
 
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+
+	// Annotate constructor-call arguments with their parameter-type conversions.
+	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
+
+	// Annotate InitializerListNode elements used as constructor arguments
+	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
+	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
 
 	// Annotate ternary operator branches with common-type conversions
 	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).

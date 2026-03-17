@@ -11,6 +11,7 @@ enum class StandardConversionKind : uint8_t {
 	LValueToRValue,
 	ArrayToPointer,
 	FunctionToPointer,
+	PointerConversion,
 	IntegralPromotion,
 	FloatingPromotion,
 	IntegralConversion,

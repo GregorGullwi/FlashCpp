@@ -1039,6 +1039,13 @@
 										}
 
 										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+
+										// Apply sema-annotated or standard implicit conversion.
+										if (param_type) {
+											init_operands = applyConstructorArgConversion(
+												init_operands, init_expr, *param_type, decl.identifier_token());
+										}
+
 										{
 											TypedValue tv;
 

@@ -877,6 +877,20 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
+			// For struct types initialized via InitializerListNode (direct-init syntax
+			// like `Pair p(42, 3.14)`), annotate each initializer argument with the
+			// matching constructor parameter type.
+			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
+				if (ts.type() == Type::Struct && ts.type_index().is_valid() &&
+					ts.type_index().value < gTypeInfo.size()) {
+					const StructTypeInfo* si = gTypeInfo[ts.type_index().value].getStructInfo();
+					if (si && si->hasAnyConstructor()) {
+						const InitializerListNode& il = init->as<InitializerListNode>();
+						tryAnnotateInitListConstructorArgs(il, *si);
+					}
+				}
+			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id)
 				tryAnnotateConversion(*init, decl_type_id);
@@ -1060,6 +1074,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 			}
 			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
@@ -1619,7 +1634,40 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 // Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
 
 void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
-	tryAnnotateConversion(expr_node, bool_type_id_);
+	// First try the standard primitive conversion path (handles int/float/char → bool).
+	if (tryAnnotateConversion(expr_node, bool_type_id_))
+		return;
+
+	// Handle enum/pointer → bool (C++20 [conv.bool]/1): contextual conversion
+	// to bool applies to enums and pointers. Zero/null → false, non-zero → true.
+	// The backend TEST instruction already handles this correctly; the annotation
+	// records the semantic intent for future codegen migration.
+	if (!expr_node.is<ExpressionNode>()) return;
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id) return;
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const bool is_enum = (from_desc.base_type == Type::Enum);
+	const bool is_pointer = !from_desc.pointer_levels.empty();
+	if (!is_enum && !is_pointer) return;
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = expr_type_id;
+	cast_info.target_type_id = bool_type_id_;
+	cast_info.cast_kind = is_pointer
+		? StandardConversionKind::PointerConversion
+		: StandardConversionKind::BooleanConversion;
+	cast_info.value_category_after = ValueCategory::PRValue;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = bool_type_id_;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+	setSlot(key, slot);
+	stats_.slots_filled++;
 }
 
 // --- Callable operator() resolution ---
@@ -1802,6 +1850,106 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		// Quick exit when both types are inferable and already identical (no cast needed).
 		// tryAnnotateConversion will re-infer if arg_type_id is invalid, so no information is lost.
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
+		tryAnnotateConversion(arg, param_type_id);
+	}
+}
+
+void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
+	// Get the type being constructed.
+	const ASTNode& type_node = call_node.type_node();
+	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) return;
+	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	if (type_spec.type() != Type::Struct || !type_spec.type_index().is_valid()) return;
+	if (type_spec.type_index().value >= gTypeInfo.size()) return;
+
+	const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo();
+	if (!struct_info || !struct_info->hasAnyConstructor()) return;
+
+	// Resolve the matching constructor via overload resolution.
+	const auto& arguments = call_node.arguments();
+	size_t num_args = 0;
+	arguments.visit([&](ASTNode) { num_args++; });
+	if (num_args == 0) return;
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(num_args);
+	arguments.visit([&](ASTNode arg) {
+		auto arg_type_opt = parser_.get_expression_type(arg);
+		if (!arg_type_opt.has_value()) {
+			arg_types.clear();
+			return;
+		}
+		TypeSpecifierNode arg_type = *arg_type_opt;
+		// Mirror what codegen does: adjust lvalue arguments so that reference
+		// overloads are preferred when the argument is an lvalue.
+		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		arg_types.push_back(std::move(arg_type));
+	});
+	if (arg_types.size() != num_args) return;
+
+	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
+	// ctor and a compiler-generated implicit one with the same signature.
+	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
+	if (!resolution.selected_overload) return;
+
+	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
+	if (num_args > ctor_params.size()) return;
+
+	// Annotate each argument where its type differs from the parameter type.
+	size_t i = 0;
+	arguments.visit([&](ASTNode arg) {
+		if (i >= ctor_params.size()) { ++i; return; }
+		if (!arg.is<ExpressionNode>()) { ++i; return; }
+
+		const ASTNode& param_node = ctor_params[i];
+		if (!param_node.is<DeclarationNode>()) { ++i; return; }
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) { ++i; return; }
+
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) { ++i; return; }
+		tryAnnotateConversion(arg, param_type_id);
+		++i;
+	});
+}
+
+void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
+	const InitializerListNode& init_list, const StructTypeInfo& struct_info) {
+	const auto& initializers = init_list.initializers();
+	if (initializers.empty()) return;
+
+	// Build argument types for overload resolution.
+	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution
+	// so that lvalue arguments prefer reference overloads, and use skip_implicit=true
+	// to avoid false ambiguity between explicit and implicit copy/move ctors.
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(initializers.size());
+	for (const ASTNode& arg : initializers) {
+		auto arg_type_opt = parser_.get_expression_type(arg);
+		if (!arg_type_opt.has_value()) return;
+		TypeSpecifierNode arg_type = *arg_type_opt;
+		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		arg_types.push_back(std::move(arg_type));
+	}
+
+	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	if (!resolution.selected_overload) return;
+
+	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
+
+	for (size_t i = 0; i < initializers.size() && i < ctor_params.size(); ++i) {
+		const ASTNode& arg = initializers[i];
+		if (!arg.is<ExpressionNode>()) continue;
+
+		const ASTNode& param_node = ctor_params[i];
+		if (!param_node.is<DeclarationNode>()) continue;
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);

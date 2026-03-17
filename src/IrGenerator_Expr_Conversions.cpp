@@ -32,21 +32,44 @@
 
 		if (is_literal) {
 			if (from_is_float != to_is_float) {
-				TempVar resultVar = var_counter.next();
-				TypeConversionOp conv_op{
-					.result = resultVar,
-					.from = toTypedValue(operands),
-					.to_type = toType,
-					.to_size_in_bits = SizeInBits{toSize
-				}};
-
 				if (from_is_float) {
-					ir_.addInstruction(IrInstruction(IrOpcode::FloatToInt, std::move(conv_op), source_token));
+					// Constant-fold float/double literal → integer at compile time.
+					// This avoids emitting FloatToInt IR with a raw double IrValue,
+					// which handleFloatToInt does not support.
+					// is_literal is true and from_is_float is true ⟹ value must be double.
+					assert(std::holds_alternative<double>(operands.value) &&
+						"float literal must be stored as double in IrOperand");
+					const double src_val = std::get<double>(operands.value);
+					if (toType == Type::Bool) {
+						// C++20 [conv.bool]: zero → false, any other value → true.
+						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
+						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
+					}
+					if (is_unsigned_integer_type(toType)) {
+						// Cast through long long first for safety: direct
+						// static_cast<unsigned long long>(negative_double) is UB per
+						// C++20 [conv.fpint].  In practice parser double literals are
+						// always non-negative (unary minus produces a TempVar), but
+						// the two-step cast is defensive against future changes.
+						const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
+						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
+					}
+					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
+					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 				} else {
+					// int literal → float/double: emit IntToFloat IR instruction.
+					// handleIntToFloat uses loadTypedValueIntoRegister which handles
+					// integer literal IrValues correctly.
+					TempVar resultVar = var_counter.next();
+					TypeConversionOp conv_op{
+						.result = resultVar,
+						.from = toTypedValue(operands),
+						.to_type = toType,
+						.to_size_in_bits = SizeInBits{toSize
+					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
+					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar});
 				}
-
-				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar});
 			}
 
 			// For same-domain literal conversions, keep the value immediate.
@@ -2246,10 +2269,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (slot.has_value() && slot->has_cast()) {
 				const ImplicitCastInfo& cast_info =
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 				// Only emit an explicit conversion for float/double → bool.
 				// Integer → bool is already handled correctly by the backend (TEST).
-				if (is_floating_point_type(from_type)) {
+				// Pointer types (even float*/double*) are integer-width addresses and
+				// must use TEST, not FloatNotEqual — check pointer_levels to avoid
+				// misinterpreting a float* address as a floating-point value.
+				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.base_type)) {
 					return emitFloatNonZeroTest(condition);
 				}
 			}
@@ -2257,8 +2283,46 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// 2. Fallback: floating-point conditions need explicit conversion because
 		//    the backend's TEST instruction operates on integer bit patterns and
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
-		if (is_floating_point_type(condition.type)) {
+		//    Guard: pointer types (even float*/double*) are integer-width addresses
+		//    and must use TEST, not FloatNotEqual.
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.type)) {
 			return emitFloatNonZeroTest(condition);
 		}
 		return condition;
+	}
+
+	ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
+		const ASTNode& arg_expr, const TypeSpecifierNode& param_type, const Token& source_token) {
+		// Reference and rvalue-reference parameters: pass through unchanged.
+		if (param_type.is_reference() || param_type.is_rvalue_reference())
+			return arg_result;
+
+		const Type param_base_type = param_type.type();
+		bool sema_applied = false;
+
+		// 1. Try sema annotation (most accurate path).
+		if (sema_ && arg_expr.is<ExpressionNode>()) {
+			const void* key = &arg_expr.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (slot.has_value() && slot->has_cast()) {
+				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+				const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+				const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
+				if (from_t != Type::Struct && to_t != Type::Struct) {
+					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+					sema_applied = true;
+				}
+			}
+		}
+
+		// 2. Fallback: standard primitive conversion for non-pointer parameters.
+		if (!sema_applied && param_type.pointer_depth() == 0 &&
+			arg_result.type != param_base_type) {
+			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
+			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
+			}
+		}
+
+		return arg_result;
 	}

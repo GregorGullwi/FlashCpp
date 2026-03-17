@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value() && !node.is_implicit()) {
@@ -2551,6 +2552,13 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		}
 
 		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+
+		// Apply sema-annotated or standard implicit conversion for this argument.
+		if (param_type) {
+			argumentIrOperands = applyConstructorArgConversion(
+				argumentIrOperands, argument, *param_type, constructorCallNode.called_from());
+		}
+
 		// argumentIrOperands = [type, size, value]
 		{
 			TypedValue tv;
