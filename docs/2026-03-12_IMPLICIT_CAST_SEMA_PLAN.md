@@ -798,6 +798,17 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Enum/pointer contextual-bool sema annotations are recorded but not yet consumed by `applyConditionBoolConversion` (backend TEST handles both correctly without them; consumption is safe to add in Phase 9).
 
+### Phase 9: global/static assignment conversion, contextual-bool consumption ✅
+- Global/static simple `=` assignment: RHS now converted to LHS type via `generateTypeConversion` (e.g., `double g; g = 42;` correctly emits `IntToFloat`).
+- Global/static compound assignment (`+=`, `-=`, `*=`, `/=`, etc.): uses `get_common_type()` for usual arithmetic conversions, selects correct float/unsigned opcodes, converts result back to LHS type per C++20 `[expr.ass]/7`. Materializes conversion result via explicit `Assignment` before `GlobalStore` to avoid backend register-tracking gap.
+- `applyConditionBoolConversion` now consumes enum/pointer contextual-bool sema annotations: recognizes `BooleanConversion` and `PointerConversion` kinds and returns early (backend TEST already handles zero/null → false, non-zero/non-null → true correctly).
+- Tests: `test_global_assign_implicit_cast_ret0`, `test_static_assign_implicit_cast_ret0`, `test_global_compound_assign_cross_type_ret0`. Suite: 1555 pass / 0 fail / 54 expected-fail.
+
+**Known limitations (Phase 10+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.

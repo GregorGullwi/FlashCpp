@@ -760,6 +760,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// so that GlobalStore can safely read it. This works around the
 					// register-tracking gap where GlobalStore reads from the stack slot
 					// but generateTypeConversion may leave the result only in a register.
+					// The AssignmentOp pattern (result == lhs.value == store_temp) is the
+					// standard IR idiom: "allocate store_temp, then store op_result into it."
 					TempVar store_temp = var_counter.next();
 					{
 						AssignmentOp mat;
