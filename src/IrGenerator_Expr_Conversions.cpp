@@ -2283,7 +2283,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// 2. Fallback: floating-point conditions need explicit conversion because
 		//    the backend's TEST instruction operates on integer bit patterns and
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
-		if (is_floating_point_type(condition.type)) {
+		//    Guard: pointer types (even float*/double*) are integer-width addresses
+		//    and must use TEST, not FloatNotEqual.
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.type)) {
 			return emitFloatNonZeroTest(condition);
 		}
 		return condition;
