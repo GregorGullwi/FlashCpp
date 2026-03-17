@@ -811,6 +811,20 @@ The right split is:
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`. The backend's register-tracking does not yet support a `GlobalLoad` immediately after a `GlobalStore` to the same symbol, so a proper re-load cannot be emitted. Value semantics are correct for all practical uses (`int x = (g = 42)`, chained assignments); only lvalue-specific operations (`&(g = 42)`, `(g = 42) = 99`) would observe the difference.
 - `tryGlobalSemaConv` and `tryApplySemaConversion` in codegen do not verify that the sema annotation's target type matches the caller's intended conversion target. Today this is safe because the sema pass places at most one annotation per expression node (via `setSlot` which overwrites), and the annotation ordering guarantees the slot contains the conversion the caller expects. However, if a future sema change adds overlapping annotation passes that could overwrite a slot with a different target type, these helpers would silently apply the wrong conversion. Fix: accept an optional `expected_target` Type parameter and return `false` when the annotation's `to_t` does not match, letting the caller's fallback logic run instead.
 
+### Phase 10: sema target-type verification + codegen consumption hardening ✅
+- `tryGlobalSemaConv` and `tryApplySemaConversion` now accept an optional `expected_target` Type parameter (default `Type::Invalid`). When set, the annotation's target type must match the caller's intended conversion target; otherwise the helper returns `false` and the caller's fallback policy runs. This prevents silent semantic misapplication if a future sema change overwrites a slot with a different target type.
+- All call sites updated to pass `expected_target`: global simple `=` passes `gsi.type`, global compound passes `commonType`, binary operator LHS/RHS passes `commonType`. Shift RHS promotion intentionally omits verification (sema annotation is the sole authority for independent integral promotion per C++20 [expr.shift]).
+- Local variable simple `=` assignment codegen now consumes sema annotations: prefers the sema-annotated conversion (with target-type verification against `lhsType`) over the local `generateTypeConversion` fallback. Previously this was the only assignment path that did not check sema annotations.
+- Ternary operator branch conversions now consume sema annotations: both true and false branch conversions use `getSemaAnnotatedTargetType` to verify the sema annotation matches `common_type` before applying the conversion. Previously only the common-type determination (via `getSemaAnnotatedTargetType`) used sema annotations; the actual branch conversion calls did not.
+- Tests: `test_assign_sema_consumption_ret0`, `test_ternary_sema_consumption_ret0`, `test_sema_target_verify_ret0`. Suite: 1560 pass / 0 fail / 55 expected-fail.
+
+**Known limitations (Phase 11+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- Unification of `determineConversionKind()` (SemanticAnalysis.cpp) and `can_convert_type()` (OverloadResolution.h) into a single `buildConversionPlan()` helper remains TODO.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
