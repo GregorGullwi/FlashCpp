@@ -2097,6 +2097,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// C++20 [expr.mul]/4: % requires integral operands; diagnose ill-formed code.
 					if (arith_opcode == IrOpcode::Modulo)
 						throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
+					// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]: bitwise ops require integral operands.
+					if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
+						throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
 					if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
 					else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 					else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
