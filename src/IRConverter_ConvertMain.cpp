@@ -8945,6 +8945,21 @@ void IrToObjConverter<TWriterClass>::ensureNotInRCX(X64Register& result_reg, int
 		// If the LHS operand is in RCX, we must move it elsewhere before overwriting
 		// RCX with the shift count, otherwise the shift operates on the count itself.
 		if (result_reg != X64Register::RCX) return;
+		// Flush the RHS register (if dirty) before allocating, so that
+		// allocateRegisterWithSpilling cannot evict the RHS value from its
+		// physical register while looking for a spill candidate.  The single-
+		// exclude overload only protects RCX; without this flush the RHS
+		// could be silently spilled, and the subsequent MOV from the old
+		// physical register would read garbage.
+		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int reg_size_in_bits) {
+			if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
+				variable_scopes.back().scope_stack_space = stackVariableOffset;
+			}
+			emitMovToFrameSized(
+				SizedRegister{reg, 64, false},
+				SizedStackSlot{stackVariableOffset, reg_size_in_bits, false}
+			);
+		});
 		X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX);
 		emitMovRegToReg(X64Register::RCX, lhs_tmp, size_in_bits);
 		regAlloc.release(X64Register::RCX);
