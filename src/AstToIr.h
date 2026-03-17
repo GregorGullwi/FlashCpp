@@ -190,6 +190,12 @@ private:
 	// emit the proper type conversion.  Falls back to a local conversion for
 	// floating-point types when no annotation is present.
 	ExprResult applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token);
+	// Apply sema-annotated or standard implicit conversion for a constructor/function
+	// argument. Checks the sema slot for the argument expression first; falls back to
+	// can_convert_type for plain primitive scalars. Returns the (possibly converted)
+	// ExprResult. param_type must not be null.
+	ExprResult applyConstructorArgConversion(ExprResult arg_result, const ASTNode& arg_expr,
+		const TypeSpecifierNode& param_type, const Token& source_token);
 	// Read the sema-annotated conversion target type for an expression node.
 	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
 	Type getSemaAnnotatedTargetType(const ASTNode& node) const;

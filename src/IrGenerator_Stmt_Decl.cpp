@@ -1041,32 +1041,9 @@
 										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 
 										// Apply sema-annotated or standard implicit conversion.
-										if (param_type && !param_type->is_reference() && !param_type->is_rvalue_reference()) {
-											Type arg_type = init_operands.type;
-											const Type param_base_type = param_type->type();
-											bool sema_applied = false;
-
-											if (sema_ && init_expr.is<ExpressionNode>()) {
-												const void* key = &init_expr.as<ExpressionNode>();
-												const auto slot = sema_->getSlot(key);
-												if (slot.has_value() && slot->has_cast()) {
-													const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-													const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-													const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
-													if (from_t != Type::Struct && to_t != Type::Struct) {
-														init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
-														sema_applied = true;
-													}
-												}
-											}
-
-											if (!sema_applied && param_type->pointer_depth() == 0 &&
-												arg_type != param_base_type) {
-												TypeConversionResult conv = can_convert_type(arg_type, param_base_type);
-												if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-													init_operands = generateTypeConversion(init_operands, arg_type, param_base_type, decl.identifier_token());
-												}
-											}
+										if (param_type) {
+											init_operands = applyConstructorArgConversion(
+												init_operands, init_expr, *param_type, decl.identifier_token());
 										}
 
 										{

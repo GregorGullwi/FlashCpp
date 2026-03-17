@@ -782,6 +782,22 @@ The right split is:
 - Constructor call argument conversions not annotated by sema.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 
+### Phase 8: constructor arg conversions, enum/pointer contextual bool, literal constant folding ✅ (PR #935)
+- `tryAnnotateConstructorCallArgConversions`: annotates `ConstructorCallNode` arguments in expression context with implicit primitive conversions. Calls `adjust_argument_type_for_overload_resolution` and uses `skip_implicit=true` to match the codegen path exactly.
+- `tryAnnotateInitListConstructorArgs`: annotates `InitializerListNode` arguments in direct-init variable declarations (`T obj(a, b)`) with the same approach, guarded by `hasAnyConstructor()` to skip template stubs.
+- `applyConstructorArgConversion` helper: extracted shared sema-first + standard-conversion-fallback codegen logic used by both `IrGenerator_Visitors_Decl.cpp` and `IrGenerator_Stmt_Decl.cpp`, eliminating the previous duplicate 28-line blocks.
+- `tryAnnotateContextualBool` extended: annotates `Type::Enum` and pointer-typed expressions in boolean contexts using `BooleanConversion` and `PointerConversion` kinds respectively. Backend `TEST` instruction already handles these correctly; annotations record semantic intent for future migration.
+- `PointerConversion` added to `StandardConversionKind` enum.
+- Literal float→int constant folding: `generateTypeConversion` now constant-folds `double` literal → integer at compile time (with assert), fixing a latent crash in `handleFloatToInt` which only supports `TempVar`/`StringHandle` operands. `int` literal → `float/double` still emits `IntToFloat` IR (backend `loadTypedValueIntoRegister` handles it correctly).
+- Removed blanket `catch(...)` blocks from both sema functions; proper guards (`hasAnyConstructor()`, null checks, early returns) prevent crashes on incomplete template structs.
+- Tests: `test_ctor_call_arg_implicit_cast_ret0`, `test_contextual_bool_enum_ret0`, `test_contextual_bool_pointer_ret0`. Suite: 1548 pass / 0 fail / 52 expected-fail.
+
+**Known limitations (Phase 9+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Global/static assignment RHS does not consume sema annotations.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Enum/pointer contextual-bool sema annotations are recorded but not yet consumed by `applyConditionBoolConversion` (backend TEST handles both correctly without them; consumption is safe to add in Phase 9).
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
