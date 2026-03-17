@@ -14,6 +14,9 @@ int g(unsigned long x) { return (int)x + 200; }
 int h(long long x) { return (int)x + 300; }
 int h(int x) { return x; }
 
+int i(unsigned long long x) { return (int)x + 400; }
+int i(int x) { return x; }
+
 int main() {
 	// 0L should call f(long)
 	int r1 = f(0L);
@@ -42,6 +45,14 @@ int main() {
 	// 0 should call h(int)
 	int r7 = h(0);
 	if (r7 != 0) return 7;
+
+	// 0ULL should call i(unsigned long long)
+	int r8 = i(0ULL);
+	if (r8 != 400) return 8;
+
+	// 0 should call i(int)
+	int r9 = i(0);
+	if (r9 != 0) return 9;
 
 	return 0;
 }
