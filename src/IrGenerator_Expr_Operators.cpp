@@ -693,18 +693,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					// Return the converted RHS as the assignment result.
-					// The type/size are guaranteed to match gsi.type after the conversion
-					// at lines 664-667 above.
-					//
-					// NOTE: Per C++20 [expr.ass]/3, the result should be an lvalue referring
-					// to the global.  Ideally we would emit a GlobalLoad here to re-read the
-					// stored value, but the backend's register-tracking does not yet support
-					// a GlobalLoad immediately after a GlobalStore to the same symbol (the
-					// store may not be flushed to the RIP-relative slot before the load reads
-					// it).  Returning the converted temporary is correct for value semantics
-					// and matches the compound-assignment path.  A future backend improvement
-					// (Phase 10+) can switch this to a proper re-load.
+					// Return the converted RHS with the global's declared type/size.
 					return makeExprResult(gsi.type, gsi.size_in_bits, rhsExprResult.value);
 				}
 			}
