@@ -35,6 +35,13 @@ int main() {
 	if (f > 98.5f)
 		result += 1000;
 
-	// Expected: 1111
-	return result - 1111;
+	// long → int assignment (narrowing)
+	int g = 0;
+	long lg = 77L;
+	g = lg;
+	if (g == 77)
+		result += 10000;
+
+	// Expected: 11111
+	return result - 11111;
 }
