@@ -972,6 +972,15 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				orig_dtor.name()
 			);
 			
+			// Copy noexcept properties from the original destructor declaration.
+			// DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
+			// must propagate the original's evaluated flag (and expression, if any)
+			// to handle explicit noexcept(false) correctly.
+			new_dtor_ref.set_noexcept(orig_dtor.is_noexcept());
+			if (orig_dtor.has_noexcept_expression()) {
+				new_dtor_ref.set_noexcept_expression(*orig_dtor.noexcept_expression());
+			}
+			
 			// Copy definition if present
 			if (orig_dtor.get_definition().has_value()) {
 				new_dtor_ref.set_definition(*orig_dtor.get_definition());
