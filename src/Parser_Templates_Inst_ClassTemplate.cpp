@@ -5499,6 +5499,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// must propagate the original's evaluated flag (and expression, if any)
 					// to handle explicit noexcept(false) correctly.
 					new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
+					new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 					if (dtor_decl.has_noexcept_expression()) {
 						new_dtor_ref.set_noexcept_expression(*dtor_decl.noexcept_expression());
 					}
