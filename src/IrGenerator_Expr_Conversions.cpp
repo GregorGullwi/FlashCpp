@@ -2192,7 +2192,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (struct_info) {
 				const auto* dtor = struct_info->findDestructor();
 				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-					return evaluateDestructorNoexcept(dtor->function_decl.as<DestructorDeclarationNode>());
+					return dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
 				}
 			}
 		}

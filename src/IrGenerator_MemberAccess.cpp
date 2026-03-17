@@ -2828,7 +2828,7 @@
 					if (struct_info) {
 						const auto* dtor = struct_info->findDestructor();
 						if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-							result = evaluateDestructorNoexcept(dtor->function_decl.as<DestructorDeclarationNode>());
+							result = dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
 						} else {
 							result = true;  // Implicit destructor is noexcept
 						}

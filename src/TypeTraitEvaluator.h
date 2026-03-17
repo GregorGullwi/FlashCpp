@@ -31,12 +31,6 @@ bool isUnsigned(Type type);
 
 } // namespace TypeTraitEval
 
-// Evaluate a DestructorDeclarationNode's effective noexcept status.
-// Handles the implicit default (true) and evaluates an explicit noexcept(expr)
-// using a minimal constexpr evaluation context.  Shared by TypeTraitEvaluator,
-// IrGenerator, and ConstExprEvaluator so the logic lives in one place.
-bool evaluateDestructorNoexcept(const DestructorDeclarationNode& dtor_node);
-
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,

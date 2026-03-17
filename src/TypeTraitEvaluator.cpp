@@ -1,21 +1,4 @@
 #include "TypeTraitEvaluator.h"
-#include "ConstExprEvaluator.h"
-#include "SymbolTable.h"
-
-extern SymbolTable gSymbolTable;
-
-bool evaluateDestructorNoexcept(const DestructorDeclarationNode& dtor_node) {
-	bool is_nothrow = dtor_node.is_noexcept();
-	if (is_nothrow && dtor_node.has_noexcept_expression()) {
-		// A minimal context using gSymbolTable suffices: destructor noexcept
-		// expressions are simple constants (e.g. noexcept(false)) that don't
-		// reference global symbols or require parser/template context.
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		auto eval_result = ConstExpr::Evaluator::evaluate(*dtor_node.noexcept_expression(), ctx);
-		is_nothrow = eval_result.success() && eval_result.as_bool();
-	}
-	return is_nothrow;
-}
 
 namespace TypeTraitEval {
 
@@ -372,7 +355,7 @@ TypeTraitResult evaluateTypeTrait(
 				// per C++11 [class.dtor]/3.
 				const auto* dtor = struct_info->findDestructor();
 				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-					result = evaluateDestructorNoexcept(dtor->function_decl.as<DestructorDeclarationNode>());
+					result = dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
 				} else {
 					result = true;  // Implicit destructor is noexcept
 				}
