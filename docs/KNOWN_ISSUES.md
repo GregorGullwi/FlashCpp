@@ -69,24 +69,12 @@ The disambiguation routing in `parse_statement_or_declaration` is **correct**
 The remaining work is to extend `parse_variable_declaration` (and the declarator
 parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
 
-## Overloaded function resolution with size-differing parameter types
+## ~~Overloaded function resolution with size-differing parameter types~~ — FIXED
 
-When two overloads differ only in integer width (e.g. `f(int)` vs `f(long)`),
-calling the `long` overload with a `0L` literal results in the `int` overload
-being selected at runtime.  For example:
+**Fixed**: The root cause was in `get_numeric_literal_type()` — suffixed integer
+literals (`0L`, `0LL`, `0UL`, etc.) were always typed as `Type::Int` regardless of
+the `L`/`LL` suffix, causing the overload resolver to pick the `int` overload.
+Fixed by setting the correct `Type::Long` / `Type::LongLong` / unsigned variants
+when the suffix is present.
 
-```cpp
-int f(int x)  { return x; }
-int f(long x) { return (int)x + 100; }
-
-int main() {
-    f(0L);   // Expected: 100 (long overload). Actual: 0 (int overload selected)
-}
-```
-
-This is a codegen-level limitation in overload dispatch for integer-width variants.
-The semantic pass (`tryAnnotateCallArgConversions`) uses pointer-identity matching to
-recover the parser-resolved overload, but when the argument value is `0L` and the int
-overload was chosen by the parser the behaviour diverges from the standard.
-
-Tracking: `tests/test_overload_call_annotation_ret0.cpp` avoids this case.
+Tracking: `tests/test_overload_int_long_literal_ret0.cpp`

@@ -609,18 +609,19 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	if (!suffix.empty() && suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
 		bool hasUnsigned = suffix.find('u') != std::string_view::npos;
 		typeInfo.typeQualifier = hasUnsigned ? TypeQualifier::Unsigned : TypeQualifier::Signed;
-		typeInfo.type = hasUnsigned ? Type::UnsignedInt : Type::Int;
 
-		// Count the number of 'l' characters
+		// Count the number of 'l' characters to determine type
 		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
-		if (l_count > 0) {
-			// 'l' suffix: long (size depends on target)
+		if (l_count >= 2) {
 			// 'll' suffix: long long (always 64 bits)
-			if (l_count >= 2) {
-				typeInfo.sizeInBits = 64;  // long long is always 64 bits
-			} else {
-				typeInfo.sizeInBits = static_cast<size_t>(get_type_size_bits(Type::Long));  // long is target-dependent
-			}
+			typeInfo.type = hasUnsigned ? Type::UnsignedLongLong : Type::LongLong;
+			typeInfo.sizeInBits = 64;
+		} else if (l_count == 1) {
+			// 'l' suffix: long (size depends on target)
+			typeInfo.type = hasUnsigned ? Type::UnsignedLong : Type::Long;
+			typeInfo.sizeInBits = static_cast<size_t>(get_type_size_bits(Type::Long));
+		} else {
+			typeInfo.type = hasUnsigned ? Type::UnsignedInt : Type::Int;
 		}
 	} else {
 		// Default for literals without suffix: signed int
