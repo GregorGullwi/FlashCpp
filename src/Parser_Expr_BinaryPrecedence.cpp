@@ -636,19 +636,27 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_decimal = !is_hex_literal && !is_binary_literal &&
 			!(lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.');
 
+		// The lexer may produce a negative literal token (e.g., "-1") when a minus sign
+		// is immediately followed by digits.  strtoull("-1") wraps around to ULLONG_MAX,
+		// which would incorrectly promote the type to LongLong.  For type-selection
+		// purposes we use the magnitude of the value so that "-1" → Type::Int (same as "1").
+		bool is_negative = !lowerText.empty() && lowerText[0] == '-';
+		unsigned long long abs_val = is_negative ? (0ULL - val) : val;
+
 		int int_bits = get_type_size_bits(Type::Int);
 		int long_bits = get_type_size_bits(Type::Long);
 		// long long is always 64 bits per C++ standard.
 
 		if (is_decimal) {
 			// Decimal unsuffixed: int → long → long long (signed only).
-			if (int_bits == 32 && val <= 0x7FFFFFFFULL) {
+			// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
+			if (int_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				typeInfo.type = Type::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
-			} else if (long_bits == 64 && val <= 0x7FFFFFFFFFFFFFFFULL) {
+			} else if (long_bits == 64 && abs_val <= 0x7FFFFFFFFFFFFFFFULL) {
 				typeInfo.type = Type::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
-			} else if (long_bits == 32 && val <= 0x7FFFFFFFULL) {
+			} else if (long_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
 				typeInfo.type = Type::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
