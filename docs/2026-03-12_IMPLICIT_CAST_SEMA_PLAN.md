@@ -825,6 +825,23 @@ The right split is:
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - Unification of `determineConversionKind()` (SemanticAnalysis.cpp) and `can_convert_type()` (OverloadResolution.h) into a single `buildConversionPlan()` helper remains TODO.
 
+### Phase 11: unified `buildConversionPlan` + C++20 promotion rank fix ✅
+- `buildConversionPlan(Type, Type)` added to `OverloadResolution.h`: single source of truth returning `ConversionPlan` (rank + kind + validity) for primitive-type conversions. Replaces the previous two-call pattern of `can_convert_type()` + `determineConversionKind()`.
+- `ConversionPlan` struct added: combines `ConversionRank` (for overload resolution), `StandardConversionKind` (for semantic annotation), and `is_valid` in one value. Includes `toResult()` for backward-compatible `TypeConversionResult` extraction.
+- `can_convert_type(Type, Type)` refactored to delegate to `buildConversionPlan().toResult()`: all 36+ existing callers remain unchanged, no API breakage.
+- `tryAnnotateConversion` in `SemanticAnalysis.cpp` now calls `buildConversionPlan` directly (one call instead of `can_convert_type` + `determineConversionKind`).
+- `determineConversionKind()` removed from `SemanticAnalysis.cpp`: no longer needed as a separate function.
+- C++20 [conv.prom] fix: integral promotion rank now correctly limited to types promoted to exactly `int`/`unsigned int` (rank 3). Previously `short → long`/`long long` was over-approximated as Promotion; now correctly classified as Conversion, matching [conv.prom]/1.
+- C++20 [conv.fpprom] fix: floating-point promotion now correctly limited to `float → double`. Previously `float → long double` and `double → long double` were classified as FloatingPromotion via size comparison; now correctly classified as FloatingConversion, matching [conv.fpprom]/1.
+- Tests: `test_conversion_plan_unified_ret0`. Suite: 1562 pass / 0 fail / 55 expected-fail.
+
+**Known limitations (Phase 12+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
@@ -1446,16 +1463,17 @@ Work:
 - teach debug printing
 - teach expression dispatch and lowering from annotations
 
-#### Step 3: conversion-plan support
+#### Step 3: conversion-plan support (partially done — Phase 11)
 
 - `src/OverloadResolution.h`
 
 Work:
 
-- add `ConversionPlan` helpers
-- add `TypeContext` / type interning support
-- reuse existing rank rules
-- keep behavior matching existing overload ranking first
+- ✅ add `ConversionPlan` struct and `buildConversionPlan()` (Phase 11)
+- add `TypeContext` / type interning support (done in Phase 1)
+- ✅ reuse existing rank rules (Phase 11 delegates `can_convert_type` to `buildConversionPlan`)
+- ✅ keep behavior matching existing overload ranking first (Phase 11 — all tests pass)
+- TODO: extend `buildConversionPlan` to `TypeSpecifierNode`-level conversions
 
 #### Step 3b: semantic constant-evaluation integration
 

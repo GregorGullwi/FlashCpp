@@ -51,7 +51,7 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 // Replaces the previous two-call pattern of can_convert_type() + determineConversionKind().
 struct ConversionPlan {
 	ConversionRank rank = ConversionRank::NoMatch;
-	StandardConversionKind kind = StandardConversionKind::IntegralConversion;
+	StandardConversionKind kind = StandardConversionKind::None;
 	bool is_valid = false;
 
 	// Convert to TypeConversionResult for backward compatibility with callers
@@ -59,10 +59,10 @@ struct ConversionPlan {
 	TypeConversionResult toResult() const { return {rank, is_valid}; }
 
 	static ConversionPlan exact_match() {
-		return {ConversionRank::ExactMatch, StandardConversionKind::IntegralConversion, true};
+		return {ConversionRank::ExactMatch, StandardConversionKind::None, true};
 	}
 	static ConversionPlan no_match() {
-		return {ConversionRank::NoMatch, StandardConversionKind::IntegralConversion, false};
+		return {ConversionRank::NoMatch, StandardConversionKind::None, false};
 	}
 };
 

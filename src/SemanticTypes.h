@@ -8,6 +8,7 @@
 // --- Standard conversion kinds (C++20 [conv]) ---
 
 enum class StandardConversionKind : uint8_t {
+	None,                         // No conversion / identity (used as sentinel in ConversionPlan)
 	LValueToRValue,
 	ArrayToPointer,
 	FunctionToPointer,
