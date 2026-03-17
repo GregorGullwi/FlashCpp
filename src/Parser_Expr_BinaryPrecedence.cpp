@@ -581,25 +581,20 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		return typeInfo;
 	}
 
-	// Integer literal parsing
+	// Integer literal parsing — extract numeric value and set end_ptr for suffix detection.
+	// sizeInBits is derived from the resolved Type below (line 645), not from digit count.
 	if (is_hex_literal) {
-		// Hexadecimal literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 16);
 	}
 	else if (is_binary_literal) {
-		// Binary literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 2);
 	}
 	else if (lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.') {
 		// Octal literal (but not "0." which is a float)
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.c_str() + 1, &end_ptr, 8);
 	}
 	else {
 		// Decimal integer literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(sizeof(int) * 8);
 		typeInfo.value = std::strtoull(lowerText.c_str(), &end_ptr, 10);
 	}
 
