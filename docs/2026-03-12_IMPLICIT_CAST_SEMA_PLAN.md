@@ -835,6 +835,18 @@ The right split is:
 - C++20 [conv.fpprom] fix: floating-point promotion now correctly limited to `float → double`. Previously `float → long double` and `double → long double` were classified as FloatingPromotion via size comparison; now correctly classified as FloatingConversion, matching [conv.fpprom]/1.
 - Tests: `test_conversion_plan_unified_ret0`. Suite: 1562 pass / 0 fail / 55 expected-fail.
 
+#### Phase 11 bug fix: enum→double init missing IntToFloat conversion
+- Root cause: variable initialization path at `IrGenerator_Stmt_Decl.cpp` had a guard `init_type != Type::Enum` that skipped the conversion block entirely. Since enum→int shares the same bit representation, this was invisible for integer targets but caused silent data corruption for double/float targets (storing raw int bits into a float register, producing garbage).
+- Fix: resolve `Type::Enum` to its underlying type (via `gTypeInfo`/`EnumTypeInfo`) before entering the conversion check, so `enum → double` correctly follows the `Int → Double` path and emits `IntToFloat` IR.
+- Discovered while investigating test `test_conversion_plan_unified_ret0` returning 251 instead of 0 on Windows CI.
+- Tests: updated `test_conversion_plan_unified_ret0` passes. Suite: 1562 pass / 0 fail / 55 expected-fail.
+
+#### Phase 11 feature: local (function-scoped) enum declarations
+- Parser: added `"enum"` to the keyword dispatch map in `Parser_Statements.cpp` alongside `struct`/`class`/`union`.
+- Codegen: updated `visitEnumDeclarationNode` in `IrGenerator_Visitors_Decl.cpp` to re-insert unscoped enumerator symbols into the codegen-local symbol table. Parser-inserted symbols are popped when the function scope closes during parsing; the codegen visitor re-creates them for identifier lookup.
+- Both unscoped `enum` and scoped `enum class` (including with explicit underlying types) work inside function bodies.
+- Tests: `test_local_enum_ret0`, `test_local_enum_class_ret0`. Suite: 1564 pass / 0 fail / 55 expected-fail.
+
 **Known limitations (Phase 12+):**
 - User-defined `operator bool()` / converting constructors remain in codegen.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
