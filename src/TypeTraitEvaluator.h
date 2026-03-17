@@ -43,7 +43,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
 // Resolves the object's type via symbol lookup (handles template specializations)
 // and falls back to gTypesByName lookup by type name token for non-template types.
 // Scalar pseudo-destructor calls are always noexcept (no-ops).
-bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, SymbolTable& symbols);
+bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols);
 
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(

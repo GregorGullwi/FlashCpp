@@ -91,7 +91,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	return true;
 }
 
-bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, SymbolTable& symbols) {
+bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
 	// Try to resolve the actual type from the object expression's declaration
 	// (not the type_name() token) so that template specializations like
 	// Wrapper<int> resolve to the correct instantiated type.
