@@ -529,6 +529,11 @@ private:
 
 	void handleUnsignedShiftRight(const IrInstruction& instruction);
 
+	// Guard helper: if 'result_reg' is RCX (which we are about to overwrite with
+	// the shift count), save the value to a fresh register and update 'result_reg'.
+	// This prevents the shift count from clobbering the LHS operand.
+	void ensureNotInRCX(X64Register& result_reg, int size_in_bits);
+
 	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description);
 
 	void handleBitwiseAnd(const IrInstruction& instruction);

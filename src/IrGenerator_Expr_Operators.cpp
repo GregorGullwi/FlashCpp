@@ -2036,14 +2036,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for assignment: convert RHS to LHS type instead of finding common type
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
-			// Convert RHS to LHS type if they differ — prefer sema annotation.
-			if (rhsType != lhsType) {
-				Type sema_target = getSemaAnnotatedTargetType(binaryOperatorNode.get_rhs());
-				if (sema_target != Type::Invalid)
-					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, sema_target, binaryOperatorNode.get_token());
-				else
-					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
-			}
+			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
+			if (rhsType != lhsType)
+				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
 			// Extract the LHS value directly (it's either StringHandle or TempVar)
@@ -2110,12 +2105,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			auto it = compound_to_binary.find(op);
 			if (it != compound_to_binary.end()) {
 				IrOpcode arith_opcode = it->second;
-				// Use float opcodes when operating in floating-point common type
+				// Use float opcodes when operating in floating-point common type;
+				// use unsigned opcodes for unsigned integer types.
 				if (is_floating_point_type(commonType)) {
 					if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
 					else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 					else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
 					else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
+				} else if (is_unsigned_integer_type(commonType)) {
+					if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::UnsignedDivide;
+					else if (arith_opcode == IrOpcode::ShiftRight) arith_opcode = IrOpcode::UnsignedShiftRight;
 				}
 
 				// 1. Perform the arithmetic in common type
@@ -2135,12 +2134,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// original_lhs_value was the value of lhsExprResult before type conversion
 				// (which is a StringHandle for local variables or TempVar for other lvalues).
 				AssignmentOp assign_op;
-				if (std::holds_alternative<StringHandle>(original_lhs_value)) {
-					assign_op.result = std::get<StringHandle>(original_lhs_value);
-					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<StringHandle>(original_lhs_value) };
-				} else if (std::holds_alternative<TempVar>(original_lhs_value)) {
-					assign_op.result = std::get<TempVar>(original_lhs_value);
-					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<TempVar>(original_lhs_value) };
+				if (const auto* sh = std::get_if<StringHandle>(&original_lhs_value)) {
+					assign_op.result = *sh;
+					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, *sh };
+				} else if (const auto* tv = std::get_if<TempVar>(&original_lhs_value)) {
+					assign_op.result = *tv;
+					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, *tv };
 				} else {
 					throw InternalError("Compound assignment LHS must be a variable");
 				}

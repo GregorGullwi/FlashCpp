@@ -8937,14 +8937,26 @@ void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instructi
 	}
 
 template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::ensureNotInRCX(X64Register& result_reg, int size_in_bits) {
+		// If the LHS operand is in RCX, we must move it elsewhere before overwriting
+		// RCX with the shift count, otherwise the shift operates on the count itself.
+		if (result_reg != X64Register::RCX) return;
+		X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX);
+		emitMovRegToReg(X64Register::RCX, lhs_tmp, size_in_bits);
+		regAlloc.release(X64Register::RCX);
+		result_reg = lhs_tmp;
+	}
+
+template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instruction)  {
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left");
 
+		// If the LHS is in RCX, save it before loading the shift count there.
+		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the shift left operation: shl r/m, cl
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
@@ -8961,10 +8973,11 @@ void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instr
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
 
+		// If the LHS is in RCX, save it before loading the shift count there.
+		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the shift right operation: sar r/m, cl (arithmetic right shift)
 		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
@@ -9009,10 +9022,11 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
 
+		// If the LHS is in RCX, save it before loading the shift count there.
+		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the unsigned shift right operation: shr r/m, cl (logical right shift)
 		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
@@ -10651,10 +10665,12 @@ void IrToObjConverter<TWriterClass>::handleXorAssign(const IrInstruction& instru
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instruction)  {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
-		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 
-		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
+		// If the LHS is in RCX, save it before loading the shift count there.
+		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
+		// Move RHS to CL register
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Emit SHL instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
@@ -10665,10 +10681,12 @@ void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instru
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShrAssign(const IrInstruction& instruction)  {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
-		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 
-		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
+		// If the LHS is in RCX, save it before loading the shift count there.
+		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
+		// Move RHS to CL register
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Emit SAR instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);

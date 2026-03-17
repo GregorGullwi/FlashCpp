@@ -1171,8 +1171,16 @@ This implements C++20 [expr.ass]/7: `E1 op= E2` is equivalent to `E1 = static_ca
 - `tests/test_ternary_conv_ret0.cpp` — mixed-type ternary (int/long, int/double) with true and false branches
 - `tests/test_compound_assign_implicit_cast_ret0.cpp` — compound assignment with type promotion (long+=int, double+=int, int-=double, int*=int)
 - `tests/test_assign_implicit_cast_ret0.cpp` — simple assignment implicit conversions (int→long, int→double, float→int, double→int)
+- `tests/test_unsigned_compound_assign_ret0.cpp` — unsigned cross-type compound `/=` and `>>=` (uint32 /= ulonglong, uint32 >>= ulonglong)
 
-Test results: 1536 pass / 0 fail / 49 expected-fail (3 new tests added)
+Test results: 1537 pass / 0 fail / 49 expected-fail (4 new tests added)
+
+### Phase 7 review-feedback fixes (post-commit)
+
+- **Assignment RHS always uses `lhsType`** — simplified from `sema_target`-or-`lhsType` branch to always use `lhsType` (codegen ground truth), removing a potential divergence when sema inferred a different target type.
+- **`std::get_if()` for compound-assign store-back** — replaced `std::holds_alternative + std::get` with the safer `std::get_if` pattern for `original_lhs_value` in the cross-type store-back path.
+- **Unsigned `/=` and `>>=` opcodes** — the `compound_to_binary` map entries for `/=` and `>>=` now select `IrOpcode::UnsignedDivide` / `IrOpcode::UnsignedShiftRight` when `is_unsigned_integer_type(commonType)`, matching the existing non-compound binary path.
+- **Shift RCX clobber fix** — `handleShiftLeft`, `handleShiftRight`, `handleUnsignedShiftRight`, `handleShlAssign`, and `handleShrAssign` all had a latent bug: when the LHS operand (e.g., a freshly-computed TempVar from ZeroExtend) happened to be in RCX, the `mov RCX, rhs_reg` step to load the shift count would overwrite the LHS before the shift instruction ran, producing 0 instead of the correct result. Fixed by adding `ensureNotInRCX()` helper (extracted to avoid duplication) that saves the LHS to a fresh register when `result_physical_reg == RCX`.
 
 **Remaining known limitations (carried forward to Phase 8+):**
 
