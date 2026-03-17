@@ -2044,10 +2044,24 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for assignment: convert RHS to LHS type instead of finding common type
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
-			// Convert RHS to LHS type if they differ
+			// Convert RHS to LHS type if they differ — prefer sema annotation.
 			if (rhsType != lhsType) {
-				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
-
+				bool sema_applied = false;
+				if (sema_ && binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
+					const void* key = &binaryOperatorNode.get_rhs().as<ExpressionNode>();
+					const auto slot = sema_->getSlot(key);
+					if (slot.has_value() && slot->has_cast()) {
+						const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+						const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+						const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
+						if (from_t != Type::Struct && to_t != Type::Struct) {
+							rhsExprResult = generateTypeConversion(rhsExprResult, from_t, to_t, binaryOperatorNode.get_token());
+							sema_applied = true;
+						}
+					}
+				}
+				if (!sema_applied)
+					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
 			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
@@ -2069,6 +2083,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		Type commonType = get_common_type(lhsType, rhsType);
+
+		// Save original LHS value binding before type conversion (needed for compound assignment store-back).
+		const IrOperand original_lhs_value = lhsExprResult.value;
 
 		// Check whether the semantic pass pre-computed operand conversion annotations.
 		// When present for non-struct types, use them and skip the local policy.
@@ -2094,6 +2111,62 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (rhsType != commonType) {
 			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs()))
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
+		}
+
+		// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the behavior is equivalent
+		// to E1 = static_cast<T1>(E1 op E2) where T1 is the type of E1. When the LHS was
+		// promoted/converted for the operation, the compound-assign opcodes would store the
+		// result into the temporary (losing the original variable binding). Fix: perform the
+		// binary operation explicitly, convert the result back to LHS type, and store it.
+		if (compound_assignment_ops.count(op) > 0 && lhsType != commonType) {
+			// Map compound op to the corresponding binary arithmetic opcode
+			static const std::unordered_map<std::string_view, IrOpcode> compound_to_binary = {
+				{"+=", IrOpcode::Add}, {"-=", IrOpcode::Subtract}, {"*=", IrOpcode::Multiply},
+				{"/=", IrOpcode::Divide}, {"%=", IrOpcode::Modulo},
+				{"&=", IrOpcode::BitwiseAnd}, {"|=", IrOpcode::BitwiseOr}, {"^=", IrOpcode::BitwiseXor},
+				{"<<=", IrOpcode::ShiftLeft}, {">>=", IrOpcode::ShiftRight}
+			};
+			auto it = compound_to_binary.find(op);
+			if (it != compound_to_binary.end()) {
+				IrOpcode arith_opcode = it->second;
+				// Use float opcodes when operating in floating-point common type
+				if (is_floating_point_type(commonType)) {
+					if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
+					else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
+					else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
+					else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
+				}
+
+				// 1. Perform the arithmetic in common type
+				TempVar op_result = var_counter.next();
+				BinaryOp bin_op{
+					.lhs = toTypedValue(lhsExprResult),
+					.rhs = toTypedValue(rhsExprResult),
+					.result = op_result,
+				};
+				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+
+				// 2. Convert result back to original LHS type
+				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result});
+				ExprResult converted = generateTypeConversion(op_expr, commonType, lhsType, binaryOperatorNode.get_token());
+
+				// 3. Store back to original LHS variable
+				// original_lhs_value was the value of lhsExprResult before type conversion
+				// (which is a StringHandle for local variables or TempVar for other lvalues).
+				AssignmentOp assign_op;
+				if (std::holds_alternative<StringHandle>(original_lhs_value)) {
+					assign_op.result = std::get<StringHandle>(original_lhs_value);
+					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<StringHandle>(original_lhs_value) };
+				} else if (std::holds_alternative<TempVar>(original_lhs_value)) {
+					assign_op.result = std::get<TempVar>(original_lhs_value);
+					assign_op.lhs = { lhsType, SizeInBits{lhsSize}, std::get<TempVar>(original_lhs_value) };
+				} else {
+					throw InternalError("Compound assignment LHS must be a variable");
+				}
+				assign_op.rhs = toTypedValue(converted);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, original_lhs_value);
+			}
 		}
 
 		// Check if we're dealing with floating-point operations
