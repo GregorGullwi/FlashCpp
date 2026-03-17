@@ -632,6 +632,21 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 		}
 
+		// Helper: prefer sema annotation over local policy for operand conversions on global/static paths.
+		// Returns true and applies the conversion when a non-struct sema slot exists for the node.
+		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node) -> bool {
+			if (!sema_ || !node.is<ExpressionNode>()) return false;
+			const void* key = &node.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (!slot.has_value() || !slot->has_cast()) return false;
+			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+			const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
+			if (from_t == Type::Struct || to_t == Type::Struct) return false;
+			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
+			return true;
+		};
+
 		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -643,6 +658,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
+					// Prefer sema annotation (consistent with binary operator path); fall back to local policy.
+					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs()) &&
+						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
+						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
+					}
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
@@ -671,8 +693,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					// Return the RHS value as the result (assignment expression returns the assigned value)
-					return rhsExprResult;
+					// Return the converted RHS with the global's declared type/size.
+					return makeExprResult(gsi.type, gsi.size_in_bits, rhsExprResult.value);
 				}
 			}
 		}
@@ -701,28 +723,101 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Map compound op to arithmetic opcode
-					const auto arith_opcode = compoundOpToBaseOpcode(op);
-					if (!arith_opcode.has_value()) {
+					const auto base_opcode = compoundOpToBaseOpcode(op);
+					if (!base_opcode.has_value()) {
 						FLASH_LOG(Codegen, Error, "Unsupported compound assignment operator for global: ", op);
 						return ExprResult{};
 					}
 
-					// Perform the operation
+					// C++20 [expr.shift]: shift operands undergo independent integral promotions,
+					// NOT usual arithmetic conversions. The result type is the promoted LHS type.
+					// All other operators use usual arithmetic conversions per [expr.ass]/7.
+					const bool is_shift_op = (op == "<<=" || op == ">>=");
+					const Type commonType = is_shift_op
+						? promote_integer_type(gsi.type)
+						: get_common_type(gsi.type, rhs_result.type);
+
+					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
+					if (is_shift_op && is_floating_point_type(gsi.type))
+						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+
+					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
+					if (gsi.type != commonType) {
+						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs()))
+							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+					}
+					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
+					// NOT conversion to the LHS/result type. Other operators convert RHS to commonType.
+					if (is_shift_op) {
+						// Reject float RHS before promotion to avoid unnecessary conversion work.
+						if (is_floating_point_type(rhs_result.type))
+							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+						const Type promoted_rhs = promote_integer_type(rhs_result.type);
+						if (rhs_result.type != promoted_rhs)
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+					} else if (rhs_result.type != commonType) {
+						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs()))
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+					}
+
+					// Select the correct opcode for the common type.
+					IrOpcode arith_opcode = *base_opcode;
+					if (is_floating_point_type(commonType)) {
+						if (arith_opcode == IrOpcode::Modulo)
+							throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
+						if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
+							throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
+						// Shifts on floating-point are ill-formed; the RHS check above catches the
+						// float-RHS case; this catches float-LHS (e.g., float g; g <<= 1;).
+						if (arith_opcode == IrOpcode::ShiftLeft || arith_opcode == IrOpcode::ShiftRight)
+							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+						if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
+						else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
+						else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
+						else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
+					} else if (is_unsigned_integer_type(commonType)) {
+						if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::UnsignedDivide;
+						else if (arith_opcode == IrOpcode::Modulo) arith_opcode = IrOpcode::UnsignedModulo;
+						else if (arith_opcode == IrOpcode::ShiftRight) arith_opcode = IrOpcode::UnsignedShiftRight;
+					}
+
+					// Perform the operation in common type
 					TempVar result_var = var_counter.next();
 					BinaryOp bin_op{
-						.lhs = {gsi.type, gsi.size_in_bits, loaded},
+						.lhs = toTypedValue(lhs_operand),
 						.rhs = toTypedValue(rhs_result),
 						.result = result_var,
 					};
-					ir_.addInstruction(IrInstruction(*arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+					ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+
+					// Convert result back to global's type if needed
+					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var});
+					if (commonType != gsi.type) {
+						op_result = generateTypeConversion(op_result, commonType, gsi.type, binaryOperatorNode.get_token());
+					}
+
+					// Materialize the conversion result into a stack-flushed temporary
+					// so that GlobalStore can safely read it. This works around the
+					// register-tracking gap where GlobalStore reads from the stack slot
+					// but generateTypeConversion may leave the result only in a register.
+					// The AssignmentOp pattern (result == lhs.value == store_temp) is the
+					// standard IR idiom: "allocate store_temp, then store op_result into it."
+					TempVar store_temp = var_counter.next();
+					{
+						AssignmentOp mat;
+						mat.result = store_temp;
+						mat.lhs = { gsi.type, gsi.size_in_bits, store_temp };
+						mat.rhs = toTypedValue(op_result);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(mat), binaryOperatorNode.get_token()));
+					}
 
 					// Store result back to global
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
-					store_operands.emplace_back(result_var);
+					store_operands.emplace_back(store_temp);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{result_var});
+					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{store_temp});
 				}
 			}
 		}

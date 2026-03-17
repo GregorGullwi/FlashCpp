@@ -798,6 +798,19 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Enum/pointer contextual-bool sema annotations are recorded but not yet consumed by `applyConditionBoolConversion` (backend TEST handles both correctly without them; consumption is safe to add in Phase 9).
 
+### Phase 9: global/static assignment conversion, contextual-bool consumption ✅
+- Global/static simple `=` assignment: RHS now converted to LHS type via `generateTypeConversion` (e.g., `double g; g = 42;` correctly emits `IntToFloat`).
+- Global/static compound assignment (`+=`, `-=`, `*=`, `/=`, etc.): uses `get_common_type()` for usual arithmetic conversions, selects correct float/unsigned opcodes, converts result back to LHS type per C++20 `[expr.ass]/7`. Materializes conversion result via explicit `Assignment` before `GlobalStore` to avoid backend register-tracking gap.
+- `applyConditionBoolConversion` now consumes enum/pointer contextual-bool sema annotations: recognizes `BooleanConversion` and `PointerConversion` kinds and returns early (backend TEST already handles zero/null → false, non-zero/non-null → true correctly).
+- Tests: `test_global_assign_implicit_cast_ret0`, `test_static_assign_implicit_cast_ret0`, `test_global_compound_assign_cross_type_ret0`. Suite: 1555 pass / 0 fail / 54 expected-fail.
+
+**Known limitations (Phase 10+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`. The backend's register-tracking does not yet support a `GlobalLoad` immediately after a `GlobalStore` to the same symbol, so a proper re-load cannot be emitted. Value semantics are correct for all practical uses (`int x = (g = 42)`, chained assignments); only lvalue-specific operations (`&(g = 42)`, `(g = 42) = 99`) would observe the difference.
+- `tryGlobalSemaConv` and `tryApplySemaConversion` in codegen do not verify that the sema annotation's target type matches the caller's intended conversion target. Today this is safe because the sema pass places at most one annotation per expression node (via `setSlot` which overwrites), and the annotation ordering guarantees the slot contains the conversion the caller expects. However, if a future sema change adds overlapping annotation passes that could overwrite a slot with a different target type, these helpers would silently apply the wrong conversion. Fix: accept an optional `expected_target` Type parameter and return `false` when the annotation's `to_t` does not match, letting the caller's fallback logic run instead.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
