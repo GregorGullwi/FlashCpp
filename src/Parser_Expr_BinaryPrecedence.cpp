@@ -582,7 +582,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	}
 
 	// Integer literal parsing — extract numeric value and set end_ptr for suffix detection.
-	// sizeInBits is derived from the resolved Type below (line 645), not from digit count.
+	// sizeInBits is derived from the resolved Type at the end of this function, not from digit count.
 	if (is_hex_literal) {
 		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 16);
 	}
@@ -629,9 +629,60 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		// All chars are u/l but not a valid combination (e.g., "lul", "lll", "uu")
 		return std::nullopt;
 	} else {
-		// No suffix or non-suffix trailing text: default signed int
-		typeInfo.typeQualifier = TypeQualifier::Signed;
-		typeInfo.type = Type::Int;
+		// No suffix: determine type from the value per C++20 [lex.icon] Table 8.
+		// Decimal: int → long → long long (first signed type that can represent the value).
+		// Hex/octal/binary: int → unsigned int → long → unsigned long → long long → unsigned long long.
+		auto val = std::get<unsigned long long>(typeInfo.value);
+		bool is_decimal = !is_hex_literal && !is_binary_literal &&
+			!(lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.');
+
+		int int_bits = get_type_size_bits(Type::Int);
+		int long_bits = get_type_size_bits(Type::Long);
+		// long long is always 64 bits per C++ standard.
+
+		if (is_decimal) {
+			// Decimal unsuffixed: int → long → long long (signed only).
+			if (int_bits == 32 && val <= 0x7FFFFFFFULL) {
+				typeInfo.type = Type::Int;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else if (long_bits == 64 && val <= 0x7FFFFFFFFFFFFFFFULL) {
+				typeInfo.type = Type::Long;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else if (long_bits == 32 && val <= 0x7FFFFFFFULL) {
+				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
+				typeInfo.type = Type::Int;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else {
+				typeInfo.type = Type::LongLong;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			}
+		} else {
+			// Hex/octal/binary unsuffixed: int → unsigned int → long → unsigned long → long long → unsigned long long.
+			unsigned long long int_max_signed   = (1ULL << (int_bits - 1)) - 1;
+			unsigned long long int_max_unsigned  = (1ULL << int_bits) - 1;
+			unsigned long long long_max_signed   = (long_bits == 64) ? 0x7FFFFFFFFFFFFFFFULL : (1ULL << (long_bits - 1)) - 1;
+			unsigned long long long_max_unsigned  = (long_bits == 64) ? 0xFFFFFFFFFFFFFFFFULL : (1ULL << long_bits) - 1;
+
+			if (val <= int_max_signed) {
+				typeInfo.type = Type::Int;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else if (val <= int_max_unsigned) {
+				typeInfo.type = Type::UnsignedInt;
+				typeInfo.typeQualifier = TypeQualifier::Unsigned;
+			} else if (val <= long_max_signed) {
+				typeInfo.type = Type::Long;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else if (val <= long_max_unsigned) {
+				typeInfo.type = Type::UnsignedLong;
+				typeInfo.typeQualifier = TypeQualifier::Unsigned;
+			} else if (val <= 0x7FFFFFFFFFFFFFFFULL) {
+				typeInfo.type = Type::LongLong;
+				typeInfo.typeQualifier = TypeQualifier::Signed;
+			} else {
+				typeInfo.type = Type::UnsignedLongLong;
+				typeInfo.typeQualifier = TypeQualifier::Unsigned;
+			}
+		}
 	}
 
 	// Always set sizeInBits from the resolved type so it matches the C++ standard,
