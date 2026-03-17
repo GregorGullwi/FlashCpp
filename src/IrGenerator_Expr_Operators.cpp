@@ -427,7 +427,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (common_type == Type::Invalid)
 			common_type = true_result.type;
 
-		// Convert true result to common type if needed
+		// Convert true result to common type if needed.
+		// NOTE: sema annotations were already consumed above when determining common_type
+		// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
+		// there is no need to re-query the annotation here since both paths would produce
+		// the same generateTypeConversion call (sema_target == common_type by construction).
 		if (true_result.type != common_type)
 			true_result = generateTypeConversion(true_result, true_result.type, common_type, ternaryNode.get_token());
 
@@ -456,7 +460,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Evaluate false expression
 		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
-		// Convert false result to common type if needed
+		// Convert false result to common type if needed (same reasoning as true branch above).
 		if (false_result.type != common_type)
 			false_result = generateTypeConversion(false_result, false_result.type, common_type, ternaryNode.get_token());
 
@@ -634,7 +638,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Helper: prefer sema annotation over local policy for operand conversions on global/static paths.
 		// Returns true and applies the conversion when a non-struct sema slot exists for the node.
-		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node) -> bool {
+		// When expected_target != Type::Invalid, the annotation's target type must match; otherwise
+		// the helper returns false so the caller's fallback policy runs instead.
+		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node, Type expected_target = Type::Invalid) -> bool {
 			if (!sema_ || !node.is<ExpressionNode>()) return false;
 			const void* key = &node.as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
@@ -643,6 +649,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
 			if (from_t == Type::Struct || to_t == Type::Struct) return false;
+			if (expected_target != Type::Invalid && to_t != expected_target) return false;
+			// Defensive: sema source type should match the expression's runtime type.
+			// A mismatch would indicate a stale or miskeyed annotation.
+			if (from_t != expr.type)
+				throw InternalError("sema annotation source type does not match expr.type");
 			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
 			return true;
 		};
@@ -661,7 +672,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 					// Prefer sema annotation (consistent with binary operator path); fall back to local policy.
-					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs()) &&
+					// Pass expected_target=gsi.type so the sema annotation is verified against the LHS type.
+					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
 						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
@@ -743,7 +755,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
-						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs()))
+						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType))
 							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -756,7 +768,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						if (rhs_result.type != promoted_rhs)
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
 					} else if (rhs_result.type != commonType) {
-						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs()))
+						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType))
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
 					}
 
@@ -2122,8 +2134,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
-			if (rhsType != lhsType)
-				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+			// Prefer sema annotation (consistent with global assignment and binary operator paths);
+			// pass expected_target=lhsType so the annotation is verified before being applied.
+			if (rhsType != lhsType) {
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType))
+					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
 			// Extract the LHS value directly (it's either StringHandle or TempVar)
@@ -2152,7 +2168,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Check whether the semantic pass pre-computed operand conversion annotations.
 		// When present for non-struct types, use them and skip the local policy.
-		auto tryApplySemaConversion = [&](ExprResult& operands, const ASTNode& operand_node) -> bool {
+		// When expected_target != Type::Invalid, the annotation's target type must match;
+		// otherwise the helper returns false so the caller's fallback policy runs instead.
+		auto tryApplySemaConversion = [&](ExprResult& operands, const ASTNode& operand_node, Type expected_target = Type::Invalid) -> bool {
 			if (!sema_ || !operand_node.is<ExpressionNode>()) return false;
 			const void* key = &operand_node.as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
@@ -2162,6 +2180,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 			const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 			if (from_type == Type::Struct || to_type == Type::Struct) return false;
+			if (expected_target != Type::Invalid && to_type != expected_target) return false;
+			// Defensive: sema source type should match the expression's runtime type.
+			// A mismatch would indicate a stale or miskeyed annotation.
+			if (from_type != operands.type)
+				throw InternalError("sema annotation source type does not match operands.type");
 			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
 			return true;
 		};
@@ -2170,8 +2193,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
 
 		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
+		// Pass expected_target=commonType so the sema annotation is verified against the
+		// codegen-computed common type before applying the conversion.
 		if (lhsType != commonType) {
-			if (!tryApplySemaConversion(lhsExprResult, binaryOperatorNode.get_lhs()))
+			if (!tryApplySemaConversion(lhsExprResult, binaryOperatorNode.get_lhs(), commonType))
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -2180,7 +2205,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (is_shift_op) {
 			tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs());
 		} else if (rhsType != commonType) {
-			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs()))
+			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs(), commonType))
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
 		}
 
