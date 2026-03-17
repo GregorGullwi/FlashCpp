@@ -2089,6 +2089,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				IrOpcode arith_opcode = *base_opcode;
 				// Upgrade to the correct opcode for the common type.
 				if (is_floating_point_type(commonType)) {
+					// C++20 [expr.mul]/4: % requires integral operands; diagnose ill-formed code.
+					if (arith_opcode == IrOpcode::Modulo)
+						throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
 					if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
 					else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 					else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
@@ -2177,8 +2180,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
-		// Modulo operations (typed) — signed vs. unsigned
-		else if (op == "%" && !is_floating_point_op) {
+		// Modulo operations (typed): signed vs. unsigned; float is ill-formed (C++20 [expr.mul]/4)
+		else if (op == "%") {
+			if (is_floating_point_op)
+				throw CompileError("Operator % is not defined for floating-point operands (C++20 [expr.mul]/4)");
 			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedModulo : IrOpcode::Modulo;
 
 			BinaryOp bin_op{

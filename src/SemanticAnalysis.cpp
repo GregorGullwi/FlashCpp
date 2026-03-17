@@ -1372,6 +1372,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(desc);
 				}
 			}
+			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				// C++20 [expr.cond]/7: result type is the common type of the two branches.
+				const CanonicalTypeId t_id = inferExpressionType(e.true_expr());
+				const CanonicalTypeId f_id = inferExpressionType(e.false_expr());
+				if (!t_id || !f_id) return {};
+				if (canonical_types_match(t_id, f_id)) return t_id;
+				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
+				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
+				if (t_desc.base_type == Type::Struct || f_desc.base_type == Type::Struct) return {};
+				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
+				const Type common_t = get_common_type(t_desc.base_type, f_desc.base_type);
+				if (common_t == Type::Invalid) return {};
+				CanonicalTypeDesc ternary_desc;
+				ternary_desc.base_type = common_t;
+				return type_context_.intern(ternary_desc);
+			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
