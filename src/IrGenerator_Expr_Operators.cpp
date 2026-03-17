@@ -650,6 +650,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
 			if (from_t == Type::Struct || to_t == Type::Struct) return false;
 			if (expected_target != Type::Invalid && to_t != expected_target) return false;
+			// Defensive: sema source type should match the expression's runtime type.
+			// A mismatch would indicate a stale or miskeyed annotation.
+			assert(from_t == expr.type && "sema annotation source type does not match expr.type");
 			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
 			return true;
 		};
@@ -2177,6 +2180,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 			if (from_type == Type::Struct || to_type == Type::Struct) return false;
 			if (expected_target != Type::Invalid && to_type != expected_target) return false;
+			// Defensive: sema source type should match the expression's runtime type.
+			// A mismatch would indicate a stale or miskeyed annotation.
+			assert(from_type == operands.type && "sema annotation source type does not match operands.type");
 			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
 			return true;
 		};
