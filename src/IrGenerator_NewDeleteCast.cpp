@@ -728,10 +728,10 @@
 				return false;
 			}
 			Type semantic_type = resolve_type_alias(source_type, source_type_index);
-			if (semantic_type != Type::Struct && semantic_type != Type::Enum && semantic_type != Type::UserDefined) {
+			if (!carriesSemanticTypeIndex(semantic_type)) {
 				semantic_type = resolve_type_alias(gTypeInfo[source_type_index.value].type_, source_type_index);
 			}
-			return semantic_type == Type::Struct || semantic_type == Type::Enum || semantic_type == Type::UserDefined;
+			return carriesSemanticTypeIndex(semantic_type);
 		};
 
 		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
@@ -765,7 +765,7 @@
 
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
-			if (source_has_semantic_identity() && target_type != Type::Struct && target_type != Type::Enum && target_type != Type::UserDefined) {
+			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
 				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
 			}
 			return expr_operands;

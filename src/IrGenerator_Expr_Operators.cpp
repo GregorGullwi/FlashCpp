@@ -1178,7 +1178,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return false;
 			}
 			Type semantic_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
-			if (semantic_type == Type::Struct || semantic_type == Type::Enum) {
+			if (carriesSemanticTypeIndex(semantic_type)) {
 				return true;
 			}
 			if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
@@ -1187,7 +1187,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return true;
 				}
 				Type indexed_type = resolve_type_alias(type_info.type_, type_spec.type_index());
-				if (indexed_type == Type::Struct || indexed_type == Type::Enum) {
+				if (carriesSemanticTypeIndex(indexed_type)) {
 					return true;
 				}
 			}
@@ -1277,14 +1277,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				const TypeInfo& type_info = gTypeInfo[type_index.value];
 				Type semantic_type = resolve_type_alias(lowered_type, type_index);
-				if (semantic_type == Type::Struct || semantic_type == Type::Enum) {
+				if (carriesSemanticTypeIndex(semantic_type)) {
 					return true;
 				}
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
 				Type indexed_type = resolve_type_alias(type_info.type_, type_index);
-				return indexed_type == Type::Struct || indexed_type == Type::Enum;
+				return carriesSemanticTypeIndex(indexed_type);
 			};
 
 			lhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(lhsType, lhs_type_index);

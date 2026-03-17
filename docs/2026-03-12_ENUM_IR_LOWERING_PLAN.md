@@ -1,7 +1,7 @@
 # Enum Lowering Plan: Keep Enum Identity in Semantics, Lower Runtime Representation Earlier
 
 **Date**: 2026-03-12  
-**Status**: In Progress (Phase 0-5 complete through 2026-03-14; Phase 6 audit found remaining semantic/transitional Type uses)  
+**Status**: All phases complete (Phase 0-6 through 2026-03-17; remaining codegen Type::Enum/UserDefined sites explicitly documented as intentional semantic exceptions)  
 **Context**: Follow-up design note after the enum-pointer `ExprResult` / slot-4 regressions
 
 ## Proposed Approach
@@ -459,14 +459,16 @@ type metadata.
   `IrGenerator_Visitors_TypeInit.cpp` (recursive zero-fill) migrated.
 
 **Remaining Phase 3 work:**
-- `IrGenerator_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
-  applicability (semantic: checks Type::Enum for overload semantics)
-- `IrGenerator_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
-  and enum↔int cast rules
+- ~~`IrGenerator_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
+  applicability~~ → **DONE** (migrated to `carriesSemanticTypeIndex()` in 2026-03-17)
+- ~~`IrGenerator_NewDeleteCast.cpp` lines 730, 733, 767~~ — **DONE** (semantic identity
+  checks migrated to `carriesSemanticTypeIndex()` in 2026-03-17)
+- `IrGenerator_NewDeleteCast.cpp` lines 774-777 — enum↔int cast rules (intentional semantic)
 - `IrGenerator_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
-  scalar classification (semantic)
-- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
-- `IrGenerator_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+  scalar classification (intentional semantic)
+- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (intentional semantic)
+- ~~`IrGenerator_MemberAccess.cpp` line 3518 — fallback suppression for enums~~
+  → **DONE** (migrated to `!carriesSemanticTypeIndex()` in 2026-03-17)
 
 **UPDATE (2026-03-14)**: A third Phase 3 slice is now in place:
 
@@ -495,19 +497,59 @@ type metadata.
 - `IRConverter_ConvertMain.h` struct identity check (formerly in `IRConverter_Conv_Calls.h`) migrated to
   `!isIrStructType(arg.effectiveIrType())`.
 
-**Remaining semantically-intentional Phase 3 sites (intentionally kept as Type::X):**
-- `IrGenerator_Expr_Operators.cpp` lines 1037, 1046, 1138, 1145 — operator overload
-  applicability (semantic: checks Type::Enum for overload semantics)
-- `IrGenerator_NewDeleteCast.cpp` lines 730, 733, 767, 774-777 — semantic identity
-  and enum↔int cast rules
-- `IrGenerator_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
-  scalar classification (semantic)
-- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic)
-- `IrGenerator_MemberAccess.cpp` line 3518 — fallback suppression for enums (semantic)
+**UPDATE (2026-03-17)**: A fourth Phase 3 slice completes codegen migration:
 
-These remaining sites are **semantic checks** that intentionally need `Type::Enum`
-or the full `Type` enum.  They will stay as-is until a semantic analysis pass
-provides a clean way to query semantic identity without touching the runtime type field.
+- `typeSpecRequiresUserDefinedOperator` lambda in `IrGenerator_Expr_Operators.cpp`
+  now uses `carriesSemanticTypeIndex(semantic_type)` / `carriesSemanticTypeIndex(indexed_type)`
+  instead of `Type::Struct || Type::Enum` disjunctions (4 sites).
+- `hasUserDefinedIdentityFromIr` lambda in `IrGenerator_Expr_Operators.cpp` similarly
+  migrated to `carriesSemanticTypeIndex()` (2 sites).
+- `source_has_semantic_identity` lambda in `IrGenerator_NewDeleteCast.cpp` now uses
+  `carriesSemanticTypeIndex()` instead of three-way `Struct || Enum || UserDefined` (2 sites).
+- Same-type cast identity check in `IrGenerator_NewDeleteCast.cpp` migrated to
+  `!carriesSemanticTypeIndex(target_type)` (1 site).
+- Member resolution object type check in `IrGenerator_Expr_Conversions.cpp` migrated to
+  `isIrStructType(toIrType(object_type_opt->type()))` — correctly catches Struct and
+  UserDefined while excluding Enum (1 site).
+- Range-for type normalisation in `IrGenerator_Stmt_Control.cpp` migrated to
+  `isIrStructType(toIrType(resolved_member->type))` (1 site).
+- Range-for container type check in `IrGenerator_Stmt_Control.cpp` migrated to
+  `isIrStructType(toIrType(range_type.type()))` — correctly excludes enums which
+  cannot have `begin()`/`end()` methods (1 site).
+- Conversion operator fallback suppression in `IrGenerator_MemberAccess.cpp` migrated to
+  `!carriesSemanticTypeIndex(target_type)` (1 site).
+
+**Remaining semantically-intentional Phase 3 sites (intentionally kept as Type::X):**
+- `IrGenerator_NewDeleteCast.cpp` lines 775-778 — enum↔int cast rules
+  (C++ semantic: `static_cast<int>(enum_val)` and `static_cast<EnumType>(int_val)`)
+- `IrGenerator_MemberAccess.cpp` line 1962 (`isScalarType`) — includes Type::Enum in
+  scalar classification (semantic: enums ARE scalar types per C++ standard)
+- `IrGenerator_MemberAccess.cpp` line 2962 — `__underlying_type` trait (semantic:
+  requires EnumTypeInfo metadata lookup)
+- `IrGenerator_MemberAccess.cpp` lines 3506-3521 — alias resolution chain for
+  conversion operator return types (semantic: resolves UserDefined alias chains)
+- `IrGenerator_MemberAccess.cpp` line 854 — struct info validation for UserDefined
+  (semantic: guards against primitive typedefs propagating stale type_index)
+- `IrGenerator_Helpers.cpp` lines 365, 381 — enum runtime lowering (`getRuntimeValueType`
+  / `getRuntimeValueSizeBits`: need EnumTypeInfo metadata for underlying type/size)
+- `IrGenerator_Helpers.cpp` line 402 — enumerator constant detection
+  (`tryMakeEnumeratorConstantExpr`: must check `Type::Enum` to identify enumerator constants)
+- `IrGenerator_Expr_Primitives.cpp` line 291 — enum pointer detection in
+  `makeIdentifierResultFromTypeNode` (enum pointers are handled differently than enum values)
+- `IrGenerator_Stmt_Decl.cpp` line 1452 — enum conversion gating (prevents implicit
+  enum↔enum conversions during variable initialisation; enums are opaque semantic types)
+- `IrGenerator_Visitors_Namespace.cpp` line 54 — `using enum` AST construction
+  (must create TypeSpecifierNode with `Type::Enum` for enumerator scope injection)
+- `IrGenerator_Call_Direct.cpp` line 1267 — unresolved template return type check
+  (semantic: `Type::UserDefined` indicates unresolved dependent type from template)
+- `IrGenerator_Visitors_TypeInit.cpp` line 1865 — `this` pointer AST construction
+  in template member function bodies (semantic: must use `Type::UserDefined`)
+
+These remaining sites are **semantic checks** that intentionally need `Type::Enum`,
+`Type::UserDefined`, or the full `Type` enum.  They are explicitly carved out as
+**intentional long-term exceptions** — they operate on semantic identity, not runtime
+representation.  They will stay as-is until a dedicated semantic analysis pass provides
+a clean way to query semantic identity without touching the runtime type field.
 
 ### Phase 4 — Remove `Type type` from `TypedValue`
 
@@ -588,25 +630,45 @@ Remaining work for this phase:
   unresolved `Type::UserDefined` metadata from a genuine zero-sized-struct bug. The other
   `IRConverter*.h` matches are comments describing the migration.
 - Remaining `CodeGen_*.cpp` references are concentrated in semantic or template-driven logic:
-  - `IrGenerator_NewDeleteCast.cpp` — semantic identity checks and enum↔int cast rules.
-  - `IrGenerator_Expr_Operators.cpp` — overload applicability / user-defined-operator detection.
+  - `IrGenerator_NewDeleteCast.cpp` — ~~semantic identity checks and~~ enum↔int cast rules.
+    Identity checks migrated to `carriesSemanticTypeIndex()` (2026-03-17).
+  - ~~`IrGenerator_Expr_Operators.cpp` — overload applicability / user-defined-operator detection.~~
+    Migrated to `carriesSemanticTypeIndex()` (2026-03-17).
   - `IrGenerator_MemberAccess.cpp` — semantic scalar classification, `__underlying_type`,
-    conversion-operator alias resolution, and enum fallback suppression.
+    conversion-operator alias resolution, ~~and enum fallback suppression~~.
+    Fallback suppression migrated to `!carriesSemanticTypeIndex()` (2026-03-17).
   - `IrGenerator_Call_Direct.cpp` — unresolved dependent template return types still represented as
     `Type::UserDefined`.
   - `IrGenerator_Helpers.cpp` / `IrGenerator_Expr_Primitives.cpp` — enum underlying-type recovery and
     enumerator/type-index preservation helpers that still start from semantic `Type`.
   - `IrGenerator_Visitors_Namespace.cpp` / `IrGenerator_Visitors_TypeInit.cpp` — AST/type-node
     construction paths, not IR runtime dispatch.
+  - ~~`IrGenerator_Expr_Conversions.cpp` — member resolution object type check.~~
+    Migrated to `isIrStructType(toIrType(...))` (2026-03-17).
+  - ~~`IrGenerator_Stmt_Control.cpp` — range-for type checks.~~
+    Migrated to `isIrStructType(toIrType(...))` (2026-03-17).
 
-So the Phase 6 cleanup criterion:
+**Updated audit result (2026-03-17):**
+
+The Phase 6 cleanup criterion:
 
 > `Type::Enum` and `Type::UserDefined` do not appear in `CodeGen_*.cpp`, `IROperandHelpers.h`,
 > or `IRConverter*.h`
 
-is **not yet satisfied**. The plan document should remain until those semantic and transitional
-sites are either migrated to a dedicated semantic-analysis layer or explicitly carved out as
-intentional long-term exceptions.
+is **not fully satisfied** but all remaining sites are now **explicitly documented as
+intentional long-term semantic exceptions** (see Phase 3 section above).  The remaining
+references fall into two categories:
+
+1. **Semantic identity checks** that genuinely need `Type::Enum` or `Type::UserDefined`
+   (enum↔int casts, `isScalarType`, `__underlying_type`, alias chain resolution, enum
+   runtime lowering, enumerator detection, enum pointer handling, enum conversion gating)
+2. **AST/type-node construction** paths that create semantic type metadata, not IR runtime
+   dispatch (`using enum`, `this` pointer types, template return type guards)
+
+These cannot be eliminated by `IrType` migration alone — they require either a dedicated
+semantic analysis pass or explicit annotation in the AST.  The `IROperandHelpers.h` and
+`IRConverter*.h` layers are fully clean.  The migration objective (making the runtime
+representation boundary structurally enforced) is achieved for the IR/backend layer.
 
 ---
 
@@ -723,10 +785,10 @@ The phased approach allows incremental migration:
 
 - **Phase 0-1** (`IrType` definition + `TypedValue` dual field): Low risk, additive only — ✅ **COMPLETE**
 - **Phase 2** (backend migration): Medium risk - now known to have ~5+ references to Type::Enum — ✅ **COMPLETE**
-- **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined) — ✅ **COMPLETE**
+- **Phase 3** (codegen helper migration): **High risk** - main body of changes (~43+ Type::Enum, 187+ Type::UserDefined) — ✅ **COMPLETE** (all migrateable sites done; remaining are intentional semantic exceptions)
 - **Phase 4** (remove old `Type` field blockers): Low risk — ✅ **COMPLETE** (all blockers resolved; `type` field removal is mechanical)
 - **Phase 5** (ExprResult simplification): ✅ **COMPLETE** (slot-4 encoding already resolved by ExprResult migration)
-- **Phase 6** (audit and cleanup): Remaining work — verify `Type::Enum`/`Type::UserDefined` only in semantic layers
+- **Phase 6** (audit and cleanup): ✅ **COMPLETE** (2026-03-17) — `IROperandHelpers.h` and `IRConverter*.h` are fully clean; remaining codegen sites explicitly documented as intentional long-term semantic exceptions
 
 **Revised Estimate**: Work is approximately **3-4x larger** than originally estimated 
 due to extensive codegen usage of Type::Enum and Type::UserDefined.

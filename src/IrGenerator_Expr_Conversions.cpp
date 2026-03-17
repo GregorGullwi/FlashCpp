@@ -1880,7 +1880,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				object_type_opt = parser_->get_expression_type(member_access.object());
 			}
 			if (object_type_opt.has_value() &&
-				(object_type_opt->type() == Type::Struct || object_type_opt->type() == Type::UserDefined) &&
+				isIrStructType(toIrType(object_type_opt->type())) &&
 				object_type_opt->type_index().is_valid() && object_type_opt->type_index().value < gTypeInfo.size()) {
 				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					object_type_opt->type_index(),
