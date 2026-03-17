@@ -1,49 +1,36 @@
-// Test: sizeof suffixed hex/binary/octal literals.
+// Test: sizeof suffixed hex/binary/octal literals should match the type size,
+// not the digit count. This is a pre-existing issue where the initial sizeInBits
+// calculation in get_numeric_literal_type() counts suffix characters ('u') as
+// digits, inflating the computed size. For L/LL suffixes the size is overwritten
+// correctly, but for U-only suffixes the inflated value persists.
 //
-// KNOWN BUG: get_numeric_literal_type() computes sizeInBits from the digit
-// count of the lowercased text *including* suffix characters. For U-only
-// suffixed hex/binary/octal literals the inflated size is never overwritten
-// (only L/LL branches overwrite it). For example:
-//   0xFFU -> lowerText "0xffu" (len 5) -> (5-2)*4/8 -> ceil(1.5)*8 = 16 bits
-//   Correct: sizeof(unsigned int) = 4 bytes = 32 bits
-//
-// This test documents the CURRENT (buggy) behaviour so it passes in CI.
-// When the bug is fixed, these assertions will fail — update them to match
-// the correct C++ semantics (sizeof should equal sizeof(unsigned int) = 4).
-//
-// See also: src/Parser_Expr_BinaryPrecedence.cpp lines 585-604
+// Per C++20 [lex.icon], 0xFFU is unsigned int (4 bytes), not 2 bytes.
 
 int main() {
-	// ── L / LL suffixes: sizeInBits is correctly overwritten ──
+	// 0xFFU should be unsigned int (4 bytes), not 2 bytes
+	if (sizeof(0xFFU) != sizeof(unsigned int)) return 1;
 
-	// 0xFFL -> long (size depends on target, typically 8 on LP64)
-	if (sizeof(0xFFL) != sizeof(long)) return 1;
+	// 0xFFFFFFFFU should be unsigned int (4 bytes), not 5 bytes
+	if (sizeof(0xFFFFFFFFU) != sizeof(unsigned int)) return 2;
 
-	// 0xFFLL -> long long (always 8 bytes)
-	if (sizeof(0xFFLL) != sizeof(long long)) return 2;
+	// 0b1010U should be unsigned int (4 bytes), not 1 byte
+	if (sizeof(0b1010U) != sizeof(unsigned int)) return 3;
 
-	// 0xFFUL -> unsigned long
-	if (sizeof(0xFFUL) != sizeof(unsigned long)) return 3;
+	// 010U (octal) should be unsigned int (4 bytes)
+	if (sizeof(010U) != sizeof(unsigned int)) return 4;
 
-	// 0xFFULL -> unsigned long long (always 8 bytes)
-	if (sizeof(0xFFULL) != sizeof(unsigned long long)) return 4;
+	// Unsuffixed hex should also be int-sized (4 bytes)
+	// 0xFF is int per C++ standard, sizeof should be 4
+	if (sizeof(0xFF) != sizeof(int)) return 5;
 
-	// ── U-only suffix: sizeInBits is WRONG (known bug) ──
-	// These document the buggy behaviour. Correct value would be 4 (sizeof(unsigned int)).
+	// L suffix should give long-sized result
+	if (sizeof(0xFFL) != sizeof(long)) return 6;
 
-	// BUG: 0xFFU -> sizeInBits=16 -> sizeof reports 2 instead of 4
-	if (sizeof(0xFFU) != 2) return 5;  // WRONG: should be sizeof(unsigned int) == 4
+	// LL suffix should give long long-sized result (8 bytes)
+	if (sizeof(0xFFLL) != sizeof(long long)) return 7;
 
-	// BUG: 0xFFFFFFFFU -> sizeInBits=40 -> sizeof reports 5 instead of 4
-	if (sizeof(0xFFFFFFFFU) != 5) return 6;  // WRONG: should be sizeof(unsigned int) == 4
-
-	// ── Unsuffixed hex: sizeInBits is digit-based (also pre-existing) ──
-
-	// 0xFF -> sizeInBits=8 -> sizeof reports 1 instead of 4
-	if (sizeof(0xFF) != 1) return 7;  // WRONG: should be sizeof(int) == 4
-
-	// 0xFFFF -> sizeInBits=16 -> sizeof reports 2 instead of 4
-	if (sizeof(0xFFFF) != 2) return 8;  // WRONG: should be sizeof(int) == 4
+	// UL suffix should give unsigned long-sized result
+	if (sizeof(0xFFUL) != sizeof(unsigned long)) return 8;
 
 	return 0;
 }
