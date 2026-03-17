@@ -1002,9 +1002,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					op == "<" || op == ">" || op == "<=" || op == ">=" ||
 					op == "==" || op == "!=";
 				const bool is_logical = op == "&&" || op == "||";
-				const bool is_compound_assign =
-					op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
-					op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=";
+				const bool is_compound_assign = isCompoundAssignmentOp(op);
 				if ((is_arithmetic || is_comparison || is_compound_assign) &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {

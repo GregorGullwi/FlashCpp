@@ -544,6 +544,8 @@ private:
 
 	void handleModulo(const IrInstruction& instruction);
 
+	void handleUnsignedModulo(const IrInstruction& instruction);
+
 	void handleEqual(const IrInstruction& instruction);
 
 	void handleNotEqual(const IrInstruction& instruction);

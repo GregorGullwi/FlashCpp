@@ -2,10 +2,57 @@
 
 #include <vector>
 #include <span>
+#include <array>
+#include <string_view>
+#include <optional>
 
 // Note: IrValue and all struct definitions (BinaryOp, etc.) are now in IRTypes.h
 // This file only contains helper functions for working with those types
 // PointerDepth is defined in IRTypes_Core.h (included transitively via IRTypes.h)
+
+// ============================================================================
+// Compound assignment operator → base binary opcode mapping.
+//
+// This table is shared by:
+//   - IrGenerator_Expr_Operators.cpp  (cross-type path, global-assign path,
+//     handleLValueCompoundAssignment)
+//   - SemanticAnalysis.cpp            (is_compound_assign classification)
+//
+// The base opcode returned is the signed/generic variant; callers are
+// responsible for upgrading to an unsigned variant when the operand type is
+// unsigned (e.g. UnsignedDivide, UnsignedShiftRight, UnsignedModulo).
+// ============================================================================
+struct CompoundOpEntry {
+	std::string_view op;
+	IrOpcode base_opcode;
+};
+
+inline constexpr std::array<CompoundOpEntry, 10> kCompoundOpTable = {{
+	{"+=",  IrOpcode::Add},
+	{"-=",  IrOpcode::Subtract},
+	{"*=",  IrOpcode::Multiply},
+	{"/=",  IrOpcode::Divide},
+	{"%=",  IrOpcode::Modulo},
+	{"&=",  IrOpcode::BitwiseAnd},
+	{"|=",  IrOpcode::BitwiseOr},
+	{"^=",  IrOpcode::BitwiseXor},
+	{"<<=", IrOpcode::ShiftLeft},
+	{">>=", IrOpcode::ShiftRight},
+}};
+
+/// Returns the base binary IrOpcode for a compound-assignment operator string,
+/// or std::nullopt if the string is not a recognized compound-assignment op.
+inline std::optional<IrOpcode> compoundOpToBaseOpcode(std::string_view op) {
+	for (const auto& entry : kCompoundOpTable) {
+		if (entry.op == op) return entry.base_opcode;
+	}
+	return std::nullopt;
+}
+
+/// Returns true iff \p op is a compound-assignment operator.
+inline bool isCompoundAssignmentOp(std::string_view op) {
+	return compoundOpToBaseOpcode(op).has_value();
+}
 
 // Helper function to extract IrValue from IrOperand using index-based mapping
 // IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>

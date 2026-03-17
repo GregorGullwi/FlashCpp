@@ -116,6 +116,9 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 			case IrOpcode::Modulo:
 				handleModulo(instruction);
 				break;
+			case IrOpcode::UnsignedModulo:
+				handleUnsignedModulo(instruction);
+				break;
 			case IrOpcode::FloatAdd:
 				handleFloatAdd(instruction);
 				break;
@@ -477,6 +480,7 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				case IrOpcode::Divide:
 				case IrOpcode::UnsignedDivide:
 				case IrOpcode::Modulo:
+				case IrOpcode::UnsignedModulo:
 				case IrOpcode::FloatAdd:
 				case IrOpcode::FloatSubtract:
 				case IrOpcode::FloatMultiply:
@@ -9126,6 +9130,48 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
 				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+			);
+		}
+
+		regAlloc.release(divisor_reg);
+		regAlloc.release(X64Register::RDX);
+	}
+
+template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::handleUnsignedModulo(const IrInstruction& instruction)  {
+		reserveDivisionFixedRegisters();
+
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned modulo");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
+		// Unsigned modulo via DIV: quotient→RAX, remainder→RDX.
+		// Move dividend to RAX.
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
+		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+
+		// Release the original result register since we moved its value to RAX
+		regAlloc.release(ctx.result_physical_reg);
+
+		// Zero-extend: xor edx, edx  (RDX must be 0 before DIV, not sign-extended)
+		std::array<uint8_t, 2> xorEdxInst = { 0x31, 0xD2 };
+		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
+
+		// div divisor_reg (unsigned division; F7 /6)
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
+
+		// Store remainder from RDX to the result variable's stack location.
+		if (const auto* sh = std::get_if<StringHandle>(&ctx.result_value.value)) {
+			int final_result_offset = variable_scopes.back().variables[*sh].offset;
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, false}
+			);
+		} else if (const auto* tv = std::get_if<TempVar>(&ctx.result_value.value)) {
+			auto res_stack_var_addr = getStackOffsetFromTempVar(*tv, ctx.result_value.size_in_bits.value);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, false}
 			);
 		}
 
