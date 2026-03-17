@@ -110,6 +110,11 @@ private:
 	// Annotate binary arithmetic/comparison operands with their common-type conversions.
 	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op);
 
+	// Annotate an expression with contextual bool conversion (C++20 [conv.bool]).
+	// Used for control-flow conditions (if/while/for/do-while), ternary condition,
+	// and logical operator operands (&&, ||).
+	void tryAnnotateContextualBool(const ASTNode& expr_node);
+
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
 
@@ -130,6 +135,7 @@ private:
 	CompileContext& context_;
 	SymbolTable& symbols_;
 	TypeContext type_context_;
+	CanonicalTypeId bool_type_id_{};  // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
 

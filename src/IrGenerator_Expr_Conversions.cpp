@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
+#include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
 		// Get the actual size from the operands (they already contain the correct size)
@@ -1264,6 +1265,10 @@
 
 		// Generate the IR for the operation based on the operator
 		if (unaryOperatorNode.op() == "!") {
+			// C++20 [expr.unary.op]/9: the operand of ! is contextually converted
+			// to bool. For float/double operands this requires an explicit
+			// FloatToInt conversion (same -0.0 fix as conditions / && / ||).
+			operandIrOperands = applyConditionBoolConversion(operandIrOperands, unaryOperatorNode.get_operand(), Token());
 			// Logical NOT - use UnaryOp struct
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),
@@ -2190,3 +2195,58 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	// Default: conservatively assume may throw
 	return false;
 }
+
+	ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
+		// C++20 [conv.bool]: convert condition to bool for control-flow statements.
+		//
+		// Integer types: the backend's TEST instruction already implements the
+		// correct "nonzero → true, zero → false" semantics.  No conversion needed.
+		//
+		// Floating-point types: we emit a FloatNotEqual comparison against 0.0.
+		// This correctly handles:
+		//   - -0.0: UCOMISD/UCOMISS treats -0.0 == +0.0, so SETNE → 0 (false). ✓
+		//   - Fractional values (e.g. 0.5): 0.5 != 0.0 → SETNE → 1 (true). ✓
+		//   - NaN: unordered comparison → PF=1, SETNE → 1 (truthy per C++20). ✓
+		// The previous FloatToInt (cvttsd2si) truncation was wrong because it
+		// mapped fractional values like 0.5 to integer 0 (false).
+
+		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
+			// Materialize a 0.0 constant with the same float type as the condition.
+			// The caller guarantees cond.type is Float or Double.
+			ExprResult zero = makeExprResult(cond.type, cond.size_in_bits, IrOperand{0.0});
+			// Emit: result = (cond != 0.0)
+			TempVar result_var = var_counter.next();
+			BinaryOp bin_op{
+				.lhs = toTypedValue(cond),
+				.rhs = toTypedValue(zero),
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
+			// FloatNotEqual produces a bool8 result via SETNE; the backend's
+			// conditional branch already handles bool8 values correctly.
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
+		};
+
+		// 1. Try sema annotation (Phase 6 contextual bool).
+		if (sema_ && cond_node.is<ExpressionNode>()) {
+			const void* key = &cond_node.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (slot.has_value() && slot->has_cast()) {
+				const ImplicitCastInfo& cast_info =
+					sema_->castInfoTable()[slot->cast_info_index.value - 1];
+				const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+				// Only emit an explicit conversion for float/double → bool.
+				// Integer → bool is already handled correctly by the backend (TEST).
+				if (is_floating_point_type(from_type)) {
+					return emitFloatNonZeroTest(condition);
+				}
+			}
+		}
+		// 2. Fallback: floating-point conditions need explicit conversion because
+		//    the backend's TEST instruction operates on integer bit patterns and
+		//    would mishandle -0.0, which has nonzero bits but is semantically false.
+		if (is_floating_point_type(condition.type)) {
+			return emitFloatNonZeroTest(condition);
+		}
+		return condition;
+	}

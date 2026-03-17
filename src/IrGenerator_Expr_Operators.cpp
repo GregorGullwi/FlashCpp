@@ -384,6 +384,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Evaluate the condition
 		auto condition_operands = visitExpressionNode(ternaryNode.condition().as<ExpressionNode>());
+		// C++20 [expr.cond]: contextual bool conversion.
+		condition_operands = applyConditionBoolConversion(condition_operands, ternaryNode.condition(), ternaryNode.get_token());
 
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
 		CondBranchOp cond_branch;
@@ -1850,7 +1852,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Check for logical operations BEFORE type promotions
 		// Logical operations should preserve boolean types without promotion
+		// C++20 [expr.log.and], [expr.log.or]: each operand is contextually
+		// converted to bool.
 		if (op == "&&" || op == "||") {
+			// Convert operands to bool when they are not already bool-compatible.
+			// Reuse applyConditionBoolConversion which checks sema annotations and
+			// falls back to local float→int conversion when needed.
+			lhsExprResult = applyConditionBoolConversion(lhsExprResult, binaryOperatorNode.get_lhs(), binaryOperatorNode.get_token());
+			rhsExprResult = applyConditionBoolConversion(rhsExprResult, binaryOperatorNode.get_rhs(), binaryOperatorNode.get_token());
+
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = { Type::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value) },
