@@ -68,13 +68,3 @@ The disambiguation routing in `parse_statement_or_declaration` is **correct**
 (`test_tparam_bracket_decl_ambig_fail.cpp`) documents the current parse error.
 The remaining work is to extend `parse_variable_declaration` (and the declarator
 parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
-
-## ~~Overloaded function resolution with size-differing parameter types~~ — FIXED
-
-**Fixed**: The root cause was in `get_numeric_literal_type()` — suffixed integer
-literals (`0L`, `0LL`, `0UL`, etc.) were always typed as `Type::Int` regardless of
-the `L`/`LL` suffix, causing the overload resolver to pick the `int` overload.
-Fixed by setting the correct `Type::Long` / `Type::LongLong` / unsigned variants
-when the suffix is present.
-
-Tracking: `tests/test_overload_int_long_literal_ret0.cpp`
