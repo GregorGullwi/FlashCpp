@@ -414,35 +414,19 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### Destructors are not implicitly `noexcept(true)` and `noexcept(false)` has no effect
+### ~~Destructors are not implicitly `noexcept(true)` and `noexcept(false)` has no effect~~ ✅ FIXED
 
-**Severity**: Medium (conformance issue, may cause incorrect exception propagation)
+**Status**: Fixed (2026-03-17)
 
-In C++11 and later, destructors are implicitly `noexcept(true)` unless explicitly marked `noexcept(false)`. FlashCpp does not implement this rule: `DestructorDeclarationNode::is_noexcept_` defaults to `false` (`src/AstNodeTypes.h`), and the parser only sets it to `true` when an explicit `noexcept` specifier is present (`src/Parser.cpp` in the destructor trailing specifiers path). This means:
+Destructors now default to `noexcept(true)` per C++11 [class.dtor]/3:
 
-1. **Implicit `noexcept(true)` not applied** — A destructor without any exception specifier is treated as potentially throwing, when per the standard it should be `noexcept(true)`. If an exception escapes such a destructor, `std::terminate` should be called but currently is not.
+1. `DestructorDeclarationNode::is_noexcept_` defaults to `true`.
+2. Explicit `noexcept(false)` is stored as an expression and evaluated in the IR generator (same pattern as regular functions).
+3. `visitDestructorDeclarationNode` propagates the evaluated flag to `FunctionDeclOp::is_noexcept`, which enables the terminate landing pad on Linux ELF.
+4. `TypeTraitEvaluator::IsNothrowDestructible` checks the actual destructor's flag instead of hardcoding `true`.
+5. The `noexcept` operator (`noexcept(obj.~Type())`) correctly evaluates the destructor's noexcept status in both the IR generator and constexpr evaluator paths.
 
-2. **`noexcept(false)` parsed but has no semantic effect** — While the parser recognizes `noexcept(false)` via `parse_function_trailing_specifiers()`, it leaves `is_noexcept_` as `false` (the default), which happens to be the correct state. However, the code generator (`src/CodeGen.h`, `visitDestructorDeclarationNode`) does not check `is_noexcept()` at all — no implicit `catch(...) { std::terminate(); }` wrapper is generated for `noexcept(true)` destructors, so the distinction between `noexcept(true)` and `noexcept(false)` is moot at the codegen level.
-
-3. **`TypeTraitEvaluator` hardcodes the answer** — `IsNothrowDestructible` at `src/TypeTraitEvaluator.h` unconditionally returns `true` for struct types with a comment "Most destructors are noexcept by default since C++11", rather than checking the actual `is_noexcept()` flag. This gives the correct answer for the common case but would be wrong for a destructor explicitly marked `noexcept(false)`.
-
-**Example** (should call `std::terminate` but currently propagates the exception):
-```cpp
-struct Bad {
-    ~Bad() { throw 42; }  // implicitly noexcept(true) — should terminate
-};
-
-struct Explicit {
-    ~Explicit() noexcept(false) { throw 42; }  // explicitly may throw — should propagate
-};
-```
-
-**Impact**: Code that throws from a destructor without `noexcept(false)` will propagate the exception instead of calling `std::terminate`, which violates the C++11+ standard and can cause unexpected behavior during stack unwinding.
-
-**Fix**:
-1. Set `is_noexcept_ = true` by default in `DestructorDeclarationNode`, or apply it after parsing trailing specifiers when no explicit `noexcept(false)` is present.
-2. In `visitDestructorDeclarationNode`, wrap the destructor body in an implicit `catch(...) { std::terminate(); }` when `is_noexcept()` is true (same treatment as noexcept functions).
-3. In `TypeTraitEvaluator`, check the actual `is_noexcept()` flag on the destructor node instead of hardcoding `true`.
+Tests: `test_eh_dtor_implicit_noexcept_ret0.cpp`, `test_eh_dtor_noexcept_false_ret0.cpp`.
 
 ---
 

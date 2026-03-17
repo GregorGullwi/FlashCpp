@@ -1,6 +1,6 @@
 # Exception Handling in FlashCpp
 
-**Updated**: 2026-03-15
+**Updated**: 2026-03-17
 **Platform Targets**: Linux (Itanium C++ ABI) and Windows (MSVC SEH / `__CxxFrameHandler3`)
 
 ## Current Status
@@ -30,6 +30,7 @@ Basic and intermediate exception handling works end-to-end:
 | **Exception hierarchy matching** | ✅ | `catch(Base&)` catches `throw Derived{}` via `__si_class_type_info` / `__vmi_class_type_info`; virtual base matching via vtable vbase offsets |
 | `std::rethrow_exception` / `throw;` propagation | ✅ | `__cxa_rethrow` tested end-to-end |
 | **Function-try-blocks** | ✅ | `int f() try { … } catch(…) { … }` parsed and lowered as a wrapped try-statement in the function body; free functions, member functions, template functions, and constructors (including the `try :` initializer form) supported. Lambdas do not support function-try-blocks per C++20 [expr.prim.lambda]. |
+| **Implicit destructor `noexcept(true)`** | ✅ | C++11 [class.dtor]/3: destructors default to `noexcept(true)`; explicit `noexcept(false)` evaluated; terminate LP emitted for noexcept destructors; `noexcept` operator and `IsNothrowDestructible` type trait check actual flag |
 
 ### Windows (COFF / MSVC ABI): ✅ Partial
 
@@ -281,6 +282,7 @@ The Language-Specific Data Area (`.gcc_except_table`) contains:
 | 2026-03-09 | Diamond flag detection (`__diamond_shaped_mask` 0x2) now correctly set when two bases share a common virtual ancestor | **Correct VMI typeinfo flags for diamond inheritance** |
 | 2026-03-09 | `vtable_offset` in `add_vtable` was captured before `add_typeinfo` appended to `.rodata`, causing vtable symbols/relocations to point into typeinfo data | **Fixed vtable pointer corruption for all ELF classes with RTTI** |
 | 2026-03-15 | `emitDestructorsForNonLocalExit()`: emit scope destructors before `break`, `continue`, `return`, and `goto` non-local jumps; `prescanLabels()` + `label_scope_depth_map_` for forward/backward goto; combined `loop_depth_stack_` (was two separate stacks) | **Fixed missing destructor calls when exiting scopes via non-local jumps** |
+| 2026-03-17 | `DestructorDeclarationNode::is_noexcept_` defaults to `true` (C++11 [class.dtor]/3); explicit `noexcept(false)` stored and evaluated; `visitDestructorDeclarationNode` propagates to `FunctionDeclOp::is_noexcept`; noexcept operator and `IsNothrowDestructible` check actual flag | **Destructors are now implicitly noexcept(true) with correct noexcept(false) support** |
 
 ---
 
@@ -360,6 +362,8 @@ Key test files:
 - `test_eh_function_try_block_ret0.cpp` — function-level try blocks: free functions and inline member functions with `f() try { … } catch { … }` syntax
 - `test_eh_function_try_block_template_ret0.cpp` — function-try-blocks in template free functions and template member functions
 - `test_eh_function_try_block_ctor_ret0.cpp` — constructor function-try-blocks including the `Ctor() try : m(v) { … } catch { … }` form (inline and out-of-line)
+- `test_eh_dtor_implicit_noexcept_ret0.cpp` — verifies destructors are implicitly `noexcept(true)` via the `noexcept` operator on `obj.~Type()`
+- `test_eh_dtor_noexcept_false_ret0.cpp` — verifies explicit `noexcept(false)` destructor correctly evaluates as non-noexcept
 
 ## References
 
