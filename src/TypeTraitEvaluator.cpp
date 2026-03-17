@@ -7,6 +7,9 @@ extern SymbolTable gSymbolTable;
 bool evaluateDestructorNoexcept(const DestructorDeclarationNode& dtor_node) {
 	bool is_nothrow = dtor_node.is_noexcept();
 	if (is_nothrow && dtor_node.has_noexcept_expression()) {
+		// A minimal context using gSymbolTable suffices: destructor noexcept
+		// expressions are simple constants (e.g. noexcept(false)) that don't
+		// reference global symbols or require parser/template context.
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(*dtor_node.noexcept_expression(), ctx);
 		is_nothrow = eval_result.success() && eval_result.as_bool();
