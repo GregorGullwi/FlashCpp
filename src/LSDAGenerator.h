@@ -22,27 +22,16 @@
 // - Itanium C++ ABI Exception Handling
 // - LSB Exception Frames specification
 //
-// MULTIPLE CATCH HANDLER SUPPORT STATUS:
-// =======================================
-// The action table now correctly generates chained entries for multiple catch handlers
-// within a single try block. Each action entry has a next_offset field that points to
-// the next handler in the chain, allowing the personality routine to try each handler
+// MULTIPLE CATCH HANDLER SUPPORT:
+// ===============================
+// The action table generates chained entries for multiple catch handlers within a
+// single try block.  Each action entry has a next_offset field that points to the
+// next handler in the chain, allowing the personality routine to try each handler
 // in sequence.
 //
-// KNOWN LIMITATION - Landing Pad Architecture:
-// However, for full multiple catch handler support in Itanium C++ ABI, the landing pad
-// code generation in IRConverter.h also needs to be updated. Currently, each catch handler
-// generates its own separate landing pad with __cxa_begin_catch call. The correct approach is:
-//
-// 1. All catch handlers in a try block should share ONE unified landing pad entry point
-// 2. The personality routine sets RDX (selector) to indicate which handler matched
-// 3. The unified landing pad should:
-//    - Call __cxa_begin_catch once
-//    - Read the selector value from RDX
-//    - Use a switch/jump table to dispatch to the appropriate handler body
-//
-// Until the landing pad architecture is fixed, only the first catch handler will execute,
-// even though the action table correctly supports chaining.
+// Landing pads use a unified entry point with selector-based dispatch (RDX set by
+// the personality routine).  See EXCEPTION_HANDLING.md § "Multi-Handler Landing
+// Pad Dispatch" for the full layout.
 
 class LSDAGenerator {
 public:

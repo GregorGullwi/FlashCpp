@@ -1925,9 +1925,16 @@ ParseResult Parser::parse_template_declaration() {
 						return dtor_specs_result;
 					}
 					
-					// Apply specifiers
+					// Apply specifiers (default is already noexcept(true) per C++11)
 					if (dtor_func_specs.is_noexcept) {
 						dtor_ref.set_noexcept(true);
+						dtor_ref.set_has_noexcept_specifier(true);
+						if (dtor_func_specs.noexcept_expr.has_value()) {
+							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+							if (eval.success()) dtor_ref.set_noexcept(eval.as_bool());
+						}
 					}
 					
 					bool is_defaulted = dtor_func_specs.is_defaulted();
@@ -3325,9 +3332,16 @@ ParseResult Parser::parse_template_declaration() {
 						return dtor_specs_result;
 					}
 					
-					// Apply specifiers
+					// Apply specifiers (default is already noexcept(true) per C++11)
 					if (dtor_func_specs.is_noexcept) {
 						dtor_ref.set_noexcept(true);
+						dtor_ref.set_has_noexcept_specifier(true);
+						if (dtor_func_specs.noexcept_expr.has_value()) {
+							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+							if (eval.success()) dtor_ref.set_noexcept(eval.as_bool());
+						}
 					}
 					
 					bool is_defaulted = dtor_func_specs.is_defaulted();

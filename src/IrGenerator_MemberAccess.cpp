@@ -2820,14 +2820,14 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				// Class types: assume noexcept destructor (most are in practice)
+				// Class types: check via recursive isStructNothrowDestructible to handle
+				// implicit destructors whose noexcept status depends on base/member dtors.
 				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						// Most destructors are noexcept by default since C++11
-						result = true;
+						result = isStructNothrowDestructible(struct_info);
 					}
 				}
 				break;

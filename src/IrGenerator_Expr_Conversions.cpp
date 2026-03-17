@@ -2181,9 +2181,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return false;
 	}
 
-	// Pseudo-destructor calls are noexcept
-	if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
-		return true;
+	// Pseudo-destructor calls: noexcept iff the type's destructor is noexcept.
+	if (const auto* pseudo_dtor = std::get_if<PseudoDestructorCallNode>(&expr)) {
+		return isPseudoDestructorCallNoexcept(*pseudo_dtor, symbol_table);
 	}
 
 	// Nested noexcept expression

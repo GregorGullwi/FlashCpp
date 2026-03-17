@@ -2088,6 +2088,23 @@
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
+	// C++11 [class.dtor]/3 / C++20 [except.spec]/7: when the destructor has an
+	// explicit noexcept specifier, use it directly (is_noexcept() was evaluated
+	// eagerly at parse time).  When there is no explicit specifier, the effective
+	// noexcept status is inherited from base and member destructors — use
+	// isStructNothrowDestructible() for the recursive check.
+	if (node.has_noexcept_specifier()) {
+		dtor_decl_op.is_noexcept = node.is_noexcept();
+	} else {
+		auto type_it = gTypesByName.find(node.struct_name());
+		if (type_it != gTypesByName.end()) {
+			dtor_decl_op.is_noexcept = isStructNothrowDestructible(type_it->second->getStructInfo());
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Warning, "visitDestructorDeclarationNode: struct '{}' not found in gTypesByName; defaulting destructor to noexcept", StringTable::getStringView(node.struct_name()));
+			dtor_decl_op.is_noexcept = true;  // Unknown struct — assume noexcept
+		}
+	}
+
 	// Generate mangled name for destructor
 	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
 	// (e.g., MSVC uses ??1ClassName@... format)

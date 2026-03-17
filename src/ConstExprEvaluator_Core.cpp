@@ -863,13 +863,20 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		std::holds_alternative<MemberAccessNode>(expr) ||
 		std::holds_alternative<TypeTraitExprNode>(expr) ||
 		std::holds_alternative<LambdaExpressionNode>(expr) ||
-		std::holds_alternative<PseudoDestructorCallNode>(expr) ||
 		std::holds_alternative<NoexceptExprNode>(expr) ||
 		std::holds_alternative<SizeofExprNode>(expr) ||
 		std::holds_alternative<SizeofPackNode>(expr) ||
 		std::holds_alternative<AlignofExprNode>(expr) ||
 		std::holds_alternative<OffsetofExprNode>(expr)) {
 		return true;
+	}
+
+	// Pseudo-destructor calls: noexcept iff the type's destructor is noexcept.
+	if (const auto* pseudo_dtor = std::get_if<PseudoDestructorCallNode>(&expr)) {
+		if (context.symbols) {
+			return isPseudoDestructorCallNoexcept(*pseudo_dtor, *context.symbols);
+		}
+		return true;  // No symbol table — assume noexcept (scalar types)
 	}
 
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {

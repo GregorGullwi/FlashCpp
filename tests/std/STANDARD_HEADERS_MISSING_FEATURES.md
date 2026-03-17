@@ -40,7 +40,7 @@ Incomplete exception runtime support blocks headers that rely on exceptions.
 - `tests/std/test_std_iostream.cpp`
 - `tests/std/test_std_memory.cpp`
 
-**Related doc:** `docs/EXCEPTION_HANDLING_PLAN.md`
+**Related doc:** `docs/EXCEPTION_HANDLING.md`
 
 ### 3. Allocator Support
 Allocator infrastructure is not implemented, blocking most containers.

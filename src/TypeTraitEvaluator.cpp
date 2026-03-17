@@ -53,6 +53,78 @@ inline bool isUnsigned(Type type) {
 
 } // namespace TypeTraitEval
 
+bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
+	if (!struct_info) return true;
+
+	// If there is an explicit user-defined destructor AND it carries an explicit
+	// noexcept specifier (bare noexcept or noexcept(expr)), the is_noexcept()
+	// flag was eagerly evaluated at parse time — trust it directly.
+	// If the destructor has NO explicit noexcept specifier (or is = default),
+	// its effective noexcept status is determined by bases/members, just as for
+	// an implicit destructor (C++20 [except.spec]/7, [class.dtor]/3).
+	const auto* dtor = struct_info->findDestructor();
+	if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
+		const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
+		if (dtor_node.has_noexcept_specifier()) {
+			return dtor_node.is_noexcept();
+		}
+		// Fall through to base/member check below
+	}
+
+	// No explicit destructor, or destructor without a noexcept specifier:
+	// the effective noexcept status depends on base classes and members.
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred || base.type_index.value >= gTypeInfo.size()) continue;
+		const StructTypeInfo* base_struct = gTypeInfo[base.type_index.value].getStructInfo();
+		if (!isStructNothrowDestructible(base_struct))
+			return false;
+	}
+	for (const auto& member : struct_info->members) {
+		// Only struct/class-typed members (not pointers or references) have destructors
+		if ((member.type != Type::Struct && member.type != Type::UserDefined) ||
+		    member.pointer_depth > 0 || member.is_reference()) continue;
+		if (member.type_index.value >= gTypeInfo.size()) continue;
+		const StructTypeInfo* mem_struct = gTypeInfo[member.type_index.value].getStructInfo();
+		if (!isStructNothrowDestructible(mem_struct))
+			return false;
+	}
+	return true;
+}
+
+bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
+	// Try to resolve the actual type from the object expression's declaration
+	// (not the type_name() token) so that template specializations like
+	// Wrapper<int> resolve to the correct instantiated type.
+	if (pseudo_dtor.object().is<ExpressionNode>()) {
+		const ExpressionNode& obj_expr = pseudo_dtor.object().as<ExpressionNode>();
+		if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
+			auto symbol = symbols.lookup(obj_id->name());
+			if (symbol.has_value()) {
+				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+				if (decl && decl->type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
+					if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+						const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo();
+						if (struct_info) {
+							return isStructNothrowDestructible(struct_info);
+						}
+					}
+				}
+			}
+		}
+	}
+	// Fallback: look up by type name token (works for non-template types)
+	std::string_view type_name = pseudo_dtor.type_name();
+	auto it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
+	if (it != gTypesByName.end()) {
+		const StructTypeInfo* struct_info = it->second->getStructInfo();
+		if (struct_info) {
+			return isStructNothrowDestructible(struct_info);
+		}
+	}
+	return true;  // Scalar types: pseudo-destructor is a no-op, always noexcept
+}
+
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	Type base_type,
@@ -350,7 +422,7 @@ TypeTraitResult evaluateTypeTrait(
 			if (isScalarType(base_type, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
-				result = true;  // Most destructors are noexcept by default since C++11
+				result = isStructNothrowDestructible(struct_info);
 			}
 			break;
 			
