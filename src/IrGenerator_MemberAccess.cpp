@@ -3531,7 +3531,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// but the size matches the target primitive type, accept it as a match.
 					// This handles template type aliases like `using value_type = T;` where T is substituted
 					// but the return type wasn't fully updated in the AST.
-					if (resolved_type == Type::UserDefined && target_type != Type::Struct && target_type != Type::Enum) {
+					if (resolved_type == Type::UserDefined && !carriesSemanticTypeIndex(target_type)) {
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {

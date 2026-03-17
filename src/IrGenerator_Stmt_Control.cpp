@@ -553,7 +553,7 @@
 				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
 					resolved_member) {
 					inferred_range_type.emplace(
-						(resolved_member->type == Type::UserDefined || resolved_member->type == Type::Struct)
+						isIrStructType(toIrType(resolved_member->type))
 							? Type::Struct
 							: resolved_member->type,
 						resolved_member->type_index,
@@ -611,7 +611,7 @@
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
 		// Check if it's a struct with begin()/end() methods
-		else if (range_type.type() == Type::Struct || range_type.type() == Type::UserDefined) {
+		else if (isIrStructType(toIrType(range_type.type()))) {
 			visitRangedForBeginEnd(node, range_object_expr, range_type, loop_start_label, loop_body_label,
 			loop_increment_label, loop_end_label, ranged_for_counter - 1);
 		}
