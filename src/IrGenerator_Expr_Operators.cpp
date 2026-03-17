@@ -2382,7 +2382,32 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				.rhs = toTypedValue(rhsExprResult),
 				.result = toIrValue(lhsExprResult.value),
 			};
-			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			// For unsigned types, use logical shift right (SHR) instead of arithmetic (SAR).
+			// ShrAssign always emits SAR which sign-extends the MSB — wrong for unsigned.
+			if (is_unsigned_integer_type(commonType)) {
+				// Decompose into: result = lhs >> rhs; store back to lhs
+				TempVar shr_result = var_counter.next();
+				BinaryOp shr_op{
+					.lhs = toTypedValue(lhsExprResult),
+					.rhs = toTypedValue(rhsExprResult),
+					.result = shr_result,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(shr_op), binaryOperatorNode.get_token()));
+				AssignmentOp assign_op;
+				if (const auto* sh = std::get_if<StringHandle>(&lhsExprResult.value)) {
+					assign_op.result = *sh;
+					assign_op.lhs = toTypedValue(lhsExprResult);
+				} else if (const auto* tv = std::get_if<TempVar>(&lhsExprResult.value)) {
+					assign_op.result = *tv;
+					assign_op.lhs = toTypedValue(lhsExprResult);
+				} else {
+					throw InternalError("Compound assignment LHS must be a variable");
+				}
+				assign_op.rhs = { commonType, SizeInBits{get_type_size_bits(commonType)}, shr_result };
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+			} else {
+				ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			}
 			return lhsExprResult;
 		}
 		else if (is_floating_point_op) { // Floating-point operations
