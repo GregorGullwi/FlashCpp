@@ -809,6 +809,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`. The backend's register-tracking does not yet support a `GlobalLoad` immediately after a `GlobalStore` to the same symbol, so a proper re-load cannot be emitted. Value semantics are correct for all practical uses (`int x = (g = 42)`, chained assignments); only lvalue-specific operations (`&(g = 42)`, `(g = 42) = 99`) would observe the difference.
+- `tryGlobalSemaConv` and `tryApplySemaConversion` in codegen do not verify that the sema annotation's target type matches the caller's intended conversion target. Today this is safe because the sema pass places at most one annotation per expression node (via `setSlot` which overwrites), and the annotation ordering guarantees the slot contains the conversion the caller expects. However, if a future sema change adds overlapping annotation passes that could overwrite a slot with a different target type, these helpers would silently apply the wrong conversion. Fix: accept an optional `expected_target` Type parameter and return `false` when the annotation's `to_t` does not match, letting the caller's fallback logic run instead.
 
 ### Parallel rollout guidance
 
