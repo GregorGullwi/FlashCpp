@@ -437,6 +437,35 @@ int main() {
 
 **Fix**: `insert_into_namespace` should tag the symbol as ADL-only, and normal unqualified lookup should skip ADL-only symbols. Only `lookup_adl()` (which checks associated classes of the arguments) should find them.
 
+### Local (function-scoped) enum declarations are not supported
+
+**Severity**: Low (parser limitation)
+
+The parser does not support `enum` declarations inside function bodies. Enum types must be declared at file/namespace scope. Attempting to declare an enum locally and then use its name as a type will produce a parse error (`Unknown keyword`).
+
+**Example** (fails to parse):
+```cpp
+int main() {
+    enum Color { Red, Green, Blue };
+    Color c = Green;  // error: Unknown keyword: Color
+    return 0;
+}
+```
+
+**Workaround**: Move enum declarations to file scope:
+```cpp
+enum Color { Red, Green, Blue };
+
+int main() {
+    Color c = Green;  // OK
+    return 0;
+}
+```
+
+**Impact**: Local enums are uncommon in production C++ but can appear in tests and small examples. All enum declarations must currently live at file or namespace scope.
+
+**Fix**: The parser's declaration dispatcher needs to handle `enum` (and `enum class`) as a valid local declaration inside compound statements, and register the resulting type in the current function scope's symbol table.
+
 ---
 
 ## References

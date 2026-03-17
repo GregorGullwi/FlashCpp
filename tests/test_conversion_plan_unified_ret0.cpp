@@ -84,30 +84,32 @@ int test_boolean_conversion() {
 	return r1 + r2;
 }
 
+enum PromE { PA = 1, PB = 2, PC = 3 };
+enum IntE { IX = 10 };
+enum BoolE { BZero = 0, BOne = 1 };
+enum FltE { FVal = 5 };
+
 int test_enum_promotion() {
 	// IntegralPromotion: enum -> int [conv.prom]/4
-	enum E { A = 1, B = 2, C = 3 };
-	E e = B;
+	PromE e = PB;
 	int ei = e;
 	return ei - 2;  // expect 0
 }
 
 int test_enum_to_integral() {
 	// IntegralConversion: enum -> long long
-	enum E { X = 10 };
-	E e = X;
+	IntE e = IX;
 	long long ll = e;
 	return (int)(ll - 10LL);  // expect 0
 }
 
 int test_enum_to_bool() {
 	// BooleanConversion: enum -> bool [conv.bool]
-	enum E { Zero = 0, One = 1 };
-	E e1 = One;
+	BoolE e1 = BOne;
 	bool b1 = e1;
 	int r1 = b1 ? 0 : 1;  // expect 0
 
-	E e0 = Zero;
+	BoolE e0 = BZero;
 	bool b0 = e0;
 	int r2 = b0 ? 1 : 0;  // expect 0
 
@@ -116,8 +118,7 @@ int test_enum_to_bool() {
 
 int test_enum_to_floating() {
 	// FloatingIntegralConversion: enum -> double
-	enum E { Val = 5 };
-	E e = Val;
+	FltE e = FVal;
 	double d = e;
 	return (int)(d - 5.0);  // expect 0
 }
