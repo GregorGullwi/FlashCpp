@@ -1445,8 +1445,18 @@
 					// info); then fall back to can_convert_type for types the sema pass couldn't
 					// infer (e.g., complex sub-expressions or function-call result values).
 					{
-						const Type init_type  = init_operands.type;
+						Type init_type  = init_operands.type;
 						const Type decl_type  = type_node.type();
+						// Resolve enum to underlying type for conversion purposes.
+						// Enum values share the same bit representation as their underlying
+						// integer type, so we can treat them as their underlying type for
+						// standard conversions (e.g., enum→double needs IntToFloat).
+						if (init_type == Type::Enum && init_operands.type_index.is_valid()
+							&& init_operands.type_index.value < gTypeInfo.size()) {
+							if (const EnumTypeInfo* enum_info = gTypeInfo[init_operands.type_index.value].getEnumInfo()) {
+								init_type = enum_info->underlying_type;
+							}
+						}
 						if (init_type != decl_type
 							&& init_type  != Type::Struct && decl_type  != Type::Struct
 							&& init_type  != Type::Enum   && decl_type  != Type::Enum
