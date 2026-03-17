@@ -91,6 +91,40 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	return true;
 }
 
+bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, SymbolTable& symbols) {
+	// Try to resolve the actual type from the object expression's declaration
+	// (not the type_name() token) so that template specializations like
+	// Wrapper<int> resolve to the correct instantiated type.
+	if (pseudo_dtor.object().is<ExpressionNode>()) {
+		const ExpressionNode& obj_expr = pseudo_dtor.object().as<ExpressionNode>();
+		if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
+			auto symbol = symbols.lookup(obj_id->name());
+			if (symbol.has_value()) {
+				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+				if (decl && decl->type_node().is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
+					if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+						const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo();
+						if (struct_info) {
+							return isStructNothrowDestructible(struct_info);
+						}
+					}
+				}
+			}
+		}
+	}
+	// Fallback: look up by type name token (works for non-template types)
+	std::string_view type_name = pseudo_dtor.type_name();
+	auto it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
+	if (it != gTypesByName.end()) {
+		const StructTypeInfo* struct_info = it->second->getStructInfo();
+		if (struct_info) {
+			return isStructNothrowDestructible(struct_info);
+		}
+	}
+	return true;  // Scalar types: pseudo-destructor is a no-op, always noexcept
+}
+
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	Type base_type,

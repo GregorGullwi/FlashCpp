@@ -5,6 +5,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "SymbolTable.h"
 #include <optional>
 
 // Result type for type trait evaluation
@@ -37,6 +38,12 @@ bool isUnsigned(Type type);
 // noexcept(false) destructor (recursively).  Explicit user-defined destructors
 // use the is_noexcept() flag that was eagerly evaluated at parse time.
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
+
+// Shared helper: determine whether a pseudo-destructor call expression is noexcept.
+// Resolves the object's type via symbol lookup (handles template specializations)
+// and falls back to gTypesByName lookup by type name token for non-template types.
+// Scalar pseudo-destructor calls are always noexcept (no-ops).
+bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, SymbolTable& symbols);
 
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
