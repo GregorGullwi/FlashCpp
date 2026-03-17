@@ -2192,17 +2192,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (struct_info) {
 				const auto* dtor = struct_info->findDestructor();
 				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-					const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
-					bool is_nothrow = dtor_node.is_noexcept();
-					// Evaluate noexcept(expr) to handle explicit noexcept(false)
-					if (is_nothrow && dtor_node.has_noexcept_expression()) {
-						ConstExpr::EvaluationContext ctx(symbol_table);
-						if (global_symbol_table_) ctx.global_symbols = global_symbol_table_;
-						ctx.parser = parser_;
-						auto eval_result = ConstExpr::Evaluator::evaluate(*dtor_node.noexcept_expression(), ctx);
-						is_nothrow = eval_result.success() && eval_result.as_bool();
-					}
-					return is_nothrow;
+					return evaluateDestructorNoexcept(dtor->function_decl.as<DestructorDeclarationNode>());
 				}
 			}
 		}
