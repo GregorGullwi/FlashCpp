@@ -3391,6 +3391,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::vector<TypeSpecifierNode> adl_arg_types;
 					for (const auto& adl_arg : args) {
 					    if (auto at = get_expression_type(adl_arg); at.has_value()) {
+					        // Mark lvalue expressions as lvalue references so that overload
+					        // resolution correctly handles non-const lvalue ref parameters (e.g. Widget&).
+					        adjust_argument_type_for_overload_resolution(adl_arg, *at);
 					        adl_arg_types.push_back(*at);
 					    }
 					}
@@ -3402,6 +3405,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					            identifierType = *adl_res.selected_overload;
 					        }
 					    }
+					}
+					// C++20 [basic.lookup.argdep]: if the function was NOT found via ADL either,
+					// and the name belongs to a hidden friend (ADL-only symbol), reject the call.
+					if (!identifierType->is<FunctionDeclarationNode>() &&
+					    gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						return ParseResult::error(
+							"'" + std::string(identifier_token.value()) + "' is a hidden friend and is only "
+							"accessible via argument-dependent lookup when an argument of the associated class type is provided",
+							identifier_token);
 					}
 				}
 

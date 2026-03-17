@@ -530,15 +530,33 @@ public:
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
+	// Returns true if name exists in adl_only_symbols_ (across any namespace).
+	// Used to emit a proper compile error when a hidden friend is called without
+	// an argument that triggers ADL (C++20 [basic.lookup.argdep]).
+	bool is_adl_only_function_name(std::string_view name) const {
+		StringHandle key = StringTable::getOrInternStringHandle(name);
+		for (const auto& [ns_handle, sym_map] : adl_only_symbols_) {
+			if (sym_map.find(key) != sym_map.end()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Register a symbol directly into a namespace's persistent symbol table.
 	// Used for hidden friend functions defined inside class bodies so that
 	// lookup_adl() can find them even though the current scope is the struct scope.
-	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node) {
+	// When adl_only is true the symbol is stored in adl_only_symbols_ instead of
+	// namespace_symbols_, making it invisible to ordinary unqualified lookup while
+	// still reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
+	// When adl_only is false (the default), the symbol is stored in namespace_symbols_
+	// and is visible to both ordinary unqualified lookup and ADL.
+	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only = false) {
 		if (!ns.isValid()) return;
-		auto& ns_map = namespace_symbols_[ns];
-		auto it = ns_map.find(name_handle);
-		if (it == ns_map.end()) {
-			ns_map[name_handle] = std::vector<ASTNode>{node};
+		auto& target = adl_only ? adl_only_symbols_[ns] : namespace_symbols_[ns];
+		auto it = target.find(name_handle);
+		if (it == target.end()) {
+			target[name_handle] = std::vector<ASTNode>{node};
 		} else {
 			it->second.push_back(node);
 		}
@@ -548,6 +566,8 @@ public:
 	// For each argument type that is a struct/class, searches the namespace in which
 	// the struct was declared, plus namespaces of all its direct base classes.
 	// Suppressed when ordinary lookup already found a blocking non-function declaration.
+	// Also searches adl_only_symbols_ so that hidden friends defined inside class bodies
+	// are reachable via ADL but not via ordinary unqualified lookup.
 	std::vector<ASTNode> lookup_adl(std::string_view func_name,
 	                                const std::vector<TypeSpecifierNode>& arg_types) const {
 		std::vector<ASTNode> result;
@@ -555,8 +575,18 @@ public:
 
 		auto search_ns = [&](NamespaceHandle ns) {
 			if (!ns.isValid() || !visited.insert(ns).second) return;
+			// Search regular namespace symbols
 			auto candidates = lookup_qualified_all(ns, func_name);
 			result.insert(result.end(), candidates.begin(), candidates.end());
+			// Also search ADL-only (hidden friend) symbols
+			auto adl_it = adl_only_symbols_.find(ns);
+			if (adl_it != adl_only_symbols_.end()) {
+				StringHandle key = StringTable::getOrInternStringHandle(func_name);
+				auto sym_it = adl_it->second.find(key);
+				if (sym_it != adl_it->second.end()) {
+					result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+				}
+			}
 		};
 
 		for (const auto& arg_type : arg_types) {
@@ -920,34 +950,40 @@ public:
 		// Match by identity/signature and require uniqueness across namespaces.
 		std::optional<NamespaceHandle> matched_namespace;
 		bool ambiguous = false;
-		for (const auto& [ns_handle, symbol_map] : namespace_symbols_) {
-			for (const auto& symbol_entry : symbol_map) {
-				const auto& nodes = symbol_entry.second;
-				for (const auto& candidate : nodes) {
-					if (candidate.is<FunctionDeclarationNode>() &&
-					    matches_function(candidate.as<FunctionDeclarationNode>())) {
-						if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
-							ambiguous = true;
-							break;
-						}
-						matched_namespace = ns_handle;
-					}
-					if (candidate.is<TemplateFunctionDeclarationNode>()) {
-						const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
-						if (tmpl.function_declaration().is<FunctionDeclarationNode>() &&
-						    matches_function(tmpl.function_declaration().as<FunctionDeclarationNode>())) {
+
+		auto search_map = [&](const std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>>& sym_map) {
+			for (const auto& [ns_handle, symbol_map] : sym_map) {
+				for (const auto& symbol_entry : symbol_map) {
+					const auto& nodes = symbol_entry.second;
+					for (const auto& candidate : nodes) {
+						if (candidate.is<FunctionDeclarationNode>() &&
+						    matches_function(candidate.as<FunctionDeclarationNode>())) {
 							if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
 								ambiguous = true;
 								break;
 							}
 							matched_namespace = ns_handle;
 						}
+						if (candidate.is<TemplateFunctionDeclarationNode>()) {
+							const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
+							if (tmpl.function_declaration().is<FunctionDeclarationNode>() &&
+							    matches_function(tmpl.function_declaration().as<FunctionDeclarationNode>())) {
+								if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
+									ambiguous = true;
+									break;
+								}
+								matched_namespace = ns_handle;
+							}
+						}
 					}
+					if (ambiguous) break;
 				}
 				if (ambiguous) break;
 			}
-			if (ambiguous) break;
-		}
+		};
+
+		search_map(namespace_symbols_);
+		if (!ambiguous) search_map(adl_only_symbols_);
 		if (!ambiguous && matched_namespace.has_value()) {
 			return matched_namespace;
 		}
@@ -1008,6 +1044,7 @@ public:
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
+		adl_only_symbols_.clear();
 		interned_strings_.clear();
 		// Recreate the string allocator to fully release all memory
 		string_allocator_ = ChunkedStringAllocator(64 * 1024);
@@ -1019,6 +1056,9 @@ private:
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading
 	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> namespace_symbols_;
+	// ADL-only symbols (hidden friends): not visible to ordinary unqualified lookup,
+	// only reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
+	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> adl_only_symbols_;
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table

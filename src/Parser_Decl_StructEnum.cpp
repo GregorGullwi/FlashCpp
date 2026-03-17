@@ -4177,9 +4177,10 @@ ParseResult Parser::parse_friend_declaration()
 				true,     // is_free_function
 			});
 
-			// Register directly into namespace_symbols_ so lookup_adl() can find it
+			// Register directly into adl_only_symbols_ so lookup_adl() can find it
+			// but ordinary unqualified lookup cannot (C++20 [basic.lookup.argdep]).
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
-			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node);
+			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
 
 			// Queue for codegen: the function node must appear in the enclosing namespace's
 			// declaration list (or top-level AST) so the IR converter generates code for it.
