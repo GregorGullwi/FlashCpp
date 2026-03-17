@@ -190,6 +190,9 @@ private:
 	// emit the proper type conversion.  Falls back to a local conversion for
 	// floating-point types when no annotation is present.
 	ExprResult applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token);
+	// Read the sema-annotated conversion target type for an expression node.
+	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
+	Type getSemaAnnotatedTargetType(const ASTNode& node) const;
 	ExprResult generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(

@@ -405,16 +405,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Check sema annotations: if either branch has a conversion annotation, that
 		// tells us the target (common) type.
 		if (sema_) {
-			auto getAnnotatedTargetType = [&](const ASTNode& branch) -> Type {
-				if (!branch.is<ExpressionNode>()) return Type::Invalid;
-				const void* key = &branch.as<ExpressionNode>();
-				const auto slot = sema_->getSlot(key);
-				if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
-				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				return sema_->typeContext().get(ci.target_type_id).base_type;
-			};
-			Type true_target = getAnnotatedTargetType(ternaryNode.true_expr());
-			Type false_target = getAnnotatedTargetType(ternaryNode.false_expr());
+			Type true_target = getSemaAnnotatedTargetType(ternaryNode.true_expr());
+			Type false_target = getSemaAnnotatedTargetType(ternaryNode.false_expr());
 			if (true_target != Type::Invalid)
 				common_type = true_target;
 			else if (false_target != Type::Invalid)
@@ -2046,21 +2038,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ — prefer sema annotation.
 			if (rhsType != lhsType) {
-				bool sema_applied = false;
-				if (sema_ && binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
-					const void* key = &binaryOperatorNode.get_rhs().as<ExpressionNode>();
-					const auto slot = sema_->getSlot(key);
-					if (slot.has_value() && slot->has_cast()) {
-						const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-						const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
-						if (from_t != Type::Struct && to_t != Type::Struct) {
-							rhsExprResult = generateTypeConversion(rhsExprResult, from_t, to_t, binaryOperatorNode.get_token());
-							sema_applied = true;
-						}
-					}
-				}
-				if (!sema_applied)
+				Type sema_target = getSemaAnnotatedTargetType(binaryOperatorNode.get_rhs());
+				if (sema_target != Type::Invalid)
+					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, sema_target, binaryOperatorNode.get_token());
+				else
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
 			}
 			// Now both are the same type, create assignment
@@ -2084,9 +2065,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		Type commonType = get_common_type(lhsType, rhsType);
 
-		// Save original LHS value binding before type conversion (needed for compound assignment store-back).
-		const IrOperand original_lhs_value = lhsExprResult.value;
-
 		// Check whether the semantic pass pre-computed operand conversion annotations.
 		// When present for non-struct types, use them and skip the local policy.
 		auto tryApplySemaConversion = [&](ExprResult& operands, const ASTNode& operand_node) -> bool {
@@ -2102,6 +2080,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
 			return true;
 		};
+
+		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
+		const IrOperand original_lhs_value = (compound_assignment_ops.count(op) > 0) ? lhsExprResult.value : IrOperand{};
 
 		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
 		if (lhsType != commonType) {
