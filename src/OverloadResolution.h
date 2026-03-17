@@ -79,7 +79,7 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 
 	// --- Target is bool: BooleanConversion [conv.bool] ---
 	if (to == Type::Bool) {
-		if (is_integral_type(from) || is_floating_point_type(from)) {
+		if (is_integral_type(from) || is_floating_point_type(from) || from == Type::Enum) {
 			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 		}
 		return ConversionPlan::no_match();
@@ -141,8 +141,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 		if (to == Type::Int) {
 			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		if (is_integral_type(to) || is_floating_point_type(to)) {
+		if (is_integral_type(to)) {
 			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
+		}
+		if (is_floating_point_type(to)) {
+			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 		}
 	}
 

@@ -84,11 +84,53 @@ int test_boolean_conversion() {
 	return r1 + r2;
 }
 
+int test_enum_promotion() {
+	// IntegralPromotion: enum -> int [conv.prom]/4
+	enum E { A = 1, B = 2, C = 3 };
+	E e = B;
+	int ei = e;
+	return ei - 2;  // expect 0
+}
+
+int test_enum_to_integral() {
+	// IntegralConversion: enum -> long long
+	enum E { X = 10 };
+	E e = X;
+	long long ll = e;
+	return (int)(ll - 10LL);  // expect 0
+}
+
+int test_enum_to_bool() {
+	// BooleanConversion: enum -> bool [conv.bool]
+	enum E { Zero = 0, One = 1 };
+	E e1 = One;
+	bool b1 = e1;
+	int r1 = b1 ? 0 : 1;  // expect 0
+
+	E e0 = Zero;
+	bool b0 = e0;
+	int r2 = b0 ? 1 : 0;  // expect 0
+
+	return r1 + r2;
+}
+
+int test_enum_to_floating() {
+	// FloatingIntegralConversion: enum -> double
+	enum E { Val = 5 };
+	E e = Val;
+	double d = e;
+	return (int)(d - 5.0);  // expect 0
+}
+
 int main() {
 	return test_integral_promotion()
 	     + test_integral_conversion()
 	     + test_floating_promotion()
 	     + test_floating_conversion()
 	     + test_floating_integral_conversion()
-	     + test_boolean_conversion();
+	     + test_boolean_conversion()
+	     + test_enum_promotion()
+	     + test_enum_to_integral()
+	     + test_enum_to_bool()
+	     + test_enum_to_floating();
 }
