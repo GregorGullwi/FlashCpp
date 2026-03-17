@@ -632,6 +632,21 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 		}
 
+		// Helper: prefer sema annotation over local policy for operand conversions on global/static paths.
+		// Returns true and applies the conversion when a non-struct sema slot exists for the node.
+		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node) -> bool {
+			if (!sema_ || !node.is<ExpressionNode>()) return false;
+			const void* key = &node.as<ExpressionNode>();
+			const auto slot = sema_->getSlot(key);
+			if (!slot.has_value() || !slot->has_cast()) return false;
+			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+			const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
+			if (from_t == Type::Struct || to_t == Type::Struct) return false;
+			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
+			return true;
+		};
+
 		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -645,7 +660,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
-					if (rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
+					// Prefer sema annotation (consistent with binary operator path); fall back to local policy.
+					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs()) &&
+						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
@@ -712,16 +729,31 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						return ExprResult{};
 					}
 
-					// C++20 [expr.ass]/7: E1 op= E2 behaves as E1 = static_cast<T1>(E1 op E2).
-					// Compute common type and apply usual arithmetic conversions.
-					const Type commonType = get_common_type(gsi.type, rhs_result.type);
+					// C++20 [expr.shift]: shift operands undergo independent integral promotions,
+					// NOT usual arithmetic conversions. The result type is the promoted LHS type.
+					// All other operators use usual arithmetic conversions per [expr.ass]/7.
+					const bool is_shift_op = (op == "<<=" || op == ">>=");
+					const Type commonType = is_shift_op
+						? promote_integer_type(gsi.type)
+						: get_common_type(gsi.type, rhs_result.type);
 
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
-						lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs()))
+							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
 					}
-					if (rhs_result.type != commonType) {
-						rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
+					// NOT conversion to the LHS/result type. Other operators convert RHS to commonType.
+					if (is_shift_op) {
+						// Reject float RHS before promotion to avoid unnecessary conversion work.
+						if (is_floating_point_type(rhs_result.type))
+							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
+						const Type promoted_rhs = promote_integer_type(rhs_result.type);
+						if (rhs_result.type != promoted_rhs)
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+					} else if (rhs_result.type != commonType) {
+						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs()))
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
 					}
 
 					// Select the correct opcode for the common type.
@@ -731,6 +763,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
 						if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
 							throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
+						// Shifts on floating-point are ill-formed; the RHS check above catches the
+						// float-RHS case; this catches float-LHS (e.g., float g; g <<= 1;).
+						if (arith_opcode == IrOpcode::ShiftLeft || arith_opcode == IrOpcode::ShiftRight)
+							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 						if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
 						else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 						else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
