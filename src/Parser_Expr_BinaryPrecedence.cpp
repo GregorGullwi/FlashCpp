@@ -615,11 +615,9 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		if (l_count >= 2) {
 			// 'll' suffix: long long (always 64 bits)
 			typeInfo.type = hasUnsigned ? Type::UnsignedLongLong : Type::LongLong;
-			typeInfo.sizeInBits = 64;
 		} else if (l_count == 1) {
 			// 'l' suffix: long (size depends on target)
 			typeInfo.type = hasUnsigned ? Type::UnsignedLong : Type::Long;
-			typeInfo.sizeInBits = static_cast<size_t>(get_type_size_bits(Type::Long));
 		} else {
 			typeInfo.type = hasUnsigned ? Type::UnsignedInt : Type::Int;
 		}
@@ -628,6 +626,11 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		typeInfo.typeQualifier = TypeQualifier::Signed;
 		typeInfo.type = Type::Int;
 	}
+
+	// Always set sizeInBits from the resolved type so it matches the C++ standard,
+	// rather than relying on the digit-based estimate which can be wrong
+	// (e.g. suffix chars counted as digits for hex/binary/octal literals).
+	typeInfo.sizeInBits = static_cast<unsigned char>(get_type_size_bits(typeInfo.type));
 
 	return typeInfo;
 }
