@@ -772,6 +772,7 @@ The right split is:
 - `UnsignedDivide`/`UnsignedShiftRight`/`UnsignedModulo` selected in cross-type compound path for unsigned common type.
 - `ensureNotInRCX()` helper: prevents shift count from clobbering LHS when result register is RCX (applied to all 5 shift handlers).
 - `compoundOpToBaseOpcode()` / `isCompoundAssignmentOp()` centralized in `IROperandHelpers.h`; replaces 4 local maps in `IrGenerator_Expr_Operators.cpp` and the inline list in `SemanticAnalysis.cpp`.
+- C++20 [expr.shift] fix: shift operators (`<<`, `>>`, `<<=`, `>>=`) now use independent integral promotions via `tryAnnotateShiftOperandPromotions` instead of usual arithmetic conversions. Codegen uses `promote_integer_type(lhsType)` as the result type for shifts. This prevents `int x <<= long long y` from unnecessarily widening to 64-bit and triggering the cross-type compound assignment path.
 - Tests: `test_ternary_conv_ret0`, `test_compound_assign_implicit_cast_ret0`, `test_assign_implicit_cast_ret0`, `test_unsigned_compound_assign_ret0`, `test_unsigned_modulo_ret0`. Suite: 1538 pass / 0 fail / 49 expected-fail.
 
 **Known limitations (Phase 8+):**

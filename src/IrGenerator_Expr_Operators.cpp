@@ -2048,7 +2048,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			return lhsExprResult;
 		}
 
-		Type commonType = get_common_type(lhsType, rhsType);
+		// C++20 [expr.shift]: shift operands undergo independent integral promotions,
+		// NOT usual arithmetic conversions.  The result type is the promoted LHS type.
+		const bool is_shift_op = (op == "<<" || op == ">>" || op == "<<=" || op == ">>=");
+		Type commonType = is_shift_op
+			? promote_integer_type(lhsType)   // shift: result type = promoted LHS
+			: get_common_type(lhsType, rhsType);
 
 		// Check whether the semantic pass pre-computed operand conversion annotations.
 		// When present for non-struct types, use them and skip the local policy.

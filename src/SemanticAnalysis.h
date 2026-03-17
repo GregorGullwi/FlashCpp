@@ -110,6 +110,11 @@ private:
 	// Annotate binary arithmetic/comparison operands with their common-type conversions.
 	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op);
 
+	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
+	// NOT the usual arithmetic conversions.  Each operand is promoted separately
+	// (bool/char/short → int); the result type is the promoted LHS type.
+	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op);
+
 	// Annotate an expression with contextual bool conversion (C++20 [conv.bool]).
 	// Used for control-flow conditions (if/while/for/do-while), ternary condition,
 	// and logical operator operands (&&, ||).

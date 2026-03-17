@@ -1002,8 +1002,18 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					op == "<" || op == ">" || op == "<=" || op == ">=" ||
 					op == "==" || op == "!=";
 				const bool is_logical = op == "&&" || op == "||";
+				// C++20 [expr.shift]: shift operands undergo independent integral
+				// promotions, NOT usual arithmetic conversions.
+				const bool is_shift =
+					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
-				if ((is_arithmetic || is_comparison || is_compound_assign) &&
+				if (is_shift &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					tryAnnotateShiftOperandPromotions(e);
+				}
+				else if ((is_arithmetic || is_comparison ||
+					(is_compound_assign && !is_shift)) &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
 					tryAnnotateBinaryOperandConversions(e);
@@ -1561,6 +1571,46 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Shift operand independent promotion annotation ---
+// C++20 [expr.shift]: The operands shall be of integral or unscoped enumeration type
+// and integral promotions are performed.  The type of the result is that of the
+// promoted left operand.  Unlike usual arithmetic conversions, each operand is
+// promoted independently — there is no shared "common type".
+
+void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op) {
+	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id) return;
+
+	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	// Only handle plain primitive integral types (no pointers, arrays, structs, enums, floats)
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
+	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
+	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
+	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+	// Shift is only defined for integral operands
+	if (is_floating_point_type(lhs_desc.base_type) || is_floating_point_type(rhs_desc.base_type)) return;
+
+	// Independent integral promotion for each operand
+	const Type promoted_lhs = promote_integer_type(lhs_desc.base_type);
+	const Type promoted_rhs = promote_integer_type(rhs_desc.base_type);
+
+	if (promoted_lhs != lhs_desc.base_type) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted_lhs;
+		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc));
+	}
+	if (promoted_rhs != rhs_desc.base_type) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted_rhs;
+		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc));
+	}
 }
 
 // --- Contextual bool annotation ---
