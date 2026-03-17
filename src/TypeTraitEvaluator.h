@@ -31,6 +31,13 @@ bool isUnsigned(Type type);
 
 } // namespace TypeTraitEval
 
+// Shared helper: determine whether a struct/class is nothrow-destructible.
+// Per C++20 [except.spec]/7 and [class.dtor]/3, an implicit/defaulted destructor
+// is noexcept unless any direct base class or non-static data member type has a
+// noexcept(false) destructor (recursively).  Explicit user-defined destructors
+// use the is_noexcept() flag that was eagerly evaluated at parse time.
+bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
+
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,

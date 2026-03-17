@@ -53,6 +53,37 @@ inline bool isUnsigned(Type type) {
 
 } // namespace TypeTraitEval
 
+bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
+	if (!struct_info) return true;
+
+	// If there is an explicit user-defined destructor, its is_noexcept() flag
+	// was eagerly evaluated at parse time — trust it directly.
+	const auto* dtor = struct_info->findDestructor();
+	if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
+		return dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
+	}
+
+	// No explicit destructor: the implicit destructor is noexcept unless any
+	// direct base class or non-static data member has a noexcept(false)
+	// destructor (C++20 [except.spec]/7, [class.dtor]/3).
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred || base.type_index.value >= gTypeInfo.size()) continue;
+		const StructTypeInfo* base_struct = gTypeInfo[base.type_index.value].getStructInfo();
+		if (!isStructNothrowDestructible(base_struct))
+			return false;
+	}
+	for (const auto& member : struct_info->members) {
+		// Only struct/class-typed members (not pointers or references) have destructors
+		if ((member.type != Type::Struct && member.type != Type::UserDefined) ||
+		    member.pointer_depth > 0 || member.is_reference()) continue;
+		if (member.type_index.value >= gTypeInfo.size()) continue;
+		const StructTypeInfo* mem_struct = gTypeInfo[member.type_index.value].getStructInfo();
+		if (!isStructNothrowDestructible(mem_struct))
+			return false;
+	}
+	return true;
+}
+
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	Type base_type,
@@ -350,15 +381,7 @@ TypeTraitResult evaluateTypeTrait(
 			if (isScalarType(base_type, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
-				// Check the actual destructor's noexcept flag.  If there is no
-				// user-defined destructor the implicit destructor is noexcept(true)
-				// per C++11 [class.dtor]/3.
-				const auto* dtor = struct_info->findDestructor();
-				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-					result = dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
-				} else {
-					result = true;  // Implicit destructor is noexcept
-				}
+				result = isStructNothrowDestructible(struct_info);
 			}
 			break;
 			

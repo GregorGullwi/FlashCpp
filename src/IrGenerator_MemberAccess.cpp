@@ -2820,18 +2820,14 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				// Class types: check the actual destructor's noexcept flag
+				// Class types: check via recursive isStructNothrowDestructible to handle
+				// implicit destructors whose noexcept status depends on base/member dtors.
 				else if (type == Type::Struct && type_spec.type_index().value < gTypeInfo.size() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						const auto* dtor = struct_info->findDestructor();
-						if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-							result = dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
-						} else {
-							result = true;  // Implicit destructor is noexcept
-						}
+						result = isStructNothrowDestructible(struct_info);
 					}
 				}
 				break;

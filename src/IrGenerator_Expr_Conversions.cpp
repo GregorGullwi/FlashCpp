@@ -2183,17 +2183,15 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 	// Pseudo-destructor calls: noexcept iff the type's destructor is noexcept.
 	// Scalar pseudo-destructor calls are always no-ops (noexcept), but class
-	// types may have a destructor marked noexcept(false).
+	// types may have a destructor marked noexcept(false), and their implicit
+	// destructor may inherit noexcept(false) from a base or member.
 	if (const auto* pseudo_dtor = std::get_if<PseudoDestructorCallNode>(&expr)) {
 		std::string_view type_name = pseudo_dtor->type_name();
 		auto it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (it != gTypesByName.end()) {
 			const StructTypeInfo* struct_info = it->second->getStructInfo();
 			if (struct_info) {
-				const auto* dtor = struct_info->findDestructor();
-				if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-					return dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
-				}
+				return isStructNothrowDestructible(struct_info);
 			}
 		}
 		return true;  // Scalar types: pseudo-destructor is a no-op, always noexcept
