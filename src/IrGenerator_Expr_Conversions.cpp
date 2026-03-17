@@ -46,7 +46,12 @@
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 					}
 					if (is_unsigned_integer_type(toType)) {
-						const auto int_val = static_cast<unsigned long long>(src_val);
+						// Cast through long long first for safety: direct
+						// static_cast<unsigned long long>(negative_double) is UB per
+						// C++20 [conv.fpint].  In practice parser double literals are
+						// always non-negative (unary minus produces a TempVar), but
+						// the two-step cast is defensive against future changes.
+						const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 					}
 					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
