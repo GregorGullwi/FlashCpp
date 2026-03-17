@@ -56,16 +56,23 @@ inline bool isUnsigned(Type type) {
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	if (!struct_info) return true;
 
-	// If there is an explicit user-defined destructor, its is_noexcept() flag
-	// was eagerly evaluated at parse time — trust it directly.
+	// If there is an explicit user-defined destructor AND it carries an explicit
+	// noexcept specifier (bare noexcept or noexcept(expr)), the is_noexcept()
+	// flag was eagerly evaluated at parse time — trust it directly.
+	// If the destructor has NO explicit noexcept specifier (or is = default),
+	// its effective noexcept status is determined by bases/members, just as for
+	// an implicit destructor (C++20 [except.spec]/7, [class.dtor]/3).
 	const auto* dtor = struct_info->findDestructor();
 	if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
-		return dtor->function_decl.as<DestructorDeclarationNode>().is_noexcept();
+		const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
+		if (dtor_node.has_noexcept_specifier()) {
+			return dtor_node.is_noexcept();
+		}
+		// Fall through to base/member check below
 	}
 
-	// No explicit destructor: the implicit destructor is noexcept unless any
-	// direct base class or non-static data member has a noexcept(false)
-	// destructor (C++20 [except.spec]/7, [class.dtor]/3).
+	// No explicit destructor, or destructor without a noexcept specifier:
+	// the effective noexcept status depends on base classes and members.
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred || base.type_index.value >= gTypeInfo.size()) continue;
 		const StructTypeInfo* base_struct = gTypeInfo[base.type_index.value].getStructInfo();

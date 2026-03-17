@@ -477,11 +477,18 @@ public:
 	// deleted is implicitly noexcept(true) unless a base or member destructor
 	// is noexcept(false).  We default to true and clear only on explicit
 	// noexcept(false).
+	// has_noexcept_specifier_ distinguishes "bare noexcept / noexcept(expr)"
+	// (written explicitly) from "no specifier at all".  Without an explicit
+	// specifier the effective noexcept status must be inferred from base/member
+	// destructors (C++20 [except.spec]/7), so callers should use
+	// isStructNothrowDestructible() instead of reading is_noexcept() directly.
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
 	void set_noexcept_expression(ASTNode expr) { noexcept_expression_ = expr; }
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
+	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
+	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
 
 private:
 	StringHandle struct_name_;  // Points directly into source text from lexer token
@@ -489,6 +496,7 @@ private:
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
+	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
 	std::optional<ASTNode> noexcept_expression_;  // For explicit noexcept(expr)
 };
 
