@@ -171,6 +171,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.instantiated_class_name, dtor_name_handle
 		);
 		new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
+		if (dtor_decl.has_noexcept_expression()) {
+			new_dtor_ref.set_noexcept_expression(*dtor_decl.noexcept_expression());
+		}
 
 		std::vector<TemplateTypeArg> converted_template_args;
 		converted_template_args.reserve(lazy_info.template_args.size());
