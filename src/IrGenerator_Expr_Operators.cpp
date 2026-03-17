@@ -428,15 +428,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			common_type = true_result.type;
 
 		// Convert true result to common type if needed.
-		// Prefer sema annotation (tryAnnotateTernaryBranchConversions may have annotated
-		// this branch); verify annotation target matches common_type before applying.
-		if (true_result.type != common_type) {
-			Type sema_target = getSemaAnnotatedTargetType(ternaryNode.true_expr());
-			if (sema_target != Type::Invalid && sema_target == common_type)
-				true_result = generateTypeConversion(true_result, true_result.type, sema_target, ternaryNode.get_token());
-			else
-				true_result = generateTypeConversion(true_result, true_result.type, common_type, ternaryNode.get_token());
-		}
+		// NOTE: sema annotations were already consumed above when determining common_type
+		// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
+		// there is no need to re-query the annotation here since both paths would produce
+		// the same generateTypeConversion call (sema_target == common_type by construction).
+		if (true_result.type != common_type)
+			true_result = generateTypeConversion(true_result, true_result.type, common_type, ternaryNode.get_token());
 
 		int result_size = get_type_size_bits(common_type);
 		if (result_size == 0) result_size = true_result.size_in_bits.value;
@@ -463,15 +460,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Evaluate false expression
 		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
-		// Convert false result to common type if needed.
-		// Prefer sema annotation; verify annotation target matches common_type.
-		if (false_result.type != common_type) {
-			Type sema_target = getSemaAnnotatedTargetType(ternaryNode.false_expr());
-			if (sema_target != Type::Invalid && sema_target == common_type)
-				false_result = generateTypeConversion(false_result, false_result.type, sema_target, ternaryNode.get_token());
-			else
-				false_result = generateTypeConversion(false_result, false_result.type, common_type, ternaryNode.get_token());
-		}
+		// Convert false result to common type if needed (same reasoning as true branch above).
+		if (false_result.type != common_type)
+			false_result = generateTypeConversion(false_result, false_result.type, common_type, ternaryNode.get_token());
 
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
