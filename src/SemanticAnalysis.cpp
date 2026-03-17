@@ -1634,7 +1634,40 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 // Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
 
 void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
-	tryAnnotateConversion(expr_node, bool_type_id_);
+	// First try the standard primitive conversion path (handles int/float/char → bool).
+	if (tryAnnotateConversion(expr_node, bool_type_id_))
+		return;
+
+	// Handle enum/pointer → bool (C++20 [conv.bool]/1): contextual conversion
+	// to bool applies to enums and pointers. Zero/null → false, non-zero → true.
+	// The backend TEST instruction already handles this correctly; the annotation
+	// records the semantic intent for future codegen migration.
+	if (!expr_node.is<ExpressionNode>()) return;
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id) return;
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const bool is_enum = (from_desc.base_type == Type::Enum);
+	const bool is_pointer = !from_desc.pointer_levels.empty();
+	if (!is_enum && !is_pointer) return;
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = expr_type_id;
+	cast_info.target_type_id = bool_type_id_;
+	cast_info.cast_kind = is_pointer
+		? StandardConversionKind::PointerConversion
+		: StandardConversionKind::BooleanConversion;
+	cast_info.value_category_after = ValueCategory::PRValue;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = bool_type_id_;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+	setSlot(key, slot);
+	stats_.slots_filled++;
 }
 
 // --- Callable operator() resolution ---
