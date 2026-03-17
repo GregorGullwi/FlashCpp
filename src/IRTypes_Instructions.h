@@ -108,6 +108,9 @@ public:
 		case IrOpcode::Modulo:
 			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
 			break;
+		case IrOpcode::UnsignedModulo:
+			oss << formatBinaryOp("urem", getTypedPayload<BinaryOp>());
+			break;
 		case IrOpcode::BitwiseAnd:
 			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
 			break;

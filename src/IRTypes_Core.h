@@ -109,6 +109,7 @@ enum class IrOpcode : int_fast16_t {
 	Divide,
 	UnsignedDivide,
 	Modulo,
+	UnsignedModulo,
 	// Floating-point arithmetic
 	FloatAdd,
 	FloatSubtract,

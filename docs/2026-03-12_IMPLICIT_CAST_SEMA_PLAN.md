@@ -728,384 +728,59 @@ The right split is:
 
 ## Phased implementation plan
 
-### Phase 1: establish the seam ✅ COMPLETED (PR #917)
-
-Goal:
-
-- introduce the semantic pass without changing behavior broadly
-
-Work:
-
-- add `SemanticAnalysis` files
-- add timing hook in `main.cpp`
-- add semantic-slot data structures and debug-print support
-- add lowering support in `AstToIr` for semantic annotations
-- keep the pass effectively no-op at first except for tracing / validation hooks
-
-Exit criteria:
-
-- clean build
-- pass is measurable
-- no test regressions
-
-#### Implementation notes (PR #917)
-
-New files added:
-
-- `src/SemanticTypes.h` — all vocabulary types: `SemanticSlot` (8 bytes, `static_assert`'d), `CanonicalTypeId`, `CastInfoIndex`, `StandardConversionKind`, `ImplicitCastInfo`, `CanonicalTypeDesc`, `TypeContext`, `SemanticContext`, `ConversionPlanFlags`, `ConversionStep`, `SemanticPassStats`
-- `src/SemanticAnalysis.h` / `src/SemanticAnalysis.cpp` — the traversal pass
-- `tests/test_semantic_pass_ret0.cpp` — end-to-end test covering structs, namespaces, recursion, all control-flow statement types, ternary, array subscript, member function calls, and fold expressions
-
-Pipeline integration in `src/FlashCppMain.cpp`:
-
-- pass runs between `gLazyMemberResolver.clearCache()` and `AstToIr` construction
-- timed via `PhaseTimer`, stats emitted under `--perf-stats`
-- APIs take `const ASTNode&` to avoid unnecessary `std::any` copies
-
-What Phase 1 does:
-
-- walks all top-level nodes: functions, structs (member function bodies), namespaces, constructors, destructors, top-level variables
-- recurses into all statement types: block, return, variable decl, if, for, while, do-while, switch, range-for, try-catch
-- recurses into all non-leaf `ExpressionNode` variants via `std::visit`: binary/unary/ternary operators, function/constructor/member calls, member access, pointer-to-member access, subscripts, sizeof/alignof/typeid, new/delete, all four cast nodes, lambda (captures, parameters, body), fold/pack expressions, noexcept, initializer-list construction, throw expressions
-- interns canonical types for function return types via `TypeContext`
-- collects traversal statistics (roots, expressions, statements, canonical types)
-
-What Phase 1 does NOT do:
-
-- no actual semantic normalization or implicit cast insertion
-- no semantic slot filling on expression nodes
-- no `AstToIr` lowering changes for semantic annotations (deferred to Phase 2)
-- `SemanticAnalysis` object is scoped to a block and destroyed before IR conversion — its `TypeContext` and cast-info table do not survive into later phases yet
-
-Known issues resolved in Phase 2:
-
-- `SemanticAnalysis` results now outlive the timing scope — the object is kept alive past `AstToIr` construction and `converter.setSemanticData(&sema)` wires up the connection
-- Semantic annotations (`slots_filled`, `cast_infos_allocated`) now tracked and visible under `--perf-stats`
-
-Known issues still to address:
-
-- `TypeContext::intern()` uses linear scan — acceptable at current type counts, but needs hash map when all expressions are canonicalized (Phase 4 TODO)
-- `CanonicalTypeDesc::operator==` for `FunctionSignature` does not compare all fields — acceptable for now
-- `CastInfoIndex` uses `uint16_t` (max 65535 entries) — needs overflow guard when cast-info table grows large
-- `normalizeStructDeclaration` only visits member function bodies, not member variable initializers or nested types
-- `normalizeStatement` does not walk `ThrowStatementNode` or `LabelStatementNode` children
-- `inferExpressionType` does not handle `BinaryOperatorNode` or `FunctionCallNode` — complex expressions return unknown type and fall back to codegen policy
-
-### Phase 2: migrate the highest-value conversion contexts ✅ COMPLETED (return, call args, binary ops)
-
-Goal:
-
-- move the most error-prone standard conversions out of codegen-local logic
-
-Work:
-
-- ✅ return statements (standard primitive conversions)
-- ✅ function-call arguments (simple non-overloaded functions)
-- ✅ builtin binary arithmetic / comparison operands
-- establish semantic-pass diagnostics ownership for these migrated contexts so codegen no longer reports them late
-
-Exit criteria:
-
-- delete corresponding ad-hoc conversion policy from:
-	- `IrGenerator_Call_Direct.cpp` — dual-path added; original policy preserved as fallback for overloaded/variadic/struct cases
-	- `IrGenerator_Expr_Operators.cpp` — dual-path added; original policy preserved as fallback for struct/user-defined operands
-	- `IrGenerator_Visitors_Namespace.cpp` — dual-path added; original policy preserved as fallback for struct/user-defined conversions
-- add regression tests for each migrated context ✅
-
-#### Implementation notes (Phase 2 — all three contexts)
-
-**Pre-requisites addressed:**
-
-1. **`SemanticAnalysis` lifetime** — moved outside the block scope in `FlashCppMain.cpp` so the object (and its `TypeContext` + `cast_info_table_`) survives into `AstToIr` conversion. `converter.setSemanticData(&sema)` wires up the connection.
-
-2. **SemanticSlot side table** — added `semantic_slots_: unordered_map<const void*, SemanticSlot>` to `SemanticAnalysis` (keyed by raw `ExpressionNode*` pointer from stable `gChunkedAnyStorage`). Added `getSlot(const void*)`, `setSlot(...)`, `allocateCastInfo(...)` helpers.
-
-3. **AstToIr reads annotations** — added `sema_: const SemanticAnalysis*` member and `setSemanticData()` to `AstToIr`. All three IR lowering contexts check `sema_->getSlot(key)` before the local `generateTypeConversion` fallback.
-
-**Core annotation infrastructure in SemanticAnalysis:**
-
-- `inferExpressionType(node)` — infers `CanonicalTypeId` for `NumericLiteralNode`, `BoolLiteralNode`, and `IdentifierNode` (via a scope stack of `StringHandle → CanonicalTypeId` maps). Returns invalid when inference is not possible.
-- `tryAnnotateConversion(expr_node, target_type_id)` — shared helper: if `inferExpressionType` succeeds and a standard (non-struct, non-enum, non-auto, non-pointer) conversion is needed, allocates an `ImplicitCastInfo` and fills the expression's slot. Returns `true` when annotation was written.
-- `tryAnnotateReturnConversion(expr_node, ctx)` — delegates to `tryAnnotateConversion` with `ctx.current_function_return_type_id` as target.
-- `tryAnnotateBinaryOperandConversions(bin_op)` — infers LHS/RHS types, computes common type with `get_common_type`, and calls `tryAnnotateConversion` on each operand that needs conversion.
-- `tryAnnotateCallArgConversions(call_node)` — looks up the function by name in `symbols_`; if a single non-variadic match is found, annotates each argument with its parameter type.
-- `determineConversionKind(from, to)` — maps `(Type, Type)` to `StandardConversionKind`; uses `get_integer_rank()` for C++20-correct promotion vs conversion classification.
-- Scope stack — `normalizeBlock` now calls `pushScope()`/`popScope()`; `VariableDeclarationNode` registers the local; `normalizeFunctionDeclaration` registers parameters.
-- Stats: `slots_filled` and `cast_infos_allocated` now tracked and reported under `--perf-stats`.
-
-**Fixes applied after review (Devin + Gemini):**
-
-- `Type::Auto` guard added to `tryAnnotateConversion` — prevents bogus 0-bit truncation for `auto` return functions
-- `determineConversionKind`: int→long is now `IntegralConversion` (not `IntegralPromotion`); uses `get_integer_rank()` per C++20 [conv.prom]
-- Parameter and local variable type registration uses `canonicalizeType()` instead of inline struct construction — handles pointer/array types correctly
-- Unary +/- type inference applies integral promotion (result of `+short` is `int`)
-
-**New tests:**
-
-- `tests/test_ret_implicit_cast_int_to_long_ret0.cpp` — int→long return from literal, local variable, and function parameter
-- `tests/test_ret_implicit_cast_float_to_int_ret0.cpp` — float→int and double→int return from local variable
-- `tests/test_ret_implicit_cast_unsigned_ret0.cpp` — int→unsigned, int→long long, int→unsigned long return conversions
-- `tests/test_call_implicit_cast_arg_ret0.cpp` — int→long and int→double function argument conversions
-- `tests/test_binop_implicit_cast_ret0.cpp` — int+long→long (LHS promoted), int*unsigned→unsigned (LHS converted)
-
-Test results: 1476 pass / 0 fail / 35 expected-fail (5 new tests added)
-
-**Remaining known limitations (carried forward to Phase 4+):**
-
-- Function call argument annotation handles only the simple single-overload lookup case; overloaded functions still use the codegen fallback
-- `inferExpressionType` coverage for nested `BinaryOperatorNode` sub-expressions is complete; `FunctionCallNode` result type is also inferred
-
-### Phase 3: initializer and reference-binding coverage ✅ COMPLETED (declaration initializers, assignment RHS)
-
-Goal:
-
-- cover the remaining correctness-critical conversion contexts
-
-Work:
-
-- ✅ declaration initializers (`long x = some_int;`, `double d = int_var;`)
-- ✅ assignment RHS (`long x; x = some_int;`)
-- ✅ `inferExpressionType` extended to cover `BinaryOperatorNode` and `FunctionCallNode` results
-- ✅ Bug fix: `int i = double_var;` was storing raw IEEE-754 bits instead of truncating
-- member initialization — deferred to Phase 4+
-- constructor-argument normalization — deferred to Phase 4+
-- reference binding — deferred to Phase 4+
-- temporary materialization — deferred to Phase 4+
-- conditional-expression conversions — deferred to Phase 4+
-- contextual `bool` — deferred to Phase 4+
-- integrate semantic-orchestrated constant evaluation — deferred to Phase 4+
-
-Exit criteria:
-
-- no remaining policy-style `generateTypeConversion(...)` calls for these contexts — partially met; declaration initializers and assignment now go through sema path; remaining contexts still use codegen fallback
-
-#### Implementation notes (Phase 3)
-
-- `normalizeStatement` for `VariableDeclarationNode` calls `tryAnnotateConversion(*init, decl_type_id)` before visiting the initializer expression.
-- `normalizeExpression` for `BinaryOperatorNode` with `op == "="` infers the LHS type and calls `tryAnnotateConversion` on the RHS.
-- `IrGenerator_Stmt_Decl.cpp` dual-path: sema annotation wins when present; `can_convert_type` fallback handles any case the sema pass could not infer (e.g., function-call return values that are still unresolved at annotation time).
-- `inferExpressionType` extended: `BinaryOperatorNode` arithmetic→`get_common_type`, comparisons/logical→`bool`, assignment→LHS type, comma→RHS type; `FunctionCallNode`→return type from `decl_node().type_node()`.
-- Test suite hygiene: six tests that relied on implicit shell exit-code truncation (e.g., returning 330 and depending on 330 % 256 = 74) now have an explicit `% 256` in their return expressions.
-
-**New tests:**
-
-- `tests/test_decl_init_implicit_cast_ret0.cpp` — double→int, float→int, int→double, int→float initializer conversions
-
-Test results: 1477 pass / 0 fail / 35 expected-fail (1 new test added)
-
-**Remaining known limitations (carried forward to Phase 4+):**
-
-- Function call argument annotation handles only the simple single-overload lookup case; overloaded functions still use the codegen fallback
-- Reference-binding initializer conversions are not yet annotated
-- Member initialization and constructor-argument conversions are not yet annotated
-
-### Phase 4: canonical type identity cleanup ✅ COMPLETED
-
-Goal:
-
-- stop using syntax-node heuristics where semantic canonical type identity is required
-
-Work:
-
-- ✅ `TypeContext::intern()` — replaced O(n) linear scan with O(1) `std::unordered_map<CanonicalTypeDesc, CanonicalTypeId>` (hash specialisation in `SemanticTypes.h`)
-- ✅ `inferExpressionType` for cast expressions — added `StaticCastNode`, `ConstCastNode`, `ReinterpretCastNode` cases that return the cast target type; unblocks annotation of expressions like `long y = (int)x + z`
-- ✅ `canonical_types_match(CanonicalTypeId, CanonicalTypeId)` helper — added to `OverloadResolution.h`; expresses intent of canonical equality without hardcoding the `==` operator; used in `tryAnnotateCallArgConversions` to skip annotation when argument and parameter types already match
-- ✅ `tryAnnotateCallArgConversions` — reconciled with overloaded functions: now uses `symbols_.lookup_all()` and matches the correct overload by `DeclarationNode` pointer identity (the parser already resolved the overload; we recover the `FunctionDeclarationNode` that wraps it); falls back to count-based selection when pointer match fails
-
-Exit criteria:
-
-- signature equivalence and overload ranking depend on canonical type IDs, not size/type fallbacks ✅
-
-#### Implementation notes (Phase 4)
-
-**Task 1 — TypeContext hash map:**
-
-- Added `std::hash<CanonicalTypeDesc>` specialisation in `SemanticTypes.h` using a polynomial combiner over all fields (base type, type index, cv, ref qualifier, pointer levels, array dimensions, flags, optional function signature).
-- Added `std::unordered_map<CanonicalTypeDesc, CanonicalTypeId> index_` private member to `TypeContext`.
-- `TypeContext::intern()` now does `index_.find(desc)` first; only appends to `types_` on a cache miss and inserts into `index_`.
-
-**Task 2 — inferExpressionType for cast expressions:**
-
-- In `inferExpressionType()`, added a single `if constexpr` branch that handles `StaticCastNode`, `ConstCastNode`, and `ReinterpretCastNode` by reading `target_type()` and calling `canonicalizeType()` on it.
-- `DynamicCastNode` is intentionally excluded because its target type always involves a pointer/reference and `tryAnnotateConversion` already guards against that.
-
-**Task 3 — canonical_types_match:**
-
-- Added `inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b)` to `OverloadResolution.h` (includes `SemanticTypes.h`).
-- Used in `tryAnnotateCallArgConversions` to short-circuit annotation when `arg_type_id == param_type_id`.
-
-**Task 4 — SymbolTable::lookup_function unification:**
-
-- Replaced `symbols_.lookup(name)` (returns first overload) with `symbols_.lookup_all(name)` (returns all overloads).
-- Primary match: find the `FunctionDeclarationNode` whose `decl_node()` address equals `&call_node.function_declaration()` — the parser stored a reference to the same stable object.
-- Fallback 1: if pointer match fails and only one overload exists, use it.
-- Fallback 2: if multiple overloads and no pointer match (template instantiation, indirect call), pick the first one whose parameter count equals the argument count.
-- Fallback 3: if no viable fallback, return without annotating (codegen handles it).
-
-**Known limitation discovered during Phase 4:**
-
-Calling an overloaded function where one overload takes `int` and another takes `long` results in the `int` overload always being selected at runtime when the argument value is `0L`. This is a pre-existing codegen bug in FlashCpp (verified to exist in baseline before Phase 4 changes). Documented in `docs/KNOWN_ISSUES.md`.
-
-**New tests:**
-
-- `tests/test_cast_expr_type_inference_ret0.cpp` — `(int)f` and `static_cast<long>(x)` as sub-expressions; result type correctly inferred and annotations applied
-- `tests/test_overload_call_annotation_ret0.cpp` — pointer-identity matching in `tryAnnotateCallArgConversions`; int→long argument annotation through non-overloaded functions
-
-Test results: 1486 pass / 0 fail / 36 expected-fail (2 new tests added)
-
-**Remaining known limitations (carried forward to Phase 5+):**
-
-- Overload ranking for functions where argument types differ in size (pre-existing codegen limitation)
-- `DynamicCastNode` target type not inferred (always pointer/reference; not needed for scalar annotation)
-- `SymbolTable::lookup_function` still uses syntax-node comparison; full migration to canonical type IDs deferred to Phase 5
-
-### Phase 5: `auto` / generic lambda cleanup ✅ COMPLETED (with PR928 follow-up hardening)
-
-Goal:
-
-- remove transitional backend fallbacks and synthetic declaration hacks
-
-Work:
-
-- keep ordinary parser-side `auto` deduction where the parser still depends on it, but add semantic-pass validation/canonicalization around it
-- move generic lambda parameter normalization out of `IrGenerator_Lambdas.cpp` into an instantiation-time semantic hook
-- remove synthetic lambda parameter declarations once that hook exists
-- remove `Type::Auto` runtime fallbacks in codegen
-- remove codegen-side fallback deduction of ordinary function `auto` return type
-- add distinct handling for `decltype(auto)` so it no longer piggybacks ambiguously on plain `Type::Auto`
-- extend the semantic layer to own constraint / requires diagnostics on instantiated generic code as support grows
-
-Exit criteria:
-
-- generic lambda bodies and signatures no longer depend on codegen-local synthetic declarations
-- `Type::Auto` no longer reaches backend arithmetic/lvalue lowering on supported paths
-- ordinary supported functions no longer depend on codegen to finalize `auto` return type
-- `decltype(auto)` has an explicit semantic-resolution path instead of reusing plain `auto` heuristics
-
-Implementation notes:
-
-- Added `Type::DeclTypeAuto` so `decltype(auto)` no longer reuses plain `Type::Auto` placeholder handling.
-- `SemanticAnalysis::resolveRemainingAutoReturns()` now finalizes unresolved ordinary function placeholder returns before codegen and forces mangled-name recomputation after rewriting the return annotation.
-- `SemanticAnalysis::normalizeInstantiatedLambdaBody()` now owns instantiated generic-lambda placeholder normalization: it rewrites deduced parameter declarations, re-runs semantic normalization on the instantiated body, and finalizes placeholder return types (including callable-parameter cases) before lambda IR generation.
-- Identifier/reference lowering now treats unresolved placeholder types in codegen as an internal error instead of silently falling back to `int`.
-- Regression coverage added for ordinary `auto` return finalization, generic lambda parameter normalization, and `decltype(auto)` reference-preserving returns.
-- Deferred generic lambdas are re-scanned after the main collection pass so call-site deduction discovered from later-generated lambda bodies still triggers operator()/`__invoke` emission for previously skipped entries.
-- Range-for placeholder deduction now runs through semantic analysis for array/pointer-style and struct-iterator loops before lowering, so codegen receives already-concrete loop-variable declarations.
-- Placeholder `auto` return deduction now also handles top-level function-try-block bodies, covering the previously unresolved ordinary `auto` + function-try-block path.
-- Remaining placeholder checks in codegen/template plumbing now use `isPlaceholderAutoType()` where `DeclTypeAuto` should follow plain `auto`, while parser paths that only support plain `auto` keep explicit handling.
-- Parser-side `decltype(auto)` variable handling now preserves deduced size information and rejects declarators that add extra `*`, `&`, or `&&` around `decltype(auto)`.
-- Parser-side mangling now defers whenever any part of a function signature still contains unresolved placeholder `auto` / `decltype(auto)`, which avoids MSVC-side mangling failures on still-normalizing signatures.
-- Instantiated generic-lambda callable mangling now consumes the sema-normalized lambda return type instead of the template-pattern `operator()` return type, fixing MSVC unresolved-placeholder mangling on callable-parameter cases.
-- Range-for struct-iterator dereference lookup is now sema-owned and cached on `RangedForStatementNode`, so lowering reuses the resolved `operator*()` target instead of re-deriving it independently.
-
-#### Callable-object `operator()` resolution ✅ COMPLETED
-
-The arity-only heuristic has been replaced by the compiler's real `resolve_overload` logic at both resolution sites:
-
-1. **Parser** (`Parser_Expr_PrimaryExpr.cpp`): When constructing a `MemberFunctionCallNode` for a callable-object call (`f(args)` where `f` has a struct type), the parser now builds the candidate set from `gTypeInfo`, infers argument types via `get_expression_type`, and calls `resolve_overload`. The old arity-only loop (which broke on the first arity match, wrongly selecting `operator()(int)` for a `double` argument) is retained only as a fallback when argument types cannot be determined.
-
-2. **Semantic analysis** (`SemanticAnalysis.cpp::tryResolveCallableOperator`): The same pattern is applied for `FunctionCallNode` callable-object calls that are created after parse time (e.g. template instantiation paths). `inferExpressionType` is the primary type source; `parser_.get_expression_type` is the fallback; arity-only is the last resort.
-
-**What is now correct:**
-- Same-arity overloads discriminated by argument type (e.g. `int` vs `double` parameter)
-- Default-argument and variadic candidates ranked by conversion quality
-- Ambiguous calls — where one overload is better on some arguments but worse on others (e.g. `operator()(int,double)` vs `operator()(double,int)` called as `f(1,2)`) — are now detected and reported as a compile error. The fix was in `OverloadResolution.h::resolve_overload`: the "incomparable" case (`this_is_better && this_is_worse`) was previously falling through silently, leaving the first-declared overload as the winner. It is now counted as a tied candidate, causing `num_best_matches > 1` and triggering the ambiguity path.
-
-**Remaining gaps:**
-- Ref/rvalue-reference qualification: `inferExpressionType` does not propagate value-category (lvalue/rvalue) onto the inferred `TypeSpecifierNode`, so overloads distinguished only by `T&` vs `T&&` still score identically. Full lvalue/rvalue tracking in sema type inference would close this gap.
-- Template/concept constraints: `resolve_overload` does not evaluate `requires` clauses; constrained overloads are treated as unconstrained candidates.
-- Codegen fallback in `IrGenerator_Call_Direct.cpp:171-215` still uses arity-only selection for `FunctionCallNode` paths not covered by sema; this is now rare but still present for deeply template-instantiated paths.
-
-**Test coverage added:**
-- `tests/test_operator_call_ret30.cpp` updated: the `int` and `double` overloads now return distinct values (`x` vs `x*5`), so the expected return of 30 is only achievable when `adder(5.0)` correctly selects the `double` overload.
-- `tests/test_operator_call_ambiguous_fail.cpp` added: verifies that cross-wise overloads like `operator()(int,double)` / `operator()(double,int)` called with `f(1,2)` are rejected with a compile error rather than silently resolved.
-
-### Phase 6: contextual bool conversion ✅ COMPLETED
-
-Goal:
-
-- move contextual bool conversion out of implicit backend behavior into explicit semantic annotation + codegen consumption
-- fix float/double condition bugs (e.g. `-0.0` mishandled by backend `TEST` instruction)
-
-Work:
-
-- ✅ semantic annotation: `tryAnnotateContextualBool` annotates conditions and logical operands with `BooleanConversion`
-- ✅ if/while/for/do-while condition annotation
-- ✅ ternary operator condition annotation
-- ✅ `&&` / `||` operand annotation (C++20 [expr.log.and], [expr.log.or])
-- ✅ `!` operand annotation (C++20 [expr.unary.op]/9)
-- ✅ codegen: `applyConditionBoolConversion` helper in AstToIr wired into all condition sites
-- ✅ codegen: `&&` / `||` operand conversion for float/double types
-- ✅ bug fix: float/double `-0.0` no longer misidentified as truthy
-
-Exit criteria:
-
-- `ConversionContext::Condition` from `SemanticTypes.h` is now actively used via `tryAnnotateContextualBool`
-- all float/double conditions produce correct boolean semantics including `-0.0`
-- integer conditions continue to use the backend `TEST` instruction (no unnecessary conversion)
-- no test regressions
-
-#### Implementation notes (Phase 6)
-
-**Semantic annotation infrastructure:**
-
-- `SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node)` — interns `Type::Bool` as a canonical type and calls `tryAnnotateConversion(expr, bool_type_id)`. The annotation is informational for integer types (backend handles them correctly) and actionable for float/double types (codegen emits explicit conversion).
-- `normalizeStatement` now calls `tryAnnotateContextualBool` before `normalizeExpression` for:
-  - `IfStatementNode::get_condition()` — C++20 [stmt.select]
-  - `ForStatementNode::get_condition()` — C++20 [stmt.for]
-  - `WhileStatementNode::get_condition()` — C++20 [stmt.while]
-  - `DoWhileStatementNode::get_condition()` — C++20 [stmt.do]
-- `normalizeExpression` now calls `tryAnnotateContextualBool` for:
-  - `TernaryOperatorNode::condition()` — C++20 [expr.cond]/1
-  - `BinaryOperatorNode` operands when `op == "&&"` or `op == "||"` — C++20 [expr.log.and], [expr.log.or]
-  - `UnaryOperatorNode` operand when `op == "!"` — C++20 [expr.unary.op]/9
-
-**AstToIr condition conversion:**
-
-- `AstToIr::applyConditionBoolConversion(ExprResult, ASTNode, Token)` — new helper method:
-  1. Checks for sema annotation: if a `BooleanConversion` annotation exists for a float/double source type, emits `generateTypeConversion(condition, float/double, Int, token)`.
-  2. Fallback: if no annotation but the condition is float/double, emits the same conversion.
-  3. Integer conditions are passed through unchanged (backend `TEST reg, reg` already handles them).
-  4. The target type is `Int` (32-bit), not `Bool` (8-bit), to avoid register-flush size mismatches in the backend.
-- Wired into `visitIfStatementNode`, `visitForStatementNode`, `visitWhileStatementNode`, `visitDoWhileStatementNode`, and `generateTernaryOperatorIr`.
-
-**Logical operator conversion:**
-
-- `IrGenerator_Expr_Operators.cpp`: `&&` / `||` handling now includes a `convertToBool` lambda that:
-  1. Checks sema annotations for float/double operands.
-  2. Falls back to local `generateTypeConversion(operand, float/double, Int, token)`.
-  3. Leaves integer operands unchanged (backend bitwise AND/OR works correctly for integer truth values).
-
-**Bug fix — floating-point `-0.0` condition:**
-
-- IEEE 754 `-0.0` has bit pattern `0x8000000000000000` (double) or `0x80000000` (float).
-- The backend's `handleConditionalBranch` uses `TEST reg, reg` on the raw integer representation. For `-0.0`, the bit pattern is nonzero, so the backend incorrectly treated it as `true`.
-- The fix emits `FloatNotEqual` (UCOMISD/UCOMISS + SETNE) to compare the float against `0.0`, producing a proper boolean result.
-  - `-0.0 == +0.0` per IEEE 754 semantics → SETNE → 0 (false) ✓
-  - Fractional values like `0.5` → `0.5 != 0.0` → SETNE → 1 (true) ✓
-  - NaN → unordered → SETNE → 1 (truthy per C++20 [conv.bool]) ✓
-- The initial approach used `cvttsd2si`/`cvttss2si` (FloatToInt), but this was wrong because it truncated fractional values like 0.5 to integer 0.
-- This is a pre-existing bug exposed by Phase 6 work; it now has regression tests.
-
-**New tests:**
-
-- `tests/test_contextual_bool_int_ret0.cpp` — int conditions in if/while/for/do-while/ternary
-- `tests/test_contextual_bool_float_ret0.cpp` — float/double conditions with zero and nonzero values
-- `tests/test_contextual_bool_char_ret0.cpp` — char conditions with null and non-null values
-- `tests/test_contextual_bool_logical_ret0.cpp` — logical operators (&&, ||, !) with mixed types including float/double
-- `tests/test_contextual_bool_neg_zero_ret0.cpp` — `-0.0` edge case regression test
-- `tests/test_contextual_bool_not_neg_zero_ret0.cpp` — `!` operator with float `-0.0`
-- `tests/test_contextual_bool_fractional_float_ret0.cpp` — fractional float conditions (0.5, 0.1f, 0.99)
-
-Test results: 1533 pass / 0 fail / 49 expected-fail (7 new tests added)
-
-**Remaining known limitations (carried forward to Phase 7+):**
-
-- Pointer conditions are not annotated (backend `TEST` handles them correctly for non-null-pointer cases)
-- Enum conditions are not annotated (backend `TEST` handles them correctly)
-- User-defined `operator bool()` / contextual conversion operators are not handled by the sema pass
-- Integer-to-bool contextual conversion annotation is informational only; the backend does not read it. A future phase could add a proper `CMP reg, 0; SETNE` sequence for full C++20 compliance, but the backend `TEST` instruction is semantically equivalent for integer types.
-- `ConversionContext::Condition` enum value is used implicitly through `tryAnnotateContextualBool` but is not explicitly set on the `SemanticContext` (would require threading context into the annotation call)
+### Phase 1: establish the seam ✅ (PR #917)
+- Added `SemanticAnalysis` pass seam, `SemanticSlot` per-expression storage, `CastInfoTable`, and `CanonicalTypeId` interning.
+- New tests: arithmetic/comparison/return conversions produce correct output.
+
+### Phase 2: return, call-arg, binary-op contexts ✅
+- `tryAnnotateReturnConversion`: return-type mismatch annotated with cast.
+- `tryAnnotateCallArgConversions`: call arguments annotated with conversions.
+- `tryAnnotateBinaryOperandConversions`: binary arithmetic/comparison operands annotated to common type.
+- Codegen dual-path: sema annotation wins; codegen policy is fallback.
+- Test suite: return-value and binary-op conversions verified.
+
+### Phase 3: declaration initializers + assignment RHS ✅
+- `normalizeStatement` annotates `VariableDeclarationNode` init with target type.
+- `normalizeExpression` annotates `=` RHS with LHS type.
+- `inferExpressionType` extended to `BinaryOperatorNode`, `FunctionCallNode`.
+- Tests: `test_decl_init_implicit_cast_ret0.cpp`.
+
+### Phase 4: canonical type identity cleanup ✅
+- `TypeContext::intern()` uses `std::unordered_map` (O(1) vs O(n)).
+- `inferExpressionType` handles cast nodes.
+- `tryAnnotateCallArgConversions` uses `lookup_all` + pointer-identity overload matching.
+- Tests: `test_cast_expr_type_inference_ret0.cpp`, `test_overload_call_annotation_ret0.cpp`.
+
+### Phase 5: `auto` / generic lambda cleanup ✅ (with PR928 hardening)
+- `Type::DeclTypeAuto` distinct from `Type::Auto`.
+- `resolveRemainingAutoReturns()` finalizes ordinary function placeholder returns.
+- `normalizeInstantiatedLambdaBody()` owns generic-lambda normalization before IR.
+- Callable `operator()` resolution uses `resolve_overload` (type-based) in parser and sema; arity-only retained as fallback.
+- Ambiguous overloads now detected and reported.
+- Tests: range-for, auto-return, generic lambda, callable overload disambiguation.
+
+### Phase 6: contextual bool conversion ✅
+- `tryAnnotateContextualBool` annotates conditions (if/while/for/do-while/ternary) and `&&`/`||`/`!` operands.
+- `applyConditionBoolConversion` in codegen: float/double conditions use `FloatNotEqual(cond, 0.0)` (handles `-0.0`, fractional values, NaN); integers use backend `TEST`.
+- Tests: `contextual_bool_{int,float,char,logical,neg_zero,not_neg_zero,fractional_float}`.
+
+### Phase 7: ternary common-type, compound assignment cross-type, assignment sema ✅
+- `tryAnnotateTernaryBranchConversions`: both branches annotated to common type before IR.
+- Compound assignment (`+=`, `-=`, etc.) cross-type fix: when `lhsType != commonType`, performs binary op in common type, converts result back to `lhsType`, stores via `Assignment` to original variable.
+- Simple `=` RHS converts to `lhsType` (codegen ground truth).
+- `UnsignedModulo` opcode added; `%` and `%=` now emit signed vs. unsigned modulo by type.
+- `UnsignedDivide`/`UnsignedShiftRight`/`UnsignedModulo` selected in cross-type compound path for unsigned common type.
+- `ensureNotInRCX()` helper: prevents shift count from clobbering LHS when result register is RCX (applied to all 5 shift handlers).
+- `compoundOpToBaseOpcode()` / `isCompoundAssignmentOp()` centralized in `IROperandHelpers.h`; replaces 4 local maps in `IrGenerator_Expr_Operators.cpp` and the inline list in `SemanticAnalysis.cpp`.
+- C++20 [expr.shift] fix: shift operators (`<<`, `>>`, `<<=`, `>>=`) now use independent integral promotions via `tryAnnotateShiftOperandPromotions` instead of usual arithmetic conversions. Codegen uses `promote_integer_type(lhsType)` as the result type for shifts. This prevents `int x <<= long long y` from unnecessarily widening to 64-bit and triggering the cross-type compound assignment path.
+- Tests: `test_ternary_conv_ret0`, `test_compound_assign_implicit_cast_ret0`, `test_assign_implicit_cast_ret0`, `test_unsigned_compound_assign_ret0`, `test_unsigned_modulo_ret0`. Suite: 1538 pass / 0 fail / 49 expected-fail.
+
+**Known limitations (Phase 8+):**
+- Pointer/enum conditions use backend `TEST` (correct, but not annotated).
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Global/static assignment RHS does not consume sema annotations.
+- Constructor call argument conversions not annotated by sema.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
 
 ### Parallel rollout guidance
 

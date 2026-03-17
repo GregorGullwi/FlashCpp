@@ -1002,7 +1002,18 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					op == "<" || op == ">" || op == "<=" || op == ">=" ||
 					op == "==" || op == "!=";
 				const bool is_logical = op == "&&" || op == "||";
-				if ((is_arithmetic || is_comparison) &&
+				// C++20 [expr.shift]: shift operands undergo independent integral
+				// promotions, NOT usual arithmetic conversions.
+				const bool is_shift =
+					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
+				const bool is_compound_assign = isCompoundAssignmentOp(op);
+				if (is_shift &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					tryAnnotateShiftOperandPromotions(e);
+				}
+				else if ((is_arithmetic || is_comparison ||
+					(is_compound_assign && !is_shift)) &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
 					tryAnnotateBinaryOperandConversions(e);
@@ -1035,6 +1046,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
+				// C++20 [expr.cond]/7: usual arithmetic conversions on branches.
+				tryAnnotateTernaryBranchConversions(e);
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
@@ -1369,6 +1382,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(desc);
 				}
 			}
+			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+				// C++20 [expr.cond]/7: result type is the common type of the two branches.
+				const CanonicalTypeId t_id = inferExpressionType(e.true_expr());
+				const CanonicalTypeId f_id = inferExpressionType(e.false_expr());
+				if (!t_id || !f_id) return {};
+				if (canonical_types_match(t_id, f_id)) return t_id;
+				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
+				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
+				if (t_desc.base_type == Type::Struct || f_desc.base_type == Type::Struct) return {};
+				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
+				const Type common_t = get_common_type(t_desc.base_type, f_desc.base_type);
+				if (common_t == Type::Invalid) return {};
+				CanonicalTypeDesc ternary_desc;
+				ternary_desc.base_type = common_t;
+				return type_context_.intern(ternary_desc);
+			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
@@ -1542,6 +1571,46 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Shift operand independent promotion annotation ---
+// C++20 [expr.shift]: The operands shall be of integral or unscoped enumeration type
+// and integral promotions are performed.  The type of the result is that of the
+// promoted left operand.  Unlike usual arithmetic conversions, each operand is
+// promoted independently — there is no shared "common type".
+
+void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op) {
+	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id) return;
+
+	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	// Only handle plain primitive integral types (no pointers, arrays, structs, enums, floats)
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
+	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
+	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
+	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+	// Shift is only defined for integral operands
+	if (is_floating_point_type(lhs_desc.base_type) || is_floating_point_type(rhs_desc.base_type)) return;
+
+	// Independent integral promotion for each operand
+	const Type promoted_lhs = promote_integer_type(lhs_desc.base_type);
+	const Type promoted_rhs = promote_integer_type(rhs_desc.base_type);
+
+	if (promoted_lhs != lhs_desc.base_type) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted_lhs;
+		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc));
+	}
+	if (promoted_rhs != rhs_desc.base_type) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted_rhs;
+		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc));
+	}
 }
 
 // --- Contextual bool annotation ---
@@ -1737,4 +1806,31 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 	}
+}
+
+void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperatorNode& ternary_node) {
+	// C++20 [expr.cond]/7: if the second and third operands have different
+	// arithmetic types, the usual arithmetic conversions are applied.
+	const CanonicalTypeId true_type_id = inferExpressionType(ternary_node.true_expr());
+	const CanonicalTypeId false_type_id = inferExpressionType(ternary_node.false_expr());
+	if (!true_type_id || !false_type_id) return;
+	if (canonical_types_match(true_type_id, false_type_id)) return;
+
+	const auto& true_desc = type_context_.get(true_type_id);
+	const auto& false_desc = type_context_.get(false_type_id);
+
+	// Only handle primitive arithmetic types (not structs, pointers, etc.)
+	if (true_desc.base_type == Type::Struct || false_desc.base_type == Type::Struct) return;
+	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
+
+	Type common = get_common_type(true_desc.base_type, false_desc.base_type);
+	CanonicalTypeDesc common_desc;
+	common_desc.base_type = common;
+	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
+
+	// Annotate each branch if it needs conversion to the common type.
+	if (!canonical_types_match(true_type_id, common_type_id))
+		tryAnnotateConversion(ternary_node.true_expr(), common_type_id);
+	if (!canonical_types_match(false_type_id, common_type_id))
+		tryAnnotateConversion(ternary_node.false_expr(), common_type_id);
 }

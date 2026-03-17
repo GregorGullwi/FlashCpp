@@ -2196,6 +2196,18 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	return false;
 }
 
+	Type AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
+		if (!sema_ || !node.is<ExpressionNode>()) return Type::Invalid;
+		const void* key = &node.as<ExpressionNode>();
+		const auto slot = sema_->getSlot(key);
+		if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
+		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+		const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+		const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
+		if (from_t == Type::Struct || to_t == Type::Struct) return Type::Invalid;
+		return to_t;
+	}
+
 	ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
 		// C++20 [conv.bool]: convert condition to bool for control-flow statements.
 		//

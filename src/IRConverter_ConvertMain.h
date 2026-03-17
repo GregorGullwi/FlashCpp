@@ -399,6 +399,9 @@ private:
 	// Allocate a register, spilling one to the stack if necessary, excluding a specific register
 	X64Register allocateRegisterWithSpilling(X64Register exclude);
 
+	// Allocate a register, spilling one to the stack if necessary, excluding two specific registers
+	X64Register allocateRegisterWithSpilling(X64Register exclude1, X64Register exclude2);
+
 	// Allocate an XMM register, spilling one to the stack if necessary
 	X64Register allocateXMMRegisterWithSpilling();
 
@@ -529,6 +532,11 @@ private:
 
 	void handleUnsignedShiftRight(const IrInstruction& instruction);
 
+	// If the LHS (result) register is RCX, move it elsewhere before we overwrite
+	// RCX with the shift count.  Both RCX and the RHS register are excluded from
+	// allocation so the spill candidate search cannot evict either operand.
+	void relocateLhsOutOfRCX(ArithmeticOperationContext& ctx);
+
 	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description);
 
 	void handleBitwiseAnd(const IrInstruction& instruction);
@@ -538,6 +546,8 @@ private:
 	void handleBitwiseXor(const IrInstruction& instruction);
 
 	void handleModulo(const IrInstruction& instruction);
+
+	void handleUnsignedModulo(const IrInstruction& instruction);
 
 	void handleEqual(const IrInstruction& instruction);
 

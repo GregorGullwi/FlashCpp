@@ -116,6 +116,9 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 			case IrOpcode::Modulo:
 				handleModulo(instruction);
 				break;
+			case IrOpcode::UnsignedModulo:
+				handleUnsignedModulo(instruction);
+				break;
 			case IrOpcode::FloatAdd:
 				handleFloatAdd(instruction);
 				break;
@@ -477,6 +480,7 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				case IrOpcode::Divide:
 				case IrOpcode::UnsignedDivide:
 				case IrOpcode::Modulo:
+				case IrOpcode::UnsignedModulo:
 				case IrOpcode::FloatAdd:
 				case IrOpcode::FloatSubtract:
 				case IrOpcode::FloatMultiply:
@@ -3621,6 +3625,59 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 				for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
 					const auto& reg = regAlloc.registers[i];
 					if (!reg.isAllocated || reg.reg == X64Register::RSP || reg.reg == X64Register::RBP || reg.reg == exclude || isRestrictedCatchFuncletRegister(reg.reg)) {
+						continue;
+					}
+					if (!reg.isDirty) {
+						return reg.reg;
+					}
+					if (best_candidate == X64Register::Count) {
+						best_candidate = reg.reg;
+						found_dirty = true;
+					}
+				}
+				if (found_dirty) {
+					return best_candidate;
+				}
+				return std::nullopt;
+			}();
+		if (!reg_to_spill.has_value()) {
+			throw InternalError("No registers available for spilling");
+		}
+
+		X64Register spill_reg = reg_to_spill.value();
+		auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
+
+		// If the register is dirty, write it back to the stack using size-appropriate MOV
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			emitMovToFrameSized(
+				SizedRegister{spill_reg, 64, false},  // source: 64-bit register
+				SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits.value, false}  // dest: sized stack slot
+			);
+		}
+
+		// Release the register and allocate it again
+		regAlloc.release(spill_reg);
+		reg_info.isAllocated = true;
+		return spill_reg;
+	}
+
+template<class TWriterClass>
+X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Register exclude1, X64Register exclude2)  {
+		// Try to allocate a free register first (excluding both specified registers)
+		for (auto& reg : regAlloc.registers) {
+				if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude1 && reg.reg != exclude2 && !isRestrictedCatchFuncletRegister(reg.reg)) {
+				reg.isAllocated = true;
+				return reg.reg;
+			}
+		}
+
+		// No free registers - need to spill one (excluding both specified registers)
+			auto reg_to_spill = [&]() -> std::optional<X64Register> {
+				X64Register best_candidate = X64Register::Count;
+				bool found_dirty = false;
+				for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
+					const auto& reg = regAlloc.registers[i];
+					if (!reg.isAllocated || reg.reg == X64Register::RSP || reg.reg == X64Register::RBP || reg.reg == exclude1 || reg.reg == exclude2 || isRestrictedCatchFuncletRegister(reg.reg)) {
 						continue;
 					}
 					if (!reg.isDirty) {
@@ -8937,21 +8994,55 @@ void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instructi
 	}
 
 template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::relocateLhsOutOfRCX(ArithmeticOperationContext& ctx) {
+		// If the LHS operand is in RCX, we must move it elsewhere before overwriting
+		// RCX with the shift count, otherwise the shift operates on the count itself.
+		if (ctx.result_physical_reg != X64Register::RCX) return;
+		// Flush all dirty registers before allocating, so that
+		// allocateRegisterWithSpilling cannot evict a dirty value from its
+		// physical register while looking for a spill candidate.  Without this
+		// flush the RHS could be silently spilled, and the subsequent MOV from
+		// the old physical register would read garbage.
+		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int reg_size_in_bits) {
+			if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
+				variable_scopes.back().scope_stack_space = stackVariableOffset;
+			}
+			emitMovToFrameSized(
+				SizedRegister{reg, 64, false},
+				SizedStackSlot{stackVariableOffset, reg_size_in_bits, false}
+			);
+		});
+		// Exclude both RCX (about to be overwritten with shift count) and the RHS
+		// register (holds the shift count value) so the allocator cannot pick either.
+		X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX, ctx.rhs_physical_reg);
+		emitMovRegToReg(X64Register::RCX, lhs_tmp, ctx.result_value.size_in_bits.value);
+		regAlloc.release(X64Register::RCX);
+		ctx.result_physical_reg = lhs_tmp;
+	}
+
+template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instruction)  {
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left");
 
+		// Save original result register identity before ensureNotInRCX may change it.
+		// If both operands resolved to the same register (RCX) and ensureNotInRCX moves
+		// the LHS away, ctx.rhs_physical_reg still points at RCX (already released).
+		// The final release must be skipped in that case to avoid a double-release.
+		X64Register original_result_reg = ctx.result_physical_reg;
+
+		// If the LHS is in RCX, save it before loading the shift count there.
+		relocateLhsOutOfRCX(ctx);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the shift left operation: shl r/m, cl
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
@@ -8961,10 +9052,14 @@ void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instr
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
 
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
+		X64Register original_result_reg = ctx.result_physical_reg;
+
+		// If the LHS is in RCX, save it before loading the shift count there.
+		relocateLhsOutOfRCX(ctx);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the shift right operation: sar r/m, cl (arithmetic right shift)
 		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
@@ -8972,7 +9067,7 @@ void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instr
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
@@ -9009,10 +9104,14 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
 
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
+		X64Register original_result_reg = ctx.result_physical_reg;
+
+		// If the LHS is in RCX, save it before loading the shift count there.
+		relocateLhsOutOfRCX(ctx);
+
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
-		// Move rhs_physical_reg to RCX
-		auto movRhsToCx = regAlloc.get_reg_reg_move_op_code(X64Register::RCX, ctx.rhs_physical_reg, ctx.result_value.size_in_bits.value / 8);
-		textSectionData.insert(textSectionData.end(), movRhsToCx.op_codes.begin(), movRhsToCx.op_codes.begin() + movRhsToCx.size_in_bytes);
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Perform the unsigned shift right operation: shr r/m, cl (logical right shift)
 		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
@@ -9020,7 +9119,7 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
@@ -9112,6 +9211,48 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
 				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+			);
+		}
+
+		regAlloc.release(divisor_reg);
+		regAlloc.release(X64Register::RDX);
+	}
+
+template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::handleUnsignedModulo(const IrInstruction& instruction)  {
+		reserveDivisionFixedRegisters();
+
+		// Setup and load operands
+		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned modulo");
+		X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+
+		// Unsigned modulo via DIV: quotient→RAX, remainder→RDX.
+		// Move dividend to RAX.
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
+		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+
+		// Release the original result register since we moved its value to RAX
+		regAlloc.release(ctx.result_physical_reg);
+
+		// Zero-extend: xor edx, edx  (RDX must be 0 before DIV, not sign-extended)
+		std::array<uint8_t, 2> xorEdxInst = { 0x31, 0xD2 };
+		textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
+
+		// div divisor_reg (unsigned division; F7 /6)
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
+
+		// Store remainder from RDX to the result variable's stack location.
+		if (const auto* sh = std::get_if<StringHandle>(&ctx.result_value.value)) {
+			int final_result_offset = variable_scopes.back().variables[*sh].offset;
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, false}
+			);
+		} else if (const auto* tv = std::get_if<TempVar>(&ctx.result_value.value)) {
+			auto res_stack_var_addr = getStackOffsetFromTempVar(*tv, ctx.result_value.size_in_bits.value);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, false}
 			);
 		}
 
@@ -10651,10 +10792,12 @@ void IrToObjConverter<TWriterClass>::handleXorAssign(const IrInstruction& instru
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instruction)  {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
-		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 
-		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
+		// If the LHS is in RCX, save it before loading the shift count there.
+		relocateLhsOutOfRCX(ctx);
+
+		// Move RHS to CL register
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Emit SHL instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
@@ -10665,10 +10808,12 @@ void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instru
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShrAssign(const IrInstruction& instruction)  {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
-		auto bin_op = *getTypedPayload<BinaryOp>(instruction);
 
-		// Move RHS to CL register (using RHS size for the move)
-		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, bin_op.rhs.size_in_bits.value);
+		// If the LHS is in RCX, save it before loading the shift count there.
+		relocateLhsOutOfRCX(ctx);
+
+		// Move RHS to CL register
+		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
 		// Emit SAR instruction with correct size
 		emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
