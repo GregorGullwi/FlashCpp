@@ -1,10 +1,12 @@
-// Regression test: float* and double* in boolean contexts must compare the
+// Correctness test: float* and double* in boolean contexts must compare the
 // pointer address (not the pointed-to float value) against null.
-// Bug: applyConditionBoolConversion reads only base_type from the sema
-// annotation's source_type_id, ignoring pointer_levels.  For float* the
-// base_type is Float, so is_floating_point_type() returns true and the
-// codegen emits FloatNotEqual (a floating-point comparison) on a 64-bit
-// pointer address, producing incorrect results.
+// Covers a latent codegen issue where applyConditionBoolConversion reads only
+// base_type from the sema annotation's source_type_id, ignoring pointer_levels.
+// For float* the base_type is Float, so is_floating_point_type() returns true
+// and codegen emits FloatNotEqual (a floating-point comparison) on a 64-bit
+// pointer address.  In practice this produces correct results because no valid
+// pointer address has the bit pattern of ±0.0 double, but the emitted
+// instruction is semantically wrong (should be integer TEST, not UCOMISD).
 
 int main() {
 	float f = 0.0f;

@@ -2260,10 +2260,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (slot.has_value() && slot->has_cast()) {
 				const ImplicitCastInfo& cast_info =
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 				// Only emit an explicit conversion for float/double → bool.
 				// Integer → bool is already handled correctly by the backend (TEST).
-				if (is_floating_point_type(from_type)) {
+				// Pointer types (even float*/double*) are integer-width addresses and
+				// must use TEST, not FloatNotEqual — check pointer_levels to avoid
+				// misinterpreting a float* address as a floating-point value.
+				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.base_type)) {
 					return emitFloatNonZeroTest(condition);
 				}
 			}
