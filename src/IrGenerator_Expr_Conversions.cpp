@@ -45,6 +45,10 @@
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 					}
+					if (is_unsigned_integer_type(toType)) {
+						const auto int_val = static_cast<unsigned long long>(src_val);
+						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
+					}
 					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
 					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 				} else {
