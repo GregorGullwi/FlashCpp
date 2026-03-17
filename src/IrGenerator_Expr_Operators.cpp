@@ -2079,7 +2079,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (!tryApplySemaConversion(lhsExprResult, binaryOperatorNode.get_lhs()))
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
 		}
-		if (rhsType != commonType) {
+		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
+		// NOT conversion to the LHS/result type.  Only apply sema-annotated promotion
+		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
+		if (is_shift_op) {
+			tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs());
+		} else if (rhsType != commonType) {
 			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs()))
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
 		}
