@@ -1035,6 +1035,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
+				// C++20 [expr.cond]/7: usual arithmetic conversions on branches.
+				tryAnnotateTernaryBranchConversions(e);
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
@@ -1737,4 +1739,31 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 	}
+}
+
+void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperatorNode& ternary_node) {
+	// C++20 [expr.cond]/7: if the second and third operands have different
+	// arithmetic types, the usual arithmetic conversions are applied.
+	const CanonicalTypeId true_type_id = inferExpressionType(ternary_node.true_expr());
+	const CanonicalTypeId false_type_id = inferExpressionType(ternary_node.false_expr());
+	if (!true_type_id || !false_type_id) return;
+	if (canonical_types_match(true_type_id, false_type_id)) return;
+
+	const auto& true_desc = type_context_.get(true_type_id);
+	const auto& false_desc = type_context_.get(false_type_id);
+
+	// Only handle primitive arithmetic types (not structs, pointers, etc.)
+	if (true_desc.base_type == Type::Struct || false_desc.base_type == Type::Struct) return;
+	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
+
+	Type common = get_common_type(true_desc.base_type, false_desc.base_type);
+	CanonicalTypeDesc common_desc;
+	common_desc.base_type = common;
+	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
+
+	// Annotate each branch if it needs conversion to the common type.
+	if (!canonical_types_match(true_type_id, common_type_id))
+		tryAnnotateConversion(ternary_node.true_expr(), common_type_id);
+	if (!canonical_types_match(false_type_id, common_type_id))
+		tryAnnotateConversion(ternary_node.false_expr(), common_type_id);
 }

@@ -118,6 +118,10 @@ private:
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
 
+	// Annotate ternary operator branches with common-type conversions
+	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).
+	void tryAnnotateTernaryBranchConversions(const TernaryOperatorNode& ternary_node);
+
 	// Resolve the callable operator() for a FunctionCallNode whose callee is a struct-typed
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.

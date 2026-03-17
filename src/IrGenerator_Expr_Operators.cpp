@@ -397,19 +397,59 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// True branch label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
 
+		// C++20 [expr.cond]/7: if the second and third operands have different
+		// arithmetic types, the usual arithmetic conversions determine the common type.
+		// The sema pass annotates each branch with a conversion to the common type.
+		// We also try parser type inference as a fallback.
+		Type common_type = Type::Invalid;
+		// Check sema annotations: if either branch has a conversion annotation, that
+		// tells us the target (common) type.
+		if (sema_) {
+			auto getAnnotatedTargetType = [&](const ASTNode& branch) -> Type {
+				if (!branch.is<ExpressionNode>()) return Type::Invalid;
+				const void* key = &branch.as<ExpressionNode>();
+				const auto slot = sema_->getSlot(key);
+				if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
+				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+				return sema_->typeContext().get(ci.target_type_id).base_type;
+			};
+			Type true_target = getAnnotatedTargetType(ternaryNode.true_expr());
+			Type false_target = getAnnotatedTargetType(ternaryNode.false_expr());
+			if (true_target != Type::Invalid)
+				common_type = true_target;
+			else if (false_target != Type::Invalid)
+				common_type = false_target;
+		}
+		// Fallback: try parser type inference
+		if (common_type == Type::Invalid && parser_) {
+			auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
+			auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
+			if (true_ts.has_value() && false_ts.has_value())
+				common_type = get_common_type(true_ts->type(), false_ts->type());
+		}
+
 		// Evaluate true expression
 		ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
+		// Finalize common_type: if parser inference failed, fall back to true branch type
+		if (common_type == Type::Invalid)
+			common_type = true_result.type;
+
+		// Convert true result to common type if needed
+		if (true_result.type != common_type)
+			true_result = generateTypeConversion(true_result, true_result.type, common_type, ternaryNode.get_token());
+
+		int result_size = get_type_size_bits(common_type);
+		if (result_size == 0) result_size = true_result.size_in_bits.value;
+
 		// Create result variable to hold the final value
 		TempVar result_var = var_counter.next();
-		Type result_type = true_result.type;
-		int result_size = true_result.size_in_bits.value;
 
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
 		assign_true_op.result = result_var;
-		assign_true_op.lhs.type = result_type;
-		assign_true_op.lhs.size_in_bits = SizeInBits{static_cast<int>(result_size)};
+		assign_true_op.lhs.type = common_type;
+		assign_true_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_true_op.lhs.value = result_var;
 		assign_true_op.rhs = toTypedValue(true_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
@@ -417,17 +457,22 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Unconditional branch to end
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternaryNode.get_token()));
 
+
 		// False branch label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
 
 		// Evaluate false expression
 		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
+		// Convert false result to common type if needed
+		if (false_result.type != common_type)
+			false_result = generateTypeConversion(false_result, false_result.type, common_type, ternaryNode.get_token());
+
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
 		assign_false_op.result = result_var;
-		assign_false_op.lhs.type = result_type;
-		assign_false_op.lhs.size_in_bits = SizeInBits{static_cast<int>(result_size)};
+		assign_false_op.lhs.type = common_type;
+		assign_false_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_false_op.lhs.value = result_var;
 		assign_false_op.rhs = toTypedValue(false_result);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
@@ -436,7 +481,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 
 		// Return the result variable
-		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_var});
+		return makeExprResult(common_type, SizeInBits{result_size}, IrOperand{result_var});
 	}
 
 	ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
