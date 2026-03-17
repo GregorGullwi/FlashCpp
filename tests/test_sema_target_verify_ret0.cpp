@@ -26,8 +26,8 @@ int main() {
 
 	// Compound assignment: int += double → common type double, result back to int
 	int c = 10;
-	c += 5;
-	if (c == 15)
+	c += 2.5;
+	if (c == 12)
 		result += 100;
 
 	// Shift: independent promotion (short → int on both sides)
