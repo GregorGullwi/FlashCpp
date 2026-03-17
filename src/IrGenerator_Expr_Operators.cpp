@@ -2377,11 +2377,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			return lhsExprResult;
 		}
 		else if (op == ">>=") {
-			BinaryOp bin_op{
-				.lhs = toTypedValue(lhsExprResult),
-				.rhs = toTypedValue(rhsExprResult),
-				.result = toIrValue(lhsExprResult.value),
-			};
 			// For unsigned types, use logical shift right (SHR) instead of arithmetic (SAR).
 			// ShrAssign always emits SAR which sign-extends the MSB — wrong for unsigned.
 			if (is_unsigned_integer_type(commonType)) {
@@ -2406,6 +2401,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = { commonType, SizeInBits{get_type_size_bits(commonType)}, shr_result };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			} else {
+				BinaryOp bin_op{
+					.lhs = toTypedValue(lhsExprResult),
+					.rhs = toTypedValue(rhsExprResult),
+					.result = toIrValue(lhsExprResult.value),
+				};
 				ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 			}
 			return lhsExprResult;
