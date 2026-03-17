@@ -399,6 +399,9 @@ private:
 	// Allocate a register, spilling one to the stack if necessary, excluding a specific register
 	X64Register allocateRegisterWithSpilling(X64Register exclude);
 
+	// Allocate a register, spilling one to the stack if necessary, excluding two specific registers
+	X64Register allocateRegisterWithSpilling(X64Register exclude1, X64Register exclude2);
+
 	// Allocate an XMM register, spilling one to the stack if necessary
 	X64Register allocateXMMRegisterWithSpilling();
 
@@ -529,10 +532,10 @@ private:
 
 	void handleUnsignedShiftRight(const IrInstruction& instruction);
 
-	// Guard helper: if 'result_reg' is RCX (which we are about to overwrite with
-	// the shift count), save the value to a fresh register and update 'result_reg'.
-	// This prevents the shift count from clobbering the LHS operand.
-	void ensureNotInRCX(X64Register& result_reg, int size_in_bits);
+	// If the LHS (result) register is RCX, move it elsewhere before we overwrite
+	// RCX with the shift count.  Both RCX and the RHS register are excluded from
+	// allocation so the spill candidate search cannot evict either operand.
+	void relocateLhsOutOfRCX(ArithmeticOperationContext& ctx);
 
 	void handleBitwiseArithmetic(const IrInstruction& instruction, uint8_t opcode, const char* description);
 

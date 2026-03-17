@@ -3662,6 +3662,59 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 	}
 
 template<class TWriterClass>
+X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Register exclude1, X64Register exclude2)  {
+		// Try to allocate a free register first (excluding both specified registers)
+		for (auto& reg : regAlloc.registers) {
+				if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude1 && reg.reg != exclude2 && !isRestrictedCatchFuncletRegister(reg.reg)) {
+				reg.isAllocated = true;
+				return reg.reg;
+			}
+		}
+
+		// No free registers - need to spill one (excluding both specified registers)
+			auto reg_to_spill = [&]() -> std::optional<X64Register> {
+				X64Register best_candidate = X64Register::Count;
+				bool found_dirty = false;
+				for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
+					const auto& reg = regAlloc.registers[i];
+					if (!reg.isAllocated || reg.reg == X64Register::RSP || reg.reg == X64Register::RBP || reg.reg == exclude1 || reg.reg == exclude2 || isRestrictedCatchFuncletRegister(reg.reg)) {
+						continue;
+					}
+					if (!reg.isDirty) {
+						return reg.reg;
+					}
+					if (best_candidate == X64Register::Count) {
+						best_candidate = reg.reg;
+						found_dirty = true;
+					}
+				}
+				if (found_dirty) {
+					return best_candidate;
+				}
+				return std::nullopt;
+			}();
+		if (!reg_to_spill.has_value()) {
+			throw InternalError("No registers available for spilling");
+		}
+
+		X64Register spill_reg = reg_to_spill.value();
+		auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
+
+		// If the register is dirty, write it back to the stack using size-appropriate MOV
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			emitMovToFrameSized(
+				SizedRegister{spill_reg, 64, false},  // source: 64-bit register
+				SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits.value, false}  // dest: sized stack slot
+			);
+		}
+
+		// Release the register and allocate it again
+		regAlloc.release(spill_reg);
+		reg_info.isAllocated = true;
+		return spill_reg;
+	}
+
+template<class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling()  {
 		return allocateXMMRegisterWithSpilling(X64Register::Count);
 	}
@@ -8941,16 +8994,15 @@ void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instructi
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::ensureNotInRCX(X64Register& result_reg, int size_in_bits) {
+void IrToObjConverter<TWriterClass>::relocateLhsOutOfRCX(ArithmeticOperationContext& ctx) {
 		// If the LHS operand is in RCX, we must move it elsewhere before overwriting
 		// RCX with the shift count, otherwise the shift operates on the count itself.
-		if (result_reg != X64Register::RCX) return;
-		// Flush the RHS register (if dirty) before allocating, so that
-		// allocateRegisterWithSpilling cannot evict the RHS value from its
-		// physical register while looking for a spill candidate.  The single-
-		// exclude overload only protects RCX; without this flush the RHS
-		// could be silently spilled, and the subsequent MOV from the old
-		// physical register would read garbage.
+		if (ctx.result_physical_reg != X64Register::RCX) return;
+		// Flush all dirty registers before allocating, so that
+		// allocateRegisterWithSpilling cannot evict a dirty value from its
+		// physical register while looking for a spill candidate.  Without this
+		// flush the RHS could be silently spilled, and the subsequent MOV from
+		// the old physical register would read garbage.
 		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int reg_size_in_bits) {
 			if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
 				variable_scopes.back().scope_stack_space = stackVariableOffset;
@@ -8960,10 +9012,12 @@ void IrToObjConverter<TWriterClass>::ensureNotInRCX(X64Register& result_reg, int
 				SizedStackSlot{stackVariableOffset, reg_size_in_bits, false}
 			);
 		});
-		X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX);
-		emitMovRegToReg(X64Register::RCX, lhs_tmp, size_in_bits);
+		// Exclude both RCX (about to be overwritten with shift count) and the RHS
+		// register (holds the shift count value) so the allocator cannot pick either.
+		X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX, ctx.rhs_physical_reg);
+		emitMovRegToReg(X64Register::RCX, lhs_tmp, ctx.result_value.size_in_bits.value);
 		regAlloc.release(X64Register::RCX);
-		result_reg = lhs_tmp;
+		ctx.result_physical_reg = lhs_tmp;
 	}
 
 template<class TWriterClass>
@@ -8978,7 +9032,7 @@ void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instru
 		X64Register original_result_reg = ctx.result_physical_reg;
 
 		// If the LHS is in RCX, save it before loading the shift count there.
-		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+		relocateLhsOutOfRCX(ctx);
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
@@ -8998,11 +9052,11 @@ void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instr
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
 
-		// Save original result register before ensureNotInRCX may change it (double-release guard).
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
 		X64Register original_result_reg = ctx.result_physical_reg;
 
 		// If the LHS is in RCX, save it before loading the shift count there.
-		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+		relocateLhsOutOfRCX(ctx);
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
@@ -9050,11 +9104,11 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
 
-		// Save original result register before ensureNotInRCX may change it (double-release guard).
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
 		X64Register original_result_reg = ctx.result_physical_reg;
 
 		// If the LHS is in RCX, save it before loading the shift count there.
-		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+		relocateLhsOutOfRCX(ctx);
 
 		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
@@ -10740,7 +10794,7 @@ void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instru
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
 
 		// If the LHS is in RCX, save it before loading the shift count there.
-		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+		relocateLhsOutOfRCX(ctx);
 
 		// Move RHS to CL register
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
@@ -10756,7 +10810,7 @@ void IrToObjConverter<TWriterClass>::handleShrAssign(const IrInstruction& instru
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
 
 		// If the LHS is in RCX, save it before loading the shift count there.
-		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
+		relocateLhsOutOfRCX(ctx);
 
 		// Move RHS to CL register
 		emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
