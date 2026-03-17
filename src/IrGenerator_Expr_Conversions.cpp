@@ -40,6 +40,11 @@
 					assert(std::holds_alternative<double>(operands.value) &&
 						"float literal must be stored as double in IrOperand");
 					const double src_val = std::get<double>(operands.value);
+					if (toType == Type::Bool) {
+						// C++20 [conv.bool]: zero → false, any other value → true.
+						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
+						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
+					}
 					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
 					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 				} else {
