@@ -808,6 +808,7 @@ The right split is:
 - User-defined `operator bool()` / converting constructors remain in codegen.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`. The backend's register-tracking does not yet support a `GlobalLoad` immediately after a `GlobalStore` to the same symbol, so a proper re-load cannot be emitted. Value semantics are correct for all practical uses (`int x = (g = 42)`, chained assignments); only lvalue-specific operations (`&(g = 42)`, `(g = 42) = 99`) would observe the difference.
 
 ### Parallel rollout guidance
 
