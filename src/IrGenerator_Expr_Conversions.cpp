@@ -2262,7 +2262,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 		};
 
-		// 1. Try sema annotation (Phase 6 contextual bool).
+		// 1. Try sema annotation (Phase 6/8 contextual bool).
 		if (sema_ && cond_node.is<ExpressionNode>()) {
 			const void* key = &cond_node.as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
@@ -2270,13 +2270,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				const ImplicitCastInfo& cast_info =
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
-				// Only emit an explicit conversion for float/double → bool.
-				// Integer → bool is already handled correctly by the backend (TEST).
-				// Pointer types (even float*/double*) are integer-width addresses and
-				// must use TEST, not FloatNotEqual — check pointer_levels to avoid
-				// misinterpreting a float* address as a floating-point value.
+				// Float/double → bool: emit FloatNotEqual(cond, 0.0).
 				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.base_type)) {
 					return emitFloatNonZeroTest(condition);
+				}
+				// Enum/pointer → bool (Phase 9): backend TEST already implements
+				// correct zero/null → false, non-zero/non-null → true semantics.
+				// Consume the annotation without emitting extra code.
+				if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
+					cast_info.cast_kind == StandardConversionKind::PointerConversion) {
+					return condition;
 				}
 			}
 		}

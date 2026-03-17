@@ -644,6 +644,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
+					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
+					if (rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
+						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
+					}
+
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
@@ -701,28 +706,76 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult rhs_result = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Map compound op to arithmetic opcode
-					const auto arith_opcode = compoundOpToBaseOpcode(op);
-					if (!arith_opcode.has_value()) {
+					const auto base_opcode = compoundOpToBaseOpcode(op);
+					if (!base_opcode.has_value()) {
 						FLASH_LOG(Codegen, Error, "Unsupported compound assignment operator for global: ", op);
 						return ExprResult{};
 					}
 
-					// Perform the operation
+					// C++20 [expr.ass]/7: E1 op= E2 behaves as E1 = static_cast<T1>(E1 op E2).
+					// Compute common type and apply usual arithmetic conversions.
+					const Type commonType = get_common_type(gsi.type, rhs_result.type);
+
+					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
+					if (gsi.type != commonType) {
+						lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+					}
+					if (rhs_result.type != commonType) {
+						rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+					}
+
+					// Select the correct opcode for the common type.
+					IrOpcode arith_opcode = *base_opcode;
+					if (is_floating_point_type(commonType)) {
+						if (arith_opcode == IrOpcode::Modulo)
+							throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
+						if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
+							throw CompileError("Bitwise compound assignment is not defined for floating-point operands");
+						if (arith_opcode == IrOpcode::Add) arith_opcode = IrOpcode::FloatAdd;
+						else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
+						else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
+						else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
+					} else if (is_unsigned_integer_type(commonType)) {
+						if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::UnsignedDivide;
+						else if (arith_opcode == IrOpcode::Modulo) arith_opcode = IrOpcode::UnsignedModulo;
+						else if (arith_opcode == IrOpcode::ShiftRight) arith_opcode = IrOpcode::UnsignedShiftRight;
+					}
+
+					// Perform the operation in common type
 					TempVar result_var = var_counter.next();
 					BinaryOp bin_op{
-						.lhs = {gsi.type, gsi.size_in_bits, loaded},
+						.lhs = toTypedValue(lhs_operand),
 						.rhs = toTypedValue(rhs_result),
 						.result = result_var,
 					};
-					ir_.addInstruction(IrInstruction(*arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+					ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
+
+					// Convert result back to global's type if needed
+					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var});
+					if (commonType != gsi.type) {
+						op_result = generateTypeConversion(op_result, commonType, gsi.type, binaryOperatorNode.get_token());
+					}
+
+					// Materialize the conversion result into a stack-flushed temporary
+					// so that GlobalStore can safely read it. This works around the
+					// register-tracking gap where GlobalStore reads from the stack slot
+					// but generateTypeConversion may leave the result only in a register.
+					TempVar store_temp = var_counter.next();
+					{
+						AssignmentOp mat;
+						mat.result = store_temp;
+						mat.lhs = { gsi.type, gsi.size_in_bits, store_temp };
+						mat.rhs = toTypedValue(op_result);
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(mat), binaryOperatorNode.get_token()));
+					}
 
 					// Store result back to global
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
-					store_operands.emplace_back(result_var);
+					store_operands.emplace_back(store_temp);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{result_var});
+					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{store_temp});
 				}
 			}
 		}
