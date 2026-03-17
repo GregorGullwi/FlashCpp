@@ -32,21 +32,29 @@
 
 		if (is_literal) {
 			if (from_is_float != to_is_float) {
-				TempVar resultVar = var_counter.next();
-				TypeConversionOp conv_op{
-					.result = resultVar,
-					.from = toTypedValue(operands),
-					.to_type = toType,
-					.to_size_in_bits = SizeInBits{toSize
-				}};
-
 				if (from_is_float) {
-					ir_.addInstruction(IrInstruction(IrOpcode::FloatToInt, std::move(conv_op), source_token));
+					// Constant-fold float/double literal → integer at compile time.
+					// This avoids emitting FloatToInt IR with a raw double IrValue,
+					// which handleFloatToInt does not support.
+					double src_val = 0.0;
+					if (const auto* d_val = std::get_if<double>(&operands.value))
+						src_val = *d_val;
+					auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
+					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val});
 				} else {
+					// int literal → float/double: emit IntToFloat IR instruction.
+					// handleIntToFloat uses loadTypedValueIntoRegister which handles
+					// integer literal IrValues correctly.
+					TempVar resultVar = var_counter.next();
+					TypeConversionOp conv_op{
+						.result = resultVar,
+						.from = toTypedValue(operands),
+						.to_type = toType,
+						.to_size_in_bits = SizeInBits{toSize
+					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
+					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar});
 				}
-
-				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar});
 			}
 
 			// For same-domain literal conversions, keep the value immediate.

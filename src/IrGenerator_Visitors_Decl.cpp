@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 	void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 		if (!node.get_definition().has_value() && !node.is_implicit()) {
@@ -2551,6 +2552,40 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		}
 
 		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+
+		// Apply sema-annotated or standard implicit conversion for this argument.
+		if (param_type && !param_type->is_reference() && !param_type->is_rvalue_reference()) {
+			Type arg_type = argumentIrOperands.type;
+			const Type param_base_type = param_type->type();
+			bool sema_applied = false;
+
+			// Check sema annotation first.
+			if (sema_ && argument.is<ExpressionNode>()) {
+				const void* key = &argument.as<ExpressionNode>();
+				const auto slot = sema_->getSlot(key);
+				if (slot.has_value() && slot->has_cast()) {
+					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+					const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+					const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
+					if (from_t != Type::Struct && to_t != Type::Struct) {
+						argumentIrOperands = generateTypeConversion(argumentIrOperands, from_t, to_t,
+							constructorCallNode.called_from());
+						sema_applied = true;
+					}
+				}
+			}
+
+			// Fallback: standard primitive conversion if sema didn't annotate.
+			if (!sema_applied && param_type->pointer_depth() == 0 &&
+				arg_type != param_base_type) {
+				TypeConversionResult conv = can_convert_type(arg_type, param_base_type);
+				if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type,
+						constructorCallNode.called_from());
+				}
+			}
+		}
+
 		// argumentIrOperands = [type, size, value]
 		{
 			TypedValue tv;

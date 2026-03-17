@@ -15,8 +15,11 @@ class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
 class FunctionCallNode;
+class ConstructorCallNode;
+class InitializerListNode;
 class RangedForStatementNode;
 class VariableDeclarationNode;
+struct StructTypeInfo;
 struct LambdaInfo;
 
 // --- Semantic analysis pass ---
@@ -122,6 +125,13 @@ private:
 
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+
+	// Annotate constructor-call arguments with their parameter-type conversions.
+	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
+
+	// Annotate InitializerListNode elements used as constructor arguments
+	// with their parameter-type conversions (for direct-init syntax like `Type obj(args...)`).
+	void tryAnnotateInitListConstructorArgs(const InitializerListNode& init_list, const StructTypeInfo& struct_info);
 
 	// Annotate ternary operator branches with common-type conversions
 	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).
