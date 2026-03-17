@@ -693,8 +693,20 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					// Return the RHS value as the result (assignment expression returns the assigned value)
-					return rhsExprResult;
+					// C++20 [expr.ass]/3: the result of an assignment is an lvalue referring
+					// to the left operand.  Re-load the global so that consumers (e.g.
+					// chained assignments, arithmetic on the result) see the stored value
+					// with the correct type and identity rather than a detached temporary.
+					TempVar reloaded = var_counter.next();
+					GlobalLoadOp reload_op;
+					reload_op.result.type = gsi.type;
+					reload_op.result.ir_type = toIrType(gsi.type);
+					reload_op.result.size_in_bits = gsi.size_in_bits;
+					reload_op.result.value = reloaded;
+					reload_op.global_name = gsi.store_name;
+					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(reload_op), binaryOperatorNode.get_token()));
+
+					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{reloaded});
 				}
 			}
 		}
