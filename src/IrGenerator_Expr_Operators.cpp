@@ -2142,21 +2142,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Prefer sema annotation (consistent with global assignment and binary operator paths);
 			// pass expected_target=lhsType so the annotation is verified before being applied.
 			if (rhsType != lhsType) {
-				bool sema_applied = false;
-				if (sema_ && binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
-					const void* key = &binaryOperatorNode.get_rhs().as<ExpressionNode>();
-					const auto slot = sema_->getSlot(key);
-					if (slot.has_value() && slot->has_cast()) {
-						const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-						const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
-						if (from_t != Type::Struct && to_t != Type::Struct && to_t == lhsType) {
-							rhsExprResult = generateTypeConversion(rhsExprResult, from_t, to_t, binaryOperatorNode.get_token());
-							sema_applied = true;
-						}
-					}
-				}
-				if (!sema_applied)
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType))
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
 			}
 			// Now both are the same type, create assignment
