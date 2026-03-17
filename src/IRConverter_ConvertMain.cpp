@@ -8956,6 +8956,12 @@ void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instru
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left");
 
+		// Save original result register identity before ensureNotInRCX may change it.
+		// If both operands resolved to the same register (RCX) and ensureNotInRCX moves
+		// the LHS away, ctx.rhs_physical_reg still points at RCX (already released).
+		// The final release must be skipped in that case to avoid a double-release.
+		X64Register original_result_reg = ctx.result_physical_reg;
+
 		// If the LHS is in RCX, save it before loading the shift count there.
 		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
@@ -8967,7 +8973,7 @@ void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instru
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
@@ -8976,6 +8982,9 @@ template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instruction)  {
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
+
+		// Save original result register before ensureNotInRCX may change it (double-release guard).
+		X64Register original_result_reg = ctx.result_physical_reg;
 
 		// If the LHS is in RCX, save it before loading the shift count there.
 		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
@@ -8989,7 +8998,7 @@ void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instr
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
@@ -9026,6 +9035,9 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
 
+		// Save original result register before ensureNotInRCX may change it (double-release guard).
+		X64Register original_result_reg = ctx.result_physical_reg;
+
 		// If the LHS is in RCX, save it before loading the shift count there.
 		ensureNotInRCX(ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
@@ -9038,7 +9050,7 @@ void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstructio
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
-		if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
+		if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 			regAlloc.release(ctx.rhs_physical_reg);
 		}
 	}
