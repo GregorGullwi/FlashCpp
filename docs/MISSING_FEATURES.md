@@ -434,4 +434,31 @@ When implementing a missing feature:
 
 ## Known Issues
 
-None at this time. Fixed items have been removed per policy.
+### Enum ADL may fail for enums in anonymous namespaces
+
+**Severity**: Low (conformance issue, edge case)
+
+Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser.
+
+Enums declared inside named namespaces and enums nested inside class bodies within named
+namespaces now work correctly (fixed 2026-03-18 — nested enum qualified-name registration
+walks the full `struct_parsing_context_stack_`).
+
+However, **enums in anonymous namespaces** have not been verified. Anonymous namespaces have a
+unique internal handle. If this handle is not correctly propagated, ADL would fail to find
+functions in the anonymous namespace.
+
+**Example** (untested):
+```cpp
+namespace {
+    enum class Color { Red, Green, Blue };
+    int classify(Color c) { return static_cast<int>(c); }
+}
+int main() {
+    // ADL should find the anonymous-namespace classify() because
+    // Color's associated namespace is the anonymous namespace.
+    return classify(Color::Red);
+}
+```
+
+**Fix**: Verify that `parse_enum_declaration` passes the correct anonymous namespace handle to `add_enum_type`. Add tests for anonymous namespace enum ADL.

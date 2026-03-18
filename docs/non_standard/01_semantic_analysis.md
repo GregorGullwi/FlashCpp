@@ -8,7 +8,7 @@ Covers `src/SymbolTable.h`, `src/OverloadResolution.h`, `src/NameMangling.h`.
 
 ---
 
-### 1.1 Argument-Dependent Lookup (ADL) ✅
+### 1.1 Argument-Dependent Lookup (ADL) ⚠️
 
 **Standard (C++20 [basic.lookup.argdep]):** For an unqualified call `f(args…)` whose arguments
 have class or enumeration type, lookup must also search the *associated namespaces* of the
@@ -26,6 +26,10 @@ Both struct/class and enum argument types are handled:
 - **Hidden friends:** functions declared with `friend` inside a class body are stored in
   `adl_only_symbols_` via `insert_into_namespace(..., adl_only=true)`, making them invisible to
   ordinary unqualified lookup but reachable via ADL.
+
+**Remaining gap:** Enums in anonymous namespaces have not been verified — the anonymous namespace
+handle may not be correctly propagated to `add_enum_type()`, which would cause ADL to search
+the wrong namespace. See `docs/MISSING_FEATURES.md` Known Issues for details.
 
 **Location:** `src/SymbolTable.h` — `lookup_adl()`, `lookup_adl_only()`, `insert_into_namespace()`,
 `collect_struct_associated_namespaces()`; `src/Parser_Decl_StructEnum.cpp` — nested enum
