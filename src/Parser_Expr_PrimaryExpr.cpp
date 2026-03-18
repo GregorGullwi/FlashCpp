@@ -3397,6 +3397,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					        adl_arg_types.push_back(*at);
 					    }
 					}
+					bool adl_was_ambiguous = false;
 					if (!adl_arg_types.empty()) {
 					    auto adl_cands = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
 					    if (!adl_cands.empty()) {
@@ -3404,22 +3405,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					        if (adl_res.has_match && !adl_res.is_ambiguous) {
 					            identifierType = *adl_res.selected_overload;
 					        }
+					        if (adl_res.is_ambiguous) {
+					            adl_was_ambiguous = true;
+					        }
 					    }
 					}
 					// C++20 [basic.lookup.argdep]: if the function was NOT found via ADL either,
 					// and the name belongs to a hidden friend (ADL-only symbol), reject the call.
 					if (!identifierType->is<FunctionDeclarationNode>() &&
 					    gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
-						if (!adl_arg_types.empty()) {
-							auto adl_cands2 = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
-							if (!adl_cands2.empty()) {
-								auto adl_res2 = resolve_overload(adl_cands2, adl_arg_types);
-								if (adl_res2.is_ambiguous) {
-									return ParseResult::error(
-										"call to '" + std::string(identifier_token.value()) + "' is ambiguous",
-										identifier_token);
-								}
-							}
+						if (adl_was_ambiguous) {
+							return ParseResult::error(
+								"call to '" + std::string(identifier_token.value()) + "' is ambiguous",
+								identifier_token);
 						}
 						return ParseResult::error(
 							"'" + std::string(identifier_token.value()) + "' is a hidden friend and is only "
