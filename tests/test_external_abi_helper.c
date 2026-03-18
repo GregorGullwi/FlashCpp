@@ -38,6 +38,20 @@ typedef struct Big3 {
     int c;
 } Big3;
 
+typedef struct Big4 {
+    int a;
+    int b;
+    int c;
+    int d;
+} Big4;
+
+int flashcpp_sum_big3(Big3 value);
+int flashcpp_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value);
+int flashcpp_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value);
+int flashcpp_sum_big4(Big4 value);
+int flashcpp_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 value);
+int flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value);
+
 int external_sum_big3(Big3 value) {
     printf("external_sum_big3: %d %d %d\n", value.a, value.b, value.c);
     return value.a + value.b + value.c;
@@ -57,4 +71,55 @@ int external_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 valu
     printf("external_big3_after_5_ints: %d %d %d %d %d | %d %d %d\n",
            i1, i2, i3, i4, i5, value.a, value.b, value.c);
     return i1 + i2 + i3 + i4 + i5 + value.a + value.b + value.c;
+}
+
+int external_sum_big4(Big4 value) {
+    printf("external_sum_big4: %d %d %d %d\n", value.a, value.b, value.c, value.d);
+    return value.a + value.b + value.c + value.d;
+}
+
+int external_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 value) {
+    printf("external_big4_after_4_ints: %d %d %d %d | %d %d %d %d\n",
+           i1, i2, i3, i4, value.a, value.b, value.c, value.d);
+    return i1 + i2 + i3 + i4 + value.a + value.b + value.c + value.d;
+}
+
+int external_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value) {
+    printf("external_big4_after_5_ints: %d %d %d %d %d | %d %d %d %d\n",
+           i1, i2, i3, i4, i5, value.a, value.b, value.c, value.d);
+    return i1 + i2 + i3 + i4 + i5 + value.a + value.b + value.c + value.d;
+}
+
+int external_call_flashcpp_big3(Big3 value) {
+    printf("external_call_flashcpp_big3: %d %d %d\n", value.a, value.b, value.c);
+    return flashcpp_sum_big3(value);
+}
+
+int external_call_flashcpp_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value) {
+    printf("external_call_flashcpp_big3_after_4_ints: %d %d %d %d | %d %d %d\n",
+           i1, i2, i3, i4, value.a, value.b, value.c);
+    return flashcpp_big3_after_4_ints(i1, i2, i3, i4, value);
+}
+
+int external_call_flashcpp_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value) {
+    printf("external_call_flashcpp_big3_after_5_ints: %d %d %d %d %d | %d %d %d\n",
+           i1, i2, i3, i4, i5, value.a, value.b, value.c);
+    return flashcpp_big3_after_5_ints(i1, i2, i3, i4, i5, value);
+}
+
+int external_call_flashcpp_big4(Big4 value) {
+    printf("external_call_flashcpp_big4: %d %d %d %d\n", value.a, value.b, value.c, value.d);
+    return flashcpp_sum_big4(value);
+}
+
+int external_call_flashcpp_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 value) {
+    printf("external_call_flashcpp_big4_after_4_ints: %d %d %d %d | %d %d %d %d\n",
+           i1, i2, i3, i4, value.a, value.b, value.c, value.d);
+    return flashcpp_big4_after_4_ints(i1, i2, i3, i4, value);
+}
+
+int external_call_flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value) {
+    printf("external_call_flashcpp_big4_after_5_ints: %d %d %d %d %d | %d %d %d %d\n",
+           i1, i2, i3, i4, i5, value.a, value.b, value.c, value.d);
+    return flashcpp_big4_after_5_ints(i1, i2, i3, i4, i5, value);
 }
