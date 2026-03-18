@@ -207,9 +207,9 @@ foreach ($file in $referenceFiles) {
 }
 
 # ──────────────────────────────────────────────────────
-# Create temp directory for parallel result collection
+# Create temp directory for parallel result collection (in working directory)
 # ──────────────────────────────────────────────────────
-$resultDir = Join-Path ([System.IO.Path]::GetTempPath()) "flashcpp_test_results_$PID"
+$resultDir = Join-Path $RepoRoot "test_results_$PID"
 if (Test-Path $resultDir) { Remove-Item $resultDir -Recurse -Force }
 New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 
@@ -309,14 +309,12 @@ function Invoke-TestOneFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-worker paths in the system temp dir to avoid race conditions
-	# when parallel workers process tests that share the same base name.
-	$tempDir = [System.IO.Path]::GetTempPath()
+	# Use result directory for artifacts to avoid polluting system temp
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
-	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
-	$exeFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.exe"
-	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+	$objFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.obj"
+	$exeFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.exe"
+	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -438,12 +436,11 @@ function Invoke-TestOneFailFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-worker paths in the system temp dir to avoid race conditions.
-	$tempDir = [System.IO.Path]::GetTempPath()
+	# Use result directory for artifacts to avoid polluting system temp
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
-	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
-	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+	$objFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.obj"
+	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Fallback result in case the worker encounters a terminating error
 	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
