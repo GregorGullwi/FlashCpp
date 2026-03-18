@@ -260,8 +260,8 @@ This fixes the concrete failure mode behind the item: array arguments decaying t
 
 ---
 
-## 34. 9–16 Byte Struct Caller/Callee ABI Mismatch ✅ Fixed (2026-03-06)
-`src/IRConverter_ConvertMain.h` (formerly `src/IRConverter_Emit_CompareBranch.h`) — For structs 9–16 bytes on Linux, the caller was using the System V AMD64 two-register convention (values in RDI + RSI) while the callee always used the pointer convention (RDI = pointer, dereferences with `mov (%rcx),%eax`). FlashCpp now uses the pointer convention for all structs > 8 bytes on both Linux and Windows, matching the existing callee prologue. `isTwoRegisterStruct` always returns `false`; `shouldPassStructByAddress` returns `true` for `size_in_bits > 64` on all platforms. Test: `test_struct_const_ref_args_ret42.cpp`.
+## 34. 9–16 Byte Struct Caller/Callee ABI Mismatch ✅ Fixed (2026-03-06, revalidated 2026-03-18)
+`src/IRConverter_ConvertMain.cpp` / `src/IRConverter_ConvertMain.h` — On SysV AMD64, non-variadic 9–16 byte by-value structs are now handled with the ABI-mandated two-register convention on both the caller and callee sides. The call lowering, stack-overflow path, constructor-call path, and function-declaration prologue all recognize INTEGER-classified 9–16 byte structs via `isTwoRegisterStructRaw(...)`, suppress the by-address fallback in `shouldPassStructByAddress(...)`, and materialize register-passed values directly in the callee frame. Revalidated with external-clang interop coverage for both 12-byte (`Big3`) and 16-byte (`Big4`) structs in both directions, including register and stack-overflow cases. Test: `test_external_abi.cpp` + `test_external_abi_helper.c`.
 
 ---
 

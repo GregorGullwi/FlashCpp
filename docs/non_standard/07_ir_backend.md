@@ -9,14 +9,14 @@ For pointer-type IR issues in the codegen layer see [06_codegen.md](06_codegen.m
 
 ---
 
-### 5.1 Non-Variadic 9–16 Byte Structs Passed by Pointer (System V AMD64) ❌ [Known]
+### 5.1 Non-Variadic 9–16 Byte Structs Passed by Pointer (System V AMD64) ✅
 
 **ABI (System V AMD64 §3.2.3):** Structs whose total size is 9–16 bytes and whose fields
 classify as INTEGER must be passed in two consecutive registers for non-variadic calls.
 
-**FlashCpp:** All non-variadic struct arguments larger than 8 bytes are passed by pointer on
-Linux. Both caller and callee agree, so internal calls work; but calls to or from GCC/Clang
-code using the actual ABI produce incorrect results.
+**FlashCpp:** On Linux, non-variadic 9–16 byte by-value structs are passed and received using
+the System V two-register convention. Internal calls and GCC/Clang interop both use the ABI
+layout for 12-byte and 16-byte INTEGER-classified structs.
 
-**Location:** `src/IRConverter_ConvertMain.h` (code formerly in `src/IRConverter_Emit_CompareBranch.h` and `src/IRConverter_Conv_Calls.h`)
-**See also:** `docs/KNOWN_ISSUES.md`
+**Location:** `src/IRConverter_ConvertMain.cpp`, `src/IRConverter_ConvertMain.h`
+**Validation:** `tests/test_external_abi.cpp` + `tests/test_external_abi_helper.c`
