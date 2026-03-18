@@ -646,14 +646,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const auto slot = sema_->getSlot(key);
 			if (!slot.has_value() || !slot->has_cast()) return false;
 			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+			Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
 			if (from_t == Type::Struct || to_t == Type::Struct) return false;
 			if (expected_target != Type::Invalid && to_t != expected_target) return false;
 			// Defensive: sema source type should match the expression's runtime type.
-			// A mismatch would indicate a stale or miskeyed annotation.
-			if (from_t != expr.type)
-				throw InternalError("sema annotation source type does not match expr.type");
+			// Exception: sema may annotate as Type::Enum while codegen resolves enum
+			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
+			if (from_t != expr.type) {
+				if (from_t == Type::Enum)
+					from_t = expr.type;
+				else
+					throw InternalError("sema annotation source type does not match expr.type");
+			}
 			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
 			return true;
 		};
@@ -2177,14 +2182,20 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (!slot.has_value() || !slot->has_cast()) return false;
 			const ImplicitCastInfo& cast_info =
 				sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+			Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 			const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 			if (from_type == Type::Struct || to_type == Type::Struct) return false;
 			if (expected_target != Type::Invalid && to_type != expected_target) return false;
 			// Defensive: sema source type should match the expression's runtime type.
-			// A mismatch would indicate a stale or miskeyed annotation.
-			if (from_type != operands.type)
-				throw InternalError("sema annotation source type does not match operands.type");
+			// Exception: sema may annotate as Type::Enum while codegen resolves enum
+			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
+			// In that case, use the operand's actual runtime type for the conversion.
+			if (from_type != operands.type) {
+				if (from_type == Type::Enum)
+					from_type = operands.type;
+				else
+					throw InternalError("sema annotation source type does not match operands.type");
+			}
 			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
 			return true;
 		};

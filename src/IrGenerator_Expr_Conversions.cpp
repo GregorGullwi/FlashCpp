@@ -4,6 +4,14 @@
 #include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
+		// Resolve enum to its underlying integer type so downstream size/signedness
+		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
+		if (fromType == Type::Enum && operands.type_index.is_valid() && operands.type_index.value < gTypeInfo.size()) {
+			if (const EnumTypeInfo* enum_info = gTypeInfo[operands.type_index.value].getEnumInfo()) {
+				fromType = enum_info->underlying_type;
+			}
+		}
+
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
 
