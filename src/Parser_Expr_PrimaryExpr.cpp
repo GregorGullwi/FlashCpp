@@ -5270,14 +5270,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 									// ADL per C++20 [basic.lookup.argdep]: augment candidate set with
 									// functions from associated namespaces of the argument types.
-									// Suppressed only when ordinary lookup found a blocking non-function decl.
-									if (!arg_types.empty() &&
-									    std::all_of(all_overloads.begin(), all_overloads.end(),
-									                [](const ASTNode& n) { return n.is<FunctionDeclarationNode>(); })) {
-										auto adl_candidates = gSymbolTable.lookup_adl(
-										    identifier_token.value(), arg_types);
-										all_overloads.insert(all_overloads.end(),
-										    adl_candidates.begin(), adl_candidates.end());
+									// Suppressed only when ordinary lookup found a blocking non-function decl
+									// (variable, struct, or enum declaration) — same rule as the early path.
+									// Use lookup_adl_only (not lookup_adl) since lookup_all already searched
+									// namespace_symbols_; this avoids duplicate candidates and false ambiguity.
+									if (!arg_types.empty()) {
+										auto is_adl_blocking_late = [](const ASTNode& n) -> bool {
+											return !n.is<FunctionDeclarationNode>() &&
+											       (n.is<VariableDeclarationNode>() || n.is<StructDeclarationNode>() ||
+											        n.is<EnumDeclarationNode>());
+										};
+										if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking_late)) {
+											auto adl_candidates = gSymbolTable.lookup_adl_only(
+											    identifier_token.value(), arg_types);
+											all_overloads.insert(all_overloads.end(),
+											    adl_candidates.begin(), adl_candidates.end());
+										}
 									}
 									if (all_overloads.empty()) {
 										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)

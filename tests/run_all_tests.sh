@@ -47,7 +47,6 @@ EXPECTED_FAIL=(
 # Note: test_virtual_inheritance.cpp, test_covariant_return.cpp, test_varargs.cpp link successfully but may have runtime issues
 # Note: test_placement_new_parsing_ret42.cpp now compiles and links successfully with array initializer support
 EXPECTED_LINK_FAIL=(
-	"test_hidden_friend_enum_adl_ret0.cpp"  # Enum ADL requires EnumTypeInfo namespace support (not yet implemented)
 )
 
 # Tests that require additional C helper objects for linking.
