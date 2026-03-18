@@ -584,14 +584,20 @@ public:
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
 			if (!ti.is_valid() || ti.value >= gTypeInfo.size()) continue;
-			const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo();
-			if (!si) continue;
-			collect_from_ns(si->namespace_handle);
-			for (const auto& base : si->base_classes) {
-				if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
-				const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
-				if (!bsi) continue;
-				collect_from_ns(bsi->namespace_handle);
+			const auto& type_info = gTypeInfo[ti.value];
+			if (const StructTypeInfo* si = type_info.getStructInfo()) {
+				collect_from_ns(si->namespace_handle);
+				for (const auto& base : si->base_classes) {
+					if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
+					const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
+					if (!bsi) continue;
+					collect_from_ns(bsi->namespace_handle);
+				}
+			} else if (type_info.getEnumInfo()) {
+				// C++20 [basic.lookup.argdep]/2: the associated namespace of an
+				// enumeration type is its innermost enclosing namespace.
+				// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
+				collect_from_ns(type_info.namespaceHandle());
 			}
 		}
 		return result;
@@ -628,7 +634,8 @@ public:
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
 			if (ti.is_valid() && ti.value < gTypeInfo.size()) {
-				if (const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo()) {
+				const auto& type_info = gTypeInfo[ti.value];
+				if (const StructTypeInfo* si = type_info.getStructInfo()) {
 					search_ns(si->namespace_handle);
 					for (const auto& base : si->base_classes) {
 						if (base.type_index.is_valid() && base.type_index.value < gTypeInfo.size()) {
@@ -637,6 +644,11 @@ public:
 							}
 						}
 					}
+				} else if (type_info.getEnumInfo()) {
+					// C++20 [basic.lookup.argdep]/2: the associated namespace of an
+					// enumeration type is its innermost enclosing namespace.
+					// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
+					search_ns(type_info.namespaceHandle());
 				}
 			}
 		}
