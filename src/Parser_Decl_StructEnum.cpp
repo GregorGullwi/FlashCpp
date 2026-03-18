@@ -96,6 +96,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// - For namespace classes: ns::Class  
 	// - For top-level classes: just the simple name
 	StringHandle full_qualified_name;
+	StringHandle struct_chain;  // struct-chain-relative name (e.g. "A::B::C"), used for nested class registration
 	
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class.
@@ -110,7 +111,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_chain_builder.append(ctx.struct_name).append("::");
 		}
 		struct_chain_builder.append(struct_name);
-		StringHandle struct_chain = StringTable::getOrInternStringHandle(struct_chain_builder.commit());
+		struct_chain = StringTable::getOrInternStringHandle(struct_chain_builder.commit());
 
 		if (!qualified_namespace.empty()) {
 			// Namespace + struct chain: "ns::A::B::C"
