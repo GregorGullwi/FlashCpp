@@ -5,9 +5,19 @@ namespace ConstExpr {
 
 namespace {
 	constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
+	constexpr std::string_view kBreakExecuted = "Break executed";
+	constexpr std::string_view kContinueExecuted = "Continue executed";
 
 	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
+	}
+
+	bool isBreakExecuted(const EvalResult& result) {
+		return !result.success() && result.error_message == kBreakExecuted;
+	}
+
+	bool isContinueExecuted(const EvalResult& result) {
+		return !result.success() && result.error_message == kContinueExecuted;
 	}
 
 	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
@@ -2862,7 +2872,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (body_result.success()) {
 				return body_result;
 			}
-			if (!isStatementExecutedWithoutReturn(body_result)) {
+			if (isBreakExecuted(body_result)) {
+				break;  // break statement exits the loop
+			}
+			if (isContinueExecuted(body_result)) {
+				// continue: skip to update expression, then next iteration
+			} else if (!isStatementExecutedWithoutReturn(body_result)) {
 				return body_result;
 			}
 			
@@ -2898,6 +2913,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			auto body_result = evaluate_statement_with_bindings(while_stmt.get_body_statement(), bindings, context);
 			if (body_result.success()) {
 				return body_result;
+			}
+			if (isBreakExecuted(body_result)) {
+				break;  // break statement exits the loop
+			}
+			if (isContinueExecuted(body_result)) {
+				continue;  // continue: go to next iteration
 			}
 			if (!isStatementExecutedWithoutReturn(body_result)) {
 				return body_result;
@@ -2971,6 +2992,181 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			context,
 			"Constexpr block is not a block",
 			kStatementExecutedWithoutReturn);
+	}
+	
+	// Handle break statements
+	if (stmt_node.is<BreakStatementNode>()) {
+		return EvalResult::error(std::string(kBreakExecuted));
+	}
+	
+	// Handle continue statements
+	if (stmt_node.is<ContinueStatementNode>()) {
+		return EvalResult::error(std::string(kContinueExecuted));
+	}
+	
+	// Handle range-based for loops over arrays (C++11/C++14 constexpr)
+	if (stmt_node.is<RangedForStatementNode>()) {
+		const RangedForStatementNode& ranged_for = stmt_node.as<RangedForStatementNode>();
+		
+		// Execute optional init statement (C++20 feature)
+		if (ranged_for.has_init_statement()) {
+			auto init_result = evaluate_statement_with_bindings(*ranged_for.get_init_statement(), bindings, context);
+			// Ignore result for init statement
+		}
+		
+		// Evaluate the range expression to get the array
+		auto range_result = evaluate_expression_with_bindings(ranged_for.get_range_expression(), bindings, context);
+		if (!range_result.success()) {
+			return range_result;
+		}
+		
+		// Only support array iteration for now
+		if (!range_result.is_array || range_result.array_elements.empty()) {
+			return EvalResult::error("Range-based for: range is not an array or has no elements in constexpr context");
+		}
+		
+		// Get the loop variable name from the declaration
+		const ASTNode& loop_var_decl_node = ranged_for.get_loop_variable_decl();
+		std::string_view loop_var_name;
+		if (loop_var_decl_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = loop_var_decl_node.as<VariableDeclarationNode>();
+			if (var_decl.declaration_node().is<DeclarationNode>()) {
+				loop_var_name = var_decl.declaration_node().as<DeclarationNode>().identifier_token().value();
+			}
+		}
+		if (loop_var_name.empty()) {
+			return EvalResult::error("Range-based for: could not determine loop variable name");
+		}
+		
+		// Iterate over array elements
+		for (const EvalResult& element : range_result.array_elements) {
+			// Check complexity limit
+			if (++context.step_count > context.max_steps) {
+				return EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop");
+			}
+			
+			// Bind the loop variable to the current element (overwrites on each iteration)
+			bindings[loop_var_name] = element;
+			
+			// Execute the body
+			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
+			if (body_result.success()) {
+				bindings.erase(loop_var_name);  // Clean up before early return
+				return body_result;
+			}
+			if (isBreakExecuted(body_result)) {
+				break;  // break exits the loop; cleanup happens at post-loop erase below
+			}
+			if (isContinueExecuted(body_result)) {
+				continue;  // continue overwrites binding on next iteration; post-loop erase handles last one
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
+				bindings.erase(loop_var_name);  // Clean up before early return
+				return body_result;
+			}
+		}
+		
+		// Clean up loop variable binding (also handles the break and normal-completion paths)
+		bindings.erase(loop_var_name);
+		return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+	}
+	
+	// Handle switch statements (C++14 constexpr)
+	if (stmt_node.is<SwitchStatementNode>()) {
+		const SwitchStatementNode& switch_stmt = stmt_node.as<SwitchStatementNode>();
+		
+		// Evaluate the switch condition
+		auto cond_result = evaluate_expression_with_bindings(switch_stmt.get_condition(), bindings, context);
+		if (!cond_result.success()) {
+			return cond_result;
+		}
+		
+		// Get the switch body (must be a BlockNode)
+		const ASTNode& body_node = switch_stmt.get_body();
+		if (!body_node.is<BlockNode>()) {
+			return EvalResult::error("Switch body is not a block");
+		}
+		const BlockNode& body = body_node.as<BlockNode>();
+		const auto& stmts = body.get_statements();
+		const size_t num_stmts = stmts.size();
+		
+		// First pass: find the matching case index (or default index)
+		size_t start_index = num_stmts;  // No match found yet
+		size_t default_index = num_stmts;  // No default found yet
+		
+		auto to_long_long = [](const EvalResult& r) -> long long {
+			return std::visit([](auto v) -> long long { return static_cast<long long>(v); }, r.value);
+		};
+		
+		for (size_t i = 0; i < num_stmts; i++) {
+			const ASTNode& s = stmts[i];
+			if (s.is<CaseLabelNode>()) {
+				const CaseLabelNode& case_node = s.as<CaseLabelNode>();
+				auto case_val = evaluate_expression_with_bindings(case_node.get_case_value(), bindings, context);
+				if (!case_val.success()) {
+					return case_val;
+				}
+				// Compare condition with case value
+				if (to_long_long(cond_result) == to_long_long(case_val) && start_index == num_stmts) {
+					start_index = i;
+				}
+			} else if (s.is<DefaultLabelNode>()) {
+				default_index = i;
+			}
+		}
+		
+		// If no case matched, use default (or skip if no default)
+		if (start_index == num_stmts) {
+			start_index = default_index;
+		}
+		
+		if (start_index == num_stmts) {
+			// No matching case or default — switch does nothing
+			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+		}
+		
+		// Second pass: execute statements starting from the matching case
+		for (size_t i = start_index; i < num_stmts; i++) {
+			const ASTNode& s = stmts[i];
+			ASTNode block_to_exec;
+			if (s.is<CaseLabelNode>()) {
+				const CaseLabelNode& case_node = s.as<CaseLabelNode>();
+				if (!case_node.has_statement()) {
+					continue;  // Empty case label — fall through to next
+				}
+				block_to_exec = *case_node.get_statement();
+			} else if (s.is<DefaultLabelNode>()) {
+				const DefaultLabelNode& default_node = s.as<DefaultLabelNode>();
+				if (!default_node.has_statement()) {
+					continue;  // Empty default label — fall through
+				}
+				block_to_exec = *default_node.get_statement();
+			} else {
+				// Unexpected non-label node in switch body
+				continue;
+			}
+			
+			// Execute the block of statements for this case/default
+			auto block_result = evaluate_block_with_bindings(
+				block_to_exec,
+				bindings,
+				context,
+				"Switch case body is not a block",
+				kStatementExecutedWithoutReturn);
+			
+			if (block_result.success()) {
+				return block_result;  // Propagate return value
+			}
+			if (isBreakExecuted(block_result)) {
+				return EvalResult::error(std::string(kStatementExecutedWithoutReturn));  // break exits switch
+			}
+			if (!isStatementExecutedWithoutReturn(block_result)) {
+				return block_result;  // Propagate other errors
+			}
+			// Fall through to next case
+		}
+		
+		return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
 	}
 	
 	return EvalResult::error("Unsupported statement type in constexpr function");

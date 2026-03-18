@@ -129,17 +129,79 @@ constexpr Point p1(10, 20);
 static_assert(p1.sum() == 30);  // ✅ Works - member function call
 ```
 
-**Requirements for member function evaluation:**
-1. The struct must be initialized with a constructor call
-2. The constructor should use either member initializer lists or other straightforward supported initialization shapes
-3. The member function must be declared `constexpr`
-4. The member function must have a single return statement
+Multi-statement member functions with if/else, loops, and switch now also work. See the "What Doesn't Work" section for details.
+
+### ✅ Break and Continue in Constexpr Loops
+```cpp
+constexpr int find_first_gt(int n) {
+    int result = -1;
+    for (int i = 0; i < 100; i++) {
+        if (i * i > n) { result = i; break; }
+    }
+    return result;
+}
+
+static_assert(find_first_gt(10) == 4);  // ✅ Works
+
+constexpr int sum_odd(int n) {
+    int sum = 0;
+    for (int i = 1; i <= n; i++) {
+        if (i % 2 == 0) continue;
+        sum += i;
+    }
+    return sum;
+}
+
+static_assert(sum_odd(5) == 9);  // ✅ Works
+```
+
+### ✅ Switch Statements in Constexpr Functions
+```cpp
+constexpr int grade(int score) {
+    switch (score / 10) {
+        case 10:
+        case 9:  return 1;  // A — fall-through supported
+        case 8:  return 2;  // B
+        case 7:  return 3;  // C
+        default: return 4;  // F
+    }
+}
+
+static_assert(grade(95) == 1);  // ✅ Works
+static_assert(grade(85) == 2);  // ✅ Works
+```
+
+### ✅ Range-Based For Loops in Constexpr Functions
+```cpp
+constexpr int sum_arr() {
+    int arr[] = {1, 2, 3, 4, 5};
+    int sum = 0;
+    for (int x : arr) { sum += x; }
+    return sum;
+}
+
+static_assert(sum_arr() == 15);  // ✅ Works
+
+struct Pair { int key; int value; };
+constexpr int find_value(int key) {
+    Pair pairs[] = {{1, 10}, {2, 20}, {3, 30}};
+    for (auto p : pairs) {
+        if (p.key == key) return p.value;
+    }
+    return -1;
+}
+
+static_assert(find_value(2) == 20);  // ✅ Works
+```
+
+Range-based for loops over local arrays (both primitive and struct types) are supported.
+Range-based for over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) is not yet supported.
 
 ## What Doesn't Work
 
 ### ⚠️ Constructor Body Statements Are Partially Supported
 
-Straightforward constructor-body member assignments now work in simple constexpr shapes:
+Constructor bodies with member assignments, conditionals, loops, and switch statements now work in constexpr:
 
 ```cpp
 struct Point {
@@ -157,16 +219,31 @@ static_assert(p1.x == 10);  // ✅ Works
 static_assert(p1.y == 20);  // ✅ Works
 ```
 
-More complex constructor-body execution is still a remaining limitation.
+```cpp
+struct Range {
+    int lo;
+    int hi;
+
+    constexpr Range(int a, int b) {
+        if (a < b) { lo = a; hi = b; }
+        else       { lo = b; hi = a; }
+    }
+};
+
+constexpr Range r(9, 2);
+static_assert(r.lo == 2 && r.hi == 9);  // ✅ Works
+```
+
+More complex constructor-body execution involving complex aliasing or non-trivial call chains is still a remaining limitation.
 
 **Preferred style when practical:** Use member initializer lists:
 ```cpp
 constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}  // ✅ Works
 ```
 
-### ❌ Complex Member Function Bodies
+### ✅ Complex Member Function Bodies (NEW)
 
-Only simple member functions with a single return statement are supported:
+Multi-statement member functions with if/else, loops, and switch are now supported:
 
 ```cpp
 struct Counter {
@@ -174,25 +251,23 @@ struct Counter {
     
     constexpr Counter(int v) : value(v) {}
     
-    // ❌ Multiple statements not supported
     constexpr int conditionalSum() const {
         if (value > 0) {
             return value + 10;
         }
-        return value;
+        return value;  // ✅ Works
+    }
+    
+    constexpr int classify() const {
+        switch (value) {
+            case 0: return 0;
+            case 1:
+            case 2: return 1;
+            default: return 2;
+        }  // ✅ Works
     }
 };
 ```
-
-**Workaround:** Use ternary operators for simple conditions:
-```cpp
-constexpr int conditionalSum() const {
-    return value > 0 ? value + 10 : value;  // ✅ Works
-}
-```
-4. Supporting return values
-
-This is significantly more complex than simple member access.
 
 ### ✅ Nested Member Access (NEW)
 
@@ -239,7 +314,7 @@ Array support is still incomplete in more complex cases.
 **Known remaining limitations include:**
 
 1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, including simple local scalar arrays and simple local aggregate-array member reads, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
-2. **Statement-heavy constexpr evaluation**: more complex local/function-driven array cases can still run into broader statement-evaluation limits, although straightforward local loop-driven reads over supported arrays now work
+2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, but over objects with `begin()`/`end()` methods are not yet supported
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
 
@@ -389,9 +464,9 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Default member initializers
 - ✅ Literal expressions in initializers (e.g., `x(val * 2)`)
 - ✅ Unary `-` and `+` operators
-- ✅ Constexpr member function calls, including multi-statement bodies in supported shapes
+- ✅ Constexpr member function calls, including multi-statement bodies with `if`, `for`, `while`, and `switch`
 - ✅ Constexpr lambdas with explicit captures, default captures, and current supported `this` / `*this` shapes
-- ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`)
+- ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
 - ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`)
@@ -399,17 +474,21 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
 - ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
-- ✅ Straightforward constructor-body member assignments in constexpr objects
+- ✅ Straightforward constructor-body member assignments in constexpr objects (including if/else, for/while, and switch bodies)
 - ✅ `noexcept(expr)` in constexpr evaluation
 - ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
+- ✅ `break` and `continue` statements in constexpr for/while loops
+- ✅ `switch` statements with case labels, default label, fall-through, and `break` in constexpr functions
+- ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
+- ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
 
 ### Hard
-- ⚠️ Complex constructor body statement execution beyond straightforward direct member assignments
+- ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
@@ -426,9 +505,9 @@ Potential areas for enhancement (in order of complexity):
 
 ### For Users
 
-1. **Prefer member initializer lists when practical** - straightforward constructor body member assignments work too, but richer constructor bodies are still more fragile
+1. **Prefer member initializer lists when practical** - constructor body member assignments, conditionals, loops, and switch all work too, but complex aliasing chains are still more fragile
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
-3. **Prefer straightforward member functions** - multi-statement bodies now work in supported shapes, but complex object-state mutation is still limited
+3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
 5. **Use straightforward lambda captures** - the following work best:
    - explicit captures
