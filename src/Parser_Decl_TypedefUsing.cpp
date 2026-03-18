@@ -417,7 +417,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
 
 			// Always register the struct-chain-relative name
-			TypeInfo& alias_info = register_type_alias(struct_relative_handle, final_type_spec);
+			TypeInfo& alias_info = register_type_alias(struct_relative_handle, final_type_spec, current_ns);
 
 			if (!current_ns_name.empty()) {
 				// Also register namespace-qualified name "ns::Container::AliasStatus"
