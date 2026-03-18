@@ -82,7 +82,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 		if (is_integral_type(from) || is_floating_point_type(from) || from == Type::Enum) {
 			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 		}
-		return ConversionPlan::no_match();
+		if (from == Type::Struct) {
+			// Struct → Bool: fall through to user-defined conversion check below (operator bool()).
+		} else {
+			return ConversionPlan::no_match();
+		}
 	}
 
 	// --- Source is bool ---
@@ -99,7 +103,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 		if (is_floating_point_type(to)) {
 			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 		}
-		return ConversionPlan::no_match();
+		if (to == Type::Struct) {
+			// Bool → Struct: fall through to user-defined conversion check below (converting constructor).
+		} else {
+			return ConversionPlan::no_match();
+		}
 	}
 
 	// --- Integral -> Integral ---
@@ -147,6 +155,8 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 		if (is_floating_point_type(to)) {
 			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 		}
+		// Enum → Struct: falls through to user-defined conversion check below.
+		// Enum → Enum (different types): falls through to no_match() at end; no implicit conversion in C++.
 	}
 
 	// Note: Integer to unscoped enum is NOT an implicit conversion in C++11+.
