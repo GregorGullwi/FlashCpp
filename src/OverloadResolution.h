@@ -1389,11 +1389,14 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	// Also search ADL-only (hidden friend) operators.
 	// Per C++20 [over.match.oper]/2, ADL is performed for operator overload resolution
 	// when at least one operand has class/enum type.
+	// Use lookup_adl_only() instead of lookup_adl() because namespace_symbols_ candidates
+	// are already collected by lookup_all() above — using lookup_adl() would duplicate them,
+	// causing false ambiguity for regular (non-hidden) free-function operators.
 	{
 		std::vector<TypeSpecifierNode> adl_arg_types;
 		adl_arg_types.push_back(left_type_spec);
 		adl_arg_types.push_back(right_type_spec);
-		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
+		auto adl_candidates = symbol_table.lookup_adl_only(op_func_name, adl_arg_types);
 		for (auto& cand : adl_candidates) {
 			overloads.push_back(std::move(cand));
 		}

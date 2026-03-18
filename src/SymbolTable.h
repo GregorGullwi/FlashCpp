@@ -561,6 +561,42 @@ public:
 		}
 	}
 
+	// Search only adl_only_symbols_ (hidden friends) for the given function name
+	// in associated namespaces of the argument types.  Unlike lookup_adl(), this
+	// does NOT search namespace_symbols_, so it is safe to call when the caller
+	// has already collected namespace_symbols_ candidates via lookup_all().
+	// This avoids duplicate candidates that would cause false ambiguity.
+	std::vector<ASTNode> lookup_adl_only(std::string_view func_name,
+	                                     const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::vector<ASTNode> result;
+		std::unordered_set<NamespaceHandle> visited;
+		StringHandle key = StringTable::getOrInternStringHandle(func_name);
+
+		auto collect_from_ns = [&](NamespaceHandle ns) {
+			if (!ns.isValid() || !visited.insert(ns).second) return;
+			auto adl_it = adl_only_symbols_.find(ns);
+			if (adl_it == adl_only_symbols_.end()) return;
+			auto sym_it = adl_it->second.find(key);
+			if (sym_it == adl_it->second.end()) return;
+			result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+		};
+
+		for (const auto& arg_type : arg_types) {
+			TypeIndex ti = arg_type.type_index();
+			if (!ti.is_valid() || ti.value >= gTypeInfo.size()) continue;
+			const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo();
+			if (!si) continue;
+			collect_from_ns(si->namespace_handle);
+			for (const auto& base : si->base_classes) {
+				if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
+				const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
+				if (!bsi) continue;
+				collect_from_ns(bsi->namespace_handle);
+			}
+		}
+		return result;
+	}
+
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
 	// For each argument type that is a struct/class, searches the namespace in which
 	// the struct was declared, plus namespaces of all its direct base classes.
