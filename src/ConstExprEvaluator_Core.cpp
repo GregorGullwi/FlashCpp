@@ -742,6 +742,9 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	size_t total_offset = 0;
 	TypeIndex current_type_index = type_index;
 	const auto& member_path = offsetof_expr.member_path();
+	if (member_path.empty()) {
+		return EvalResult::error("offsetof requires a member name");
+	}
 	for (size_t i = 0; i < member_path.size(); ++i) {
 		auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 			current_type_index,
@@ -751,17 +754,15 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		}
 
 		total_offset += member_result.adjusted_offset;
-		if (i + 1 == member_path.size()) {
-			return EvalResult::from_uint(static_cast<unsigned long long>(total_offset));
+		if (i + 1 < member_path.size()) {
+			if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
+				return EvalResult::error("offsetof nested member requires struct intermediate");
+			}
+			current_type_index = member_result.member->type_index;
 		}
-
-		if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
-			return EvalResult::error("offsetof nested member requires struct intermediate");
-		}
-		current_type_index = member_result.member->type_index;
 	}
 
-	return EvalResult::error("offsetof requires a member name");
+	return EvalResult::from_uint(static_cast<unsigned long long>(total_offset));
 }
 
 EvalResult Evaluator::evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context) {

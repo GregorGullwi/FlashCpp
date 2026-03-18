@@ -1946,29 +1946,27 @@
 		size_t total_offset = 0;
 		TypeIndex current_type_index{type_index};
 		const auto& member_path = offsetofNode.member_path();
+		if (member_path.empty()) {
+			throw InternalError("offsetof requires a member name");
+		}
 		for (size_t i = 0; i < member_path.size(); ++i) {
 			auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 				current_type_index,
 				member_path[i].handle());
 			if (!member_result) {
 				throw InternalError("Member not found in struct");
-				return ExprResult{};
 			}
 
 			total_offset += member_result.adjusted_offset;
-			if (i + 1 == member_path.size()) {
-				return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(total_offset)});
+			if (i + 1 < member_path.size()) {
+				if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
+					throw InternalError("offsetof nested member requires struct intermediate");
+				}
+				current_type_index = member_result.member->type_index;
 			}
-
-			if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
-				throw InternalError("offsetof nested member requires struct intermediate");
-				return ExprResult{};
-			}
-			current_type_index = member_result.member->type_index;
 		}
 
-		throw InternalError("offsetof requires a member name");
-		return ExprResult{};
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(total_offset)});
 	}
 
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
