@@ -101,7 +101,7 @@ private:
 class EnumDeclarationNode {
 public:
 	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
-		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_() {}
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_(), type_index_{} {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
@@ -109,6 +109,11 @@ public:
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
 	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
+	// Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
+	// so codegen can look up the exact TypeInfo without any name-based search
+	// (name-based lookups via gTypesByName only store the first enum with a given
+	// name and collide when two functions define local enums with the same name).
+	TypeIndex type_index() const { return type_index_; }
 
 	void set_underlying_type(ASTNode type) {
 		underlying_type_ = type;
@@ -122,12 +127,17 @@ public:
 		enumerators_.push_back(enumerator);
 	}
 
+	void set_type_index(TypeIndex idx) {
+		type_index_ = idx;
+	}
+
 private:
 	std::string_view name_;                 // Points directly into source text from lexer token
 	bool is_scoped_;                        // true for enum class, false for enum
 	bool is_forward_declaration_;           // true for forward declarations without body
 	std::optional<ASTNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
 	std::vector<ASTNode> enumerators_;      // List of EnumeratorNode
+	TypeIndex type_index_;                  // Index into gTypeInfo — set at parse time, used by codegen
 };
 
 class MemberAccessNode {

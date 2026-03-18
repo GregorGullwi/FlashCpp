@@ -437,6 +437,12 @@ int main() {
 
 **Fix**: `insert_into_namespace` should tag the symbol as ADL-only, and normal unqualified lookup should skip ADL-only symbols. Only `lookup_adl()` (which checks associated classes of the arguments) should find them.
 
+### ~~Local (function-scoped) enum declarations are not supported~~ (FIXED)
+
+**Status**: Fixed (2026-03-17)
+
+Local `enum` and `enum class` declarations inside function bodies are now fully supported. Both unscoped and scoped (enum class) variants work, including explicit underlying types and qualified access (`EnumClass::Value`). Enumerator symbols are properly re-inserted into the codegen-local symbol table when the enum declaration is visited during code generation.
+
 ---
 
 ## References

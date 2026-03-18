@@ -129,6 +129,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"struct", &Parser::parse_struct_declaration},
 			{"class", &Parser::parse_struct_declaration},
 			{"union", &Parser::parse_struct_declaration},
+			{"enum", &Parser::parse_enum_declaration},
 			{"static", &Parser::parse_declaration_or_function_definition},
 			{"extern", &Parser::parse_declaration_or_function_definition},
 			{"register", &Parser::parse_declaration_or_function_definition},

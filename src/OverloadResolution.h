@@ -46,89 +46,141 @@ inline bool canonical_types_match(CanonicalTypeId a, CanonicalTypeId b) {
 	return a == b;  // interned: equal IDs ⟺ equal canonical types
 }
 
-// Check if one type can be implicitly converted to another
-// Returns the conversion rank
-inline TypeConversionResult can_convert_type(Type from, Type to) {
+// Unified conversion plan: combines ConversionRank (for overload resolution ranking)
+// with StandardConversionKind (for semantic annotation).
+// Replaces the previous two-call pattern of can_convert_type() + determineConversionKind().
+struct ConversionPlan {
+	ConversionRank rank = ConversionRank::NoMatch;
+	StandardConversionKind kind = StandardConversionKind::None;
+	bool is_valid = false;
+
+	// Convert to TypeConversionResult for backward compatibility with callers
+	// that only need rank + validity.
+	TypeConversionResult toResult() const { return {rank, is_valid}; }
+
+	static ConversionPlan exact_match() {
+		return {ConversionRank::ExactMatch, StandardConversionKind::None, true};
+	}
+	static ConversionPlan no_match() {
+		return {ConversionRank::NoMatch, StandardConversionKind::None, false};
+	}
+};
+
+// Build a unified conversion plan for two primitive Type values.
+// Returns both the ConversionRank (for overload resolution) and the
+// StandardConversionKind (for semantic annotation) in a single call.
+// Implements C++20 [conv], [conv.prom], [conv.rank] rules.
+inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	// Exact match (including Struct==Struct — same type, different struct variants
 	// are handled by the TypeSpecifierNode overload which has type_index).
 	if (from == to) {
-		return TypeConversionResult::exact_match();
+		return ConversionPlan::exact_match();
 	}
-	
-	// Bool conversions
+
+	// --- Target is bool: BooleanConversion [conv.bool] ---
+	if (to == Type::Bool) {
+		if (is_integral_type(from) || is_floating_point_type(from) || from == Type::Enum) {
+			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
+		}
+		if (from == Type::Struct) {
+			// Struct → Bool: fall through to user-defined conversion check below (operator bool()).
+		} else {
+			return ConversionPlan::no_match();
+		}
+	}
+
+	// --- Source is bool ---
 	if (from == Type::Bool) {
-		// Bool can be promoted to int
+		// Bool -> int is integral promotion [conv.prom]/6
 		if (to == Type::Int) {
-			return TypeConversionResult::promotion();
+			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		// Bool can be converted to any integral or floating-point type
-		if (is_integral_type(to) || is_floating_point_type(to)) {
-			return TypeConversionResult::conversion();
+		// Bool -> other integral type is integral conversion
+		if (is_integer_type(to)) {
+			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
+		}
+		// Bool -> floating-point is floating-integral conversion
+		if (is_floating_point_type(to)) {
+			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
+		}
+		if (to == Type::Struct) {
+			// Bool → Struct: fall through to user-defined conversion check below (converting constructor).
+		} else {
+			return ConversionPlan::no_match();
 		}
 	}
-	
-	// Integral promotions
-	if (is_integral_type(from) && is_integral_type(to)) {
-		int from_rank = get_integer_rank(from);
-		int to_rank = get_integer_rank(to);
-		
-		// Promotion: smaller type to int (or larger)
-		if (from_rank < 3 && to_rank >= 3) {  // 3 = rank of int
-			return TypeConversionResult::promotion();
+
+	// --- Integral -> Integral ---
+	if (is_integer_type(from) && is_integer_type(to)) {
+		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
+		const int from_rank = get_integer_rank(from);
+		const int to_rank = get_integer_rank(to);
+
+		// C++20 [conv.prom]: IntegralPromotion applies only to types with rank < int
+		// being promoted to exactly int or unsigned int (rank == INT_RANK).
+		if (from_rank < INT_RANK && to_rank == INT_RANK) {
+			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		
-		// Conversion: any integral type to any other integral type
-		return TypeConversionResult::conversion();
+		return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
 	}
-	
-	// Floating-point promotion: float to double
+
+	// --- Floating-point promotion: float -> double [conv.fpprom] ---
 	if (from == Type::Float && to == Type::Double) {
-		return TypeConversionResult::promotion();
+		return {ConversionRank::Promotion, StandardConversionKind::FloatingPromotion, true};
 	}
-	
-	// Floating-point conversions
+
+	// --- Floating-point -> Floating-point ---
 	if (is_floating_point_type(from) && is_floating_point_type(to)) {
-		return TypeConversionResult::conversion();
+		return {ConversionRank::Conversion, StandardConversionKind::FloatingConversion, true};
 	}
-	
-	// Floating-integral conversions
-	if (is_integral_type(from) && is_floating_point_type(to)) {
-		return TypeConversionResult::conversion();
+
+	// --- Integral -> Floating-point ---
+	if (is_integer_type(from) && is_floating_point_type(to)) {
+		return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 	}
-	
-	if (is_floating_point_type(from) && is_integral_type(to)) {
-		return TypeConversionResult::conversion();
+
+	// --- Floating-point -> Integral ---
+	if (is_floating_point_type(from) && is_integer_type(to)) {
+		return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 	}
-	
-	// Unscoped enum to integer/floating-point promotion/conversion
-	// Per [conv.prom]/4: An unscoped enum whose underlying type is int is promoted to int.
-	// Per [conv.integral]: An enum can be converted to any integer type.
+
+	// --- Unscoped enum -> integer/floating-point [conv.prom]/4, [conv.integral] ---
 	if (from == Type::Enum) {
 		if (to == Type::Int) {
-			return TypeConversionResult::promotion();
+			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		if (is_integral_type(to) || is_floating_point_type(to)) {
-			return TypeConversionResult::conversion();
+		if (is_integral_type(to)) {
+			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
 		}
+		if (is_floating_point_type(to)) {
+			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
+		}
+		// Enum → Struct: falls through to user-defined conversion check below.
+		// Enum → Enum (different types): falls through to no_match() at end; no implicit conversion in C++.
 	}
-	
+
 	// Note: Integer to unscoped enum is NOT an implicit conversion in C++11+.
 	// It requires a static_cast. Do NOT add a conversion path here.
 
-	
-	// User-defined conversions: struct-to-primitive
-	// Optimistically assume conversion operator exists, CodeGen will verify
+	// --- User-defined conversions ---
+	// Struct-to-primitive: optimistically assume conversion operator exists, CodeGen will verify
 	if (from == Type::Struct && to != Type::Struct) {
-		return TypeConversionResult{ConversionRank::UserDefined, true};
+		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
-	
-	// User-defined conversions: primitive-to-struct (converting constructors)
+	// Primitive-to-struct: converting constructors
 	if (to == Type::Struct && from != Type::Struct) {
-		return TypeConversionResult{ConversionRank::UserDefined, true};
+		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 
 	// No valid conversion
-	return TypeConversionResult::no_match();
+	return ConversionPlan::no_match();
+}
+
+// Check if one type can be implicitly converted to another.
+// Returns the conversion rank. Delegates to buildConversionPlan() for the
+// unified conversion logic.
+inline TypeConversionResult can_convert_type(Type from, Type to) {
+	return buildConversionPlan(from, to).toResult();
 }
 
 // Helper function to find a conversion operator in a struct

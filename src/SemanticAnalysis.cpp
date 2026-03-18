@@ -193,40 +193,10 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 	return types_[id.value - 1];
 }
 
-// --- Determine StandardConversionKind from two primitive Type values ---
-// TODO: Consider unifying this with can_convert_type (OverloadResolution.h) into a single
-// buildConversionPlan() helper that returns both the rank and the StandardConversionKind,
-// per the plan (§B.3 / appendix §B). For now the two analyses are separate but consistent.
-
-static StandardConversionKind determineConversionKind(Type from, Type to) {
-	if (to == Type::Bool) return StandardConversionKind::BooleanConversion;
-
-	const bool from_int = is_integer_type(from) || from == Type::Bool;
-	const bool to_int   = is_integer_type(to);
-	const bool from_flt = is_floating_point_type(from);
-	const bool to_flt   = is_floating_point_type(to);
-
-	if (from_int && to_int) {
-		// C++20 [conv.prom]: IntegralPromotion only applies to types with rank < int being promoted
-		// to int or unsigned int.  int→long, int→long long, etc. are IntegralConversion.
-		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
-		const int from_rank = get_integer_rank(from);
-		const int to_rank   = get_integer_rank(to);
-		if (from_rank < INT_RANK && to_rank == INT_RANK)
-			return StandardConversionKind::IntegralPromotion;
-		return StandardConversionKind::IntegralConversion;
-	}
-	if (from_flt && to_flt) {
-		if (get_type_size_bits(from) < get_type_size_bits(to))
-			return StandardConversionKind::FloatingPromotion;
-		return StandardConversionKind::FloatingConversion;
-	}
-	if (from_int && to_flt) return StandardConversionKind::FloatingIntegralConversion;
-	if (from_flt && to_int) return StandardConversionKind::FloatingIntegralConversion;
-
-	// Should not be reached: tryAnnotateReturnConversion guards against struct/pointer/invalid types.
-	throw InternalError("determineConversionKind: unhandled type pair");
-}
+// NOTE: determineConversionKind() was removed in Phase 11 and unified into
+// buildConversionPlan() (OverloadResolution.h), which returns both the
+// ConversionRank and StandardConversionKind in a single call.
+// See tryAnnotateConversion() below for usage.
 
 // --- SemanticAnalysis ---
 
@@ -1522,15 +1492,13 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
-	const TypeConversionResult conv = can_convert_type(from_desc.base_type, to_desc.base_type);
-	if (!conv.is_valid || conv.rank == ConversionRank::UserDefined) return false;
-
-	const StandardConversionKind kind = determineConversionKind(from_desc.base_type, to_desc.base_type);
+	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);
+	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return false;
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
 	cast_info.target_type_id = target_type_id;
-	cast_info.cast_kind = kind;
+	cast_info.cast_kind = plan.kind;
 	cast_info.value_category_after = ValueCategory::PRValue;
 
 	const CastInfoIndex idx = allocateCastInfo(cast_info);
@@ -1547,7 +1515,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated conversion ",
 		static_cast<int>(from_desc.base_type), " → ",
 		static_cast<int>(to_desc.base_type),
-		" (kind=", static_cast<int>(kind), ")");
+		" (kind=", static_cast<int>(plan.kind), ")");
 	return true;
 }
 

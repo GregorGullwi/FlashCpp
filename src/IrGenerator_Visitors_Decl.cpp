@@ -1182,11 +1182,59 @@
 		current_struct_name_ = saved_struct_name;
 	}
 
-	void AstToIr::visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
-		// Enum declarations themselves don't generate IR - they just define types
-		// The type information is already registered in the global type system
-		// Enumerators are treated as compile-time constants and don't need runtime code generation
-		// For unscoped enums, the enumerators are already added to the symbol table during parsing
+	void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
+		// Enum declarations themselves don't generate IR - they just define types.
+		// The type information is already registered in the global type system.
+		// For file/namespace-scope enums, the enumerators are already in gSymbolTable
+		// from parsing and persist throughout compilation.
+		// For function-local enums (both scoped and unscoped), the parser-inserted
+		// symbols were popped when the function scope closed during parsing.
+		// Re-insert them into the codegen-local symbol table so identifier lookup
+		// can find them.
+		//
+		// Use the TypeIndex baked into the AST node at parse time (set in
+		// parse_enum_declaration immediately after add_enum_type) so we always
+		// reference the correct TypeInfo regardless of name collisions between
+		// local enums in different functions — gTypesByName uses emplace which
+		// is a no-op on duplicate keys and would return the wrong TypeInfo.
+		const TypeIndex type_idx = node.type_index();
+		if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
+				node.name(), "' (type_index=", type_idx.value, ") — parser may not have set it");
+			return;
+		}
+		TypeInfo& type_info = gTypeInfo[type_idx.value];
+		const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+		if (!enum_info)
+			return;
+
+		if (node.is_scoped()) {
+			// For scoped enums (enum class / enum struct): insert the *type name*
+			// into the codegen-local symbol table so that generateQualifiedIdentifierIr
+			// can find the correct TypeInfo for `Priority::High` without going through
+			// gTypesByName (which would collide when two functions define the same
+			// enum class name).
+			// symbol_table.insert is a no-op (returns false) for duplicate non-function
+			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
+			Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
+			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), type_token);
+			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
+			symbol_table.insert(node.name(), decl_node);
+			return;
+		}
+
+		// For unscoped enums: insert each enumerator name into the codegen-local
+		// symbol table so bare name lookup (e.g., `Red`) resolves correctly.
+		// symbol_table.insert is a no-op for duplicates, so no pre-check needed.
+		for (const Enumerator& e : enum_info->enumerators) {
+			std::string_view enumerator_name = StringTable::getStringView(e.name);
+			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
+			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token);
+			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
+			symbol_table.insert(enumerator_name, decl_node);
+		}
 	}
 
 	void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {

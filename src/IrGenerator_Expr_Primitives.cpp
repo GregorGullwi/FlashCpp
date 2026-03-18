@@ -1248,9 +1248,33 @@
 			std::string_view struct_or_enum_name = gNamespaceRegistry.getName(ns_handle);
 
 			// Could be EnumName::EnumeratorName
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
-			if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
-				const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
+			// Check the codegen-local symbol table first before gTypesByName.
+			// gTypesByName uses unordered_map::emplace which is a no-op on duplicate
+			// keys, so when two functions define `enum class Priority`, the second
+			// function's TypeInfo is never registered under "Priority" — it always
+			// resolves to the first function's TypeInfo.
+			// visitEnumDeclarationNode inserts the correct TypeInfo (via TypeIndex
+			// stored in the AST node at parse time) into the local symbol table,
+			// so we must prefer that over the global gTypesByName lookup.
+			TypeInfo* scoped_enum_type_info = nullptr;
+			{
+				const std::optional<ASTNode> local_sym = symbol_table.lookup(struct_or_enum_name);
+				if (local_sym && local_sym->is<DeclarationNode>()) {
+					const auto& decl = local_sym->as<DeclarationNode>();
+					if (decl.type_node().is<TypeSpecifierNode>()) {
+						const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().value < gTypeInfo.size())
+							scoped_enum_type_info = &gTypeInfo[ts.type_index().value];
+					}
+				}
+			}
+			if (!scoped_enum_type_info) {
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
+				if (type_it != gTypesByName.end() && type_it->second->isEnum())
+					scoped_enum_type_info = type_it->second;
+			}
+			if (scoped_enum_type_info) {
+				const EnumTypeInfo* enum_info = scoped_enum_type_info->getEnumInfo();
 				if (enum_info && enum_info->is_scoped) {
 					// This is a scoped enum - look up the enumerator value
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
