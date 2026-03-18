@@ -390,14 +390,25 @@
 				return it != gTypesByName.end() ? it->second : nullptr;
 			};
 
-			const TypeInfo* type_info = resolve_type_info(StringTable::getOrInternStringHandle(struct_part));
-			if (!type_info && current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
+			const TypeInfo* type_info = nullptr;
+
+			// When inside a struct context, try the struct-qualified name first.
+			// Template instantiation registers type aliases with the instantiated
+			// struct name (e.g., "Outer$hash::MidType"), which carries the correct
+			// substituted type.  The bare name (e.g., "MidType") may still point to
+			// the template pattern's placeholder (e.g., TTT$hash) from parse time.
+			if (current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
 				std::string_view alias_qualified_name = StringBuilder()
 					.append(StringTable::getStringView(current_struct_name_))
 					.append("::")
 					.append(struct_part)
 					.commit();
 				type_info = resolve_type_info(StringTable::getOrInternStringHandle(alias_qualified_name));
+			}
+
+			// Fall back to the bare name
+			if (!type_info) {
+				type_info = resolve_type_info(StringTable::getOrInternStringHandle(struct_part));
 			}
 
 			constexpr size_t kMaxAliasDepth = 100;

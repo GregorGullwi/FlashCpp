@@ -4688,7 +4688,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Register the type alias in gTypesByName
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
-		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
+		// Use insert_or_assign so that a stale placeholder entry (e.g., from a
+		// prior partial instantiation that pointed at TTT$hash) is overwritten
+		// with the concrete type (e.g., MakeMid$hash).
+		gTypesByName.insert_or_assign(qualified_alias_name, &alias_type_info);
+		FLASH_LOG_FORMAT(Templates, Debug, "Registered type alias '{}' -> type={}, type_index={}",
+			StringTable::getStringView(qualified_alias_name), static_cast<int>(substituted_type), substituted_type_index);
 
 		// If this alias refers to an unscoped enum, track its TypeIndex so that
 		// Struct::Enumerator qualified access works in codegen.
