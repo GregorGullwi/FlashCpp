@@ -739,14 +739,29 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 
-	auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-		type_index,
-		StringTable::getOrInternStringHandle(std::string(offsetof_expr.member_name())));
-	if (!member_result) {
-		return EvalResult::error("Member not found in struct");
+	size_t total_offset = 0;
+	TypeIndex current_type_index = type_index;
+	const auto& member_path = offsetof_expr.member_path();
+	for (size_t i = 0; i < member_path.size(); ++i) {
+		auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+			current_type_index,
+			member_path[i].handle());
+		if (!member_result) {
+			return EvalResult::error("Member not found in struct");
+		}
+
+		total_offset += member_result.adjusted_offset;
+		if (i + 1 == member_path.size()) {
+			return EvalResult::from_uint(static_cast<unsigned long long>(total_offset));
+		}
+
+		if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
+			return EvalResult::error("offsetof nested member requires struct intermediate");
+		}
+		current_type_index = member_result.member->type_index;
 	}
 
-	return EvalResult::from_uint(static_cast<unsigned long long>(member_result.adjusted_offset));
+	return EvalResult::error("offsetof requires a member name");
 }
 
 EvalResult Evaluator::evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context) {

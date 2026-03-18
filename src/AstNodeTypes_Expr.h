@@ -319,19 +319,19 @@ private:
 	Token noexcept_token_;
 };
 
-// offsetof operator node - offsetof(struct_type, member)
+// offsetof operator node - offsetof(struct_type, member[.member...])
 class OffsetofExprNode {
 public:
-	explicit OffsetofExprNode(ASTNode type_node, Token member_name, Token offsetof_token)
-		: type_node_(type_node), member_name_(member_name), offsetof_token_(offsetof_token) {}
+	explicit OffsetofExprNode(ASTNode type_node, std::vector<Token> member_path, Token offsetof_token)
+		: type_node_(type_node), member_path_(std::move(member_path)), offsetof_token_(offsetof_token) {}
 
 	ASTNode type_node() const { return type_node_; }
-	std::string_view member_name() const { return member_name_.value(); }
+	const std::vector<Token>& member_path() const { return member_path_; }
 	const Token& offsetof_token() const { return offsetof_token_; }
 
 private:
-	ASTNode type_node_;      // TypeSpecifierNode for the struct type
-	Token member_name_;      // Name of the member
+	ASTNode type_node_;               // TypeSpecifierNode for the struct type
+	std::vector<Token> member_path_;  // Member path segments
 	Token offsetof_token_;
 };
 
@@ -857,5 +857,4 @@ using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, Str
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
-
 

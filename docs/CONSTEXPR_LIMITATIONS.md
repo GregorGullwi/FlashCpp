@@ -325,7 +325,7 @@ Some parsed expression kinds are not yet fully handled by the constexpr evaluato
 **Now supported:**
 
 - `noexcept(expr)`
-- `offsetof(T, member)` for direct data-member access
+- `offsetof(T, member)` for direct and straightforward nested data-member access (for example `offsetof(T, inner.value)`)
 
 **Partial support:**
 
@@ -401,7 +401,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Straightforward loop-driven local array reads in constexpr functions, including `sum += arr[i]` and `sum += items[i].value`
 - ✅ Straightforward constructor-body member assignments in constexpr objects
 - ✅ `noexcept(expr)` in constexpr evaluation
-- ✅ `offsetof(T, member)` for direct data-member access in constexpr evaluation
+- ✅ `offsetof(T, member)` for direct and straightforward nested data-member access in constexpr evaluation
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
