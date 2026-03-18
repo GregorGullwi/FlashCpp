@@ -40,11 +40,12 @@ Write-Host ""
 # Find the FlashCpp compiler executable
 # On GitHub Actions, MSBuild builds FlashCppMSVC.exe
 # Locally, build_flashcpp.bat builds FlashCpp.exe
+# Search for the newest executable in any subfolder under x64/
 $flashCppPath = ""
-if (Test-Path "x64\Debug\FlashCpp.exe") {
-	$flashCppPath = "x64\Debug\FlashCpp.exe"
-} elseif (Test-Path "x64\Debug\FlashCppMSVC.exe") {
-	$flashCppPath = "x64\Debug\FlashCppMSVC.exe"
+$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
+if ($allExes) {
+	$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+	$flashCppPath = $newestExe.FullName
 } else {
 	Write-Host "FlashCpp not found, building..."
 	& .\build_flashcpp.bat
@@ -52,8 +53,11 @@ if (Test-Path "x64\Debug\FlashCpp.exe") {
 		Write-Host "ERROR: Failed to build FlashCpp" -ForegroundColor Red
 		exit 1
 	}
-	if (Test-Path "x64\Debug\FlashCpp.exe") {
-		$flashCppPath = "x64\Debug\FlashCpp.exe"
+	# Try again after build
+	$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
+	if ($allExes) {
+		$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+		$flashCppPath = $newestExe.FullName
 	} else {
 		Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
 		exit 1
