@@ -853,7 +853,25 @@ The right split is:
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
-- Enum→primitive conversions are not yet annotated by the sema pass: `tryAnnotateConversion` (and the binary-op / shift annotation helpers) filter out `Type::Enum` via `is_non_primitive`. Codegen resolves enum to its underlying type as a fallback (`IrGenerator_Stmt_Decl.cpp` enum→underlying resolution via `gTypeInfo`). A future phase should extend `tryAnnotateConversion` to handle enum source types — likely by resolving `Type::Enum` to the underlying type in `inferExpressionType` or in `tryAnnotateConversion` itself — eliminating the codegen-level `gTypeInfo` lookup.
+- ~~Enum→primitive conversions are not yet annotated by the sema pass~~ (resolved in Phase 12).
+
+### Phase 12: enum→primitive sema annotation + identifier type inference fallback ✅
+- `tryAnnotateConversion`: `Type::Enum` removed from `is_non_primitive` lambda so enum source types are now accepted. Separate guard rejects implicit conversion TO enum (C++11+ rule). `buildConversionPlan(Type::Enum, target)` already handles enum→int (IntegralPromotion), enum→other integral (IntegralConversion), enum→float/double (FloatingIntegralConversion), and enum→bool (BooleanConversion).
+- `tryAnnotateBinaryOperandConversions`: removed `Type::Enum` rejection; resolves enum operands to their underlying type (via `gTypeInfo[type_index].getEnumInfo()->underlying_type`) before calling `get_common_type`, which only handles primitive integer/floating-point types.
+- `tryAnnotateShiftOperandPromotions`: same pattern as binary-op — resolves enum to underlying type before `promote_integer_type`. Per C++20 `[expr.shift]`, unscoped enum operands undergo integral promotion.
+- `inferExpressionType`: `IdentifierNode` handler now falls back to `parser_.get_expression_type(node)` when `lookupLocalType` fails. This resolves enumerator constants (e.g., `Red`, `Green`) and other global identifiers not tracked in the sema scope stack.
+- `generateTypeConversion`: resolves `Type::Enum` to its underlying integer type at function entry (via `operands.type_index` → `gTypeInfo[...].getEnumInfo()->underlying_type`). This ensures correct signedness for sign/zero extension decisions and correct float/int domain classification. Previously, passing `Type::Enum` as `fromType` could produce incorrect sign extension (because `is_signed_integer_type(Type::Enum)` returns false) or miss float↔int conversion paths.
+- Codegen consumers updated: `tryApplySemaConversion` (binary-op), `tryGlobalSemaConv` (global assignment), return-conversion, call-arg-conversion, and variable-init-conversion paths all handle the case where sema annotates `from_type = Type::Enum` but codegen has already resolved the operand to its underlying type (via `tryMakeEnumeratorConstantExpr`). When the mismatch is detected and `from_type == Type::Enum`, the consumer uses `operands.type` (the actual runtime type) for the conversion call.
+- Tests: `test_enum_sema_conversion_ret0` (enum→int: return, decl init, assignment, call arg), `test_enum_to_double_sema_ret0` (enum→double: decl init, call arg, return), `test_enum_binop_sema_ret0` (enum in binary arithmetic/comparison). Suite: 1586 pass / 0 fail / 56 expected-fail.
+
+**Known limitations (Phase 13+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- Scoped enum (`enum class`) source types are correctly rejected by `buildConversionPlan` (no implicit conversion for scoped enums per C++11+), but the sema pass does not emit a diagnostic for attempted implicit conversion from a scoped enum. A future phase should add a proper diagnostic.
+- `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 
 ### Parallel rollout guidance
 
