@@ -581,18 +581,14 @@ public:
 			result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
 		};
 
+		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
 			if (!ti.is_valid() || ti.value >= gTypeInfo.size()) continue;
 			const auto& type_info = gTypeInfo[ti.value];
 			if (const StructTypeInfo* si = type_info.getStructInfo()) {
-				collect_from_ns(si->namespace_handle);
-				for (const auto& base : si->base_classes) {
-					if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
-					const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
-					if (!bsi) continue;
-					collect_from_ns(bsi->namespace_handle);
-				}
+				visited_types.insert(ti.value);
+				collect_struct_associated_namespaces(si, collect_from_ns, visited_types);
 			} else if (type_info.getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: the associated namespace of an
 				// enumeration type is its innermost enclosing namespace.
@@ -605,7 +601,7 @@ public:
 
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
 	// For each argument type that is a struct/class, searches the namespace in which
-	// the struct was declared, plus namespaces of all its direct base classes.
+	// the struct was declared, plus namespaces of all its base classes (recursively).
 	// Suppressed when ordinary lookup already found a blocking non-function declaration.
 	// Also searches adl_only_symbols_ so that hidden friends defined inside class bodies
 	// are reachable via ADL but not via ordinary unqualified lookup.
@@ -631,19 +627,14 @@ public:
 			}
 		};
 
+		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
 			if (ti.is_valid() && ti.value < gTypeInfo.size()) {
 				const auto& type_info = gTypeInfo[ti.value];
 				if (const StructTypeInfo* si = type_info.getStructInfo()) {
-					search_ns(si->namespace_handle);
-					for (const auto& base : si->base_classes) {
-						if (base.type_index.is_valid() && base.type_index.value < gTypeInfo.size()) {
-							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo()) {
-								search_ns(bsi->namespace_handle);
-							}
-						}
-					}
+					visited_types.insert(ti.value);
+					collect_struct_associated_namespaces(si, search_ns, visited_types);
 				} else if (type_info.getEnumInfo()) {
 					// C++20 [basic.lookup.argdep]/2: the associated namespace of an
 					// enumeration type is its innermost enclosing namespace.
@@ -1114,6 +1105,25 @@ private:
 	
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
+
+	// Recursively collect associated namespaces from a struct/class type and all
+	// of its base classes (C++20 [basic.lookup.argdep]/2: "the associated classes
+	// of a class type include ... all of its base classes").
+	// The visited set (keyed by TypeIndex) prevents infinite loops from diamond
+	// inheritance and avoids redundant work.
+	template<typename NsCallback>
+	static void collect_struct_associated_namespaces(const StructTypeInfo* si,
+	                                                 NsCallback&& ns_callback,
+	                                                 std::unordered_set<size_t>& visited_types) {
+		if (!si) return;
+		ns_callback(si->namespace_handle);
+		for (const auto& base : si->base_classes) {
+			if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
+			if (!visited_types.insert(base.type_index.value).second) continue;
+			const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
+			collect_struct_associated_namespaces(bsi, ns_callback, visited_types);
+		}
+	}
 
 	// Intern a string_view by checking if it already exists, or allocate it
 	// Returns a string_view that is guaranteed to remain valid
