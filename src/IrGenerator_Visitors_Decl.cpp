@@ -1182,7 +1182,7 @@
 		current_struct_name_ = saved_struct_name;
 	}
 
-	void AstToIr::visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
+	void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 		// Enum declarations themselves don't generate IR - they just define types.
 		// The type information is already registered in the global type system.
 		// For file/namespace-scope enums, the enumerators are already in gSymbolTable
@@ -1190,25 +1190,34 @@
 		// For function-local unscoped enums, the parser-inserted symbols were popped
 		// when the function scope closed during parsing.  Re-insert them into the
 		// codegen-local symbol table so identifier lookup can find them.
-		if (!node.is_scoped()) {
-			StringHandle enum_name = StringTable::getOrInternStringHandle(node.name());
-			auto type_it = gTypesByName.find(enum_name);
-			if (type_it != gTypesByName.end()) {
-				TypeInfo& type_info = *type_it->second;
-				if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
-					for (const Enumerator& e : enum_info->enumerators) {
-						// Only insert if not already in scope (avoids duplicate for global enums)
-						std::string_view enumerator_name = StringTable::getStringView(e.name);
-						if (!symbol_table.lookup(enumerator_name).has_value()) {
-							Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
-							ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-								Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token);
-							ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
-							symbol_table.insert(enumerator_name, decl_node);
-						}
-					}
-				}
-			}
+		if (node.is_scoped())
+			return;
+
+		// Use the TypeIndex baked into the AST node at parse time.  This directly
+		// addresses the correct TypeInfo entry in gTypeInfo without any name-based
+		// lookup, so two functions defining local enums with the same name (e.g.,
+		// "enum Color") each get their own independent enumerator set — no collision.
+		const TypeIndex type_idx = node.type_index();
+		if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
+				node.name(), "' (type_index=", type_idx.value, ") — parser may not have set it");
+			return;
+		}
+		TypeInfo& type_info = gTypeInfo[type_idx.value];
+		const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+		if (!enum_info)
+			return;
+
+		for (const Enumerator& e : enum_info->enumerators) {
+			// Only insert if not already in scope (avoids duplicate for global enums)
+			std::string_view enumerator_name = StringTable::getStringView(e.name);
+			if (symbol_table.lookup(enumerator_name).has_value())
+				continue;
+			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
+			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token);
+			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
+			symbol_table.insert(enumerator_name, decl_node);
 		}
 	}
 
