@@ -3412,11 +3412,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					// C++20 [basic.lookup.argdep]: if the function was NOT found via ADL either,
 					// and the name belongs to a hidden friend (ADL-only symbol), reject the call.
+					// Distinguish between "ADL found nothing" and "ADL found candidates but
+					// none matched the argument types" for a more helpful diagnostic.
 					if (!identifierType->is<FunctionDeclarationNode>() &&
 					    gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
 						if (adl_was_ambiguous) {
 							return ParseResult::error(
 								"call to '" + std::string(identifier_token.value()) + "' is ambiguous",
+								identifier_token);
+						}
+						// Check whether ADL found any candidates at all.
+						bool adl_found_candidates = !adl_arg_types.empty() &&
+							!gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types).empty();
+						if (adl_found_candidates) {
+							return ParseResult::error(
+								"no matching function for call to '" + std::string(identifier_token.value()) + "'",
 								identifier_token);
 						}
 						return ParseResult::error(
