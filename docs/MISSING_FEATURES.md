@@ -414,55 +414,17 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### Operator ADL does not find regular free-function operators in associated namespaces
+### ~~Operator ADL does not find regular free-function operators in associated namespaces~~ (FIXED)
 
-**Severity**: Low (conformance issue, unlikely to hit in practice)
+**Status**: Fixed (2026-03-18)
 
-In `findBinaryOperatorOverloadWithFreeFunction` (`src/OverloadResolution.h`), the operator candidate collection calls `lookup_all()` (scope-based) then `lookup_adl_only()` (hidden friends only). This means a regular (non-hidden-friend) free-function operator declared in an associated namespace — but not brought into scope via `using` — will not be found by ADL during operator resolution.
+Operator ADL now uses `lookup_adl()` (full ADL including both hidden friends and regular namespace-scoped operators) instead of `lookup_adl_only()` in `findBinaryOperatorOverloadWithFreeFunction`. Results are deduplicated against the `lookup_all()` scope-chain results to avoid false ambiguity. Test: `test_operator_adl_free_function_ret0.cpp`.
 
-**Example** (should compile but currently fails):
-```cpp
-namespace ns {
-    struct S { int x; };
-    bool operator==(S a, S b) { return a.x == b.x; }  // regular free function
-}
-int main() {
-    ns::S a, b;
-    return a == b;  // ADL should find ns::operator==, but operator path misses it
-}
-```
+### ~~Enum ADL may fail for enums declared inside class bodies or anonymous namespaces~~ (FIXED)
 
-**Note**: Hidden friend operators *are* correctly found (via `lookup_adl_only`), and regular function-call ADL works correctly (via `lookup_adl` in `unified_resolve_function_call`). Only the operator-specific resolution path has this gap.
+**Status**: Fixed (2026-03-18)
 
-**Fix**: Replace `lookup_adl_only` with `lookup_adl` in `findBinaryOperatorOverloadWithFreeFunction`, and deduplicate against the `lookup_all` results to avoid false ambiguity.
-
-### Enum ADL may fail for enums declared inside class bodies or anonymous namespaces
-
-**Severity**: Low (conformance issue, edge case)
-
-Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser. For enums declared inside a named namespace (e.g. `namespace ns { enum class Color { ... }; }`), this works correctly.
-
-However, it has not been verified for edge cases:
-- **Enums declared inside class bodies**: Per C++20 [basic.lookup.argdep]/2, the associated namespace of an enum declared inside a class is the innermost enclosing *namespace* (not the class itself). If the parser passes the struct's scope rather than the enclosing namespace, ADL will search the wrong namespace.
-- **Enums in anonymous namespaces**: Anonymous namespaces have a unique internal handle. If this handle is not correctly propagated, ADL would fail to find functions in the anonymous namespace.
-
-**Example** (may fail — untested):
-```cpp
-namespace lib {
-    struct Container {
-        enum class Status { Ok, Error };
-    };
-    int check(Container::Status s) { return s == Container::Status::Ok ? 0 : 1; }
-}
-int main() {
-    // ADL should find lib::check because lib::Container::Status's associated
-    // namespace is "lib", but this depends on add_enum_type receiving the
-    // correct namespace handle for nested enums.
-    return check(lib::Container::Status::Ok);
-}
-```
-
-**Fix**: Verify that `parse_enum_declaration` (and `parse_member_type_alias` for inline enum typedefs) passes the enclosing *namespace* handle (not the struct scope) to `add_enum_type` when the enum is declared inside a class body. Add tests for enum-inside-class ADL and anonymous namespace enum ADL.
+Enum ADL for enums declared inside class bodies now works correctly. The fix registers nested enums in `gTypesByName` with their struct-qualified name (e.g., `ns::Container::Status`) in addition to the simple name, so that `lookupTypeInCurrentContext` resolves qualified type references like `Container::Status` to the correct enum `TypeInfo` with proper `type_index`. The ADL machinery (`lookup_adl` / `lookup_adl_only`) already correctly uses `TypeInfo::namespaceHandle()` which is set to the innermost enclosing namespace by `get_current_namespace_handle()` (which skips class scopes). Test: `test_hidden_friend_enum_adl_ret0.cpp`.
 
 ### ~~Local (function-scoped) enum declarations are not supported~~ (FIXED)
 

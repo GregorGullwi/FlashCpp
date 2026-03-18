@@ -1469,6 +1469,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 		// Build a set of existing FunctionDeclarationNode pointers for O(1) dedup.
 		std::unordered_set<const FunctionDeclarationNode*> existing;
+		existing.reserve(overloads.size());
 		for (const auto& node : overloads) {
 			if (node.is<FunctionDeclarationNode>()) {
 				existing.insert(&node.as<FunctionDeclarationNode>());
