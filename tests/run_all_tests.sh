@@ -53,7 +53,7 @@ EXPECTED_LINK_FAIL=(
 # Format: "test_file.cpp:helper_file.c" pairs, space-separated.
 # The helper .c file is expected to live in the tests/ directory.
 # This is exported so the parallel worker function can access it.
-EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_helper.c"
+EXTRA_C_HELPERS="test_external_abi.cpp:test_external_abi_helper.c test_external_abi_simple.cpp:test_external_abi_simple_helper.c"
 export EXTRA_C_HELPERS
 
 # Expected runtime crashes - files that compile and link but crash at runtime
