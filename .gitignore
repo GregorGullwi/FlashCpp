@@ -25,3 +25,4 @@ test_*_exe
 *.backup
 x64/
 src/*.pch
+*.result
