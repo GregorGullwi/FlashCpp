@@ -4051,13 +4051,24 @@ ParseResult Parser::parse_friend_declaration()
 	if (peek() == "operator"_tok) {
 		Token operator_keyword_token = peek_info();
 		advance();  // consume 'operator'
-		// Build the full operator name (e.g., "operator==", "operator+")
-		// by consuming the operator symbol token(s) until we find '('
+		// Build the full operator name (e.g., "operator==", "operator()", "operator[]")
+		// by consuming the operator symbol token(s) until we find the parameter list '('.
+		// Special-case operator() and operator[] where '(' / '[' is part of the name.
 		StringBuilder op_name_builder;
 		op_name_builder.append("operator");
-		while (!peek().is_eof() && peek() != "("_tok) {
-			op_name_builder.append(peek_info().value());
-			advance();
+		if (!peek().is_eof() && peek() == "("_tok) {
+			advance(); // consume '('
+			if (!peek().is_eof() && peek() == ")"_tok) advance(); // consume ')'
+			op_name_builder.append("()");
+		} else if (!peek().is_eof() && peek() == "["_tok) {
+			advance(); // consume '['
+			if (!peek().is_eof() && peek() == "]"_tok) advance(); // consume ']'
+			op_name_builder.append("[]");
+		} else {
+			while (!peek().is_eof() && peek() != "("_tok) {
+				op_name_builder.append(peek_info().value());
+				advance();
+			}
 		}
 		std::string_view op_name = op_name_builder.commit();
 		function_name = op_name;
