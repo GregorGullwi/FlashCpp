@@ -1386,6 +1386,19 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	std::string_view op_func_name = op_name_sb.commit();
 	auto overloads = symbol_table.lookup_all(op_func_name);
 
+	// Also search ADL-only (hidden friend) operators.
+	// Per C++20 [over.match.oper]/2, ADL is performed for operator overload resolution
+	// when at least one operand has class/enum type.
+	{
+		std::vector<TypeSpecifierNode> adl_arg_types;
+		adl_arg_types.push_back(left_type_spec);
+		adl_arg_types.push_back(right_type_spec);
+		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
+		for (auto& cand : adl_candidates) {
+			overloads.push_back(std::move(cand));
+		}
+	}
+
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) continue;
 		const auto& func_decl = overload.as<FunctionDeclarationNode>();
