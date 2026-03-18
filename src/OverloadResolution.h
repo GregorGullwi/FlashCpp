@@ -1461,23 +1461,32 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	// only hidden friends.  Deduplicate against the lookup_all() results above
 	// to avoid double-counting operators that are both in the current scope
 	// chain and in an associated namespace.
+	// Use mangled names for stable, semantically-correct identity comparison.
 	{
 		std::vector<TypeSpecifierNode> adl_arg_types;
 		adl_arg_types.push_back(left_type_spec);
 		adl_arg_types.push_back(right_type_spec);
 		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
 
-		// Build a set of existing FunctionDeclarationNode pointers for O(1) dedup.
-		std::unordered_set<const FunctionDeclarationNode*> existing;
-		existing.reserve(overloads.size());
+		// Build a set of existing mangled names for O(1) dedup.
+		// Using std::string_view is safe: mangled names are interned in
+		// stable ChunkedStringAllocator storage (they never move).
+		std::unordered_set<std::string_view> existing_mangled;
+		existing_mangled.reserve(overloads.size());
 		for (const auto& node : overloads) {
 			if (node.is<FunctionDeclarationNode>()) {
-				existing.insert(&node.as<FunctionDeclarationNode>());
+				const auto& fd = node.as<FunctionDeclarationNode>();
+				if (fd.has_mangled_name()) {
+					existing_mangled.insert(fd.mangled_name());
+				}
 			}
 		}
 		for (auto& cand : adl_candidates) {
 			if (cand.is<FunctionDeclarationNode>()) {
-				if (existing.insert(&cand.as<FunctionDeclarationNode>()).second) {
+				const auto& fd = cand.as<FunctionDeclarationNode>();
+				// If the function has no mangled name we cannot deduplicate it
+				// reliably; include it so we don't silently drop valid candidates.
+				if (!fd.has_mangled_name() || existing_mangled.insert(fd.mangled_name()).second) {
 					overloads.push_back(std::move(cand));
 				}
 			} else {

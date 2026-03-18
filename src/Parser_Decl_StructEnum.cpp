@@ -754,17 +754,38 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto enum_it = gTypesByName.find(StringTable::getOrInternStringHandle(enum_decl.name()));
 					if (enum_it != gTypesByName.end()) {
 						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
-						// Also register with struct-qualified name so that
-						// lookupTypeInCurrentContext("Container::Status") finds
-						// "ns::Container::Status" via namespace-prefixed search.
-						// Per C++20 [basic.lookup.qual], a nested enum is found by
-						// qualifying through the enclosing class name.
-						StringHandle qualified_enum_name = StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(type_name)
-								.append("::")
-								.append(enum_decl.name()));
-						gTypesByName.emplace(qualified_enum_name, enum_it->second);
+
+						// Register the enum under every qualified name a caller might use.
+						// Per C++20 [basic.lookup.qual], a nested enum is accessed by
+						// qualifying through the enclosing class name(s).
+						// Per [basic.lookup.argdep]/2 the associated namespace is the
+						// innermost enclosing namespace.
+						//
+						// Walk struct_parsing_context_stack_ (which already includes the
+						// current struct pushed above) from outermost to innermost to
+						// build the full struct chain.  This correctly handles any depth
+						// of struct nesting, e.g.:
+						//   ns::A::B::C::E   (3 levels: A > B > C, enum E)
+						//   ns::Container::Status (1 level)
+						StringBuilder struct_chain_builder;
+						for (const auto& ctx : struct_parsing_context_stack_) {
+							struct_chain_builder.append(ctx.struct_name).append("::");
+						}
+						struct_chain_builder.append(enum_decl.name());
+						StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
+							struct_chain_builder.commit());
+						// Register struct-relative name ("A::B::C::E", "Container::Status")
+						gTypesByName.emplace(struct_relative_handle, enum_it->second);
+
+						// Also register namespace-fully-qualified name using NamespaceHandle
+						// ("ns::A::B::C::E", "ns::Container::Status")
+						if (!qualified_namespace.empty()) {
+							StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+								current_namespace_handle, struct_relative_handle);
+							if (ns_qualified_handle != struct_relative_handle) {
+								gTypesByName.emplace(ns_qualified_handle, enum_it->second);
+							}
+						}
 					}
 				}
 				// The semicolon is already consumed by parse_enum_declaration
