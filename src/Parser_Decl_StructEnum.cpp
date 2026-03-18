@@ -4053,13 +4053,21 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Check for operator keyword (friend operator function)
 	if (peek() == "operator"_tok) {
+		Token operator_keyword_token = peek_info();
 		advance();  // consume 'operator'
-		// The operator can be followed by various things: ==, !=, (), [], etc.
-		// Just skip tokens until we find '('
+		// Build the full operator name (e.g., "operator==", "operator+")
+		// by consuming the operator symbol token(s) until we find '('
+		StringBuilder op_name_builder;
+		op_name_builder.append("operator");
 		while (!peek().is_eof() && peek() != "("_tok) {
+			op_name_builder.append(peek_info().value());
 			advance();
 		}
-		function_name = "operator";
+		std::string_view op_name = op_name_builder.commit();
+		function_name = op_name;
+		function_name_token = Token(Token::Type::Identifier, op_name,
+		                            operator_keyword_token.line(), operator_keyword_token.column(),
+		                            operator_keyword_token.file_index());
 	} else {
 		while (!peek().is_eof()) {
 			auto name_token = advance();
@@ -4136,10 +4144,10 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek() == "{"_tok || peek() == "try"_tok) {
-		// For non-member, non-operator friend functions with parsed parameters:
+		// For non-member friend functions (including operators) with parsed parameters:
 		// register a FunctionDeclarationNode in the enclosing namespace so ADL can find it,
 		// and queue the body for delayed parsing (same mechanism as inline member functions).
-		if (last_qualifier.empty() && function_name != "operator" && params_parsed_ok) {
+		if (last_qualifier.empty() && params_parsed_ok) {
 			NamespaceHandle enclosing_ns = gSymbolTable.get_current_namespace_handle();
 
 			// Build the return type node (copy from the parsed type_result)
@@ -4181,9 +4189,10 @@ ParseResult Parser::parse_friend_declaration()
 				true,     // is_free_function
 			});
 
-			// Register directly into namespace_symbols_ so lookup_adl() can find it
+			// Register directly into adl_only_symbols_ so lookup_adl() can find it
+			// but ordinary unqualified lookup cannot (C++20 [basic.lookup.argdep]).
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
-			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node);
+			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
 
 			// Queue for codegen: the function node must appear in the enclosing namespace's
 			// declaration list (or top-level AST) so the IR converter generates code for it.
@@ -4194,7 +4203,7 @@ ParseResult Parser::parse_friend_declaration()
 			friend_node.as<FriendDeclarationNode>().set_function_declaration(func_decl_node);
 			return saved_position.success(friend_node);
 		} else {
-			// For qualified friends, operators, or fallback: just skip the body (incl. try-blocks)
+			// For qualified friends or fallback (params not parsed): just skip the body (incl. try-blocks)
 			skip_function_body();
 		}
 	} else if (peek() == "="_tok) {

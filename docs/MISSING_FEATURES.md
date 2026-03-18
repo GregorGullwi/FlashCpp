@@ -414,28 +414,55 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### Hidden friend functions are visible to ordinary unqualified lookup
+### Operator ADL does not find regular free-function operators in associated namespaces
 
-**Severity**: Low (conformance issue, not a crash)
+**Severity**: Low (conformance issue, unlikely to hit in practice)
 
-In standard C++, a friend function defined inline inside a class is a *hidden friend* — it should only be found via argument-dependent lookup (ADL), not via ordinary unqualified lookup. FlashCpp currently registers hidden friends into the enclosing namespace's symbol table unconditionally (`gSymbolTable.insert_into_namespace` at `src/Parser_Decl_StructEnum.cpp` in `parse_friend_declaration`), making them visible to all callers regardless of argument types.
+In `findBinaryOperatorOverloadWithFreeFunction` (`src/OverloadResolution.h`), the operator candidate collection calls `lookup_all()` (scope-based) then `lookup_adl_only()` (hidden friends only). This means a regular (non-hidden-friend) free-function operator declared in an associated namespace — but not brought into scope via `using` — will not be found by ADL during operator resolution.
 
-**Example** (should fail to compile but currently passes parsing):
+**Example** (should compile but currently fails):
 ```cpp
-struct Widget {
-    friend int get_value(Widget& w) { return w.value; }
-    int value;
-};
+namespace ns {
+    struct S { int x; };
+    bool operator==(S a, S b) { return a.x == b.x; }  // regular free function
+}
 int main() {
-    // This should fail: get_value is a hidden friend, only findable via ADL
-    // when at least one argument has type Widget. But flashcpp finds it anyway.
-    int x = get_value(/* no Widget argument */);  // should be an error
+    ns::S a, b;
+    return a == b;  // ADL should find ns::operator==, but operator path misses it
 }
 ```
 
-**Impact**: Code that accidentally calls hidden friends without the associated class type in the arguments will parse and compile when it shouldn't. The generated code may also fail at link time if the template friend body was skipped rather than fully parsed.
+**Note**: Hidden friend operators *are* correctly found (via `lookup_adl_only`), and regular function-call ADL works correctly (via `lookup_adl` in `unified_resolve_function_call`). Only the operator-specific resolution path has this gap.
 
-**Fix**: `insert_into_namespace` should tag the symbol as ADL-only, and normal unqualified lookup should skip ADL-only symbols. Only `lookup_adl()` (which checks associated classes of the arguments) should find them.
+**Fix**: Replace `lookup_adl_only` with `lookup_adl` in `findBinaryOperatorOverloadWithFreeFunction`, and deduplicate against the `lookup_all` results to avoid false ambiguity.
+
+### Enum ADL may fail for enums declared inside class bodies or anonymous namespaces
+
+**Severity**: Low (conformance issue, edge case)
+
+Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser. For enums declared inside a named namespace (e.g. `namespace ns { enum class Color { ... }; }`), this works correctly.
+
+However, it has not been verified for edge cases:
+- **Enums declared inside class bodies**: Per C++20 [basic.lookup.argdep]/2, the associated namespace of an enum declared inside a class is the innermost enclosing *namespace* (not the class itself). If the parser passes the struct's scope rather than the enclosing namespace, ADL will search the wrong namespace.
+- **Enums in anonymous namespaces**: Anonymous namespaces have a unique internal handle. If this handle is not correctly propagated, ADL would fail to find functions in the anonymous namespace.
+
+**Example** (may fail — untested):
+```cpp
+namespace lib {
+    struct Container {
+        enum class Status { Ok, Error };
+    };
+    int check(Container::Status s) { return s == Container::Status::Ok ? 0 : 1; }
+}
+int main() {
+    // ADL should find lib::check because lib::Container::Status's associated
+    // namespace is "lib", but this depends on add_enum_type receiving the
+    // correct namespace handle for nested enums.
+    return check(lib::Container::Status::Ok);
+}
+```
+
+**Fix**: Verify that `parse_enum_declaration` (and `parse_member_type_alias` for inline enum typedefs) passes the enclosing *namespace* handle (not the struct scope) to `add_enum_type` when the enum is declared inside a class body. Add tests for enum-inside-class ADL and anonymous namespace enum ADL.
 
 ### ~~Local (function-scoped) enum declarations are not supported~~ (FIXED)
 

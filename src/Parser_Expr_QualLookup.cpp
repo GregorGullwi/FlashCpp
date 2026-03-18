@@ -1796,6 +1796,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						return member_type;
 					}
 				}
+			} else if (struct_type_it != gTypesByName.end() && struct_type_it->second->getEnumInfo()) {
+				// C++20 [basic.lookup.argdep]/2: for enum-typed arguments (e.g. Ns::Color::Red),
+				// return a TypeSpecifierNode with Type::Enum and the enum's type_index so ADL
+				// can find functions in the enum's associated namespace.
+				const TypeInfo* enum_type_info = struct_type_it->second;
+				TypeSpecifierNode enum_type(Type::Enum, TypeQualifier::None,
+				                            enum_type_info->getEnumInfo()->underlying_size);
+				enum_type.set_type_index(enum_type_info->type_index_);
+				return enum_type;
 			}
 		}
 	}

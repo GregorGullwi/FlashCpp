@@ -3112,7 +3112,224 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			
-			FLASH_LOG_FORMAT(Parser, Debug, "is_lambda_variable for '{}': {}", identifier_token.value(), is_lambda_variable);
+			FLASH_LOG_FORMAT(Parser, Debug, "is_lambda_variable for \'{}\': {}", identifier_token.value(), is_lambda_variable);
+
+			// Unified resolution pipeline: ordinary lookup + ADL + overload resolution + template fallback.
+			// Used by both the early path (foo(args)) and the late path (foo<T>(args)).
+			auto unified_resolve_function_call = [&](ChunkedVector<ASTNode>& args_ref) -> ParseResult {
+				auto appendMissingDefaultArguments = [&](const FunctionDeclarationNode& func_decl) -> std::optional<ParseResult> {
+					const auto& params = func_decl.parameter_nodes();
+					if (args_ref.size() >= params.size()) {
+						return std::nullopt;
+					}
+					for (size_t i = args_ref.size(); i < params.size(); ++i) {
+						if (params[i].is<DeclarationNode>() && params[i].as<DeclarationNode>().has_default_value()) {
+							ASTNode def_val = params[i].as<DeclarationNode>().default_value();
+							if (def_val.is<InitializerListNode>()) {
+								const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+								if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
+									auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
+									const InitializerListNode& init_list = def_val.as<InitializerListNode>();
+									ChunkedVector<ASTNode> ctor_args;
+									for (const auto& init : init_list.initializers()) {
+										ctor_args.push_back(init);
+									}
+									args_ref.push_back(emplace_node<ExpressionNode>(
+										ConstructorCallNode(type_copy, std::move(ctor_args), identifier_token)));
+									continue;
+								}
+								const InitializerListNode& il = def_val.as<InitializerListNode>();
+								if (il.size() == 1 && il.initializers()[0].is<ExpressionNode>()) {
+									args_ref.push_back(il.initializers()[0]);
+									continue;
+								}
+								if (il.size() == 0) {
+									Token zero_tok(Token::Type::Literal, "0"sv,
+										identifier_token.line(), identifier_token.column(), identifier_token.file_index());
+									args_ref.push_back(emplace_node<ExpressionNode>(
+										NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+									continue;
+								}
+								return ParseResult::error(
+									"Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
+									+ std::string(params[i].as<DeclarationNode>().identifier_token().value()) + "\'",
+									identifier_token);
+							}
+							args_ref.push_back(def_val);
+						} else {
+							return ParseResult::error(
+								"No matching function for call to '" + std::string(identifier_token.value()) + "\'",
+								identifier_token);
+						}
+					}
+					return std::nullopt;
+				};
+
+				auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+
+				std::vector<TypeSpecifierNode> arg_types;
+				bool all_arg_types_known = true;
+				for (const auto& arg : args_ref) {
+					auto arg_type = get_expression_type(arg);
+					if (!arg_type.has_value()) {
+						all_arg_types_known = false;
+						break;
+					}
+					TypeSpecifierNode arg_type_node = *arg_type;
+					adjust_argument_type_for_overload_resolution(arg, arg_type_node);
+					arg_types.push_back(arg_type_node);
+				}
+
+				if (!all_arg_types_known) {
+					if (!identifierType.has_value()) {
+						return ParseResult::error("Invalid function declaration", identifier_token);
+					}
+					const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+					if (!decl_ptr) {
+						return ParseResult::error("Invalid function declaration", identifier_token);
+					}
+					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args_ref), identifier_token));
+					if (identifierType->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+						if (func_decl.has_mangled_name()) {
+							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						}
+					}
+					return ParseResult::success(*result);
+				}
+
+				// ADL per C++20 [basic.lookup.argdep]: suppressed only by blocking non-function decls
+				// (variables, structs, enums). Plain DeclarationNode stubs do NOT block ADL.
+				if (!arg_types.empty()) {
+					auto is_adl_blocking = [](const ASTNode& n) -> bool {
+						return !n.is<FunctionDeclarationNode>() &&
+						       (n.is<VariableDeclarationNode>() || n.is<StructDeclarationNode>() ||
+						        n.is<EnumDeclarationNode>());
+					};
+					if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking)) {
+						auto adl_candidates = gSymbolTable.lookup_adl(identifier_token.value(), arg_types);
+						all_overloads.insert(all_overloads.end(), adl_candidates.begin(), adl_candidates.end());
+					}
+				}
+
+				auto make_call_result = [&](const ASTNode& resolved_decl) -> ParseResult {
+					const DeclarationNode* decl_ptr = getDeclarationNode(resolved_decl);
+					if (!decl_ptr) {
+						return ParseResult::error("Invalid function declaration", identifier_token);
+					}
+					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args_ref), identifier_token));
+					if (resolved_decl.is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
+						if (func_decl.has_mangled_name()) {
+							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						}
+						if (!func_decl.parent_struct_name().empty()) {
+							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_qualified_name(
+								StringBuilder()
+									.append(func_decl.parent_struct_name())
+									.append("::")
+									.append(func_decl.decl_node().identifier_token().value())
+									.commit());
+						}
+					}
+					return ParseResult::success(*result);
+				};
+
+				if (all_overloads.empty()) {
+					std::optional<ASTNode> instantiated_func;
+					if (current_linkage_ != Linkage::C) {
+						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+					}
+					if (instantiated_func.has_value()) {
+						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
+						if (func_check && func_check->is_deleted()) {
+							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+						}
+						if (instantiated_func->is<FunctionDeclarationNode>()) {
+							if (auto err = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); err.has_value()) {
+								return *err;
+							}
+						}
+						return make_call_result(*instantiated_func);
+					}
+					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						return ParseResult::error(
+							"'" + std::string(identifier_token.value()) + "\' is a hidden friend and is only "
+							"accessible via argument-dependent lookup when an argument of the associated class type is provided",
+							identifier_token);
+					}
+					if (in_sfinae_context_) {
+						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+						return ParseResult::success(*result);
+					}
+					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
+				}
+
+				FLASH_LOG(Parser, Debug, "Function call to '", identifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
+
+				// If all candidates are plain DeclarationNode stubs (forward decls), skip overload
+				// resolution and use identifierType directly — the stub is the best we have and
+				// resolve_overload cannot match against it.
+				bool all_stubs = std::all_of(all_overloads.begin(), all_overloads.end(),
+					[](const ASTNode& n) {
+						return n.is<DeclarationNode>() && !n.is<FunctionDeclarationNode>() &&
+						       !n.is<VariableDeclarationNode>() && !n.is<TemplateFunctionDeclarationNode>();
+					});
+				if (all_stubs && identifierType.has_value()) {
+					// Before falling back to stub, check if this is a hidden friend with no
+					// ADL-providing arguments — that should be a compile error.
+					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						return ParseResult::error(
+							"'" + std::string(identifier_token.value()) + "\' is a hidden friend and is only "
+							"accessible via argument-dependent lookup when an argument of the associated class type is provided",
+							identifier_token);
+					}
+					return make_call_result(*identifierType);
+				}
+
+				auto resolution = resolve_overload(all_overloads, arg_types);
+				FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution.has_match, ", is_ambiguous=", resolution.is_ambiguous);
+
+				if (resolution.is_ambiguous) {
+					return ParseResult::error("Ambiguous call to overloaded function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+				}
+				if (!resolution.has_match) {
+					std::optional<ASTNode> instantiated_func;
+					if (current_linkage_ != Linkage::C) {
+						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+					}
+					if (instantiated_func.has_value()) {
+						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
+						if (func_check && func_check->is_deleted()) {
+							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
+						}
+						if (instantiated_func->is<FunctionDeclarationNode>()) {
+							if (auto err = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); err.has_value()) {
+								return *err;
+							}
+						}
+						return make_call_result(*instantiated_func);
+					}
+					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						return ParseResult::error(
+							"no matching function for call to '" + std::string(identifier_token.value()) + "\'",
+							identifier_token);
+					}
+					if (in_sfinae_context_) {
+						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+						return ParseResult::success(*result);
+					}
+					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
+				}
+
+				if (resolution.selected_overload->is<FunctionDeclarationNode>()) {
+					const auto& func_decl = resolution.selected_overload->as<FunctionDeclarationNode>();
+					if (auto err = appendMissingDefaultArguments(func_decl); err.has_value()) {
+						return *err;
+					}
+				}
+				return make_call_result(*resolution.selected_overload);
+			};
 
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
@@ -3384,67 +3601,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
-				// ADL per C++20 [basic.lookup.argdep]: if ordinary lookup gave only a fake forward decl,
-				// try ADL using the argument types to find functions in associated namespaces.
-				if (!found_member_function_in_context &&
-				    identifierType.has_value() && !identifierType->is<FunctionDeclarationNode>()) {
-					std::vector<TypeSpecifierNode> adl_arg_types;
-					for (const auto& adl_arg : args) {
-					    if (auto at = get_expression_type(adl_arg); at.has_value()) {
-					        adl_arg_types.push_back(*at);
-					    }
-					}
-					if (!adl_arg_types.empty()) {
-					    auto adl_cands = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
-					    if (!adl_cands.empty()) {
-					        auto adl_res = resolve_overload(adl_cands, adl_arg_types);
-					        if (adl_res.has_match && !adl_res.is_ambiguous) {
-					            identifierType = *adl_res.selected_overload;
-					        }
-					    }
-					}
-				}
-
-				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
-				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", identifier_token);
-				}
-
-				// If we found this member function in the current class context (or base class),
-				// create a MemberFunctionCallNode with implicit 'this' as the object
-				if (found_member_function_in_context && identifierType->is<FunctionDeclarationNode>()) {
+				// Unified resolution: collect candidates, augment with ADL, resolve overload.
+				// The member-function-in-context path is preserved separately.
+				if (found_member_function_in_context && identifierType.has_value() && identifierType->is<FunctionDeclarationNode>()) {
 					// Create implicit 'this' expression
 					Token this_token(Token::Type::Keyword, "this"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 					auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
-					
+
 					// Get the FunctionDeclarationNode
 					FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-					
+
 					// Create MemberFunctionCallNode with implicit 'this'
 					result = emplace_node<ExpressionNode>(
 						MemberFunctionCallNode(this_node, func_decl, std::move(args), identifier_token));
 				} else {
-					auto function_call_node = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
-					// If the function has a pre-computed mangled name, set it on the FunctionCallNode
-					if (identifierType->is<FunctionDeclarationNode>()) {
-						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-						FLASH_LOG(Parser, Debug, "Function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
-						if (func_decl.has_mangled_name()) {
-							std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
-							FLASH_LOG(Parser, Debug, "Set mangled name on FunctionCallNode: {}", func_decl.mangled_name());
-						}
-						if (!func_decl.parent_struct_name().empty()) {
-							std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_qualified_name(
-								StringBuilder()
-									.append(func_decl.parent_struct_name())
-									.append("::")
-									.append(func_decl.decl_node().identifier_token().value())
-									.commit());
-						}
-					}
-					result = function_call_node;
-					return ParseResult::success(*result);
+					return unified_resolve_function_call(args);
 				}
 			}
 			else {
@@ -5099,14 +5270,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 									// ADL per C++20 [basic.lookup.argdep]: augment candidate set with
 									// functions from associated namespaces of the argument types.
-									// Suppressed only when ordinary lookup found a blocking non-function decl.
-									if (!arg_types.empty() &&
-									    std::all_of(all_overloads.begin(), all_overloads.end(),
-									                [](const ASTNode& n) { return n.is<FunctionDeclarationNode>(); })) {
-										auto adl_candidates = gSymbolTable.lookup_adl(
-										    identifier_token.value(), arg_types);
-										all_overloads.insert(all_overloads.end(),
-										    adl_candidates.begin(), adl_candidates.end());
+									// Suppressed only when ordinary lookup found a blocking non-function decl
+									// (variable, struct, or enum declaration) — same rule as the early path.
+									// Use lookup_adl_only (not lookup_adl) since lookup_all already searched
+									// namespace_symbols_; this avoids duplicate candidates and false ambiguity.
+									if (!arg_types.empty()) {
+										auto is_adl_blocking_late = [](const ASTNode& n) -> bool {
+											return !n.is<FunctionDeclarationNode>() &&
+											       (n.is<VariableDeclarationNode>() || n.is<StructDeclarationNode>() ||
+											        n.is<EnumDeclarationNode>());
+										};
+										if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking_late)) {
+											auto adl_candidates = gSymbolTable.lookup_adl_only(
+											    identifier_token.value(), arg_types);
+											all_overloads.insert(all_overloads.end(),
+											    adl_candidates.begin(), adl_candidates.end());
+										}
 									}
 									if (all_overloads.empty()) {
 										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)
@@ -5120,11 +5299,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											if (func_check && func_check->is_deleted()) {
 												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 											}
-								if (instantiated_func->is<FunctionDeclarationNode>()) {
-									if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
-										return *default_args_error;
-									}
-								}
+											if (instantiated_func->is<FunctionDeclarationNode>()) {
+												if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+													return *default_args_error;
+												}
+											}
 											// Successfully instantiated template
 											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 											if (!decl_ptr) {

@@ -255,6 +255,20 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 	return false;
 }
 
+// Check if source_idx is transitively derived from base_idx (recursive through full hierarchy).
+// Per C++20 [class.derived], a derived class implicitly converts to any of its base classes.
+inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
+	if (!source_idx.is_valid() || !base_idx.is_valid()) return false;
+	if (source_idx.value >= gTypeInfo.size()) return false;
+	const StructTypeInfo* source = gTypeInfo[source_idx.value].getStructInfo();
+	if (!source) return false;
+	for (const auto& b : source->base_classes) {
+		if (b.type_index == base_idx) return true;
+		if (isTransitivelyDerivedFrom(b.type_index, base_idx)) return true;
+	}
+	return false;
+}
+
 // Check if target_struct has a single-arg converting constructor that accepts source_type,
 // OR if source derives from target (implicit derived-to-base conversion).
 // Used to determine if struct-to-struct conversions are viable.
@@ -266,13 +280,8 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	if (target_idx.value >= gTypeInfo.size() || source_idx.value >= gTypeInfo.size()) return false;
 	const StructTypeInfo* target = gTypeInfo[target_idx.value].getStructInfo();
 	if (!target) return false;
-	// Check if source is a derived class of target (implicit derived-to-base conversion)
-	const StructTypeInfo* source = gTypeInfo[source_idx.value].getStructInfo();
-	if (source) {
-		for (const auto& base : source->base_classes) {
-			if (base.type_index == target_idx) return true;
-		}
-	}
+	// Check if source is a (transitively) derived class of target (derived-to-base conversion)
+	if (isTransitivelyDerivedFrom(source_idx, target_idx)) return true;
 	// Check single-arg user-defined constructors
 	for (const auto& mf : target->member_functions) {
 		if (!mf.is_constructor) continue;
@@ -414,6 +423,12 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 					if (from_base == Type::Struct &&
 						from.type_index().is_valid() && to.type_index().is_valid() &&
 						from.type_index() != to.type_index()) {
+						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
+						// (standard derived-to-base reference conversion).
+						if (!from_is_rvalue && !to_is_rvalue &&
+						    isTransitivelyDerivedFrom(from.type_index(), to.type_index())) {
+							return TypeConversionResult{ConversionRank::Conversion, true};
+						}
 						return TypeConversionResult::no_match();
 					}
 					if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
@@ -1437,6 +1452,22 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	op_name_sb.append("operator").append(operator_symbol);
 	std::string_view op_func_name = op_name_sb.commit();
 	auto overloads = symbol_table.lookup_all(op_func_name);
+
+	// Also search ADL-only (hidden friend) operators.
+	// Per C++20 [over.match.oper]/2, ADL is performed for operator overload resolution
+	// when at least one operand has class/enum type.
+	// Use lookup_adl_only() instead of lookup_adl() because namespace_symbols_ candidates
+	// are already collected by lookup_all() above — using lookup_adl() would duplicate them,
+	// causing false ambiguity for regular (non-hidden) free-function operators.
+	{
+		std::vector<TypeSpecifierNode> adl_arg_types;
+		adl_arg_types.push_back(left_type_spec);
+		adl_arg_types.push_back(right_type_spec);
+		auto adl_candidates = symbol_table.lookup_adl_only(op_func_name, adl_arg_types);
+		for (auto& cand : adl_candidates) {
+			overloads.push_back(std::move(cand));
+		}
+	}
 
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>()) continue;

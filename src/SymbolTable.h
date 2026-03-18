@@ -530,47 +530,116 @@ public:
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
+	// Returns true if name exists in adl_only_symbols_ (across any namespace).
+	// Used to emit a proper compile error when a hidden friend is called without
+	// an argument that triggers ADL (C++20 [basic.lookup.argdep]).
+	// O(1) thanks to the dedicated adl_only_function_names_ set.
+	bool is_adl_only_function_name(std::string_view name) const {
+		StringHandle key = StringTable::getOrInternStringHandle(name);
+		return adl_only_function_names_.find(key) != adl_only_function_names_.end();
+	}
+
 	// Register a symbol directly into a namespace's persistent symbol table.
 	// Used for hidden friend functions defined inside class bodies so that
 	// lookup_adl() can find them even though the current scope is the struct scope.
-	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node) {
+	// When adl_only is true the symbol is stored in adl_only_symbols_ instead of
+	// namespace_symbols_, making it invisible to ordinary unqualified lookup while
+	// still reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
+	// When adl_only is false (the default), the symbol is stored in namespace_symbols_
+	// and is visible to both ordinary unqualified lookup and ADL.
+	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only = false) {
 		if (!ns.isValid()) return;
-		auto& ns_map = namespace_symbols_[ns];
-		auto it = ns_map.find(name_handle);
-		if (it == ns_map.end()) {
-			ns_map[name_handle] = std::vector<ASTNode>{node};
+		auto& target = adl_only ? adl_only_symbols_[ns] : namespace_symbols_[ns];
+		auto it = target.find(name_handle);
+		if (it == target.end()) {
+			target[name_handle] = std::vector<ASTNode>{node};
 		} else {
 			it->second.push_back(node);
 		}
+		if (adl_only) {
+			adl_only_function_names_.insert(name_handle);
+		}
+	}
+
+	// Search only adl_only_symbols_ (hidden friends) for the given function name
+	// in associated namespaces of the argument types.  Unlike lookup_adl(), this
+	// does NOT search namespace_symbols_, so it is safe to call when the caller
+	// has already collected namespace_symbols_ candidates via lookup_all().
+	// This avoids duplicate candidates that would cause false ambiguity.
+	std::vector<ASTNode> lookup_adl_only(std::string_view func_name,
+	                                     const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::vector<ASTNode> result;
+		std::unordered_set<NamespaceHandle> visited;
+		StringHandle key = StringTable::getOrInternStringHandle(func_name);
+
+		auto collect_from_ns = [&](NamespaceHandle ns) {
+			if (!ns.isValid() || !visited.insert(ns).second) return;
+			auto adl_it = adl_only_symbols_.find(ns);
+			if (adl_it == adl_only_symbols_.end()) return;
+			auto sym_it = adl_it->second.find(key);
+			if (sym_it == adl_it->second.end()) return;
+			result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+		};
+
+		std::unordered_set<size_t> visited_types;
+		for (const auto& arg_type : arg_types) {
+			TypeIndex ti = arg_type.type_index();
+			if (!ti.is_valid() || ti.value >= gTypeInfo.size()) continue;
+			const auto& type_info = gTypeInfo[ti.value];
+			if (const StructTypeInfo* si = type_info.getStructInfo()) {
+				visited_types.insert(ti.value);
+				collect_struct_associated_namespaces(si, collect_from_ns, visited_types);
+			} else if (type_info.getEnumInfo()) {
+				// C++20 [basic.lookup.argdep]/2: the associated namespace of an
+				// enumeration type is its innermost enclosing namespace.
+				// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
+				collect_from_ns(type_info.namespaceHandle());
+			}
+		}
+		return result;
 	}
 
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
 	// For each argument type that is a struct/class, searches the namespace in which
-	// the struct was declared, plus namespaces of all its direct base classes.
+	// the struct was declared, plus namespaces of all its base classes (recursively).
 	// Suppressed when ordinary lookup already found a blocking non-function declaration.
+	// Also searches adl_only_symbols_ so that hidden friends defined inside class bodies
+	// are reachable via ADL but not via ordinary unqualified lookup.
 	std::vector<ASTNode> lookup_adl(std::string_view func_name,
 	                                const std::vector<TypeSpecifierNode>& arg_types) const {
 		std::vector<ASTNode> result;
 		std::unordered_set<NamespaceHandle> visited;
+		// Intern once; reused by both lookup_qualified_all and the adl_only_symbols_ search.
+		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto search_ns = [&](NamespaceHandle ns) {
 			if (!ns.isValid() || !visited.insert(ns).second) return;
-			auto candidates = lookup_qualified_all(ns, func_name);
+			// Search regular namespace symbols
+			auto candidates = lookup_qualified_all(ns, key);
 			result.insert(result.end(), candidates.begin(), candidates.end());
+			// Also search ADL-only (hidden friend) symbols
+			auto adl_it = adl_only_symbols_.find(ns);
+			if (adl_it != adl_only_symbols_.end()) {
+				auto sym_it = adl_it->second.find(key);
+				if (sym_it != adl_it->second.end()) {
+					result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
+				}
+			}
 		};
 
+		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
 			if (ti.is_valid() && ti.value < gTypeInfo.size()) {
-				if (const StructTypeInfo* si = gTypeInfo[ti.value].getStructInfo()) {
-					search_ns(si->namespace_handle);
-					for (const auto& base : si->base_classes) {
-						if (base.type_index.is_valid() && base.type_index.value < gTypeInfo.size()) {
-							if (const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo()) {
-								search_ns(bsi->namespace_handle);
-							}
-						}
-					}
+				const auto& type_info = gTypeInfo[ti.value];
+				if (const StructTypeInfo* si = type_info.getStructInfo()) {
+					visited_types.insert(ti.value);
+					collect_struct_associated_namespaces(si, search_ns, visited_types);
+				} else if (type_info.getEnumInfo()) {
+					// C++20 [basic.lookup.argdep]/2: the associated namespace of an
+					// enumeration type is its innermost enclosing namespace.
+					// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
+					search_ns(type_info.namespaceHandle());
 				}
 			}
 		}
@@ -920,22 +989,22 @@ public:
 		// Match by identity/signature and require uniqueness across namespaces.
 		std::optional<NamespaceHandle> matched_namespace;
 		bool ambiguous = false;
-		for (const auto& [ns_handle, symbol_map] : namespace_symbols_) {
-			for (const auto& symbol_entry : symbol_map) {
-				const auto& nodes = symbol_entry.second;
-				for (const auto& candidate : nodes) {
-					if (candidate.is<FunctionDeclarationNode>() &&
-					    matches_function(candidate.as<FunctionDeclarationNode>())) {
-						if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
-							ambiguous = true;
-							break;
+
+		auto search_map = [&](const std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>>& sym_map) {
+			for (const auto& [ns_handle, symbol_map] : sym_map) {
+				for (const auto& symbol_entry : symbol_map) {
+					const auto& nodes = symbol_entry.second;
+					for (const auto& candidate : nodes) {
+						const FunctionDeclarationNode* func_node = nullptr;
+						if (candidate.is<FunctionDeclarationNode>()) {
+							func_node = &candidate.as<FunctionDeclarationNode>();
+						} else if (candidate.is<TemplateFunctionDeclarationNode>()) {
+							const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
+							if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+								func_node = &tmpl.function_declaration().as<FunctionDeclarationNode>();
+							}
 						}
-						matched_namespace = ns_handle;
-					}
-					if (candidate.is<TemplateFunctionDeclarationNode>()) {
-						const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
-						if (tmpl.function_declaration().is<FunctionDeclarationNode>() &&
-						    matches_function(tmpl.function_declaration().as<FunctionDeclarationNode>())) {
+						if (func_node && matches_function(*func_node)) {
 							if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
 								ambiguous = true;
 								break;
@@ -943,11 +1012,14 @@ public:
 							matched_namespace = ns_handle;
 						}
 					}
+					if (ambiguous) break;
 				}
 				if (ambiguous) break;
 			}
-			if (ambiguous) break;
-		}
+		};
+
+		search_map(namespace_symbols_);
+		if (!ambiguous) search_map(adl_only_symbols_);
 		if (!ambiguous && matched_namespace.has_value()) {
 			return matched_namespace;
 		}
@@ -1008,6 +1080,8 @@ public:
 		symbol_table_stack_.clear();
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
+		adl_only_symbols_.clear();
+		adl_only_function_names_.clear();
 		interned_strings_.clear();
 		// Recreate the string allocator to fully release all memory
 		string_allocator_ = ChunkedStringAllocator(64 * 1024);
@@ -1019,6 +1093,11 @@ private:
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading
 	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> namespace_symbols_;
+	// ADL-only symbols (hidden friends): not visible to ordinary unqualified lookup,
+	// only reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
+	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> adl_only_symbols_;
+	// Flat set of all ADL-only function name handles for O(1) is_adl_only_function_name() queries.
+	std::unordered_set<StringHandle> adl_only_function_names_;
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
@@ -1026,6 +1105,25 @@ private:
 	
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
+
+	// Recursively collect associated namespaces from a struct/class type and all
+	// of its base classes (C++20 [basic.lookup.argdep]/2: "the associated classes
+	// of a class type include ... all of its base classes").
+	// The visited set (keyed by TypeIndex) prevents infinite loops from diamond
+	// inheritance and avoids redundant work.
+	template<typename NsCallback>
+	static void collect_struct_associated_namespaces(const StructTypeInfo* si,
+	                                                 NsCallback&& ns_callback,
+	                                                 std::unordered_set<size_t>& visited_types) {
+		if (!si) return;
+		ns_callback(si->namespace_handle);
+		for (const auto& base : si->base_classes) {
+			if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
+			if (!visited_types.insert(base.type_index.value).second) continue;
+			const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
+			collect_struct_associated_namespaces(bsi, ns_callback, visited_types);
+		}
+	}
 
 	// Intern a string_view by checking if it already exists, or allocate it
 	// Returns a string_view that is guaranteed to remain valid
