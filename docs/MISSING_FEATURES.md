@@ -414,6 +414,27 @@ When implementing a missing feature:
 
 ## Known Issues
 
+### Operator ADL does not find regular free-function operators in associated namespaces
+
+**Severity**: Low (conformance issue, unlikely to hit in practice)
+
+In `findBinaryOperatorOverloadWithFreeFunction` (`src/OverloadResolution.h`), the operator candidate collection calls `lookup_all()` (scope-based) then `lookup_adl_only()` (hidden friends only). This means a regular (non-hidden-friend) free-function operator declared in an associated namespace — but not brought into scope via `using` — will not be found by ADL during operator resolution.
+
+**Example** (should compile but currently fails):
+```cpp
+namespace ns {
+    struct S { int x; };
+    bool operator==(S a, S b) { return a.x == b.x; }  // regular free function
+}
+int main() {
+    ns::S a, b;
+    return a == b;  // ADL should find ns::operator==, but operator path misses it
+}
+```
+
+**Note**: Hidden friend operators *are* correctly found (via `lookup_adl_only`), and regular function-call ADL works correctly (via `lookup_adl` in `unified_resolve_function_call`). Only the operator-specific resolution path has this gap.
+
+**Fix**: Replace `lookup_adl_only` with `lookup_adl` in `findBinaryOperatorOverloadWithFreeFunction`, and deduplicate against the `lookup_all` results to avoid false ambiguity.
 
 ---
 
