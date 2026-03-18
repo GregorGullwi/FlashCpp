@@ -754,6 +754,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto enum_it = gTypesByName.find(StringTable::getOrInternStringHandle(enum_decl.name()));
 					if (enum_it != gTypesByName.end()) {
 						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
+						// Also register with struct-qualified name so that
+						// lookupTypeInCurrentContext("Container::Status") finds
+						// "ns::Container::Status" via namespace-prefixed search.
+						// Per C++20 [basic.lookup.qual], a nested enum is found by
+						// qualifying through the enclosing class name.
+						StringHandle qualified_enum_name = StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(type_name)
+								.append("::")
+								.append(enum_decl.name()));
+						gTypesByName.emplace(qualified_enum_name, enum_it->second);
 					}
 				}
 				// The semicolon is already consumed by parse_enum_declaration

@@ -1453,19 +1453,35 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	std::string_view op_func_name = op_name_sb.commit();
 	auto overloads = symbol_table.lookup_all(op_func_name);
 
-	// Also search ADL-only (hidden friend) operators.
-	// Per C++20 [over.match.oper]/2, ADL is performed for operator overload resolution
-	// when at least one operand has class/enum type.
-	// Use lookup_adl_only() instead of lookup_adl() because namespace_symbols_ candidates
-	// are already collected by lookup_all() above — using lookup_adl() would duplicate them,
-	// causing false ambiguity for regular (non-hidden) free-function operators.
+	// Also search associated namespaces via full ADL (hidden friends + regular
+	// namespace-scoped operators).  Per C++20 [over.match.oper]/2, ADL is
+	// performed for operator overload resolution when at least one operand has
+	// class/enum type.  We use lookup_adl() (not lookup_adl_only()) so that
+	// regular free-function operators in associated namespaces are found — not
+	// only hidden friends.  Deduplicate against the lookup_all() results above
+	// to avoid double-counting operators that are both in the current scope
+	// chain and in an associated namespace.
 	{
 		std::vector<TypeSpecifierNode> adl_arg_types;
 		adl_arg_types.push_back(left_type_spec);
 		adl_arg_types.push_back(right_type_spec);
-		auto adl_candidates = symbol_table.lookup_adl_only(op_func_name, adl_arg_types);
+		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
+
+		// Build a set of existing FunctionDeclarationNode pointers for O(1) dedup.
+		std::unordered_set<const FunctionDeclarationNode*> existing;
+		for (const auto& node : overloads) {
+			if (node.is<FunctionDeclarationNode>()) {
+				existing.insert(&node.as<FunctionDeclarationNode>());
+			}
+		}
 		for (auto& cand : adl_candidates) {
-			overloads.push_back(std::move(cand));
+			if (cand.is<FunctionDeclarationNode>()) {
+				if (existing.insert(&cand.as<FunctionDeclarationNode>()).second) {
+					overloads.push_back(std::move(cand));
+				}
+			} else {
+				overloads.push_back(std::move(cand));
+			}
 		}
 	}
 
