@@ -3207,7 +3207,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						        n.is<EnumDeclarationNode>());
 					};
 					if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking)) {
-						auto adl_candidates = gSymbolTable.lookup_adl(identifier_token.value(), arg_types);
+						auto adl_candidates = gSymbolTable.lookup_adl_only(identifier_token.value(), arg_types);
 						all_overloads.insert(all_overloads.end(), adl_candidates.begin(), adl_candidates.end());
 					}
 				}
