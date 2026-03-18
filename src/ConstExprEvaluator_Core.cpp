@@ -750,13 +750,15 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 			current_type_index,
 			member_path[i].handle());
 		if (!member_result) {
-			return EvalResult::error("Member not found in struct");
+			return EvalResult::error(std::string(
+				StringBuilder().append("Member '").append(member_path[i].value()).append("' not found in struct").commit()));
 		}
 
 		total_offset += member_result.adjusted_offset;
 		if (i + 1 < member_path.size()) {
 			if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
-				return EvalResult::error("offsetof nested member requires struct intermediate");
+				return EvalResult::error(std::string(
+					StringBuilder().append("offsetof nested member '").append(member_path[i].value()).append("' must be a struct").commit()));
 			}
 			current_type_index = member_result.member->type_index;
 		}

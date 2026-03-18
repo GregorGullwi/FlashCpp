@@ -1954,13 +1954,15 @@
 				current_type_index,
 				member_path[i].handle());
 			if (!member_result) {
-				throw InternalError("Member not found in struct");
+				throw InternalError(std::string(
+					StringBuilder().append("Member '").append(member_path[i].value()).append("' not found in struct").commit()));
 			}
 
 			total_offset += member_result.adjusted_offset;
 			if (i + 1 < member_path.size()) {
 				if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
-					throw InternalError("offsetof nested member requires struct intermediate");
+					throw InternalError(std::string(
+						StringBuilder().append("offsetof nested member '").append(member_path[i].value()).append("' must be a struct").commit()));
 				}
 				current_type_index = member_result.member->type_index;
 			}
