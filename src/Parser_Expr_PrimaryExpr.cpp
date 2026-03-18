@@ -3398,9 +3398,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					    }
 					}
 					bool adl_was_ambiguous = false;
+					bool adl_found_candidates = false;
 					if (!adl_arg_types.empty()) {
 					    auto adl_cands = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
-					    if (!adl_cands.empty()) {
+					    adl_found_candidates = !adl_cands.empty();
+					    if (adl_found_candidates) {
 					        auto adl_res = resolve_overload(adl_cands, adl_arg_types);
 					        if (adl_res.has_match && !adl_res.is_ambiguous) {
 					            identifierType = *adl_res.selected_overload;
@@ -3421,9 +3423,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								"call to '" + std::string(identifier_token.value()) + "' is ambiguous",
 								identifier_token);
 						}
-						// Check whether ADL found any candidates at all.
-						bool adl_found_candidates = !adl_arg_types.empty() &&
-							!gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types).empty();
 						if (adl_found_candidates) {
 							return ParseResult::error(
 								"no matching function for call to '" + std::string(identifier_token.value()) + "'",
