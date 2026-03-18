@@ -598,19 +598,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			return ParseResult::error("Expected ',' after struct type in offsetof", current_token_);
 		}
 
-		// Parse the member name
+		// Parse the member-designator
 		if (!peek().is_identifier()) {
 			return ParseResult::error("Expected member name in offsetof", current_token_);
 		}
-		Token member_name = peek_info();
+		std::vector<Token> member_path;
+		member_path.push_back(peek_info());
 		advance(); // consume member name
+		while (consume("."_tok)) {
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected member name after '.' in offsetof", current_token_);
+			}
+			member_path.push_back(peek_info());
+			advance(); // consume member name
+		}
 
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after offsetof arguments", current_token_);
 		}
 
 		result = emplace_node<ExpressionNode>(
-			OffsetofExprNode(*type_result.node(), member_name, offsetof_token));
+			OffsetofExprNode(*type_result.node(), std::move(member_path), offsetof_token));
 	}
 	// Check for type trait intrinsics: __is_void(T), __is_integral(T), __has_unique_object_representations(T), etc.
 	// Also support GCC/Clang __builtin_ prefix variants (e.g., __builtin_is_constant_evaluated)

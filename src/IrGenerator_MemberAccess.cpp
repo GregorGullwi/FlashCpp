@@ -1943,19 +1943,13 @@
 			return ExprResult{};
 		}
 
-		// Find the member
-		std::string_view member_name = offsetofNode.member_name();
-		auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-			TypeIndex{type_index},
-			StringTable::getOrInternStringHandle(std::string(member_name)));
-		if (!member_result) {
-			throw InternalError("Member not found in struct");
+		auto path_result = FlashCpp::resolveOffsetofMemberPath(TypeIndex{type_index}, offsetofNode.member_path());
+		if (!path_result.success()) {
+			throw InternalError(path_result.error_message);
 			return ExprResult{};
 		}
 
-		// Return offset as a constant unsigned long long (size_t equivalent)
-		// Format: [type, size_bits, value]
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)});
 	}
 
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {

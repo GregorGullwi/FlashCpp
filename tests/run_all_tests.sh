@@ -16,14 +16,42 @@ NC='\033[0m'
 # Defaults
 VERBOSE=0
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+REQUESTED_TEST_NAMES=()
 [ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
 
-for arg in "$@"; do
-    case "$arg" in
-        --verbose|-v) VERBOSE=1 ;;
-        -j[0-9]*) JOBS="${arg#-j}" ;;
-        --jobs=*) JOBS="${arg#--jobs=}" ;;
-    esac
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--verbose|-v)
+			VERBOSE=1
+			;;
+		-j[0-9]*)
+			JOBS="${1#-j}"
+			;;
+		-j|--jobs)
+			opt_name="$1"
+			shift
+			if [ $# -eq 0 ]; then
+				echo -e "${RED}ERROR:${NC} Missing value for $opt_name"
+				exit 1
+			fi
+			JOBS="$1"
+			;;
+		--jobs=*)
+			JOBS="${1#--jobs=}"
+			;;
+		--)
+			shift
+			while [ $# -gt 0 ]; do
+				REQUESTED_TEST_NAMES+=("$(basename "$1")")
+				shift
+			done
+			break
+			;;
+		*)
+			REQUESTED_TEST_NAMES+=("$(basename "$1")")
+			;;
+	esac
+	shift
 done
 
 echo "FlashCpp ELF Test Runner"
@@ -85,6 +113,35 @@ for f in tests/*.cpp; do
         [[ "$base" == *"_fail.cpp" ]] && FAIL_FILES+=("$base") || TEST_FILES+=("$base")
     fi
 done
+
+if [ ${#REQUESTED_TEST_NAMES[@]} -gt 0 ]; then
+	FILTERED_TEST_FILES=()
+	FILTERED_FAIL_FILES=()
+	for base in "${TEST_FILES[@]}"; do
+		contains "$base" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_TEST_FILES+=("$base")
+	done
+	for base in "${FAIL_FILES[@]}"; do
+		contains "$base" "${REQUESTED_TEST_NAMES[@]}" && FILTERED_FAIL_FILES+=("$base")
+	done
+
+	matched_names=()
+	[ ${#FILTERED_TEST_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_TEST_FILES[@]}")
+	[ ${#FILTERED_FAIL_FILES[@]} -gt 0 ] && matched_names+=("${FILTERED_FAIL_FILES[@]}")
+	missing_names=()
+	for requested in "${REQUESTED_TEST_NAMES[@]}"; do
+		if ! contains "$requested" "${matched_names[@]}" && ! contains "$requested" "${missing_names[@]}"; then
+			missing_names+=("$requested")
+		fi
+	done
+
+	if [ ${#missing_names[@]} -gt 0 ]; then
+		echo -e "${RED}ERROR:${NC} Test file(s) not found in tests/: ${missing_names[*]}"
+		exit 1
+	fi
+
+	TEST_FILES=("${FILTERED_TEST_FILES[@]}")
+	FAIL_FILES=("${FILTERED_FAIL_FILES[@]}")
+fi
 
 TOTAL=${#TEST_FILES[@]}
 TOTAL_FAIL=${#FAIL_FILES[@]}
@@ -241,8 +298,10 @@ export -f test_one_fail_file
 # ──────────────────────────────────────────────────────
 # Run regular tests in parallel
 # ──────────────────────────────────────────────────────
-printf '%s\n' "${TEST_FILES[@]}" | \
-    xargs -P "$JOBS" -I {} bash -c 'test_one_file "$@"' _ {} "$REPO_ROOT" "$RESULT_DIR"
+if [ ${#TEST_FILES[@]} -gt 0 ]; then
+	printf '%s\n' "${TEST_FILES[@]}" | \
+		xargs -P "$JOBS" -I {} bash -c 'test_one_file "$@"' _ {} "$REPO_ROOT" "$RESULT_DIR"
+fi
 
 # ──────────────────────────────────────────────────────
 # Run _fail tests in parallel

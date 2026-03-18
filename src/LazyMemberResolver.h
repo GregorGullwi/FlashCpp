@@ -189,4 +189,38 @@ private:
 // This will be initialized in the implementation file
 extern LazyMemberResolver gLazyMemberResolver;
 
+// Result of resolving a dotted member path for offsetof (e.g., inner.value)
+struct OffsetofPathResult {
+	size_t total_offset = 0;
+	std::string error_message;  // empty on success
+	bool success() const { return error_message.empty(); }
+};
+
+// Walk a dotted member path (e.g., {inner, value}) starting from root_type_index,
+// accumulating offsets.  Used by both constexpr evaluation and IR generation.
+inline OffsetofPathResult resolveOffsetofMemberPath(
+	TypeIndex root_type_index,
+	const std::vector<Token>& member_path) {
+	if (member_path.empty()) {
+		return {0, "offsetof requires a member name"};
+	}
+	size_t total_offset = 0;
+	TypeIndex current_type_index = root_type_index;
+	for (size_t i = 0; i < member_path.size(); ++i) {
+		auto member_result = gLazyMemberResolver.resolve(
+			current_type_index, member_path[i].handle());
+		if (!member_result) {
+			return {0, std::string("Member '") + std::string(member_path[i].value()) + "' not found in struct"};
+		}
+		total_offset += member_result.adjusted_offset;
+		if (i + 1 < member_path.size()) {
+			if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
+				return {0, std::string("offsetof nested member '") + std::string(member_path[i].value()) + "' must be a struct"};
+			}
+			current_type_index = member_result.member->type_index;
+		}
+	}
+	return {total_offset, {}};
+}
+
 } // namespace FlashCpp
