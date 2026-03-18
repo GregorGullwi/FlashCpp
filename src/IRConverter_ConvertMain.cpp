@@ -6440,9 +6440,9 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 					}
 					if (src_it == current_scope.variables.end()) {
-						FLASH_LOG(Codegen, Error, "Code generation error: variable initializer '",
-							StringTable::getStringView(rvalue_var_name_handle), "' not found in scope - skipping");
-						return;
+						throw InternalError("Code generation error: variable initializer '" +
+							std::string(StringTable::getStringView(rvalue_var_name_handle)) +
+							"' not found in scope");
 					}
 					src_offset = src_it->second.offset;
 
