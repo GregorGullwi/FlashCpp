@@ -198,6 +198,16 @@ const CanonicalTypeDesc& TypeContext::get(CanonicalTypeId id) const {
 // ConversionRank and StandardConversionKind in a single call.
 // See tryAnnotateConversion() below for usage.
 
+// Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
+// Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
+static Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
+	if (base_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* ei = gTypeInfo[type_index.value].getEnumInfo())
+			return ei->underlying_type;
+	}
+	return base_type;
+}
+
 // --- SemanticAnalysis ---
 
 SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols)
@@ -1556,16 +1566,8 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
-	Type lhs_base = lhs_desc.base_type;
-	Type rhs_base = rhs_desc.base_type;
-	if (lhs_base == Type::Enum && lhs_desc.type_index.is_valid() && lhs_desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[lhs_desc.type_index.value].getEnumInfo())
-			lhs_base = ei->underlying_type;
-	}
-	if (rhs_base == Type::Enum && rhs_desc.type_index.is_valid() && rhs_desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[rhs_desc.type_index.value].getEnumInfo())
-			rhs_base = ei->underlying_type;
-	}
+	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
 
 	const Type common = get_common_type(lhs_base, rhs_base);
 	if (common == Type::Invalid) return;
@@ -1602,16 +1604,8 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
-	Type lhs_base = lhs_desc.base_type;
-	Type rhs_base = rhs_desc.base_type;
-	if (lhs_base == Type::Enum && lhs_desc.type_index.is_valid() && lhs_desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[lhs_desc.type_index.value].getEnumInfo())
-			lhs_base = ei->underlying_type;
-	}
-	if (rhs_base == Type::Enum && rhs_desc.type_index.is_valid() && rhs_desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[rhs_desc.type_index.value].getEnumInfo())
-			rhs_base = ei->underlying_type;
-	}
+	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
 
 	// Shift is only defined for integral operands
 	if (is_floating_point_type(lhs_base) || is_floating_point_type(rhs_base)) return;
