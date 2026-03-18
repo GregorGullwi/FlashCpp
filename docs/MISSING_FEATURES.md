@@ -412,28 +412,6 @@ When implementing a missing feature:
 
 ---
 
-## Known Issues
-
-### ~~Operator ADL does not find regular free-function operators in associated namespaces~~ (FIXED)
-
-**Status**: Fixed (2026-03-18)
-
-Operator ADL now uses `lookup_adl()` (full ADL including both hidden friends and regular namespace-scoped operators) instead of `lookup_adl_only()` in `findBinaryOperatorOverloadWithFreeFunction`. Results are deduplicated against the `lookup_all()` scope-chain results to avoid false ambiguity. Test: `test_operator_adl_free_function_ret0.cpp`.
-
-### ~~Enum ADL may fail for enums declared inside class bodies or anonymous namespaces~~ (FIXED)
-
-**Status**: Fixed (2026-03-18)
-
-Enum ADL for enums declared inside class bodies now works correctly. The fix registers nested enums in `gTypesByName` with their struct-qualified name (e.g., `ns::Container::Status`) in addition to the simple name, so that `lookupTypeInCurrentContext` resolves qualified type references like `Container::Status` to the correct enum `TypeInfo` with proper `type_index`. The ADL machinery (`lookup_adl` / `lookup_adl_only`) already correctly uses `TypeInfo::namespaceHandle()` which is set to the innermost enclosing namespace by `get_current_namespace_handle()` (which skips class scopes). Test: `test_hidden_friend_enum_adl_ret0.cpp`.
-
-### ~~Local (function-scoped) enum declarations are not supported~~ (FIXED)
-
-**Status**: Fixed (2026-03-17)
-
-Local `enum` and `enum class` declarations inside function bodies are now fully supported. Both unscoped and scoped (enum class) variants work, including explicit underlying types and qualified access (`EnumClass::Value`). Enumerator symbols are properly re-inserted into the codegen-local symbol table when the enum declaration is visited during code generation.
-
----
-
 ## References
 
 **Parser Code**: `src/Parser.cpp` - Main parsing logic
