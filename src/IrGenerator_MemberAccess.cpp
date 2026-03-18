@@ -1943,32 +1943,13 @@
 			return ExprResult{};
 		}
 
-		size_t total_offset = 0;
-		TypeIndex current_type_index{type_index};
-		const auto& member_path = offsetofNode.member_path();
-		if (member_path.empty()) {
-			throw InternalError("offsetof requires a member name");
-		}
-		for (size_t i = 0; i < member_path.size(); ++i) {
-			auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-				current_type_index,
-				member_path[i].handle());
-			if (!member_result) {
-				throw InternalError(std::string(
-					StringBuilder().append("Member '").append(member_path[i].value()).append("' not found in struct").commit()));
-			}
-
-			total_offset += member_result.adjusted_offset;
-			if (i + 1 < member_path.size()) {
-				if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
-					throw InternalError(std::string(
-						StringBuilder().append("offsetof nested member '").append(member_path[i].value()).append("' must be a struct").commit()));
-				}
-				current_type_index = member_result.member->type_index;
-			}
+		auto path_result = FlashCpp::resolveOffsetofMemberPath(TypeIndex{type_index}, offsetofNode.member_path());
+		if (!path_result.success()) {
+			throw InternalError(path_result.error_message);
+			return ExprResult{};
 		}
 
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(total_offset)});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)});
 	}
 
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
