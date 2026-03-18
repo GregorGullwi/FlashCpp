@@ -732,6 +732,28 @@
 											DeferredMemberFunctionInfo deferred_info;
 											deferred_info.struct_name = direct_type_info->name();
 											deferred_info.function_node = *instantiated_func;
+											// Compute namespace stack from struct name for correct mangling
+											{
+												auto build_ns_stack = [](std::string_view qualified_name, std::vector<std::string>& out) {
+													size_t ns_end = qualified_name.rfind("::");
+													if (ns_end == std::string_view::npos) return;
+													std::string_view ns_part = qualified_name.substr(0, ns_end);
+													size_t start = 0;
+													while (start < ns_part.size()) {
+														size_t pos = ns_part.find("::", start);
+														if (pos == std::string_view::npos) {
+															out.emplace_back(ns_part.substr(start));
+															break;
+														}
+														out.emplace_back(ns_part.substr(start, pos - start));
+														start = pos + 2;
+													}
+												};
+												build_ns_stack(resolved_struct_part, deferred_info.namespace_stack);
+												if (deferred_info.namespace_stack.empty()) {
+													build_ns_stack(StringTable::getStringView(direct_type_info->name()), deferred_info.namespace_stack);
+												}
+											}
 											deferred_member_functions_.push_back(std::move(deferred_info));
 											FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
 										}
