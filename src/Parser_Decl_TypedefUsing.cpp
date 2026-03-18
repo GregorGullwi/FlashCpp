@@ -872,11 +872,19 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (struct_ref) {
 				struct_ref->add_type_alias(alias_name, type_node, current_access);
 
-				// Register struct-chain-qualified and namespace-qualified names,
-				// mirroring the registration done for 'using' aliases (lines 406-431)
-				// and direct enum declarations in parse_struct_declaration.
+				// Register struct-chain-qualified and namespace-qualified names
+				// pointing to the ORIGINAL enum TypeInfo (not an alias TypeInfo).
+				// This is critical: the original TypeInfo has the EnumTypeInfo with
+				// all enumerator values; an alias TypeInfo would lack it, breaking
+				// unscoped enumerator access like Container::Ok.
 				NamespaceHandle current_ns = gSymbolTable.get_current_namespace_handle();
 				std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
+
+				// Look up the original enum TypeInfo by its type_index
+				TypeInfo* original_enum_type_info = nullptr;
+				if (enum_type_index.value < gTypeInfo.size()) {
+					original_enum_type_info = &gTypeInfo[enum_type_index.value];
+				}
 
 				StringBuilder chain_builder;
 				for (const auto& ctx : struct_parsing_context_stack_) {
@@ -885,14 +893,16 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				chain_builder.append(alias_name);
 				StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
 
-				TypeInfo& alias_info = register_type_alias(struct_relative_handle, type_spec, current_ns);
+				// Register struct-relative name ("Container::Status") pointing to original enum
+				if (original_enum_type_info) {
+					gTypesByName.emplace(struct_relative_handle, original_enum_type_info);
+				}
 
-				if (!current_ns_name.empty()) {
+				if (!current_ns_name.empty() && original_enum_type_info) {
+					// Also register namespace-qualified name "ns::Container::Status"
 					StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 						current_ns, struct_relative_handle);
-					if (gTypesByName.find(ns_qualified_handle) == gTypesByName.end()) {
-						gTypesByName.emplace(ns_qualified_handle, &alias_info);
-					}
+					gTypesByName.emplace(ns_qualified_handle, original_enum_type_info);
 				}
 				return ParseResult::success();
 			}
