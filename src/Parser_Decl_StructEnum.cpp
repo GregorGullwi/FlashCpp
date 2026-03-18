@@ -118,6 +118,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				current_namespace_handle, struct_chain);
 			qualified_struct_name = full_qualified_name;
 			type_name = full_qualified_name;
+			// Also register the struct-chain-relative name ("A::B::C") so that
+			// unqualified access from within the namespace works, e.g.:
+			//   namespace ns { void f() { A::B b; } }
+			// The type resolver builds the literal string "A::B" and looks it up
+			// in gTypesByName; without this registration only "ns::A::B" exists.
+			// We defer the actual emplace to after add_struct_type() below (line 134+).
 		} else {
 			// No enclosing namespace: just the struct chain "A::B::C"
 			qualified_struct_name = struct_chain;
@@ -137,6 +143,22 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
 		gTypesByName.emplace(struct_name, &struct_type_info);
+
+		// Register the struct-chain-relative name ("A::B", "A::B::C") when inside a
+		// namespace.  This allows unqualified access from within the namespace:
+		//   namespace ns { void f() { A::B b; } }
+		// Without this, only "ns::A::B" and "B" are registered.
+		if (!qualified_namespace.empty()) {
+			StringBuilder struct_chain_builder2;
+			for (const auto& ctx : struct_parsing_context_stack_) {
+				struct_chain_builder2.append(ctx.struct_name).append("::");
+			}
+			struct_chain_builder2.append(struct_name);
+			StringHandle struct_chain2 = StringTable::getOrInternStringHandle(struct_chain_builder2.commit());
+			if (struct_chain2 != type_name) {
+				gTypesByName.emplace(struct_chain2, &struct_type_info);
+			}
+		}
 	}
 	
 	// For namespace classes, also register with the simple name for 'this' pointer lookup
