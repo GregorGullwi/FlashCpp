@@ -711,6 +711,31 @@
 								}
 							}
 						}
+						// If member_functions is empty (lazy-instantiated template), check
+						// LazyMemberInstantiationRegistry and trigger instantiation now.
+						if (!matched_func_decl && parser_) {
+							StringHandle struct_name_handle = direct_type_info->name();
+							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name_handle, member_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_name_handle, member_handle);
+								if (lazy_info_opt.has_value()) {
+									auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle);
+									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+										const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
+										if (fd.parameter_nodes().size() == direct_expected_param_count) {
+											matched_func_decl = &fd;
+											resolveMangledName(matched_func_decl, resolved_struct_part);
+											DeferredMemberFunctionInfo deferred_info;
+											deferred_info.struct_name = direct_type_info->name();
+											deferred_info.function_node = *instantiated_func;
+											deferred_member_functions_.push_back(std::move(deferred_info));
+											FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 			}
