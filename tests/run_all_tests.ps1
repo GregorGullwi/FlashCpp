@@ -40,11 +40,12 @@ Write-Host ""
 # Find the FlashCpp compiler executable
 # On GitHub Actions, MSBuild builds FlashCppMSVC.exe
 # Locally, build_flashcpp.bat builds FlashCpp.exe
+# Search for the newest executable in any subfolder under x64/
 $flashCppPath = ""
-if (Test-Path "x64\Debug\FlashCpp.exe") {
-	$flashCppPath = "x64\Debug\FlashCpp.exe"
-} elseif (Test-Path "x64\Debug\FlashCppMSVC.exe") {
-	$flashCppPath = "x64\Debug\FlashCppMSVC.exe"
+$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
+if ($allExes) {
+	$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+	$flashCppPath = $newestExe.FullName
 } else {
 	Write-Host "FlashCpp not found, building..."
 	& .\build_flashcpp.bat
@@ -52,8 +53,11 @@ if (Test-Path "x64\Debug\FlashCpp.exe") {
 		Write-Host "ERROR: Failed to build FlashCpp" -ForegroundColor Red
 		exit 1
 	}
-	if (Test-Path "x64\Debug\FlashCpp.exe") {
-		$flashCppPath = "x64\Debug\FlashCpp.exe"
+	# Try again after build
+	$allExes = Get-ChildItem -Path "x64" -Recurse -Include "FlashCpp.exe","FlashCppMSVC.exe" -ErrorAction SilentlyContinue
+	if ($allExes) {
+		$newestExe = $allExes | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+		$flashCppPath = $newestExe.FullName
 	} else {
 		Write-Host "ERROR: FlashCpp.exe not found after build" -ForegroundColor Red
 		exit 1
@@ -207,9 +211,9 @@ foreach ($file in $referenceFiles) {
 }
 
 # ──────────────────────────────────────────────────────
-# Create temp directory for parallel result collection
+# Create temp directory for parallel result collection (in working directory)
 # ──────────────────────────────────────────────────────
-$resultDir = Join-Path ([System.IO.Path]::GetTempPath()) "flashcpp_test_results_$PID"
+$resultDir = Join-Path $RepoRoot "test_results_$PID"
 if (Test-Path $resultDir) { Remove-Item $resultDir -Recurse -Force }
 New-Item -ItemType Directory -Path $resultDir -Force | Out-Null
 
@@ -309,14 +313,12 @@ function Invoke-TestOneFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-worker paths in the system temp dir to avoid race conditions
-	# when parallel workers process tests that share the same base name.
-	$tempDir = [System.IO.Path]::GetTempPath()
+	# Use result directory for artifacts to avoid polluting system temp
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
-	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
-	$exeFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.exe"
-	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+	$objFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.obj"
+	$exeFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.exe"
+	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -438,12 +440,11 @@ function Invoke-TestOneFailFile {
 
 	$ErrorActionPreference = "SilentlyContinue"
 
-	# Use unique per-worker paths in the system temp dir to avoid race conditions.
-	$tempDir = [System.IO.Path]::GetTempPath()
+	# Use result directory for artifacts to avoid polluting system temp
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
-	$objFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.obj"
-	$ilkFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.ilk"
-	$pdbFile = Join-Path $tempDir "${baseName}_$uniqueSuffix.pdb"
+	$objFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.obj"
+	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
+	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 
 	# Fallback result in case the worker encounters a terminating error
 	$resultLine = "FAIL_BAD|$fileName|WORKER ERROR: unknown"
