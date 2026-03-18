@@ -1187,16 +1187,16 @@
 		// The type information is already registered in the global type system.
 		// For file/namespace-scope enums, the enumerators are already in gSymbolTable
 		// from parsing and persist throughout compilation.
-		// For function-local unscoped enums, the parser-inserted symbols were popped
-		// when the function scope closed during parsing.  Re-insert them into the
-		// codegen-local symbol table so identifier lookup can find them.
-		if (node.is_scoped())
-			return;
-
-		// Use the TypeIndex baked into the AST node at parse time.  This directly
-		// addresses the correct TypeInfo entry in gTypeInfo without any name-based
-		// lookup, so two functions defining local enums with the same name (e.g.,
-		// "enum Color") each get their own independent enumerator set — no collision.
+		// For function-local enums (both scoped and unscoped), the parser-inserted
+		// symbols were popped when the function scope closed during parsing.
+		// Re-insert them into the codegen-local symbol table so identifier lookup
+		// can find them.
+		//
+		// Use the TypeIndex baked into the AST node at parse time (set in
+		// parse_enum_declaration immediately after add_enum_type) so we always
+		// reference the correct TypeInfo regardless of name collisions between
+		// local enums in different functions — gTypesByName uses emplace which
+		// is a no-op on duplicate keys and would return the wrong TypeInfo.
 		const TypeIndex type_idx = node.type_index();
 		if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) {
 			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
@@ -1208,11 +1208,27 @@
 		if (!enum_info)
 			return;
 
+		if (node.is_scoped()) {
+			// For scoped enums (enum class / enum struct): insert the *type name*
+			// into the codegen-local symbol table so that generateQualifiedIdentifierIr
+			// can find the correct TypeInfo for `Priority::High` without going through
+			// gTypesByName (which would collide when two functions define the same
+			// enum class name).
+			// symbol_table.insert is a no-op (returns false) for duplicate non-function
+			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
+			Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
+			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), type_token);
+			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
+			symbol_table.insert(node.name(), decl_node);
+			return;
+		}
+
+		// For unscoped enums: insert each enumerator name into the codegen-local
+		// symbol table so bare name lookup (e.g., `Red`) resolves correctly.
+		// symbol_table.insert is a no-op for duplicates, so no pre-check needed.
 		for (const Enumerator& e : enum_info->enumerators) {
-			// Only insert if not already in scope (avoids duplicate for global enums)
 			std::string_view enumerator_name = StringTable::getStringView(e.name);
-			if (symbol_table.lookup(enumerator_name).has_value())
-				continue;
 			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token);
