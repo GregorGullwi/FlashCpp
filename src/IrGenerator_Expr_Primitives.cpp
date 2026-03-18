@@ -1519,6 +1519,28 @@
 					}
 				}
 			}
+
+		// If the qualifier resolved to a struct, check unscoped-enum enumerators in
+		// nested enum indices (e.g., Container::Ok from `typedef enum {Ok} Status;`).
+		// This mirrors the simple-identifier path that checks getNestedEnumIndices()
+		// when resolving bare names inside a struct body.
+		if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+			const StructTypeInfo* struct_info_ne = struct_type_it->second->getStructInfo();
+			if (struct_info_ne) {
+				StringHandle member_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
+				for (TypeIndex enum_idx : struct_info_ne->getNestedEnumIndices()) {
+					if (enum_idx.value < gTypeInfo.size()) {
+						const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
+						if (enum_info && !enum_info->is_scoped) {
+							if (std::optional<ExprResult> enumerator_result =
+									tryMakeEnumeratorConstantExpr(*enum_info, member_handle)) {
+								return *enumerator_result;
+							}
+						}
+					}
+				}
+			}
+		}
 		}
 
 		// Look up the qualified identifier in the symbol table
