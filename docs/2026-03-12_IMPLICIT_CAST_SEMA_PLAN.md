@@ -853,6 +853,7 @@ The right split is:
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- Enum→primitive conversions are not yet annotated by the sema pass: `tryAnnotateConversion` (and the binary-op / shift annotation helpers) filter out `Type::Enum` via `is_non_primitive`. Codegen resolves enum to its underlying type as a fallback (`IrGenerator_Stmt_Decl.cpp` enum→underlying resolution via `gTypeInfo`). A future phase should extend `tryAnnotateConversion` to handle enum source types — likely by resolving `Type::Enum` to the underlying type in `inferExpressionType` or in `tryAnnotateConversion` itself — eliminating the codegen-level `gTypeInfo` lookup.
 
 ### Parallel rollout guidance
 
