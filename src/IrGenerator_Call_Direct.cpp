@@ -403,7 +403,10 @@
 			constexpr size_t kMaxAliasDepth = 100;
 			size_t alias_depth = 0;
 			while (type_info && alias_depth < kMaxAliasDepth) {
-				if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
+				// Accept any TypeInfo that carries StructTypeInfo, regardless of type_ tag.
+				// A template placeholder may be stored as Type::UserDefined yet still have
+				// struct_info_ populated once instantiated.
+				if (type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
 				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= gTypeInfo.size()) {
