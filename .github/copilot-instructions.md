@@ -16,7 +16,7 @@ For patterns that are used in different places in a compiler, like parsing attri
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes.
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
 Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
-Prefer StringBuilder instead of using std::string concatination.
+Prefer StringBuilder instead of using std::string concatination, apart from when throwing exceptions, since we don't care about performance in that context.
 Call `emit` functions like `emitMovFromFrameBySize` instead of `generateMov`. Do not add opcodes manually to `textSectionData` in `IRConverter.h`, make helper functions if no fitting `emit` function exist.
 
 ## Testing Guidelines
