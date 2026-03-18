@@ -3410,6 +3410,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// and the name belongs to a hidden friend (ADL-only symbol), reject the call.
 					if (!identifierType->is<FunctionDeclarationNode>() &&
 					    gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						if (!adl_arg_types.empty()) {
+							auto adl_cands2 = gSymbolTable.lookup_adl(identifier_token.value(), adl_arg_types);
+							if (!adl_cands2.empty()) {
+								auto adl_res2 = resolve_overload(adl_cands2, adl_arg_types);
+								if (adl_res2.is_ambiguous) {
+									return ParseResult::error(
+										"call to '" + std::string(identifier_token.value()) + "' is ambiguous",
+										identifier_token);
+								}
+							}
+						}
 						return ParseResult::error(
 							"'" + std::string(identifier_token.value()) + "' is a hidden friend and is only "
 							"accessible via argument-dependent lookup when an argument of the associated class type is provided",
