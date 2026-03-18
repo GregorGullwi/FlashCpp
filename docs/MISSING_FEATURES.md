@@ -436,6 +436,34 @@ int main() {
 
 **Fix**: Replace `lookup_adl_only` with `lookup_adl` in `findBinaryOperatorOverloadWithFreeFunction`, and deduplicate against the `lookup_all` results to avoid false ambiguity.
 
+### Enum ADL may fail for enums declared inside class bodies or anonymous namespaces
+
+**Severity**: Low (conformance issue, edge case)
+
+Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser. For enums declared inside a named namespace (e.g. `namespace ns { enum class Color { ... }; }`), this works correctly.
+
+However, it has not been verified for edge cases:
+- **Enums declared inside class bodies**: Per C++20 [basic.lookup.argdep]/2, the associated namespace of an enum declared inside a class is the innermost enclosing *namespace* (not the class itself). If the parser passes the struct's scope rather than the enclosing namespace, ADL will search the wrong namespace.
+- **Enums in anonymous namespaces**: Anonymous namespaces have a unique internal handle. If this handle is not correctly propagated, ADL would fail to find functions in the anonymous namespace.
+
+**Example** (may fail — untested):
+```cpp
+namespace lib {
+    struct Container {
+        enum class Status { Ok, Error };
+    };
+    int check(Container::Status s) { return s == Container::Status::Ok ? 0 : 1; }
+}
+int main() {
+    // ADL should find lib::check because lib::Container::Status's associated
+    // namespace is "lib", but this depends on add_enum_type receiving the
+    // correct namespace handle for nested enums.
+    return check(lib::Container::Status::Ok);
+}
+```
+
+**Fix**: Verify that `parse_enum_declaration` (and `parse_member_type_alias` for inline enum typedefs) passes the enclosing *namespace* handle (not the struct scope) to `add_enum_type` when the enum is declared inside a class body. Add tests for enum-inside-class ADL and anonymous namespace enum ADL.
+
 ---
 
 ## References
