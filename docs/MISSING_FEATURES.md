@@ -434,16 +434,4 @@ When implementing a missing feature:
 
 ## Known Issues
 
-### ~~Deeply nested struct types (3+ levels) in namespaces not resolvable~~ (FIXED 2026-03-18)
-
-When a struct was nested more than one level deep inside a namespace, the type was registered using only the immediate parent (`B::C`) instead of the full chain (`ns::A::B::C`). Fixed by walking the full `struct_parsing_context_stack_` in `parse_struct_declaration`. Tests: `test_2level_ns_struct_ret0.cpp`, `test_3level_ns_struct_ret0.cpp`.
-
-### ~~typedef/using aliases for nested types not registered with namespace-qualified names~~ (FIXED 2026-03-18)
-
-`using AliasType = OriginalType` inside a struct was registered only as `StructName::AliasType` (using just the simple struct name). Code in another namespace couldn't resolve `ns::Container::AliasType`. Fixed by walking `struct_parsing_context_stack_` to build the full struct chain and additionally registering the namespace-qualified alias `ns::Container::AliasType`. Test: `test_typedef_alias_adl_ret0.cpp`.
-
-**Note**: Direct enum *value* access through an unscoped-enum alias (`Container::AliasStatus::Ok`) is not yet supported — enumerators are not tracked through type aliases. Scoped enum aliases work correctly.
-
-### ~~Operator ADL dedup may include duplicates for pre-mangling functions~~ (FIXED 2026-03-18)
-
-Operator ADL deduplication used mangled names only. Functions without mangled names were always included, risking duplicates. Fixed by adding a stable-pointer fallback dedup set (ASTNode stores `T*` via `std::any`, so pointer identity is stable). File: `src/OverloadResolution.h`.
+None at this time. Fixed items have been removed per policy.
