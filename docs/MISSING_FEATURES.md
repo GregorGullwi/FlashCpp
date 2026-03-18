@@ -412,66 +412,6 @@ When implementing a missing feature:
 
 ---
 
-## Known Issues
-
-### Operator ADL does not find regular free-function operators in associated namespaces
-
-**Severity**: Low (conformance issue, unlikely to hit in practice)
-
-In `findBinaryOperatorOverloadWithFreeFunction` (`src/OverloadResolution.h`), the operator candidate collection calls `lookup_all()` (scope-based) then `lookup_adl_only()` (hidden friends only). This means a regular (non-hidden-friend) free-function operator declared in an associated namespace — but not brought into scope via `using` — will not be found by ADL during operator resolution.
-
-**Example** (should compile but currently fails):
-```cpp
-namespace ns {
-    struct S { int x; };
-    bool operator==(S a, S b) { return a.x == b.x; }  // regular free function
-}
-int main() {
-    ns::S a, b;
-    return a == b;  // ADL should find ns::operator==, but operator path misses it
-}
-```
-
-**Note**: Hidden friend operators *are* correctly found (via `lookup_adl_only`), and regular function-call ADL works correctly (via `lookup_adl` in `unified_resolve_function_call`). Only the operator-specific resolution path has this gap.
-
-**Fix**: Replace `lookup_adl_only` with `lookup_adl` in `findBinaryOperatorOverloadWithFreeFunction`, and deduplicate against the `lookup_all` results to avoid false ambiguity.
-
-### Enum ADL may fail for enums declared inside class bodies or anonymous namespaces
-
-**Severity**: Low (conformance issue, edge case)
-
-Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser. For enums declared inside a named namespace (e.g. `namespace ns { enum class Color { ... }; }`), this works correctly.
-
-However, it has not been verified for edge cases:
-- **Enums declared inside class bodies**: Per C++20 [basic.lookup.argdep]/2, the associated namespace of an enum declared inside a class is the innermost enclosing *namespace* (not the class itself). If the parser passes the struct's scope rather than the enclosing namespace, ADL will search the wrong namespace.
-- **Enums in anonymous namespaces**: Anonymous namespaces have a unique internal handle. If this handle is not correctly propagated, ADL would fail to find functions in the anonymous namespace.
-
-**Example** (may fail — untested):
-```cpp
-namespace lib {
-    struct Container {
-        enum class Status { Ok, Error };
-    };
-    int check(Container::Status s) { return s == Container::Status::Ok ? 0 : 1; }
-}
-int main() {
-    // ADL should find lib::check because lib::Container::Status's associated
-    // namespace is "lib", but this depends on add_enum_type receiving the
-    // correct namespace handle for nested enums.
-    return check(lib::Container::Status::Ok);
-}
-```
-
-**Fix**: Verify that `parse_enum_declaration` (and `parse_member_type_alias` for inline enum typedefs) passes the enclosing *namespace* handle (not the struct scope) to `add_enum_type` when the enum is declared inside a class body. Add tests for enum-inside-class ADL and anonymous namespace enum ADL.
-
-### ~~Local (function-scoped) enum declarations are not supported~~ (FIXED)
-
-**Status**: Fixed (2026-03-17)
-
-Local `enum` and `enum class` declarations inside function bodies are now fully supported. Both unscoped and scoped (enum class) variants work, including explicit underlying types and qualified access (`EnumClass::Value`). Enumerator symbols are properly re-inserted into the codegen-local symbol table when the enum declaration is visited during code generation.
-
----
-
 ## References
 
 **Parser Code**: `src/Parser.cpp` - Main parsing logic
@@ -489,3 +429,36 @@ Local `enum` and `enum class` declarations inside function bodies are now fully 
 - `tests/test_sfinae_*.cpp` - SFINAE test cases
 - `tests/test_exceptions_*.cpp` - Exception handling tests
 - `tests/test_spaceship_*.cpp` - Spaceship operator tests
+
+---
+
+## Known Issues
+
+### Enum ADL may fail for enums in anonymous namespaces
+
+**Severity**: Low (conformance issue, edge case)
+
+Enum ADL (`src/SymbolTable.h`, `lookup_adl` and `lookup_adl_only`) relies on `TypeInfo::namespaceHandle()` returning the correct enclosing namespace for enum types. This is set by `add_enum_type()` in `src/AstNodeTypes.cpp`, which receives a `NamespaceHandle` from the parser.
+
+Enums declared inside named namespaces and enums nested inside class bodies within named
+namespaces now work correctly (fixed 2026-03-18 — nested enum qualified-name registration
+walks the full `struct_parsing_context_stack_`).
+
+However, **enums in anonymous namespaces** have not been verified. Anonymous namespaces have a
+unique internal handle. If this handle is not correctly propagated, ADL would fail to find
+functions in the anonymous namespace.
+
+**Example** (untested):
+```cpp
+namespace {
+    enum class Color { Red, Green, Blue };
+    int classify(Color c) { return static_cast<int>(c); }
+}
+int main() {
+    // ADL should find the anonymous-namespace classify() because
+    // Color's associated namespace is the anonymous namespace.
+    return classify(Color::Red);
+}
+```
+
+**Fix**: Verify that `parse_enum_declaration` passes the correct anonymous namespace handle to `add_enum_type`. Add tests for anonymous namespace enum ADL.

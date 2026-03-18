@@ -96,18 +96,41 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// - For namespace classes: ns::Class  
 	// - For top-level classes: just the simple name
 	StringHandle full_qualified_name;
+	StringHandle struct_chain;  // struct-chain-relative name (e.g. "A::B::C"), used for nested class registration
 	
 	if (is_nested_class) {
-		// We're inside a struct, so this is a nested class
-		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
-		const auto& context = struct_parsing_context_stack_.back();
-		// Build the qualified name using StringBuilder for a persistent allocation
-		qualified_struct_name = StringTable::getOrInternStringHandle(StringBuilder()
-			.append(context.struct_name)
-			.append("::")
-			.append(struct_name));
-		type_name = qualified_struct_name;
-		full_qualified_name = qualified_struct_name;
+		// We're inside a struct, so this is a nested class.
+		// Walk the full context stack from outermost to innermost parent so we
+		// build the complete struct chain at any nesting depth, e.g.:
+		//   depth-1:  "A::B"      (context=[A], current="B")
+		//   depth-2:  "A::B::C"   (context=[A,B], current="C")
+		// The old code only looked at back(), giving "B::C" for depth-2 which
+		// made ns::A::B::C unresolvable.
+		StringBuilder struct_chain_builder;
+		for (const auto& ctx : struct_parsing_context_stack_) {
+			struct_chain_builder.append(ctx.struct_name).append("::");
+		}
+		struct_chain_builder.append(struct_name);
+		struct_chain = StringTable::getOrInternStringHandle(struct_chain_builder.commit());
+
+		if (!qualified_namespace.empty()) {
+			// Namespace + struct chain: "ns::A::B::C"
+			full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				current_namespace_handle, struct_chain);
+			qualified_struct_name = full_qualified_name;
+			type_name = full_qualified_name;
+			// Also register the struct-chain-relative name ("A::B::C") so that
+			// unqualified access from within the namespace works, e.g.:
+			//   namespace ns { void f() { A::B b; } }
+			// The type resolver builds the literal string "A::B" and looks it up
+			// in gTypesByName; without this registration only "ns::A::B" exists.
+			// We defer the actual emplace to after add_struct_type() below (line 134+).
+		} else {
+			// No enclosing namespace: just the struct chain "A::B::C"
+			qualified_struct_name = struct_chain;
+			type_name = struct_chain;
+			full_qualified_name = struct_chain;
+		}
 	} else if (!qualified_namespace.empty()) {
 		// Top-level class in a namespace - use namespace-qualified name for proper mangling
 		full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, struct_name);
@@ -121,6 +144,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
 		gTypesByName.emplace(struct_name, &struct_type_info);
+
+		// Register the struct-chain-relative name ("A::B", "A::B::C") when inside a
+		// namespace.  This allows unqualified access from within the namespace:
+		//   namespace ns { void f() { A::B b; } }
+		// Without this, only "ns::A::B" and "B" are registered.
+		if (!qualified_namespace.empty()) {
+			if (struct_chain != type_name) {
+				gTypesByName.emplace(struct_chain, &struct_type_info);
+			}
+		}
 	}
 	
 	// For namespace classes, also register with the simple name for 'this' pointer lookup
@@ -754,17 +787,38 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto enum_it = gTypesByName.find(StringTable::getOrInternStringHandle(enum_decl.name()));
 					if (enum_it != gTypesByName.end()) {
 						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
-						// Also register with struct-qualified name so that
-						// lookupTypeInCurrentContext("Container::Status") finds
-						// "ns::Container::Status" via namespace-prefixed search.
-						// Per C++20 [basic.lookup.qual], a nested enum is found by
-						// qualifying through the enclosing class name.
-						StringHandle qualified_enum_name = StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(type_name)
-								.append("::")
-								.append(enum_decl.name()));
-						gTypesByName.emplace(qualified_enum_name, enum_it->second);
+
+						// Register the enum under every qualified name a caller might use.
+						// Per C++20 [basic.lookup.qual], a nested enum is accessed by
+						// qualifying through the enclosing class name(s).
+						// Per [basic.lookup.argdep]/2 the associated namespace is the
+						// innermost enclosing namespace.
+						//
+						// Walk struct_parsing_context_stack_ (which already includes the
+						// current struct pushed above) from outermost to innermost to
+						// build the full struct chain.  This correctly handles any depth
+						// of struct nesting, e.g.:
+						//   ns::A::B::C::E   (3 levels: A > B > C, enum E)
+						//   ns::Container::Status (1 level)
+						StringBuilder struct_chain_builder;
+						for (const auto& ctx : struct_parsing_context_stack_) {
+							struct_chain_builder.append(ctx.struct_name).append("::");
+						}
+						struct_chain_builder.append(enum_decl.name());
+						StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
+							struct_chain_builder.commit());
+						// Register struct-relative name ("A::B::C::E", "Container::Status")
+						gTypesByName.emplace(struct_relative_handle, enum_it->second);
+
+						// Also register namespace-fully-qualified name using NamespaceHandle
+						// ("ns::A::B::C::E", "ns::Container::Status")
+						if (!qualified_namespace.empty()) {
+							StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+								current_namespace_handle, struct_relative_handle);
+							if (ns_qualified_handle != struct_relative_handle) {
+								gTypesByName.emplace(ns_qualified_handle, enum_it->second);
+							}
+						}
 					}
 				}
 				// The semicolon is already consumed by parse_enum_declaration

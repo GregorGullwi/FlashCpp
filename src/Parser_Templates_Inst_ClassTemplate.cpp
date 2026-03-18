@@ -2002,6 +2002,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_size
 			);
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+
+			// If this alias refers to an unscoped enum, track its TypeIndex so that
+			// Struct::Enumerator qualified access (e.g. Tagged<int>::None) works in codegen.
+			if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
+				const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo();
+				if (enum_info && !enum_info->is_scoped) {
+					struct_info->addNestedEnumIndex(substituted_type_index);
+				}
+			}
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(substituted_type), 
@@ -4679,7 +4688,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Register the type alias in gTypesByName
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
-		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
+		// Use insert_or_assign so that a stale placeholder entry (e.g., from a
+		// prior partial instantiation that pointed at TTT$hash) is overwritten
+		// with the concrete type (e.g., MakeMid$hash).
+		gTypesByName.insert_or_assign(qualified_alias_name, &alias_type_info);
+		FLASH_LOG_FORMAT(Templates, Debug, "Registered type alias '{}' -> type={}, type_index={}",
+			StringTable::getStringView(qualified_alias_name), static_cast<int>(substituted_type), substituted_type_index);
+
+		// If this alias refers to an unscoped enum, track its TypeIndex so that
+		// Struct::Enumerator qualified access works in codegen.
+		if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
+			const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo();
+			if (enum_info && !enum_info->is_scoped) {
+				struct_info->addNestedEnumIndex(substituted_type_index);
+			}
+		}
 	}
 
 	// Finalize the struct layout

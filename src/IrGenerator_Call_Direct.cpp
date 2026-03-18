@@ -390,8 +390,14 @@
 				return it != gTypesByName.end() ? it->second : nullptr;
 			};
 
-			const TypeInfo* type_info = resolve_type_info(StringTable::getOrInternStringHandle(struct_part));
-			if (!type_info && current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
+			const TypeInfo* type_info = nullptr;
+
+			// When inside a struct context, try the struct-qualified name first.
+			// Template instantiation registers type aliases with the instantiated
+			// struct name (e.g., "Outer$hash::MidType"), which carries the correct
+			// substituted type.  The bare name (e.g., "MidType") may still point to
+			// the template pattern's placeholder (e.g., TTT$hash) from parse time.
+			if (current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
 				std::string_view alias_qualified_name = StringBuilder()
 					.append(StringTable::getStringView(current_struct_name_))
 					.append("::")
@@ -400,10 +406,18 @@
 				type_info = resolve_type_info(StringTable::getOrInternStringHandle(alias_qualified_name));
 			}
 
+			// Fall back to the bare name
+			if (!type_info) {
+				type_info = resolve_type_info(StringTable::getOrInternStringHandle(struct_part));
+			}
+
 			constexpr size_t kMaxAliasDepth = 100;
 			size_t alias_depth = 0;
 			while (type_info && alias_depth < kMaxAliasDepth) {
-				if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
+				// Accept any TypeInfo that carries StructTypeInfo, regardless of type_ tag.
+				// A template placeholder may be stored as Type::UserDefined yet still have
+				// struct_info_ populated once instantiated.
+				if (type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
 				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= gTypeInfo.size()) {
@@ -708,6 +722,53 @@
 										deferred_member_functions_.push_back(std::move(deferred_info));
 									}
 									break;
+								}
+							}
+						}
+						// If member_functions is empty (lazy-instantiated template), check
+						// LazyMemberInstantiationRegistry and trigger instantiation now.
+						if (!matched_func_decl && parser_) {
+							StringHandle struct_name_handle = direct_type_info->name();
+							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name_handle, member_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_name_handle, member_handle);
+								if (lazy_info_opt.has_value()) {
+									auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle);
+									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+										const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
+										if (fd.parameter_nodes().size() == direct_expected_param_count) {
+											matched_func_decl = &fd;
+											resolveMangledName(matched_func_decl, resolved_struct_part);
+											DeferredMemberFunctionInfo deferred_info;
+											deferred_info.struct_name = direct_type_info->name();
+											deferred_info.function_node = *instantiated_func;
+											// Compute namespace stack from struct name for correct mangling
+											{
+												auto build_ns_stack = [](std::string_view qualified_name, std::vector<std::string>& out) {
+													size_t ns_end = qualified_name.rfind("::");
+													if (ns_end == std::string_view::npos) return;
+													std::string_view ns_part = qualified_name.substr(0, ns_end);
+													size_t start = 0;
+													while (start < ns_part.size()) {
+														size_t pos = ns_part.find("::", start);
+														if (pos == std::string_view::npos) {
+															out.emplace_back(ns_part.substr(start));
+															break;
+														}
+														out.emplace_back(ns_part.substr(start, pos - start));
+														start = pos + 2;
+													}
+												};
+												build_ns_stack(resolved_struct_part, deferred_info.namespace_stack);
+												if (deferred_info.namespace_stack.empty()) {
+													build_ns_stack(StringTable::getStringView(direct_type_info->name()), deferred_info.namespace_stack);
+												}
+											}
+											deferred_member_functions_.push_back(std::move(deferred_info));
+											FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
+										}
+									}
 								}
 							}
 						}

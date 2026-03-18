@@ -38,3 +38,24 @@ The disambiguation routing in `parse_statement_or_declaration` is **correct**
 (`test_tparam_bracket_decl_ambig_fail.cpp`) documents the current parse error.
 The remaining work is to extend `parse_variable_declaration` (and the declarator
 parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
+
+## Unscoped enum enumerator access through type aliases
+
+Accessing unscoped enum values using a type alias as the qualifier
+(`Container::AliasStatus::Ok` where `AliasStatus = Status`) does not work.
+The alias `TypeInfo` does not carry an `EnumTypeInfo` (enumerators are only
+tracked on the original enum's `TypeInfo`).
+
+```cpp
+struct Container {
+    enum Status { Ok, Fail };          // unscoped
+    using AliasStatus = Status;
+};
+// Works:    Container::Status::Ok
+// Broken:   Container::AliasStatus::Ok  (no EnumTypeInfo on alias)
+```
+
+Scoped enums (`enum class`) work through aliases because the enumerator lookup
+uses a different code path.
+
+**Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.

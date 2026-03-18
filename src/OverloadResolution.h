@@ -1461,22 +1461,43 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	// only hidden friends.  Deduplicate against the lookup_all() results above
 	// to avoid double-counting operators that are both in the current scope
 	// chain and in an associated namespace.
+	// Use mangled names for stable, semantically-correct identity comparison.
 	{
 		std::vector<TypeSpecifierNode> adl_arg_types;
 		adl_arg_types.push_back(left_type_spec);
 		adl_arg_types.push_back(right_type_spec);
 		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
 
-		// Build a set of existing FunctionDeclarationNode pointers for O(1) dedup.
-		std::unordered_set<const FunctionDeclarationNode*> existing;
+		// Build a set of existing mangled names for O(1) dedup.
+		// Using std::string_view is safe: mangled names are interned in
+		// stable ChunkedStringAllocator storage (they never move).
+		// ASTNode stores a T* pointer via std::any, so &fd is stable across
+		// copies and vector reallocations — pointer dedup is a safe fallback
+		// for functions that do not yet have a mangled name.
+		std::unordered_set<std::string_view> existing_mangled;
+		std::unordered_set<const FunctionDeclarationNode*> existing_ptrs;
+		existing_mangled.reserve(overloads.size());
+		existing_ptrs.reserve(overloads.size());
 		for (const auto& node : overloads) {
 			if (node.is<FunctionDeclarationNode>()) {
-				existing.insert(&node.as<FunctionDeclarationNode>());
+				const auto& fd = node.as<FunctionDeclarationNode>();
+				if (fd.has_mangled_name()) {
+					existing_mangled.insert(fd.mangled_name());
+				} else {
+					existing_ptrs.insert(&fd);
+				}
 			}
 		}
 		for (auto& cand : adl_candidates) {
 			if (cand.is<FunctionDeclarationNode>()) {
-				if (existing.insert(&cand.as<FunctionDeclarationNode>()).second) {
+				const auto& fd = cand.as<FunctionDeclarationNode>();
+				bool is_duplicate;
+				if (fd.has_mangled_name()) {
+					is_duplicate = !existing_mangled.insert(fd.mangled_name()).second;
+				} else {
+					is_duplicate = !existing_ptrs.insert(&fd).second;
+				}
+				if (!is_duplicate) {
 					overloads.push_back(std::move(cand));
 				}
 			} else {
