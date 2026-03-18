@@ -149,14 +149,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		//   namespace ns { void f() { A::B b; } }
 		// Without this, only "ns::A::B" and "B" are registered.
 		if (!qualified_namespace.empty()) {
-			StringBuilder struct_chain_builder2;
-			for (const auto& ctx : struct_parsing_context_stack_) {
-				struct_chain_builder2.append(ctx.struct_name).append("::");
-			}
-			struct_chain_builder2.append(struct_name);
-			StringHandle struct_chain2 = StringTable::getOrInternStringHandle(struct_chain_builder2.commit());
-			if (struct_chain2 != type_name) {
-				gTypesByName.emplace(struct_chain2, &struct_type_info);
+			if (struct_chain != type_name) {
+				gTypesByName.emplace(struct_chain, &struct_type_info);
 			}
 		}
 	}
