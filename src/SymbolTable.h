@@ -533,14 +533,10 @@ public:
 	// Returns true if name exists in adl_only_symbols_ (across any namespace).
 	// Used to emit a proper compile error when a hidden friend is called without
 	// an argument that triggers ADL (C++20 [basic.lookup.argdep]).
+	// O(1) thanks to the dedicated adl_only_function_names_ set.
 	bool is_adl_only_function_name(std::string_view name) const {
 		StringHandle key = StringTable::getOrInternStringHandle(name);
-		for (const auto& [ns_handle, sym_map] : adl_only_symbols_) {
-			if (sym_map.find(key) != sym_map.end()) {
-				return true;
-			}
-		}
-		return false;
+		return adl_only_function_names_.find(key) != adl_only_function_names_.end();
 	}
 
 	// Register a symbol directly into a namespace's persistent symbol table.
@@ -560,6 +556,9 @@ public:
 		} else {
 			it->second.push_back(node);
 		}
+		if (adl_only) {
+			adl_only_function_names_.insert(name_handle);
+		}
 	}
 
 	// Collect ADL candidates per C++20 [basic.lookup.argdep].
@@ -572,16 +571,17 @@ public:
 	                                const std::vector<TypeSpecifierNode>& arg_types) const {
 		std::vector<ASTNode> result;
 		std::unordered_set<NamespaceHandle> visited;
+		// Intern once; reused by both lookup_qualified_all and the adl_only_symbols_ search.
+		StringHandle key = StringTable::getOrInternStringHandle(func_name);
 
 		auto search_ns = [&](NamespaceHandle ns) {
 			if (!ns.isValid() || !visited.insert(ns).second) return;
 			// Search regular namespace symbols
-			auto candidates = lookup_qualified_all(ns, func_name);
+			auto candidates = lookup_qualified_all(ns, key);
 			result.insert(result.end(), candidates.begin(), candidates.end());
 			// Also search ADL-only (hidden friend) symbols
 			auto adl_it = adl_only_symbols_.find(ns);
 			if (adl_it != adl_only_symbols_.end()) {
-				StringHandle key = StringTable::getOrInternStringHandle(func_name);
 				auto sym_it = adl_it->second.find(key);
 				if (sym_it != adl_it->second.end()) {
 					result.insert(result.end(), sym_it->second.begin(), sym_it->second.end());
@@ -956,24 +956,21 @@ public:
 				for (const auto& symbol_entry : symbol_map) {
 					const auto& nodes = symbol_entry.second;
 					for (const auto& candidate : nodes) {
-						if (candidate.is<FunctionDeclarationNode>() &&
-						    matches_function(candidate.as<FunctionDeclarationNode>())) {
+						const FunctionDeclarationNode* func_node = nullptr;
+						if (candidate.is<FunctionDeclarationNode>()) {
+							func_node = &candidate.as<FunctionDeclarationNode>();
+						} else if (candidate.is<TemplateFunctionDeclarationNode>()) {
+							const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
+							if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
+								func_node = &tmpl.function_declaration().as<FunctionDeclarationNode>();
+							}
+						}
+						if (func_node && matches_function(*func_node)) {
 							if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
 								ambiguous = true;
 								break;
 							}
 							matched_namespace = ns_handle;
-						}
-						if (candidate.is<TemplateFunctionDeclarationNode>()) {
-							const auto& tmpl = candidate.as<TemplateFunctionDeclarationNode>();
-							if (tmpl.function_declaration().is<FunctionDeclarationNode>() &&
-							    matches_function(tmpl.function_declaration().as<FunctionDeclarationNode>())) {
-								if (matched_namespace.has_value() && *matched_namespace != ns_handle) {
-									ambiguous = true;
-									break;
-								}
-								matched_namespace = ns_handle;
-							}
 						}
 					}
 					if (ambiguous) break;
@@ -1045,6 +1042,7 @@ public:
 		symbol_table_stack_.emplace_back(Scope(ScopeType::Global, 0));
 		namespace_symbols_.clear();
 		adl_only_symbols_.clear();
+		adl_only_function_names_.clear();
 		interned_strings_.clear();
 		// Recreate the string allocator to fully release all memory
 		string_allocator_ = ChunkedStringAllocator(64 * 1024);
@@ -1059,6 +1057,8 @@ private:
 	// ADL-only symbols (hidden friends): not visible to ordinary unqualified lookup,
 	// only reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
 	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> adl_only_symbols_;
+	// Flat set of all ADL-only function name handles for O(1) is_adl_only_function_name() queries.
+	std::unordered_set<StringHandle> adl_only_function_names_;
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
