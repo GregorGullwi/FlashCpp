@@ -393,16 +393,45 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// (re-get type_spec since we modified it above)
 		const TypeSpecifierNode& final_type_spec = type_result.node()->as<TypeSpecifierNode>();
 		
-		// Build qualified name if we're inside a struct
+		// Build qualified name if we're inside a struct.
+		// Walk struct_parsing_context_stack_ to build the full struct chain at any
+		// depth, then also register a namespace-prefixed version for ADL.
+		// This mirrors the registration done for direct enum declarations in
+		// parse_struct_declaration (nested-enum block after addNestedEnumIndex()).
+		// We do NOT register the simple alias name when inside a struct: doing so
+		// would add the alias TypeInfo (no EnumTypeInfo) under the simple key,
+		// so unscoped-enum enumerator lookup would find the alias TypeInfo instead
+		// of the original enum TypeInfo and crash.
 		StringHandle qualified_alias_name = alias_name;
 		if (struct_ref) {
-			StringBuilder qualified_builder;
-			qualified_builder.append(struct_ref->name());
-			qualified_builder.append("::");
-			qualified_builder.append(alias_name);
-			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
+			NamespaceHandle current_ns = gSymbolTable.get_current_namespace_handle();
+			std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
+
+			// Build struct-chain-relative name (e.g., "Container::AliasStatus" for
+			// 1 level, "A::B::AliasStatus" for 2 levels of struct nesting)
+			StringBuilder chain_builder;
+			for (const auto& ctx : struct_parsing_context_stack_) {
+				chain_builder.append(ctx.struct_name).append("::");
+			}
+			chain_builder.append(alias_name);
+			StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
+
+			// Always register the struct-chain-relative name
+			TypeInfo& alias_info = register_type_alias(struct_relative_handle, final_type_spec);
+
+			if (!current_ns_name.empty()) {
+				// Also register namespace-qualified name "ns::Container::AliasStatus"
+				// so that ADL and type lookups work from outside the namespace.
+				StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+					current_ns, struct_relative_handle);
+				if (gTypesByName.find(ns_qualified_handle) == gTypesByName.end()) {
+					gTypesByName.emplace(ns_qualified_handle, &alias_info);
+				}
+			}
+			return ParseResult::success();
 		}
 		
+		// Non-struct alias: register with the simple name (alias_name)
 		register_type_alias(qualified_alias_name, final_type_spec);
 		
 		return ParseResult::success();

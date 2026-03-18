@@ -98,16 +98,32 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	StringHandle full_qualified_name;
 	
 	if (is_nested_class) {
-		// We're inside a struct, so this is a nested class
-		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
-		const auto& context = struct_parsing_context_stack_.back();
-		// Build the qualified name using StringBuilder for a persistent allocation
-		qualified_struct_name = StringTable::getOrInternStringHandle(StringBuilder()
-			.append(context.struct_name)
-			.append("::")
-			.append(struct_name));
-		type_name = qualified_struct_name;
-		full_qualified_name = qualified_struct_name;
+		// We're inside a struct, so this is a nested class.
+		// Walk the full context stack from outermost to innermost parent so we
+		// build the complete struct chain at any nesting depth, e.g.:
+		//   depth-1:  "A::B"      (context=[A], current="B")
+		//   depth-2:  "A::B::C"   (context=[A,B], current="C")
+		// The old code only looked at back(), giving "B::C" for depth-2 which
+		// made ns::A::B::C unresolvable.
+		StringBuilder struct_chain_builder;
+		for (const auto& ctx : struct_parsing_context_stack_) {
+			struct_chain_builder.append(ctx.struct_name).append("::");
+		}
+		struct_chain_builder.append(struct_name);
+		StringHandle struct_chain = StringTable::getOrInternStringHandle(struct_chain_builder.commit());
+
+		if (!qualified_namespace.empty()) {
+			// Namespace + struct chain: "ns::A::B::C"
+			full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				current_namespace_handle, struct_chain);
+			qualified_struct_name = full_qualified_name;
+			type_name = full_qualified_name;
+		} else {
+			// No enclosing namespace: just the struct chain "A::B::C"
+			qualified_struct_name = struct_chain;
+			type_name = struct_chain;
+			full_qualified_name = struct_chain;
+		}
 	} else if (!qualified_namespace.empty()) {
 		// Top-level class in a namespace - use namespace-qualified name for proper mangling
 		full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, struct_name);

@@ -6439,7 +6439,11 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 							FLASH_LOG(Codegen, Error, "  - ", StringTable::getStringView(name), " at var_info.offset ");
 						}
 					}
-					assert(src_it != current_scope.variables.end());
+					if (src_it == current_scope.variables.end()) {
+						FLASH_LOG(Codegen, Error, "Code generation error: variable initializer '",
+							StringTable::getStringView(rvalue_var_name_handle), "' not found in scope - skipping");
+						return;
+					}
 					src_offset = src_it->second.offset;
 
 					// Check if source is an array - for array-to-pointer decay, we need LEA
