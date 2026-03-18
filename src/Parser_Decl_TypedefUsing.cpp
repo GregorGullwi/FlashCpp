@@ -1015,9 +1015,33 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	// Store the alias in the struct (if struct_ref provided)
 	if (struct_ref) {
 		struct_ref->add_type_alias(alias_name, type_node, current_access);
+
+		// Register struct-chain-qualified and namespace-qualified names,
+		// mirroring the registration done for 'using' aliases (lines 406-431)
+		// and typedef enum (lines 874-897).
+		NamespaceHandle current_ns = gSymbolTable.get_current_namespace_handle();
+		std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
+
+		StringBuilder chain_builder;
+		for (const auto& ctx : struct_parsing_context_stack_) {
+			chain_builder.append(ctx.struct_name).append("::");
+		}
+		chain_builder.append(alias_name);
+		StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
+
+		TypeInfo& alias_info = register_type_alias(struct_relative_handle, type_spec, current_ns);
+
+		if (!current_ns_name.empty()) {
+			StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+				current_ns, struct_relative_handle);
+			if (gTypesByName.find(ns_qualified_handle) == gTypesByName.end()) {
+				gTypesByName.emplace(ns_qualified_handle, &alias_info);
+			}
+		}
+		return ParseResult::success();
 	}
 	
-	// Also register it globally
+	// Also register it globally (non-struct context)
 	register_type_alias(alias_name, type_spec);
 	
 	return ParseResult::success();
