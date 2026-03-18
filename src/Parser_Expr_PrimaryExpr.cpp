@@ -3266,6 +3266,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 
 				FLASH_LOG(Parser, Debug, "Function call to '", identifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
+
+				// If all candidates are plain DeclarationNode stubs (forward decls), skip overload
+				// resolution and use identifierType directly — the stub is the best we have and
+				// resolve_overload cannot match against it.
+				bool all_stubs = std::all_of(all_overloads.begin(), all_overloads.end(),
+					[](const ASTNode& n) {
+						return n.is<DeclarationNode>() && !n.is<FunctionDeclarationNode>() &&
+						       !n.is<VariableDeclarationNode>() && !n.is<TemplateFunctionDeclarationNode>();
+					});
+				if (all_stubs && identifierType.has_value()) {
+					// Before falling back to stub, check if this is a hidden friend with no
+					// ADL-providing arguments — that should be a compile error.
+					if (gSymbolTable.is_adl_only_function_name(identifier_token.value())) {
+						return ParseResult::error(
+							"'" + std::string(identifier_token.value()) + "\' is a hidden friend and is only "
+							"accessible via argument-dependent lookup when an argument of the associated class type is provided",
+							identifier_token);
+					}
+					return make_call_result(*identifierType);
+				}
+
 				auto resolution = resolve_overload(all_overloads, arg_types);
 				FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution.has_match, ", is_ambiguous=", resolution.is_ambiguous);
 
@@ -5270,11 +5291,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											if (func_check && func_check->is_deleted()) {
 												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 											}
-								if (instantiated_func->is<FunctionDeclarationNode>()) {
-									if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
-										return *default_args_error;
-									}
-								}
+											if (instantiated_func->is<FunctionDeclarationNode>()) {
+												if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+													return *default_args_error;
+												}
+											}
 											// Successfully instantiated template
 											const DeclarationNode* decl_ptr = getDeclarationNode(*instantiated_func);
 											if (!decl_ptr) {
