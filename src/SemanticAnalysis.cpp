@@ -995,24 +995,27 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				const bool is_shift =
 					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
-				// C++20: scoped enums do not participate in implicit arithmetic
-				// conversions.  Diagnose before annotation so the error fires
-				// early with a clear message.
-				if ((is_arithmetic || is_comparison || is_compound_assign || is_shift) &&
+				const bool needs_binary_type_inference =
+					(is_arithmetic || is_comparison || is_compound_assign || is_shift) &&
 					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>()) {
-					diagnoseScopedEnumBinaryOperands(e);
+					e.get_rhs().template is<ExpressionNode>();
+				CanonicalTypeId lhs_type_id{};
+				CanonicalTypeId rhs_type_id{};
+				if (needs_binary_type_inference) {
+					lhs_type_id = inferExpressionType(e.get_lhs());
+					rhs_type_id = inferExpressionType(e.get_rhs());
+					// C++20: scoped enums do not participate in implicit arithmetic
+					// conversions. Diagnose before annotation so the error fires
+					// early with a clear message.
+					diagnoseScopedEnumBinaryOperands(e, lhs_type_id, rhs_type_id);
 				}
-				if (is_shift &&
-					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>()) {
-					tryAnnotateShiftOperandPromotions(e);
+				if (is_shift && needs_binary_type_inference) {
+					tryAnnotateShiftOperandPromotions(e, lhs_type_id, rhs_type_id);
 				}
 				else if ((is_arithmetic || is_comparison ||
 					(is_compound_assign && !is_shift)) &&
-					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>()) {
-					tryAnnotateBinaryOperandConversions(e);
+					needs_binary_type_inference) {
+					tryAnnotateBinaryOperandConversions(e, lhs_type_id, rhs_type_id);
 				}
 				// C++20 [expr.log.and], [expr.log.or]: each operand is
 				// contextually converted to bool.
@@ -1024,10 +1027,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (op == "=" &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
-					const CanonicalTypeId lhs_type_id = inferExpressionType(e.get_lhs());
-					if (lhs_type_id) {
-						tryAnnotateConversion(e.get_rhs(), lhs_type_id);
-						diagnoseScopedEnumConversion(e.get_rhs(), lhs_type_id,
+					const CanonicalTypeId assignment_lhs_type_id = inferExpressionType(e.get_lhs());
+					if (assignment_lhs_type_id) {
+						tryAnnotateConversion(e.get_rhs(), assignment_lhs_type_id);
+						diagnoseScopedEnumConversion(e.get_rhs(), assignment_lhs_type_id,
 							" in assignment");
 					}
 				}
@@ -1614,9 +1617,10 @@ static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
 	return "scoped enum";
 }
 
-void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op) {
-	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
 	if (!lhs_type_id || !rhs_type_id) return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
@@ -1723,9 +1727,10 @@ void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, con
 
 // --- Binary operand conversion annotation ---
 
-void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op) {
-	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
 	if (!lhs_type_id || !rhs_type_id) return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
@@ -1761,9 +1766,10 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 // promoted left operand.  Unlike usual arithmetic conversions, each operand is
 // promoted independently — there is no shared "common type".
 
-void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op) {
-	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
 	if (!lhs_type_id || !rhs_type_id) return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);

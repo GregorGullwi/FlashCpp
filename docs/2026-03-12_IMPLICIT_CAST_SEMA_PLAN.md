@@ -908,7 +908,8 @@ The right split is:
 	- `OffsetofExprNode`: returns `size_t` (`Type::UnsignedLongLong` on 64-bit).
 	- `NoexceptExprNode`: returns `Type::Bool`.
 	- `TypeTraitExprNode`: returns `Type::Bool` (all type trait intrinsics return bool).
-- Helper functions `isScopedEnumDesc()` and `scopedEnumName()` extracted as static utilities for scoped enum detection from `CanonicalTypeDesc`.
+- Helper functions `isScopedEnum()` and `getScopedEnumName()` extracted as static utilities for scoped enum detection from `CanonicalTypeDesc`.
+- Follow-up hot-path cleanup: `normalizeExpression` now computes binary operand `CanonicalTypeId`s once and threads them through `diagnoseScopedEnumBinaryOperands`, `tryAnnotateBinaryOperandConversions`, and `tryAnnotateShiftOperandPromotions` so Phase 14 does not double `inferExpressionType` work for every arithmetic/comparison/compound/shift operator.
 - Tests: `test_scoped_enum_assign_fail`, `test_scoped_enum_call_arg_fail`, `test_scoped_enum_compound_assign_fail`, `test_scoped_enum_binop_fail`, `test_infer_expr_type_expansion_ret0`. Suite: 1596 pass / 0 fail / 63 expected-fail.
 
 **Known limitations (Phase 15+):**
