@@ -1324,11 +1324,14 @@
 					}
 				}
 			}
-			// Phase 15: sema must annotate all unary operand integral promotions.
-			if (!promoted && sema_ && (operandType == Type::Bool ||
+			// Phase 15: sema should annotate all unary operand integral promotions.
+			// When sema_ is null (e.g., template instantiation), keep the fallback
+			// unconditionally to avoid dropping promotions.
+			if (!promoted && (operandType == Type::Bool ||
 				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
-				FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for unary promotion (",
-					type_to_string(operandType, TypeQualifier::None), " -> int) — sema gap");
+				if (sema_)
+					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for unary promotion (",
+						type_to_string(operandType, TypeQualifier::None), " -> int) — sema gap");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
