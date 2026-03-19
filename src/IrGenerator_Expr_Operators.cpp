@@ -2171,52 +2171,25 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			? promote_integer_type(lhsType)   // shift: result type = promoted LHS
 			: get_common_type(lhsType, rhsType);
 
-		// Check whether the semantic pass pre-computed operand conversion annotations.
-		// When present for non-struct types, use them and skip the local policy.
-		// When expected_target != Type::Invalid, the annotation's target type must match;
-		// otherwise the helper returns false so the caller's fallback policy runs instead.
-		auto tryApplySemaConversion = [&](ExprResult& operands, const ASTNode& operand_node, Type expected_target = Type::Invalid) -> bool {
-			if (!sema_ || !operand_node.is<ExpressionNode>()) return false;
-			const void* key = &operand_node.as<ExpressionNode>();
-			const auto slot = sema_->getSlot(key);
-			if (!slot.has_value() || !slot->has_cast()) return false;
-			const ImplicitCastInfo& cast_info =
-				sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-			const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-			if (from_type == Type::Struct || to_type == Type::Struct) return false;
-			if (expected_target != Type::Invalid && to_type != expected_target) return false;
-			// Defensive: sema source type should match the expression's runtime type.
-			// Exception: sema may annotate as Type::Enum while codegen resolves enum
-			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
-			// In that case, use the operand's actual runtime type for the conversion.
-			if (from_type != operands.type) {
-				if (from_type == Type::Enum)
-					from_type = operands.type;
-				else
-					throw InternalError("sema annotation source type does not match operands.type");
-			}
-			operands = generateTypeConversion(operands, from_type, to_type, binaryOperatorNode.get_token());
-			return true;
-		};
-
 		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
 
 		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
+		// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
+		// guard, expected-target verification, enum type mismatch handling, and conversion.
 		// Pass expected_target=commonType so the sema annotation is verified against the
 		// codegen-computed common type before applying the conversion.
 		if (lhsType != commonType) {
-			if (!tryApplySemaConversion(lhsExprResult, binaryOperatorNode.get_lhs(), commonType))
+			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType))
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 		// NOT conversion to the LHS/result type.  Only apply sema-annotated promotion
 		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
 		if (is_shift_op) {
-			tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs());
+			tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs());
 		} else if (rhsType != commonType) {
-			if (!tryApplySemaConversion(rhsExprResult, binaryOperatorNode.get_rhs(), commonType))
+			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType))
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
 		}
 
