@@ -2695,7 +2695,11 @@ EvalResult Evaluator::evaluate_block_with_bindings(
 	// Install a scope tracker for this block.  The guard automatically
 	// removes newly-declared variables and restores any shadowed outer
 	// values when it goes out of scope, even on early returns.
-	BlockScopeGuard guard(bindings, context.current_scope);
+	// Use resolve_declaration_bindings so the guard targets the same map
+	// that variable declarations are written to (important when
+	// context.local_bindings is non-null, e.g. constructor body eval).
+	auto& decl_bindings = context.resolve_declaration_bindings(bindings);
+	BlockScopeGuard guard(decl_bindings, context.current_scope);
 
 	for (size_t i = 0; i < statements.size(); i++) {
 		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
@@ -2732,7 +2736,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			const VariableDeclarationNode& var_decl = stmt_node.as<VariableDeclarationNode>();
 			const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
 			std::string_view var_name = decl.identifier_token().value();
-			auto& declaration_bindings = context.local_bindings ? *context.local_bindings : bindings;
+			auto& declaration_bindings = context.resolve_declaration_bindings(bindings);
 
 			// Register this declaration with the current block scope tracker so it
 			// can be cleaned up (or the shadowed outer value restored) on block exit.
@@ -2859,7 +2863,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// The for-loop init variable (e.g. `int i = 0`) is scoped to the entire
 		// loop (init + condition + body + update), not to the outer block.
 		// The guard automatically cleans it up when the for-loop exits.
-		BlockScopeGuard loop_guard(bindings, context.current_scope);
+		BlockScopeGuard loop_guard(context.resolve_declaration_bindings(bindings), context.current_scope);
 		
 		// Execute init statement if present
 		if (for_stmt.has_init()) {
@@ -2950,7 +2954,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// The if-init variable (C++17: `if (int x = foo(); x > 0)`) is scoped to
 		// the entire if statement (condition + then + else), not to the outer block.
 		// The guard automatically cleans it up on any exit path.
-		BlockScopeGuard if_guard(bindings, context.current_scope);
+		BlockScopeGuard if_guard(context.resolve_declaration_bindings(bindings), context.current_scope);
 		
 		// Execute init statement if present (C++17 feature)
 		if (if_stmt.has_init()) {
@@ -3026,7 +3030,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// The loop variable and any C++20 init variable are scoped to the
 		// range-for loop, not to the surrounding block.
 		// The guard automatically cleans them up on any exit path.
-		BlockScopeGuard loop_guard(bindings, context.current_scope);
+		auto& range_decl_bindings = context.resolve_declaration_bindings(bindings);
+		BlockScopeGuard loop_guard(range_decl_bindings, context.current_scope);
 		
 		// Execute optional init statement (C++20 feature)
 		if (ranged_for.has_init_statement()) {
@@ -3060,7 +3065,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// Register the loop variable with the scope guard so it is cleaned up
 		// when the loop ends (also handles the shadowing case if the outer scope
 		// already has a variable with the same name).
-		loop_guard.scope.on_declare(loop_var_name, bindings);
+		loop_guard.scope.on_declare(loop_var_name, range_decl_bindings);
 		
 		// Iterate over array elements
 		for (const EvalResult& element : range_result.array_elements) {
@@ -3070,7 +3075,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 			
 			// Bind the loop variable to the current element (overwrites on each iteration)
-			bindings[loop_var_name] = element;
+			range_decl_bindings[loop_var_name] = element;
 			
 			// Execute the body
 			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);

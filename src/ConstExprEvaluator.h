@@ -282,6 +282,15 @@ struct EvaluationContext {
 	// their own tracker.
 	BlockScopeTracker* current_scope = nullptr;
 
+	// Returns the map that variable declarations should be written to (and
+	// that BlockScopeGuard / on_declare should target).  When local_bindings
+	// is set (e.g. constructor body evaluation), declarations go there;
+	// otherwise they go to the regular bindings map passed by the caller.
+	std::unordered_map<std::string_view, EvalResult>& resolve_declaration_bindings(
+		std::unordered_map<std::string_view, EvalResult>& bindings) {
+		return local_bindings ? *local_bindings : bindings;
+	}
+
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
 	std::vector<std::string_view> template_param_names;
