@@ -353,11 +353,13 @@ inline bool isUnsignedIntegralType(Type type) {
 	case Type::UnsignedInt:
 	case Type::UnsignedLong:
 	case Type::UnsignedLongLong:
-	case Type::WChar:
 	case Type::Char8:
 	case Type::Char16:
 	case Type::Char32:
 		return true;
+	// wchar_t is target-dependent: unsigned on Windows (LLP64), signed on Linux (LP64)
+	case Type::WChar:
+		return g_target_data_model == TargetDataModel::LLP64;
 	default:
 		return false;
 	}
