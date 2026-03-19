@@ -1407,24 +1407,50 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				    "Expected '}' after initializer arguments", peek_info());
 			}
 			
-			// Add member initializer to constructor
+			// Determine if this is a delegating, base class, or member initializer
 			if (ctor_ref) {
-				if (is_brace && init_args.empty()) {
-					// Empty brace-init (e.g., arr{}): C++ requires value-initialization
-					// (zero-init for scalars/arrays). Store an empty InitializerListNode so
-					// the constexpr evaluator and IR generator can zero-fill correctly.
-					auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-					ctor_ref->add_member_initializer(init_name, init_list_node);
-				} else if (is_brace && init_args.size() > 1) {
-					// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
-					// so the constexpr evaluator can materialize array/struct members correctly.
-					auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-					for (auto& arg : init_args) {
-						init_list_ref.add_initializer(arg);
+				bool is_delegating = (init_name == class_name);
+				bool is_base_init = false;
+				
+				if (is_delegating) {
+					// Delegating constructor: ClassName() : ClassName(0, 0) {}
+					// In C++11, if a constructor delegates, it CANNOT have other initializers
+					if (!ctor_ref->member_initializers().empty() || !ctor_ref->base_initializers().empty()) {
+						member_function_context_stack_.pop_back();
+						return ParseResult::error("Delegating constructor cannot have other member or base initializers", init_name_token);
 					}
-					ctor_ref->add_member_initializer(init_name, init_list_node);
-				} else if (!init_args.empty()) {
-					ctor_ref->add_member_initializer(init_name, init_args[0]);
+					ctor_ref->set_delegating_initializer(std::move(init_args));
+				} else {
+					// Check if it's a base class initializer
+					for (const auto& base : struct_info->base_classes) {
+						if (base.name == init_name) {
+							is_base_init = true;
+							StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
+							ctor_ref->add_base_initializer(base_name_handle, std::move(init_args));
+							break;
+						}
+					}
+
+					if (!is_base_init) {
+						// Member initializer with brace-init wrapping
+						if (is_brace && init_args.empty()) {
+							// Empty brace-init (e.g., arr{}): C++ requires value-initialization
+							// (zero-init for scalars/arrays). Store an empty InitializerListNode so
+							// the constexpr evaluator and IR generator can zero-fill correctly.
+							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+							ctor_ref->add_member_initializer(init_name, init_list_node);
+						} else if (is_brace && init_args.size() > 1) {
+							// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
+							// so the constexpr evaluator can materialize array/struct members correctly.
+							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+							for (auto& arg : init_args) {
+								init_list_ref.add_initializer(arg);
+							}
+							ctor_ref->add_member_initializer(init_name, init_list_node);
+						} else if (!init_args.empty()) {
+							ctor_ref->add_member_initializer(init_name, init_args[0]);
+						}
+					}
 				}
 			}
 			
