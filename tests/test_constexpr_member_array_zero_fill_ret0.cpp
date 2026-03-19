@@ -5,8 +5,8 @@
 
 // 1. Single-element brace-init: arr{val} → arr[0]=val, rest=0
 struct SingleInit {
-int arr[4];
-constexpr SingleInit() : arr{7} {}
+	int arr[4];
+	constexpr SingleInit() : arr{7} {}
 };
 
 constexpr SingleInit s{};
