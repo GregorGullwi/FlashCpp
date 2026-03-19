@@ -1100,7 +1100,20 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					
 					if (!new_value.success()) return new_value;
-						*target_binding = new_value;
+
+					// Truncate to the declared type of the operand, matching C++
+					// assignment-conversion semantics.  For unsigned types narrower than
+					// 64 bits (e.g. unsigned char, unsigned short, unsigned int) the
+					// stored result must wrap at the declared type's width, regardless
+					// of any integer promotion that happened during the binary arithmetic.
+					if (current.exact_type.has_value() &&
+					    is_unsigned_integer_type(current.exact_type->type())) {
+						const unsigned long long raw = static_cast<unsigned long long>(new_value.as_int());
+						new_value = EvalResult::from_uint(apply_uint_type_mask(raw, current.exact_type));
+						new_value.set_exact_type(*current.exact_type);
+					}
+
+					*target_binding = new_value;
 					
 					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
