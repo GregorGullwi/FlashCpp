@@ -1072,9 +1072,16 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 		case Type::UnsignedInt:
 		case Type::UnsignedLong:
 		case Type::UnsignedLongLong:
-			// For unsigned types, convert to unsigned
+			// For unsigned types, convert to unsigned.
+			// Read the source value preserving full bit-width: if the source result
+			// is already unsigned long long, read it directly to avoid the
+			// long long round-trip in as_int() for values above LLONG_MAX.
 		{
-			EvalResult result = EvalResult::from_uint(static_cast<unsigned long long>(expr_result.as_int()));
+			const bool src_is_uint = std::holds_alternative<unsigned long long>(expr_result.value);
+			const unsigned long long uval = src_is_uint
+				? std::get<unsigned long long>(expr_result.value)
+				: static_cast<unsigned long long>(expr_result.as_int());
+			EvalResult result = EvalResult::from_uint(uval);
 			result.set_exact_type(target_type);
 			return result;
 		}

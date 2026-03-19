@@ -13,6 +13,67 @@ errors, that is implementation plumbing, not language-feature support.
 
 ## What Works
 
+### ✅ All Primitive Types in Constexpr Variables and Expressions
+
+Every C++ primitive type is supported as a constexpr variable and in arithmetic/comparison expressions:
+
+```cpp
+constexpr bool          cv_bool   = true;
+constexpr char          cv_char   = 'A';        // 65
+constexpr signed char   cv_schar  = -5;
+constexpr unsigned char cv_uchar  = 200;
+constexpr short         cv_short  = 1000;
+constexpr unsigned short cv_ushort = 60000;
+constexpr int           cv_int    = -42;
+constexpr unsigned int  cv_uint   = 4000000000u;
+constexpr long          cv_long   = 100000L;
+constexpr unsigned long cv_ulong  = 3000000000UL;
+constexpr long long     cv_llong  = -9000000000LL;
+constexpr unsigned long long cv_ullong = 10000000000ULL;
+constexpr float         cv_float  = 3.14f;
+constexpr double        cv_double = 2.718281828;
+constexpr long double   cv_ldouble = 1.41421356L;
+```
+
+Arithmetic and comparisons work correctly for all of these types including mixed-type
+expressions (C++ usual arithmetic conversions are applied):
+
+```cpp
+constexpr double result = 3 + 0.14;      // int + double → double ✅
+constexpr float  sum    = 3.5f + 2;      // float + int  → double ✅
+static_assert(3.14 > 3.0);               // non-integer double comparison ✅
+static_assert(3.14f > 3.0f);             // non-integer float comparison  ✅
+
+constexpr unsigned long long big = 18000000000000000000ULL;
+static_assert(big > 1LL);               // unsigned long long vs signed ✅
+```
+
+Constexpr functions may also return and accept all primitive types, and
+C-style casts / `static_cast` inside function bodies work correctly:
+
+```cpp
+constexpr double fn(double a, double b) { return a * b; }
+static_assert(fn(3.14, 2.0) > 6.0);    // 6.28 > 6.0 ✅
+
+constexpr int fn_cast(double a) { return (int)a; }
+static_assert(fn_cast(3.9) == 3);       // truncation ✅
+```
+
+**Known limitation — unsigned type width:**
+The evaluator stores all unsigned integers as `unsigned long long` (64-bit) internally.
+Wrapping arithmetic that depends on the *declared width* (e.g. `unsigned int` wrapping
+at 32 bits) will produce a 64-bit result instead:
+
+```cpp
+constexpr unsigned int wrap = 1u - 2u;
+// C++ standard: 4294967295 (UINT_MAX, wraps at 32 bits)
+// FlashCpp:     18446744073709551615 (ULLONG_MAX, wraps at 64 bits) ⚠️
+// static_assert(wrap == 4294967295u);  // ⚠️ fails in FlashCpp
+```
+
+This only affects expressions where the unsigned wrapping result is then observed
+(e.g. in `static_assert`); arithmetic that stays well within range is unaffected.
+
 ### ✅ Basic Constexpr Variables
 ```cpp
 constexpr int x = 10;
@@ -480,12 +541,15 @@ Potential areas for enhancement (in order of complexity):
 - ✅ `break` and `continue` statements in constexpr for/while loops
 - ✅ `switch` statements with case labels, default label, fall-through, and `break` in constexpr functions
 - ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
+- ✅ All primitive types (`bool`, `char`, signed/unsigned integer variants, `float`, `double`, `long double`) in constexpr variables, arithmetic, comparisons, function parameters/return values, and C-style/`static_cast` conversions inside constexpr function bodies
+- ✅ Mixed-type arithmetic following C++ usual arithmetic conversions: float/double vs any → double path; unsigned long long vs signed → unsigned path; bool/char/short/int/long/long long → signed path
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
+- ⚠️ Unsigned wrapping arithmetic at the declared type's width: all unsigned values are stored as `unsigned long long` (64-bit) internally, so `unsigned int` wrapping (at 32 bits), `unsigned short` wrapping (at 16 bits), etc. give 64-bit results. Arithmetic that stays within range is unaffected.
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
