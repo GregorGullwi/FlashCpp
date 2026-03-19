@@ -2,9 +2,9 @@
 // e.g., arr{a, b, c} correctly stores array values and supports subscript access
 
 struct Triplet {
-int vals[3];
-constexpr Triplet(int a, int b, int c) : vals{a, b, c} {}
-constexpr int get(int i) const { return vals[i]; }
+	int vals[3];
+	constexpr Triplet(int a, int b, int c) : vals{a, b, c} {}
+	constexpr int get(int i) const { return vals[i]; }
 };
 
 // Access via member subscript (d.arr[i])
