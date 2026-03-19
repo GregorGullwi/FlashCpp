@@ -1713,6 +1713,10 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
 
 	// Unary +, -, ~ are only defined for arithmetic types
+	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
+	if (unary_op.op() == "~" && is_floating_point_type(operand_base)) {
+		throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+	}
 	if (is_floating_point_type(operand_base)) return;  // float/double: no promotion needed
 
 	const Type promoted = promote_integer_type(operand_base);

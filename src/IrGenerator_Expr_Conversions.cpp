@@ -1359,6 +1359,11 @@
 			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 		}
 		else if (unaryOperatorNode.op() == "~") {
+			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
+			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
+			if (!is_integer_type(operandType) && operandType != Type::Bool) {
+				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+			}
 			// Bitwise NOT - use UnaryOp struct
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),
