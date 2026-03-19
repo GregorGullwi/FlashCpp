@@ -124,12 +124,15 @@ private:
 	void tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx);
 
 	// Annotate binary arithmetic/comparison operands with their common-type conversions.
-	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op);
+	// The caller may pass precomputed operand type IDs to avoid re-running inference on hot paths.
+	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 	// NOT the usual arithmetic conversions.  Each operand is promoted separately
 	// (bool/char/short → int); the result type is the promoted LHS type.
-	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op);
+	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// C++20 [expr.unary.op]: the operand of unary +, -, and ~ undergoes integral
 	// promotion.  Types with conversion rank less than int (bool, char, short, etc.)
@@ -172,6 +175,12 @@ private:
 	// Throws CompileError if expr_node is a scoped enum and target type differs.
 	void diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
 		const char* context_description);
+
+	// Diagnose scoped enum used as operand in binary arithmetic/comparison with a
+	// different type.  Per C++20, scoped enums only support relational/equality
+	// operators between values of the same scoped enum type.
+	void diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// State
 	Parser& parser_;

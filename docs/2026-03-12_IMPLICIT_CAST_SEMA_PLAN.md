@@ -891,9 +891,38 @@ The right split is:
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
-- Scoped enum diagnostic covers variable init and return contexts; assignment RHS (`scoped_val = x;` where x is a scoped enum) and function call argument contexts are not yet diagnosed. Scoped enum used in binary arithmetic (e.g., `scoped_val + 1`) silently resolves to underlying type without diagnostic.
+- ~~Scoped enum diagnostic covers variable init and return contexts; assignment RHS (`scoped_val = x;` where x is a scoped enum) and function call argument contexts are not yet diagnosed. Scoped enum used in binary arithmetic (e.g., `scoped_val + 1`) silently resolves to underlying type without diagnostic.~~ (resolved in Phase 14)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.
+
+### Phase 14: scoped enum diagnostic expansion + `inferExpressionType` coverage ✅
+- `diagnoseScopedEnumBinaryOperands`: new diagnostic function for scoped enums used in binary arithmetic, comparison (cross-type), compound assignment, and shift operations. Per C++20, scoped enums only support relational/equality operators between values of the same scoped enum type; all other binary operator usage with a scoped enum operand is ill-formed.
+- `diagnoseScopedEnumConversion` extended to assignment RHS context: `int x; x = scoped_val;` now diagnoses with "cannot implicitly convert from scoped enum 'Color' to 'int' in assignment; use static_cast".
+- `diagnoseScopedEnumConversion` extended to function call argument context: `foo(scoped_val)` where `foo(int)` now diagnoses with "cannot implicitly convert from scoped enum 'Color' to 'int' in function argument; use static_cast".
+- Same-type scoped enum comparisons (`Color::Red == Color::Green`, `a < b`) remain valid as per C++20.
+- `inferExpressionType` expanded with 7 new expression type handlers:
+	- `ConstructorCallNode`: returns the constructed type (canonicalized from `type_node()`).
+	- `StringLiteralNode`: returns `const char*` (pointer to const char).
+	- `QualifiedIdentifierNode`: falls back to `parser_.get_expression_type()` for namespace-qualified identifiers.
+	- `DynamicCastNode`: returns the target cast type.
+	- `OffsetofExprNode`: returns `size_t` (`Type::UnsignedLongLong` on 64-bit).
+	- `NoexceptExprNode`: returns `Type::Bool`.
+	- `TypeTraitExprNode`: returns `Type::Bool` (all type trait intrinsics return bool).
+- Helper functions `isScopedEnum()` and `getScopedEnumName()` extracted as static utilities for scoped enum detection from `CanonicalTypeDesc`.
+- Follow-up hot-path cleanup: `normalizeExpression` now computes binary operand `CanonicalTypeId`s once and threads them through `diagnoseScopedEnumBinaryOperands`, `tryAnnotateBinaryOperandConversions`, and `tryAnnotateShiftOperandPromotions` so Phase 14 does not double `inferExpressionType` work for every arithmetic/comparison/compound/shift operator.
+- Tests: `test_scoped_enum_assign_fail`, `test_scoped_enum_call_arg_fail`, `test_scoped_enum_compound_assign_fail`, `test_scoped_enum_binop_fail`, `test_infer_expr_type_expansion_ret0`. Suite: 1596 pass / 0 fail / 63 expected-fail.
+
+**Known limitations (Phase 15+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
+- Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.
+- `inferExpressionType` still does not handle: `ArraySubscriptNode`, `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
+- Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
+- Plain bitwise operators (`&`, `|`, `^`) with scoped enum operands are not diagnosed. The `diagnoseScopedEnumBinaryOperands` guard checks `is_arithmetic || is_comparison || is_compound_assign || is_shift`, which covers `+`, `-`, `*`, `/`, `%`, comparisons, compound assignments (`&=`, `|=`, `^=`), and shifts — but not the plain bitwise forms. Per C++20, `Color::Red | Color::Green` is ill-formed for scoped enums (no built-in bitwise operators). This gap is consistent with the broader sema annotation coverage (which also does not handle plain bitwise operators for type annotation).
 
 ### Parallel rollout guidance
 
