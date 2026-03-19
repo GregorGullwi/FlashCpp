@@ -14,6 +14,7 @@ class FunctionDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
+class UnaryOperatorNode;
 class FunctionCallNode;
 class ConstructorCallNode;
 class InitializerListNode;
@@ -33,6 +34,10 @@ struct LambdaInfo;
 //   Phase 6: Function call argument conversions + callable operator() resolution
 //   Phase 7: Ternary branch conversions, assignment RHS, variable initialiser
 //   Phase 8: Constructor arg conversions, enum/pointer contextual bool, float→int folding
+//   Phase 9-12: Global/static assignment, sema target verification, buildConversionPlan,
+//               enum→primitive annotations, identifier type inference fallback
+//   Phase 13: Unary operator integral promotions, scoped enum diagnostic,
+//             inferExpressionType expansion (~/!/++/--/sizeof/alignof)
 
 class SemanticAnalysis {
 public:
@@ -126,6 +131,11 @@ private:
 	// (bool/char/short → int); the result type is the promoted LHS type.
 	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op);
 
+	// C++20 [expr.unary.op]: the operand of unary +, -, and ~ undergoes integral
+	// promotion.  Types with conversion rank less than int (bool, char, short, etc.)
+	// are promoted to int before the operator is applied.
+	void tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode& unary_op);
+
 	// Annotate an expression with contextual bool conversion (C++20 [conv.bool]).
 	// Used for control-flow conditions (if/while/for/do-while), ternary condition,
 	// and logical operator operands (&&, ||).
@@ -156,6 +166,12 @@ private:
 	void popScope();
 	void addLocalType(StringHandle name, CanonicalTypeId type_id);
 	CanonicalTypeId lookupLocalType(StringHandle name) const;
+
+	// Diagnose implicit conversion from scoped enum.
+	// C++11+: scoped enums do not allow implicit conversion to other types.
+	// Throws CompileError if expr_node is a scoped enum and target type differs.
+	void diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+		const char* context_description);
 
 	// State
 	Parser& parser_;

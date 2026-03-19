@@ -1301,7 +1301,46 @@
 			}
 		}
 
-		// Create a temporary variable for the result
+		// C++20 [expr.unary.op]: For unary +, -, ~, the operand undergoes integral
+		// promotion (bool/char/short → int).  Apply sema annotation if present,
+		// otherwise apply promotion as fallback.
+		if (unaryOperatorNode.op() == "~" || unaryOperatorNode.op() == "-" || unaryOperatorNode.op() == "+") {
+			// Try sema-annotated promotion first
+			bool promoted = false;
+			if (sema_ && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+				const void* key = &unaryOperatorNode.get_operand().as<ExpressionNode>();
+				const auto slot = sema_->getSlot(key);
+				if (slot.has_value() && slot->has_cast()) {
+					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+					Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
+					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
+					if (from_t != Type::Struct && to_t != Type::Struct) {
+						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
+						if (from_t != operandIrOperands.type && from_t == Type::Enum)
+							from_t = operandIrOperands.type;
+						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
+						operandType = to_t;
+						promoted = true;
+					}
+				}
+			}
+			// Fallback: apply integral promotion if operand is a small integer type
+			if (!promoted && is_integer_type(operandType) && get_integer_rank(operandType) < 3) {
+				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
+				operandType = Type::Int;
+			}
+			if (!promoted && operandType == Type::Bool) {
+				operandIrOperands = generateTypeConversion(operandIrOperands, Type::Bool, Type::Int, unaryOperatorNode.get_token());
+				operandType = Type::Int;
+			}
+			// Unary plus is a no-op after promotion — return immediately without
+			// allocating an unused result_var.
+			if (unaryOperatorNode.op() == "+") {
+				return operandIrOperands;
+			}
+		}
+
+		// Create a temporary variable for the result (after unary + early-return).
 		TempVar result_var = var_counter.next();
 
 		// Generate the IR for the operation based on the operator
@@ -1320,6 +1359,11 @@
 			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var});
 		}
 		else if (unaryOperatorNode.op() == "~") {
+			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
+			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
+			if (!is_integer_type(operandType) && operandType != Type::Bool) {
+				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+			}
 			// Bitwise NOT - use UnaryOp struct
 			UnaryOp unary_op{
 				.value = toTypedValue(operandIrOperands),
@@ -1334,10 +1378,6 @@
 				.result = result_var
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Negate, unary_op, Token()));
-		}
-		else if (unaryOperatorNode.op() == "+") {
-			// Unary plus (no-op, just return the operand)
-			return operandIrOperands;
 		}
 		else if (unaryOperatorNode.op() == "++") {
 			// Increment operator (prefix or postfix)

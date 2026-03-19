@@ -829,6 +829,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// before the normal traversal (which just counts).
 			if (ctx.current_function_return_type_id) {
 				tryAnnotateReturnConversion(*expr, ctx);
+				diagnoseScopedEnumConversion(*expr, *ctx.current_function_return_type_id,
+					" in return statement");
 			}
 			normalizeExpression(*expr, ctx);
 		}
@@ -862,8 +864,10 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
-			if (decl_type_id)
+			if (decl_type_id) {
 				tryAnnotateConversion(*init, decl_type_id);
+				diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
+			}
 			normalizeExpression(*init, ctx);
 		}
 	}
@@ -1024,6 +1028,11 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				// converted to bool.
 				if (e.op() == "!") {
 					tryAnnotateContextualBool(e.get_operand());
+				}
+				// C++20 [expr.unary.op]: the operand of unary +, -, ~ undergoes
+				// integral promotion (bool/char/short → int).
+				else if (e.op() == "+" || e.op() == "-" || e.op() == "~") {
+					tryAnnotateUnaryOperandPromotion(e);
 				}
 				normalizeExpression(e.get_operand(), ctx);
 			}
@@ -1323,21 +1332,35 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				// Unary + and - apply integral promotion: types with rank < int become int.
 				const std::string_view op = e.op();
-				if (op == "+" || op == "-") {
+				// Unary +, - and ~ apply integral promotion: types with rank < int become int.
+				if (op == "+" || op == "-" || op == "~") {
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id) return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
+					// Resolve enum to underlying type
+					const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
 					const bool is_small_int =
-						(is_integer_type(operand_desc.base_type) || operand_desc.base_type == Type::Bool)
-						&& get_integer_rank(operand_desc.base_type) < 3;  // rank of int
+						(is_integer_type(operand_base) || operand_base == Type::Bool)
+						&& get_integer_rank(operand_base) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
 						promoted.base_type = Type::Int;
 						return type_context_.intern(promoted);
 					}
-					return operand_id;
+					CanonicalTypeDesc result_desc;
+					result_desc.base_type = operand_base;
+					return type_context_.intern(result_desc);
+				}
+				// Logical NOT always returns bool
+				if (op == "!") {
+					CanonicalTypeDesc desc;
+					desc.base_type = Type::Bool;
+					return type_context_.intern(desc);
+				}
+				// Prefix/postfix ++ and -- return the operand type
+				if (op == "++" || op == "--") {
+					return inferExpressionType(e.get_operand());
 				}
 				return {};
 			}
@@ -1453,6 +1476,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(tt.template as<TypeSpecifierNode>());
 				return {};
 			}
+			else if constexpr (std::is_same_v<T, SizeofExprNode> ||
+			                   std::is_same_v<T, AlignofExprNode>) {
+				// sizeof and alignof always return size_t (UnsignedLongLong on 64-bit).
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::UnsignedLongLong;
+				return type_context_.intern(desc);
+			}
 			return {};
 		}, expr);
 	}
@@ -1470,6 +1500,42 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	}
 
 	return {};
+}
+
+// --- Scoped enum diagnostic helper ---
+// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
+
+void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+	const char* context_description) {
+	if (!target_type_id || !expr_node.is<ExpressionNode>()) return;
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id || expr_type_id == target_type_id) return;
+
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+
+	if (from_desc.base_type != Type::Enum) return;
+	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
+	if (to_desc.base_type == Type::Enum && from_desc.type_index == to_desc.type_index) return;
+	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size()) return;
+
+	if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+		if (ei->is_scoped) {
+			// Build target type name: use enum name if target is an enum, otherwise use primitive name.
+			std::string target_name;
+			if (to_desc.base_type == Type::Enum && to_desc.type_index.is_valid() &&
+				to_desc.type_index.value < gTypeInfo.size()) {
+				if (const EnumTypeInfo* target_ei = gTypeInfo[to_desc.type_index.value].getEnumInfo())
+					target_name = StringTable::getStringView(target_ei->name);
+			}
+			if (target_name.empty())
+				target_name = getTypeName(to_desc.base_type);
+			throw CompileError("cannot implicitly convert from scoped enum '" +
+				std::string(StringTable::getStringView(ei->name)) +
+				"' to '" + target_name +
+				"'" + std::string(context_description) + "; use static_cast");
+		}
+	}
 }
 
 // --- Core conversion annotation helper ---
@@ -1501,6 +1567,16 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
 	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
+	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
+	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
+	// check isScopedEnum() and throw CompileError themselves.
+	if (from_desc.base_type == Type::Enum && from_desc.type_index.is_valid() &&
+		from_desc.type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+			if (ei->is_scoped)
+				return false;
+		}
+	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);
@@ -1613,6 +1689,41 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.base_type = promoted_rhs;
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc));
+	}
+}
+
+// --- Unary operand integral promotion annotation ---
+// C++20 [expr.unary.op]: The operand of unary +, -, and ~ shall have arithmetic or
+// unscoped enumeration type and the result is the value of its operand promoted.
+// Integral promotions are performed (bool/char/short → int).
+
+void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode& unary_op) {
+	const CanonicalTypeId operand_type_id = inferExpressionType(unary_op.get_operand());
+	if (!operand_type_id) return;
+
+	const CanonicalTypeDesc& operand_desc = type_context_.get(operand_type_id);
+
+	// Only handle plain primitive types and enum sources (no pointers, arrays, structs)
+	if (!operand_desc.pointer_levels.empty()) return;
+	if (!operand_desc.array_dimensions.empty()) return;
+	if (operand_desc.base_type == Type::Struct || operand_desc.base_type == Type::Invalid) return;
+	if (isPlaceholderAutoType(operand_desc.base_type)) return;
+
+	// Resolve enum operands to their underlying type for promote_integer_type
+	const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
+
+	// Unary +, -, ~ are only defined for arithmetic types
+	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
+	if (unary_op.op() == "~" && is_floating_point_type(operand_base)) {
+		throw CompileError("operand of '~' must have integral or unscoped enumeration type");
+	}
+	if (is_floating_point_type(operand_base)) return;  // float/double: no promotion needed
+
+	const Type promoted = promote_integer_type(operand_base);
+	if (promoted != operand_base) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted;
+		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
 	}
 }
 

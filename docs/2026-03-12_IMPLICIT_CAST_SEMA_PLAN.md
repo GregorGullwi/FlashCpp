@@ -870,8 +870,30 @@ The right split is:
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
-- Scoped enum (`enum class`) source types are correctly rejected by `buildConversionPlan` (no implicit conversion for scoped enums per C++11+), but the sema pass does not emit a diagnostic for attempted implicit conversion from a scoped enum. A future phase should add a proper diagnostic.
+- ~~Scoped enum (`enum class`) source types are correctly rejected by `buildConversionPlan` (no implicit conversion for scoped enums per C++11+), but the sema pass does not emit a diagnostic for attempted implicit conversion from a scoped enum. A future phase should add a proper diagnostic.~~ (resolved in Phase 13)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
+
+### Phase 13: unary operator integral promotions + scoped enum diagnostic + `inferExpressionType` expansion ✅
+- `tryAnnotateUnaryOperandPromotion`: new sema annotation function for C++20 `[expr.unary.op]`. The operand of unary `+`, `-`, and `~` undergoes integral promotion (bool/char/short → int). Resolves enum operands to underlying type before promotion. Sema annotates the operand node with the promoted type.
+- Codegen consumption for unary promotions: `generateUnaryOperatorIr` now checks sema annotations on the operand before applying unary `+`, `-`, `~`. Consumes the sema-annotated integral promotion (with enum mismatch handling), then falls back to codegen-local promotion for small integer types. Previously, unary `-` and `~` operated in the operand's original bit width (e.g., 8-bit for `char`), producing incorrect results for cases like `~(unsigned char)0xFF` → 0 instead of the correct -256.
+- `inferExpressionType` expansion:
+	- `~` operator now returns the promoted type (same integral promotion rules as `+` and `-`).
+	- `!` operator now returns `Type::Bool`.
+	- `++`/`--` prefix and postfix operators now return the operand type.
+	- `SizeofExprNode` and `AlignofExprNode` now return `Type::UnsignedLongLong` (matching codegen's 64-bit `size_t`).
+- Scoped enum diagnostic: `diagnoseScopedEnumConversion()` helper throws `CompileError` when an implicit conversion from a scoped enum (`enum class`) to a different type is attempted. Active in variable initialization and return statement contexts. `tryAnnotateConversion` silently rejects scoped enum source types (returning false) so that binary operator comparisons of same-type scoped enums (`Color::Red == Color::Green`) continue to work correctly.
+- `normalizeExpression` for `UnaryOperatorNode`: now calls `tryAnnotateUnaryOperandPromotion(e)` for `+`, `-`, `~` operators (previously only handled `!` via `tryAnnotateContextualBool`).
+- Tests: `test_unary_promotion_sema_ret0` (unary +/-/~ on char/short/bool/unsigned char with integral promotion), `test_sizeof_alignof_sema_ret0` (sizeof/alignof type inference in expressions), `test_scoped_enum_implicit_conv_fail` (scoped enum → int rejected). Suite: 1588 pass / 0 fail / 57 expected-fail.
+
+**Known limitations (Phase 14+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- Scoped enum diagnostic covers variable init and return contexts; assignment RHS (`scoped_val = x;` where x is a scoped enum) and function call argument contexts are not yet diagnosed. Scoped enum used in binary arithmetic (e.g., `scoped_val + 1`) silently resolves to underlying type without diagnostic.
+- `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
+- Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.
 
 ### Parallel rollout guidance
 
