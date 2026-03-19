@@ -176,6 +176,16 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	return ConversionPlan::no_match();
 }
 
+// Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
+// Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
+inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
+	if (base_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* ei = gTypeInfo[type_index.value].getEnumInfo())
+			return ei->underlying_type;
+	}
+	return base_type;
+}
+
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.
