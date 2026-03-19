@@ -2660,25 +2660,6 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 	return EvalResult::from_bool(true);
 }
 
-EvalResult Evaluator::evaluate_single_return_block_with_bindings(
-	const ASTNode& body_node,
-	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context,
-	std::string_view non_block_error,
-	std::string_view multi_statement_error) {
-	if (!body_node.is<BlockNode>()) {
-		return EvalResult::error(std::string(non_block_error));
-	}
-
-	const BlockNode& body = body_node.as<BlockNode>();
-	const auto& statements = body.get_statements();
-	if (statements.size() != 1) {
-		return EvalResult::error(std::string(multi_statement_error));
-	}
-
-	return evaluate_statement_with_bindings(statements[0], bindings, context);
-}
-
 EvalResult Evaluator::evaluate_block_with_bindings(
 	const ASTNode& body_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
