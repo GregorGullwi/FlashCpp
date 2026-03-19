@@ -2848,7 +2848,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// Execute init statement if present
 		if (for_stmt.has_init()) {
-			evaluate_statement_with_bindings(for_stmt.get_init_statement().value(), bindings, context);
+			auto init_result = evaluate_statement_with_bindings(for_stmt.get_init_statement().value(), bindings, context);
+			if (!isStatementExecutedWithoutReturn(init_result)) {
+				return init_result;
+			}
 		}
 		
 		// Loop until condition is false
@@ -2941,7 +2944,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		std::optional<BlockScopeGuard> if_guard;
 		if (if_stmt.has_init()) {
 			if_guard.emplace(context.resolve_declaration_bindings(bindings), context.current_scope);
-			evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
+			auto init_result = evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
+			if (!isStatementExecutedWithoutReturn(init_result)) {
+				return init_result;
+			}
 		}
 		
 		// Evaluate condition
@@ -3018,7 +3024,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// Execute optional init statement (C++20 feature)
 		if (ranged_for.has_init_statement()) {
-			evaluate_statement_with_bindings(*ranged_for.get_init_statement(), bindings, context);
+			auto init_result = evaluate_statement_with_bindings(*ranged_for.get_init_statement(), bindings, context);
+			if (!isStatementExecutedWithoutReturn(init_result)) {
+				return init_result;
+			}
 		}
 		
 		// Evaluate the range expression to get the array
