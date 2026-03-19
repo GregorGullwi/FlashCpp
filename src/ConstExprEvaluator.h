@@ -193,6 +193,17 @@ struct BlockScopeTracker {
 	// shadowing can be detected and the old value saved.
 	void on_declare(std::string_view name,
 	                const std::unordered_map<std::string_view, EvalResult>& bindings) {
+		// Only track the first declaration of this name in this scope.
+		// Subsequent re-declarations (e.g. loop body without braces across
+		// iterations) must not overwrite the original shadow decision:
+		// if the name was brand-new on the first call, it should still be
+		// erased (not restored) at cleanup.
+		if (saved_shadows.find(name) != saved_shadows.end()) {
+			return;  // Already tracked with a saved shadow — first decision wins.
+		}
+		if (std::find(declared_names.begin(), declared_names.end(), name) != declared_names.end()) {
+			return;  // Already declared in this scope as a new variable.
+		}
 		declared_names.push_back(name);
 		auto it = bindings.find(name);
 		if (it != bindings.end()) {
