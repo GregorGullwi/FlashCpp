@@ -1525,14 +1525,14 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
 				return EvalResult::error("Left shift count >= width of type in constant expression");
 			}
-			return make_shift_result(shift_info.promoted_type, lv << rv);
+			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv << rv, shift_info.promoted_type));
 		}
 		if (op == ">>") {
 			const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
 				return EvalResult::error("Right shift count >= width of type in constant expression");
 			}
-			return make_shift_result(shift_info.promoted_type, lv >> rv);
+			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv >> rv, shift_info.promoted_type));
 		}
 		if (op == "==" ) return EvalResult::from_bool(lv == rv);
 		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
