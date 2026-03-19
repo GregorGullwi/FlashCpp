@@ -1644,21 +1644,49 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
+	const bool operand_is_uint = std::holds_alternative<unsigned long long>(operand.value);
+
+	// Helper: build an unsigned result masked to the operand's declared type width.
+	const auto make_uint = [&](unsigned long long raw) {
+		EvalResult result = EvalResult::from_uint(apply_uint_type_mask(raw, operand.exact_type));
+		if (operand.exact_type.has_value()) {
+			result.set_exact_type(*operand.exact_type);
+		}
+		return result;
+	};
+
+	// Helper: build a signed result and propagate exact_type.
+	const auto make_sint = [&](long long val) {
+		EvalResult result = EvalResult::from_int(val);
+		if (operand.exact_type.has_value()) {
+			result.set_exact_type(*operand.exact_type);
+		}
+		return result;
+	};
+
 	if (op == "!") {
 		return EvalResult::from_bool(!operand.as_bool());
 	} else if (op == "~") {
-		return EvalResult::from_int(~operand.as_int());
+		if (operand_is_uint) {
+			return make_uint(~std::get<unsigned long long>(operand.value));
+		}
+		return make_sint(~operand.as_int());
 	} else if (op == "-") {
 		// Unary minus - negate the value
 		if (std::holds_alternative<double>(operand.value)) {
 			return EvalResult::from_double(-operand.as_double());
 		}
+		if (operand_is_uint) {
+			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
+			const unsigned long long lv = std::get<unsigned long long>(operand.value);
+			return make_uint(static_cast<unsigned long long>(-static_cast<long long>(lv)));
+		}
 		// Check for overflow: negating LLONG_MIN overflows
-		long long val = operand.as_int();
+		const long long val = operand.as_int();
 		if (val == LLONG_MIN) {
 			return EvalResult::error("Signed integer overflow in unary minus");
 		}
-		return EvalResult::from_int(-val);
+		return make_sint(-val);
 	} else if (op == "+") {
 		// Unary plus - no-op, just return the value
 		return operand;
