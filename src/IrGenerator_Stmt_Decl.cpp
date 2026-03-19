@@ -1490,11 +1490,8 @@
 								const TypeConversionResult conv =
 									can_convert_type(init_type, decl_type);
 								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-									if (sema_normalized_current_function_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type)) {
-										FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for variable init conversion (",
-											getTypeName(init_type), " -> ",
-											getTypeName(decl_type), ") — sema gap");
-									}
+									if (sema_normalized_current_function_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type))
+										throw InternalError(std::string("Phase 15: sema missed variable init conversion (") + std::string(getTypeName(init_type)) + " -> " + std::string(getTypeName(decl_type)) + ")");
 									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
 								}
 							}

@@ -66,6 +66,13 @@ public:
 		return normalized_bodies_.count(body_ptr) > 0;
 	}
 
+	// Returns true if sema attempted to annotate this FunctionCallNode but could not
+	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
+	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
+	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
+		return unresolved_call_args_.count(call) > 0;
+	}
+
 	// Look up the pre-resolved callable operator() for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
@@ -209,6 +216,12 @@ private:
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
+
+	// Track FunctionCallNode pointers where sema attempted call-arg annotation
+	// but couldn't resolve the callee (e.g. template specialization static members
+	// whose DeclarationNode addresses differ from the call's stored decl).
+	// Phase 16+ work: improve template specialization callee resolution.
+	std::unordered_set<const FunctionCallNode*> unresolved_call_args_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;

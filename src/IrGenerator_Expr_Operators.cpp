@@ -680,9 +680,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
 						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
 						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
-							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for global/static assignment (",
-								getTypeName(rhsExprResult.type), " -> ",
-								getTypeName(gsi.type), ")");
+							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.type)) + " -> " + std::string(getTypeName(gsi.type)) + ")");
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
@@ -765,9 +763,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (gsi.type != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
-								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global LHS (",
-									getTypeName(gsi.type), " -> ",
-									getTypeName(commonType), ")");
+							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
 							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
 						}
 					}
@@ -782,18 +778,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						if (rhs_result.type != promoted_rhs) {
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
 								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type))
-									FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
-										getTypeName(rhs_result.type), " -> ",
-										getTypeName(promoted_rhs), ")");
+								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
 								rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
 							}
 						}
 					} else if (rhs_result.type != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
-								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global RHS (",
-									getTypeName(rhs_result.type), " -> ",
-									getTypeName(commonType), ")");
+							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
 						}
 					}
@@ -2164,9 +2156,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (rhsType != lhsType) {
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(lhsType))
-						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for local assignment (",
-							getTypeName(rhsType), " -> ",
-							getTypeName(lhsType), ")");
+						throw InternalError(std::string("Phase 15: sema missed local assignment (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
 				}
 			}
@@ -2205,33 +2195,27 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (lhsType != commonType) {
 			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 				if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsType) && is_standard_arithmetic_type(commonType))
-					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary LHS (",
-						getTypeName(lhsType), " -> ",
-						getTypeName(commonType), ")");
+					throw InternalError(std::string("Phase 15: sema missed binary LHS (") + std::string(getTypeName(lhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
 			}
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 		// NOT conversion to the LHS/result type.  Only apply sema-annotated promotion
 		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
-		// Phase 15: if sema missed the promotion and it's needed, log and apply fallback.
+		// Phase 15: if sema missed the promotion and it's needed, assert.
 		if (is_shift_op) {
 			const Type promoted_rhs = promote_integer_type(rhsType);
 			if (rhsType != promoted_rhs) {
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType))
-						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
-							getTypeName(rhsType), " -> ",
-							getTypeName(promoted_rhs), ")");
+						throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, promoted_rhs, binaryOperatorNode.get_token());
 				}
 			}
 		} else if (rhsType != commonType) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 				if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(commonType))
-					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary RHS (",
-						getTypeName(rhsType), " -> ",
-						getTypeName(commonType), ")");
+					throw InternalError(std::string("Phase 15: sema missed binary RHS (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
 			}
 		}

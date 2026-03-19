@@ -2116,7 +2116,14 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 					}
 				}
 			}
-			if (!func_decl) return;
+			if (!func_decl) {
+				// Record that sema tried and failed — callee unresolvable (e.g. template
+				// specialization with separate DeclarationNode copies). Codegen checks
+				// hasUnresolvedCallArgs() to skip hard enforcement for this call.
+				// Phase 16+: improve template specialization callee resolution.
+				unresolved_call_args_.insert(&call_node);
+				return;
+			}
 		}
 
 		// Find the overload whose DeclarationNode address matches the one stored in the call.

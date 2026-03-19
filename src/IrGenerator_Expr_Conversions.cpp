@@ -1330,8 +1330,7 @@
 			if (!promoted && (operandType == Type::Bool ||
 				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
 				if (sema_normalized_current_function_)
-					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for unary promotion (",
-						getTypeName(operandType), " -> int) — sema gap");
+					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
@@ -2383,11 +2382,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			arg_result.type != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type)) {
-					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for constructor arg conversion (",
-						getTypeName(arg_result.type), " -> ",
-						getTypeName(param_base_type), ") — sema gap");
-				}
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type))
+					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
 				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
 			}
