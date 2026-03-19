@@ -721,6 +721,7 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		auto& ctor = node.as<ConstructorDeclarationNode>();
 		const auto& def = ctor.get_definition();
 		if (def.has_value()) {
+			normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 			SemanticContext ctx;
 			normalizeStatement(*def, ctx);
 		}
@@ -729,6 +730,7 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		auto& dtor = node.as<DestructorDeclarationNode>();
 		const auto& def = dtor.get_definition();
 		if (def.has_value()) {
+			normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 			SemanticContext ctx;
 			normalizeStatement(*def, ctx);
 		}
@@ -750,6 +752,9 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	const auto& def = func.get_definition();
 	if (!def.has_value()) return;  // Forward declaration only
+
+	// Record that sema has normalized this function body.
+	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 
 	SemanticContext ctx;
 	// Track return type for return-statement conversion annotation
@@ -786,6 +791,7 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 		if (member_func.is_constructor && func_node.is<ConstructorDeclarationNode>()) {
 			const auto& def = func_node.as<ConstructorDeclarationNode>().get_definition();
 			if (def.has_value()) {
+				normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 				SemanticContext ctx;
 				normalizeStatement(*def, ctx);
 			}
@@ -793,6 +799,7 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 		else if (member_func.is_destructor && func_node.is<DestructorDeclarationNode>()) {
 			const auto& def = func_node.as<DestructorDeclarationNode>().get_definition();
 			if (def.has_value()) {
+				normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 				SemanticContext ctx;
 				normalizeStatement(*def, ctx);
 			}
@@ -816,7 +823,27 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	stats_.statements_visited++;
 
 	if (node.is<BlockNode>()) {
-		normalizeBlock(node.as<BlockNode>(), ctx);
+		const auto& block = node.as<BlockNode>();
+		// The parser wraps comma-separated declarations (e.g. "int x = 3, y = 4;")
+		// in a synthetic BlockNode containing individual VariableDeclarationNodes.
+		// These must NOT push a new scope — the declared variables must remain
+		// visible in the enclosing scope for inferExpressionType to find them.
+		// Detect synthetic blocks: all children are VariableDeclarationNodes.
+		bool is_multi_decl_block = true;
+		for (const auto& stmt : block.get_statements()) {
+			if (!stmt.is<VariableDeclarationNode>()) {
+				is_multi_decl_block = false;
+				break;
+			}
+		}
+		if (is_multi_decl_block) {
+			// Process each declaration in the current scope (no push/pop).
+			for (const auto& stmt : block.get_statements()) {
+				normalizeStatement(stmt, ctx);
+			}
+		} else {
+			normalizeBlock(block, ctx);
+		}
 	}
 	else if (node.is<ExpressionNode>()) {
 		normalizeExpression(node, ctx);
@@ -1344,6 +1371,29 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
 				}
 				return {};
+			}
+			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				// Array subscript: the result type is the element type of the array.
+				// Infer the array expression type and strip one array dimension.
+				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
+				if (!array_type_id) return {};
+				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
+				// If it has array dimensions, strip one to get element type.
+				if (!array_desc.array_dimensions.empty()) {
+					CanonicalTypeDesc elem_desc = array_desc;
+					elem_desc.array_dimensions.clear();
+					for (size_t i = 1; i < array_desc.array_dimensions.size(); ++i)
+						elem_desc.array_dimensions.push_back(array_desc.array_dimensions[i]);
+					return type_context_.intern(elem_desc);
+				}
+				// Pointer subscript: dereference removes one pointer level.
+				if (!array_desc.pointer_levels.empty()) {
+					CanonicalTypeDesc elem_desc = array_desc;
+					elem_desc.pointer_levels.pop_back();
+					return type_context_.intern(elem_desc);
+				}
+				// Plain type subscript (e.g. overloaded operator[]) — return base type.
+				return array_type_id;
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				const std::string_view op = e.op();
@@ -2010,8 +2060,64 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 			: decl.identifier_token().value();
 
 		// Collect all overloads from the symbol table.
-		const auto overloads = symbols_.lookup_all(name);
-		if (overloads.empty()) return;
+		auto overloads = symbols_.lookup_all(name);
+		// If qualified-name lookup failed, try the unqualified function name.
+		// The parser may register struct static members under the plain name.
+		if (overloads.empty() && call_node.has_qualified_name()) {
+			overloads = symbols_.lookup_all(decl.identifier_token().value());
+		}
+		if (overloads.empty()) {
+			// Still empty — try to recover the FunctionDeclarationNode
+			// by searching struct member functions for a matching DeclarationNode address.
+			// This handles template specialization static member calls that the parser
+			// resolved but didn't register under any name in the symbol table.
+			if (call_node.has_qualified_name()) {
+				const std::string_view qname = call_node.qualified_name();
+				auto scope_sep = qname.rfind("::");
+				if (scope_sep != std::string_view::npos) {
+					const auto struct_name_sv = qname.substr(0, scope_sep);
+					const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
+					auto struct_it = gTypesByName.find(struct_name_handle);
+					if (struct_it != gTypesByName.end()) {
+						const StructTypeInfo* si = struct_it->second->getStructInfo();
+						if (si) {
+							const std::string_view func_name = decl.identifier_token().value();
+							// First pass: exact DeclarationNode address match.
+							for (const auto& mf : si->member_functions) {
+								if (!mf.function_decl.has_value()) continue;
+								if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+								const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+								if (&candidate.decl_node() == &decl) {
+									func_decl = &candidate;
+									break;
+								}
+							}
+							// Second pass: match by name + arity, but only if unambiguous.
+							// Template instantiations create separate DeclarationNode copies,
+							// so address match may fail. Name+arity is safe only when exactly
+							// one candidate matches (multiple same-arity overloads are ambiguous).
+							if (!func_decl) {
+								const FunctionDeclarationNode* name_match = nullptr;
+								bool ambiguous = false;
+								for (const auto& mf : si->member_functions) {
+									if (!mf.function_decl.has_value()) continue;
+									if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+									const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+									if (candidate.decl_node().identifier_token().value() == func_name &&
+										candidate.parameter_nodes().size() == arguments.size()) {
+										if (name_match) { ambiguous = true; break; }
+										name_match = &candidate;
+									}
+								}
+								if (name_match && !ambiguous)
+									func_decl = name_match;
+							}
+						}
+					}
+				}
+			}
+			if (!func_decl) return;
+		}
 
 		// Find the overload whose DeclarationNode address matches the one stored in the call.
 		// The parser resolved the overload at parse time; we just need to recover the

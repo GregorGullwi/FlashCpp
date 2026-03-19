@@ -679,7 +679,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
 						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
-						if (sema_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
 							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for global/static assignment (",
 								getTypeName(rhsExprResult.type), " -> ",
 								getTypeName(gsi.type), ")");
@@ -764,7 +764,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
-							if (sema_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
 								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global LHS (",
 									getTypeName(gsi.type), " -> ",
 									getTypeName(commonType), ")");
@@ -781,7 +781,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						const Type promoted_rhs = promote_integer_type(rhs_result.type);
 						if (rhs_result.type != promoted_rhs) {
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
-								if (sema_ && is_standard_arithmetic_type(rhs_result.type))
+								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type))
 									FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
 										getTypeName(rhs_result.type), " -> ",
 										getTypeName(promoted_rhs), ")");
@@ -790,7 +790,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						}
 					} else if (rhs_result.type != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
-							if (sema_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
 								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global RHS (",
 									getTypeName(rhs_result.type), " -> ",
 									getTypeName(commonType), ")");
@@ -2163,7 +2163,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
-					if (sema_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(lhsType))
+					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(lhsType))
 						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for local assignment (",
 							getTypeName(rhsType), " -> ",
 							getTypeName(lhsType), ")");
@@ -2204,7 +2204,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// guard, expected-target verification, enum type mismatch handling, and conversion.
 		if (lhsType != commonType) {
 			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
-				if (sema_ && is_standard_arithmetic_type(lhsType) && is_standard_arithmetic_type(commonType))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsType) && is_standard_arithmetic_type(commonType))
 					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary LHS (",
 						getTypeName(lhsType), " -> ",
 						getTypeName(commonType), ")");
@@ -2219,7 +2219,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const Type promoted_rhs = promote_integer_type(rhsType);
 			if (rhsType != promoted_rhs) {
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
-					if (sema_ && is_standard_arithmetic_type(rhsType))
+					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType))
 						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
 							getTypeName(rhsType), " -> ",
 							getTypeName(promoted_rhs), ")");
@@ -2228,7 +2228,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 		} else if (rhsType != commonType) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
-				if (sema_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(commonType))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(commonType))
 					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary RHS (",
 						getTypeName(rhsType), " -> ",
 						getTypeName(commonType), ")");

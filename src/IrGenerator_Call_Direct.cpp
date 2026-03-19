@@ -972,7 +972,7 @@
 					TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 					if (standard_conversion.is_valid &&
 						standard_conversion.rank != ConversionRank::UserDefined) {
-						if (sema_ && is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type)) {
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type)) {
 							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for function call argument conversion (",
 								getTypeName(arg_type), " -> ",
 								getTypeName(param_base_type), ") — sema gap");

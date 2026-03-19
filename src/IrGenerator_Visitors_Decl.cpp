@@ -7,6 +7,13 @@
 			return;
 		}
 
+		// Phase 15: track whether sema normalized this function body.
+		sema_normalized_current_function_ = false;
+		if (sema_ && node.get_definition().has_value()) {
+			sema_normalized_current_function_ = sema_->hasNormalizedBody(
+				static_cast<const void*>(&(*node.get_definition())));
+		}
+
 		struct NamespaceStackGuard {
 			std::vector<std::string>& target;
 			std::vector<std::string> saved;

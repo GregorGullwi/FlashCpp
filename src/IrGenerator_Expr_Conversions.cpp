@@ -1329,7 +1329,7 @@
 			// unconditionally to avoid dropping promotions.
 			if (!promoted && (operandType == Type::Bool ||
 				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
-				if (sema_)
+				if (sema_normalized_current_function_)
 					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for unary promotion (",
 						getTypeName(operandType), " -> int) — sema gap");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
@@ -2383,7 +2383,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			arg_result.type != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type)) {
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type)) {
 					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for constructor arg conversion (",
 						getTypeName(arg_result.type), " -> ",
 						getTypeName(param_base_type), ") — sema gap");

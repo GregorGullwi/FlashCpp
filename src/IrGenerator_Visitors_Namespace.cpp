@@ -374,7 +374,7 @@
 						// Log a warning when sema missed it (inferExpressionType may fail for
 						// some expression contexts). Same-type size mismatches are not type
 						// conversions — no annotation expected.
-						if (sema_ && expr_type != return_type &&
+						if (sema_normalized_current_function_ && expr_type != return_type &&
 							is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
 							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for return conversion (",
 								getTypeName(expr_type), " -> ",

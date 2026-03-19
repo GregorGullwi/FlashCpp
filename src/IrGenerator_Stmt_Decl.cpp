@@ -1490,7 +1490,7 @@
 								const TypeConversionResult conv =
 									can_convert_type(init_type, decl_type);
 								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-									if (sema_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type)) {
+									if (sema_normalized_current_function_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type)) {
 										FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for variable init conversion (",
 											getTypeName(init_type), " -> ",
 											getTypeName(decl_type), ") — sema gap");
