@@ -806,7 +806,7 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
 
 	SemanticContext ctx;
-	// Destructors have no parameters, but push/pop a scope for consistency
+	// Destructors cannot have parameters; push/pop a scope for consistency
 	// with the function normalization pattern.
 	pushScope();
 	normalizeStatement(*def, ctx);
