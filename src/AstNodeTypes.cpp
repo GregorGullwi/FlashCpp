@@ -541,56 +541,6 @@ static std::string cv_qualifier_to_string(CVQualifier cv) {
     return result;
 }
 
-// Helper function to get base type string
-static const std::string& type_to_string(Type type, TypeQualifier qualifier) {
-    static std::string result;
-
-    result.clear();
-    // Add sign qualifier if present
-    if (qualifier == TypeQualifier::Unsigned) {
-        result += "unsigned ";
-    } else if (qualifier == TypeQualifier::Signed) {
-        result += "signed ";
-    }
-
-    // Add base type
-    switch (type) {
-        case Type::Void: result += "void"; break;
-        case Type::Bool: result += "bool"; break;
-        case Type::Char: result += "char"; break;
-        case Type::UnsignedChar: result += "unsigned char"; break;
-        case Type::WChar: result += "wchar_t"; break;
-        case Type::Char8: result += "char8_t"; break;
-        case Type::Char16: result += "char16_t"; break;
-        case Type::Char32: result += "char32_t"; break;
-        case Type::Short: result += "short"; break;
-        case Type::UnsignedShort: result += "unsigned short"; break;
-        case Type::Int: result += "int"; break;
-        case Type::UnsignedInt: result += "unsigned int"; break;
-        case Type::Long: result += "long"; break;
-        case Type::UnsignedLong: result += "unsigned long"; break;
-        case Type::LongLong: result += "long long"; break;
-        case Type::UnsignedLongLong: result += "unsigned long long"; break;
-        case Type::Float: result += "float"; break;
-        case Type::Double: result += "double"; break;
-        case Type::LongDouble: result += "long double"; break;
-        case Type::UserDefined: result += "user_defined"; break;
-        case Type::Auto: result += "auto"; break;
-        case Type::DeclTypeAuto: result += "decltype(auto)"; break;
-        case Type::Function: result += "function"; break;
-        case Type::Struct: result += "struct"; break;
-        case Type::Enum: result += "enum"; break;
-        case Type::FunctionPointer: result += "function_pointer"; break;
-        case Type::MemberFunctionPointer: result += "member_function_pointer"; break;
-        case Type::MemberObjectPointer: result += "member_object_pointer"; break;
-        case Type::Nullptr: result += "nullptr_t"; break;
-        case Type::Template: result += "template"; break;
-        case Type::Invalid: result += "invalid"; break;
-    }
-
-    return result;
-}
-
 std::string TypeSpecifierNode::getReadableString() const {
     std::ostringstream oss;
 
@@ -600,8 +550,35 @@ std::string TypeSpecifierNode::getReadableString() const {
         oss << base_cv << " ";
     }
 
-    // Add base type
-    oss << type_to_string(type_, qualifier_);
+    // Add sign qualifier if present
+    if (qualifier_ == TypeQualifier::Unsigned) {
+        oss << "unsigned ";
+    } else if (qualifier_ == TypeQualifier::Signed) {
+        oss << "signed ";
+    }
+
+    // Add base type name
+    std::string_view name = getTypeName(type_);
+    if (!name.empty()) {
+        oss << name;
+    } else {
+        // getTypeName returns "" for non-primitive types; provide fallback names
+        switch (type_) {
+            case Type::UserDefined: oss << "user_defined"; break;
+            case Type::Auto: oss << "auto"; break;
+            case Type::DeclTypeAuto: oss << "decltype(auto)"; break;
+            case Type::Function: oss << "function"; break;
+            case Type::Struct: oss << "struct"; break;
+            case Type::Enum: oss << "enum"; break;
+            case Type::FunctionPointer: oss << "function_pointer"; break;
+            case Type::MemberFunctionPointer: oss << "member_function_pointer"; break;
+            case Type::MemberObjectPointer: oss << "member_object_pointer"; break;
+            case Type::Nullptr: oss << "nullptr_t"; break;
+            case Type::Template: oss << "template"; break;
+            case Type::Invalid: oss << "invalid"; break;
+            default: oss << "unknown"; break;
+        }
+    }
 
     // Add pointer levels
     for (const auto& ptr_level : pointer_levels_) {

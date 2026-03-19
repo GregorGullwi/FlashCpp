@@ -899,6 +899,11 @@ bool is_unsigned_integer_type(Type type);
 bool is_bool_type(Type type);
 bool is_floating_point_type(Type type);
 bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
+// Phase 15: standard arithmetic type = integer, floating-point, or bool.
+// Sema owns implicit conversion annotation for these types exclusively.
+inline bool is_standard_arithmetic_type(Type type) {
+	return is_integer_type(type) || is_floating_point_type(type) || is_bool_type(type);
+}
 int get_integer_rank(Type type);
 int get_floating_point_rank(Type type);
 
@@ -1527,8 +1532,12 @@ public:
 	const auto& get_statements() const { return statements_; }
 	void add_statement_node(ASTNode node) { statements_.push_back(node); }
 
+	bool is_synthetic_decl_list() const { return is_synthetic_decl_list_; }
+	void set_synthetic_decl_list(bool v) { is_synthetic_decl_list_ = v; }
+
 private:
 	ChunkedVector<ASTNode, 128, 256> statements_;
+	bool is_synthetic_decl_list_ = false;
 };
 
 class FunctionDeclarationNode {

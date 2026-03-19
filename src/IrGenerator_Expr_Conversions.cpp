@@ -1324,13 +1324,14 @@
 					}
 				}
 			}
-			// Fallback: apply integral promotion if operand is a small integer type
-			if (!promoted && is_integer_type(operandType) && get_integer_rank(operandType) < 3) {
+			// Phase 15: sema should annotate all unary operand integral promotions.
+			// When sema_ is null (e.g., template instantiation), keep the fallback
+			// unconditionally to avoid dropping promotions.
+			if (!promoted && (operandType == Type::Bool ||
+				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
+				if (sema_normalized_current_function_)
+					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
-				operandType = Type::Int;
-			}
-			if (!promoted && operandType == Type::Bool) {
-				operandIrOperands = generateTypeConversion(operandIrOperands, Type::Bool, Type::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
 			// Unary plus is a no-op after promotion — return immediately without
@@ -2376,11 +2377,14 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			}
 		}
 
-		// 2. Fallback: standard primitive conversion for non-pointer parameters.
+		// Phase 15: sema must annotate all standard constructor arg conversions.
 		if (!sema_applied && param_type.pointer_depth() == 0 &&
 			arg_result.type != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type))
+					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
+				// Fallback for non-arithmetic types (enum, etc.)
 				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
 			}
 		}

@@ -640,6 +640,7 @@ private:
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;  // Reference to parser for template instantiation
 	SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
+	bool sema_normalized_current_function_ = false;  // Phase 15: true when sema visited the current function body
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;

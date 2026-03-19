@@ -676,10 +676,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
-					// Prefer sema annotation (consistent with binary operator path); fall back to local policy.
-					// Pass expected_target=gsi.type so the sema annotation is verified against the LHS type.
+					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
 						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
+							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.type)) + " -> " + std::string(getTypeName(gsi.type)) + ")");
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
@@ -760,21 +761,33 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
-						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType))
+						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
+							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
 							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+						}
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 					// NOT conversion to the LHS/result type. Other operators convert RHS to commonType.
+					// Phase 15: prefer sema annotation; log warning on fallback.
 					if (is_shift_op) {
 						// Reject float RHS before promotion to avoid unnecessary conversion work.
 						if (is_floating_point_type(rhs_result.type))
 							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 						const Type promoted_rhs = promote_integer_type(rhs_result.type);
-						if (rhs_result.type != promoted_rhs)
-							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+						if (rhs_result.type != promoted_rhs) {
+							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
+								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type))
+								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
+								rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+							}
+						}
 					} else if (rhs_result.type != commonType) {
-						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType))
+						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
+							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+						}
 					}
 
 					// Select the correct opcode for the common type.
@@ -2139,11 +2152,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
-			// Prefer sema annotation (consistent with global assignment and binary operator paths);
-			// pass expected_target=lhsType so the annotation is verified before being applied.
+			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {
-				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType))
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
+					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(lhsType))
+						throw InternalError(std::string("Phase 15: sema missed local assignment (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+				}
 			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
@@ -2174,23 +2189,35 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
 
-		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
+		// Phase 15: generate conversions — prefer sema annotations; log warning on fallback.
 		// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 		// guard, expected-target verification, enum type mismatch handling, and conversion.
-		// Pass expected_target=commonType so the sema annotation is verified against the
-		// codegen-computed common type before applying the conversion.
 		if (lhsType != commonType) {
-			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType))
+			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsType) && is_standard_arithmetic_type(commonType))
+					throw InternalError(std::string("Phase 15: sema missed binary LHS (") + std::string(getTypeName(lhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
+			}
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 		// NOT conversion to the LHS/result type.  Only apply sema-annotated promotion
 		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
+		// Phase 15: if sema missed the promotion and it's needed, assert.
 		if (is_shift_op) {
-			tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs());
+			const Type promoted_rhs = promote_integer_type(rhsType);
+			if (rhsType != promoted_rhs) {
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
+					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType))
+						throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
+					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, promoted_rhs, binaryOperatorNode.get_token());
+				}
+			}
 		} else if (rhsType != commonType) {
-			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType))
+			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(commonType))
+					throw InternalError(std::string("Phase 15: sema missed binary RHS (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
+			}
 		}
 
 		// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the behavior is equivalent
@@ -3766,6 +3793,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	}
 
 	ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+		// The IR opcode produces a 32-bit exception code value.  The declared return type
+		// may differ (e.g., unsigned long vs unsigned int).  Derive the expression type
+		// from the function declaration so the intrinsic result matches what the caller
+		// expects — same as regular function calls derive their type from the declaration.
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		if (seh_in_filter_funclet_) {
 			// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
@@ -3784,23 +3819,31 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			op.result = result;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
 		}
-		return makeExprResult(Type::UnsignedInt, SizeInBits{32}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		SehAbnormalTerminationOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		SehExceptionIntrinsicOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 

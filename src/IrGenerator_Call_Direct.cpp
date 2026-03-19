@@ -960,19 +960,30 @@
 					}
 				}
 
-				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
-				bool should_apply_standard_conversion =
-					!sema_applied_arg_conversion &&
+				// Phase 15: sema should annotate all standard primitive argument conversions.
+				// Non-arithmetic types (struct, user_defined, enum, auto, function_pointer)
+				// are outside sema's current scope — keep fallback unconditionally.
+				// For arithmetic types, assert when sema missed the annotation.
+				// Exception: hasUnresolvedCallArgs means sema tried but couldn't resolve the callee
+				// (e.g. template specialization) — Phase 16+ work item.
+				if (!sema_applied_arg_conversion &&
 					param_ref_qualifier == CVReferenceQualifier::None &&
 					param_type->pointer_depth() == 0 &&
-					arg_type != param_base_type &&
-					standard_conversion.is_valid &&
-					standard_conversion.rank != ConversionRank::UserDefined;
-				if (should_apply_standard_conversion) {
-					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
-					arg_type = argumentIrOperands.type;
-					arg_size = argumentIrOperands.size_in_bits.value;
-					arg_type_index = argumentIrOperands.type_index;
+					arg_type != param_base_type) {
+					TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
+					if (standard_conversion.is_valid &&
+						standard_conversion.rank != ConversionRank::UserDefined) {
+						if (sema_normalized_current_function_ &&
+							is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
+							!(sema_ && sema_->hasUnresolvedCallArgs(&functionCallNode))) {
+							throw InternalError(std::string("Phase 15: sema missed function call argument conversion (")
+								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
+						}
+						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
+						arg_type = argumentIrOperands.type;
+						arg_size = argumentIrOperands.size_in_bits.value;
+						arg_type_index = argumentIrOperands.type_index;
+					}
 				}
 
 				// Check if argument type doesn't match parameter type and parameter expects struct

@@ -3,6 +3,7 @@
 #include "AstNodeTypes_Core.h"
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <string_view>
 #include <vector>
 
@@ -58,6 +59,19 @@ public:
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
+
+	// Returns true if sema normalized the function body identified by its ASTNode pointer.
+	// Codegen uses this to skip Phase 15 warnings for bodies sema never visited.
+	bool hasNormalizedBody(const void* body_ptr) const {
+		return normalized_bodies_.count(body_ptr) > 0;
+	}
+
+	// Returns true if sema attempted to annotate this FunctionCallNode but could not
+	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
+	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
+	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
+		return unresolved_call_args_.count(call) > 0;
+	}
 
 	// Look up the pre-resolved callable operator() for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
@@ -197,6 +211,17 @@ private:
 	// Side table: FunctionCallNode pointer → resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
+
+	// Track which function body ASTNode pointers sema has normalized.
+	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
+	// (e.g. template instantiation member functions generated during parsing).
+	std::unordered_set<const void*> normalized_bodies_;
+
+	// Track FunctionCallNode pointers where sema attempted call-arg annotation
+	// but couldn't resolve the callee (e.g. template specialization static members
+	// whose DeclarationNode addresses differ from the call's stored decl).
+	// Phase 16+ work: improve template specialization callee resolution.
+	std::unordered_set<const FunctionCallNode*> unresolved_call_args_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
