@@ -76,6 +76,15 @@ cannot be determined (e.g. some template-dependent expressions), the result
 may fall back to 64-bit storage; arithmetic that stays well within range is
 always unaffected.
 
+**Known remaining gap in unsigned type-width propagation:**
+
+- **Increment/decrement operators (`++` / `--`):** The evaluator synthesises
+  `EvalResult::from_int(1)` without setting `exact_type`, so when the
+  operand is an unsigned type narrower than 64 bits (e.g. `unsigned int`),
+  `get_binary_arithmetic_result_type` returns `nullopt` and the result is
+  not masked.  For example, `constexpr unsigned int x = UINT_MAX; x++;`
+  would produce `4294967296` (64-bit) instead of wrapping to `0`.
+
 ### ✅ Basic Constexpr Variables
 ```cpp
 constexpr int x = 10;
@@ -554,6 +563,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
+  - Increment/decrement operators (`++` / `--`) synthesise an untyped `1` operand, so unsigned wrapping is not applied on that path (e.g. `unsigned int x = UINT_MAX; x++;` wraps at 64 bits instead of 32).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
   - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
 
