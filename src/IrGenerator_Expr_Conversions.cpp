@@ -21,7 +21,21 @@
 		}
 
 		if (fromType == toType && fromSize == toSize) {
-			return operands; // No conversion needed
+			// No conversion instruction needed.  However, the operands may still
+			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingType
+			// mapped fromType to the underlying int).  Ensure the returned ExprResult
+			// reflects the requested target type so downstream consumers see the
+			// correct primitive type for signedness / domain queries.
+			if (operands.type != toType) {
+				return makeExprResult(
+					toType,
+					SizeInBits{toSize},
+					operands.value,
+					operands.type_index,
+					operands.pointer_depth
+				);
+			}
+			return operands;
 		}
 
 		// Check for int-to-float or float-to-int conversions
