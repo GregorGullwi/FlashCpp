@@ -1187,6 +1187,56 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
 			return *array_result;
 	}
+
+	// Handle StaticCastNode (static_cast<T>(e) and C-style casts) using the
+	// bindings-aware recursive evaluator so that local variables and function
+	// parameters are visible inside the cast expression.
+	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
+		const ASTNode& type_node = static_cast_node->target_type();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Cast without valid type specifier");
+		}
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		// Evaluate the inner expression with bindings.
+		auto inner_result = recursive_eval(static_cast_node->expr(), bindings, context);
+		if (!inner_result.success()) {
+			return inner_result;
+		}
+		// Apply the target-type conversion (mirrors evaluate_expr_node).
+		switch (type_spec.type()) {
+			case Type::Bool: {
+				EvalResult r = EvalResult::from_bool(inner_result.as_bool());
+				r.set_exact_type(type_spec);
+				return r;
+			}
+			case Type::Char: case Type::Short: case Type::Int:
+			case Type::Long:  case Type::LongLong: {
+				EvalResult r = EvalResult::from_int(inner_result.as_int());
+				r.set_exact_type(type_spec);
+				return r;
+			}
+			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
+			case Type::UnsignedLong: case Type::UnsignedLongLong: {
+				// Read the source value preserving full bit-width: if the inner result
+				// is already unsigned long long, read it directly to avoid the
+				// long long round-trip in as_int() for values above LLONG_MAX.
+				const bool inner_is_uint = std::holds_alternative<unsigned long long>(inner_result.value);
+				const unsigned long long uval = inner_is_uint
+					? std::get<unsigned long long>(inner_result.value)
+					: static_cast<unsigned long long>(inner_result.as_int());
+				EvalResult r = EvalResult::from_uint(uval);
+				r.set_exact_type(type_spec);
+				return r;
+			}
+			case Type::Float: case Type::Double: case Type::LongDouble: {
+				EvalResult r = EvalResult::from_double(inner_result.as_double());
+				r.set_exact_type(type_spec);
+				return r;
+			}
+			default:
+				return EvalResult::error("Unsupported type in cast for constant evaluation");
+		}
+	}
 	
 	// For literals and other expressions without parameters, evaluate normally
 	return evaluate(expr_node, context);
@@ -1283,6 +1333,105 @@ std::optional<long long> Evaluator::safe_shr(long long a, long long b) {
 
 // Helper to apply binary operators
 EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
+	// Determine the operand kinds so we can dispatch to the correct domain.
+	// This mirrors C++ "usual arithmetic conversions" (C++20 [expr.arith.conv]):
+	//   1. If either operand is floating-point → promote both to double.
+	//   2. Else if either operand is unsigned long long → promote both to
+	//      unsigned long long (the signed value is reinterpreted as unsigned,
+	//      matching the standard's rule that the signed operand converts to the
+	//      unsigned type when the unsigned type is at least as wide).
+	//   3. Otherwise → use signed long long arithmetic.
+	const bool lhs_is_double    = std::holds_alternative<double>(lhs.value);
+	const bool rhs_is_double    = std::holds_alternative<double>(rhs.value);
+	const bool either_is_double = lhs_is_double || rhs_is_double;
+
+	const bool lhs_is_uint  = std::holds_alternative<unsigned long long>(lhs.value);
+	const bool rhs_is_uint  = std::holds_alternative<unsigned long long>(rhs.value);
+	const bool either_is_uint = lhs_is_uint || rhs_is_uint;
+
+	// --- Floating-point path ---
+	// If either operand is a floating-point double (or float, which is stored as
+	// double), use floating-point arithmetic/comparison for all operations.
+	if (either_is_double) {
+		const double lv = lhs.as_double();
+		const double rv = rhs.as_double();
+
+		if (op == "+")  return EvalResult::from_double(lv + rv);
+		if (op == "-")  return EvalResult::from_double(lv - rv);
+		if (op == "*")  return EvalResult::from_double(lv * rv);
+		if (op == "/") {
+			if (rv == 0.0) return EvalResult::error("Division by zero in constant expression");
+			return EvalResult::from_double(lv / rv);
+		}
+		// Bitwise operators are not valid on floating-point types.
+		if (op == "==" ) return EvalResult::from_bool(lv == rv);
+		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
+		if (op == "<"  ) return EvalResult::from_bool(lv <  rv);
+		if (op == "<=" ) return EvalResult::from_bool(lv <= rv);
+		if (op == ">"  ) return EvalResult::from_bool(lv >  rv);
+		if (op == ">=" ) return EvalResult::from_bool(lv >= rv);
+		if (op == "&&" ) return EvalResult::from_bool(lv != 0.0 && rv != 0.0);
+		if (op == "||" ) return EvalResult::from_bool(lv != 0.0 || rv != 0.0);
+		return EvalResult::error("Operator '" + std::string(op) + "' not supported for floating-point constants");
+	}
+
+	// --- Unsigned integer path ---
+	// When either operand is stored as unsigned long long, use unsigned
+	// arithmetic and comparison.  The other operand is converted to
+	// unsigned long long via static_cast (reinterpreting negative signed
+	// values as large unsigned values), matching C++ usual arithmetic
+	// conversions when the unsigned type is at least as wide as the signed type.
+	if (either_is_uint) {
+		// Read each side preserving its full bit pattern.
+		// For an already-unsigned operand we read directly to avoid the
+		// round-trip through as_int() which would sign-extend values > LLONG_MAX.
+		// For a signed or bool operand we cast to unsigned long long which is
+		// well-defined and matches C++ usual arithmetic conversions.
+		const unsigned long long lv = lhs_is_uint
+			? std::get<unsigned long long>(lhs.value)
+			: static_cast<unsigned long long>(lhs.as_int());
+		const unsigned long long rv = rhs_is_uint
+			? std::get<unsigned long long>(rhs.value)
+			: static_cast<unsigned long long>(rhs.as_int());
+
+		if (op == "+")  return EvalResult::from_uint(lv + rv);
+		if (op == "-")  return EvalResult::from_uint(lv - rv);
+		if (op == "*")  return EvalResult::from_uint(lv * rv);
+		if (op == "/") {
+			if (rv == 0) return EvalResult::error("Division by zero in constant expression");
+			return EvalResult::from_uint(lv / rv);
+		}
+		if (op == "%") {
+			if (rv == 0) return EvalResult::error("Modulo by zero in constant expression");
+			return EvalResult::from_uint(lv % rv);
+		}
+		if (op == "&")  return EvalResult::from_uint(lv & rv);
+		if (op == "|")  return EvalResult::from_uint(lv | rv);
+		if (op == "^")  return EvalResult::from_uint(lv ^ rv);
+		if (op == "<<") {
+			// Note: we check against 64 (the storage width of unsigned long long)
+			// rather than the declared type's width because exact_type is not
+			// reliably propagated through all operations yet.  See
+			// docs/CONSTEXPR_LIMITATIONS.md "Shift-count validation" for details.
+			if (rv >= 64) return EvalResult::error("Left shift count >= width of type in constant expression");
+			return EvalResult::from_uint(lv << rv);
+		}
+		if (op == ">>") {
+			if (rv >= 64) return EvalResult::error("Right shift count >= width of type in constant expression");
+			return EvalResult::from_uint(lv >> rv);
+		}
+		if (op == "==" ) return EvalResult::from_bool(lv == rv);
+		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
+		if (op == "<"  ) return EvalResult::from_bool(lv <  rv);
+		if (op == "<=" ) return EvalResult::from_bool(lv <= rv);
+		if (op == ">"  ) return EvalResult::from_bool(lv >  rv);
+		if (op == ">=" ) return EvalResult::from_bool(lv >= rv);
+		if (op == "&&" ) return EvalResult::from_bool(lv != 0 && rv != 0);
+		if (op == "||" ) return EvalResult::from_bool(lv != 0 || rv != 0);
+		return EvalResult::error("Operator '" + std::string(op) + "' not supported for unsigned constants");
+	}
+
+	// --- Signed integer path (default) ---
 	long long lhs_val = lhs.as_int();
 	long long rhs_val = rhs.as_int();
 	
@@ -1342,20 +1491,19 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		}
 	}
 	
-	// Handle comparison operators that work on integers
+	// Handle comparison operators for signed integers
 	if (op == "==") {
-		// Compare as integers for all types
-		return EvalResult::from_bool(lhs.as_int() == rhs.as_int());
+		return EvalResult::from_bool(lhs_val == rhs_val);
 	} else if (op == "!=") {
-		return EvalResult::from_bool(lhs.as_int() != rhs.as_int());
+		return EvalResult::from_bool(lhs_val != rhs_val);
 	} else if (op == "<") {
-		return EvalResult::from_bool(lhs.as_int() < rhs.as_int());
+		return EvalResult::from_bool(lhs_val < rhs_val);
 	} else if (op == "<=") {
-		return EvalResult::from_bool(lhs.as_int() <= rhs.as_int());
+		return EvalResult::from_bool(lhs_val <= rhs_val);
 	} else if (op == ">") {
-		return EvalResult::from_bool(lhs.as_int() > rhs.as_int());
+		return EvalResult::from_bool(lhs_val > rhs_val);
 	} else if (op == ">=") {
-		return EvalResult::from_bool(lhs.as_int() >= rhs.as_int());
+		return EvalResult::from_bool(lhs_val >= rhs_val);
 	} else if (op == "&&") {
 		return EvalResult::from_bool(lhs.as_bool() && rhs.as_bool());
 	} else if (op == "||") {

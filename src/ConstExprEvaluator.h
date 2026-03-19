@@ -5,6 +5,7 @@
 #include "TypeTraitEvaluator.h"  // For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
 #include "Log.h"  // For FLASH_LOG
+#include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
 #include <string>
 #include <variant>
@@ -174,6 +175,90 @@ enum class StorageDuration {
 	Global        // Global/namespace scope variables
 };
 
+// Tracks variables declared in a single block scope so that the block
+// can clean them up on exit.  Each nested block level has its own tracker.
+// This enables proper C++ variable scoping: new declarations are removed
+// when the block exits, and variables that were shadowed (a declaration
+// in the inner block used the same name as an outer-scope variable) are
+// restored to their pre-block values.  Mutations to outer-scope variables
+// (e.g. `sum += i` inside a loop body) are NOT reverted — only declarations
+// trigger the cleanup logic.
+struct BlockScopeTracker {
+	// Names declared in this block scope (in declaration order).
+	// Most scopes declare 0–3 variables; InlineVector avoids heap allocation
+	// for the common case.
+	InlineVector<std::string_view, 4> declared_names;
+	// For each name that shadowed an existing binding, the saved outer value.
+	std::unordered_map<std::string_view, EvalResult> saved_shadows;
+
+	// Called by the VariableDeclarationNode handler before writing the
+	// new binding into the flat map.  Pass the current bindings so that
+	// shadowing can be detected and the old value saved.
+	void on_declare(std::string_view name,
+	                const std::unordered_map<std::string_view, EvalResult>& bindings) {
+		// Only track the first declaration of this name in this scope.
+		// Subsequent re-declarations (e.g. loop body without braces across
+		// iterations) must not overwrite the original shadow decision:
+		// if the name was brand-new on the first call, it should still be
+		// erased (not restored) at cleanup.
+		if (saved_shadows.find(name) != saved_shadows.end()) {
+			return;  // Already tracked with a saved shadow — first decision wins.
+		}
+		if (std::find(declared_names.begin(), declared_names.end(), name) != declared_names.end()) {
+			return;  // Already declared in this scope as a new variable.
+		}
+		declared_names.push_back(name);
+		auto it = bindings.find(name);
+		if (it != bindings.end()) {
+			// This declaration shadows an outer-scope binding — save the
+			// original value so the block exit can restore it.
+			saved_shadows.emplace(name, it->second);
+		}
+	}
+
+	// Called at block exit: remove new declarations and restore shadows.
+	// The method is const with respect to the tracker's own state; it only
+	// modifies the external bindings map passed by reference.
+	void cleanup(std::unordered_map<std::string_view, EvalResult>& bindings) const {
+		for (const auto& name : declared_names) {
+			auto shadow_it = saved_shadows.find(name);
+			if (shadow_it != saved_shadows.end()) {
+				// Restore the pre-block (outer) binding value.
+				bindings[name] = shadow_it->second;
+			} else {
+				// Brand-new variable — remove it so it does not leak.
+				bindings.erase(name);
+			}
+		}
+	}
+};
+
+// RAII guard that installs a BlockScopeTracker as the active scope in an
+// EvaluationContext and automatically cleans up declared variables (and
+// restores shadowed outer values) when it goes out of scope.  This allows
+// early returns from control-flow handlers without manually calling cleanup.
+struct BlockScopeGuard {
+	BlockScopeTracker scope;
+	std::unordered_map<std::string_view, EvalResult>& bindings;
+	BlockScopeTracker*& context_current_scope;
+	BlockScopeTracker* const outer_scope;
+
+	explicit BlockScopeGuard(std::unordered_map<std::string_view, EvalResult>& b,
+	                          BlockScopeTracker*& ctx_scope)
+		: bindings(b), context_current_scope(ctx_scope), outer_scope(ctx_scope) {
+		context_current_scope = &scope;
+	}
+
+	~BlockScopeGuard() {
+		scope.cleanup(bindings);
+		context_current_scope = outer_scope;
+	}
+
+	// Non-copyable, non-movable.
+	BlockScopeGuard(const BlockScopeGuard&) = delete;
+	BlockScopeGuard& operator=(const BlockScopeGuard&) = delete;
+};
+
 // Context for evaluation - provides access to compile-time information
 struct EvaluationContext {
 	// Symbol table for looking up constexpr variables/functions (required)
@@ -204,7 +289,21 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
-		std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
+	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
+
+	// Pointer to the innermost active block scope tracker (null at top level).
+	// Each BlockScopeGuard saves/restores this so that nested blocks each get
+	// their own tracker.
+	BlockScopeTracker* current_scope = nullptr;
+
+	// Returns the map that variable declarations should be written to (and
+	// that BlockScopeGuard / on_declare should target).  When local_bindings
+	// is set (e.g. constructor body evaluation), declarations go there;
+	// otherwise they go to the regular bindings map passed by the caller.
+	std::unordered_map<std::string_view, EvalResult>& resolve_declaration_bindings(
+		std::unordered_map<std::string_view, EvalResult>& bindings) {
+		return local_bindings ? *local_bindings : bindings;
+	}
 
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)
@@ -453,12 +552,6 @@ private:
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		std::string_view invalid_parameter_error,
 		bool skip_invalid_params = false);
-	static EvalResult evaluate_single_return_block_with_bindings(
-		const ASTNode& body_node,
-		std::unordered_map<std::string_view, EvalResult>& bindings,
-		EvaluationContext& context,
-		std::string_view non_block_error,
-		std::string_view multi_statement_error);
 	static EvalResult evaluate_block_with_bindings(
 		const ASTNode& body_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
