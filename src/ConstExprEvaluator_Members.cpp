@@ -92,6 +92,40 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 	}
 	return result;
 }
+
+// Returns the result type after C++ usual arithmetic conversions, for use in
+// binary arithmetic results.  Returns nullopt when either operand lacks an
+// exact_type (caller should produce an untyped result in that case).
+std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
+	const EvalResult& lhs, const EvalResult& rhs) {
+	if (!lhs.exact_type.has_value() || !rhs.exact_type.has_value()) {
+		return std::nullopt;
+	}
+	const Type result_type = get_common_type(lhs.exact_type->type(), rhs.exact_type->type());
+	const int result_bits = get_type_size_bits(result_type);
+	if (result_bits > 0) {
+		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits);
+	}
+	return std::nullopt;
+}
+
+// Applies the declared-type width mask to an unsigned result so that, e.g.,
+// unsigned int arithmetic wraps at 32 bits rather than 64.
+// bits >= 64: the storage type is already 64-bit, so no masking is needed
+// (and (1ULL << 64) would be undefined behaviour, so we must skip it).
+unsigned long long apply_uint_type_mask(
+	unsigned long long value, const std::optional<TypeSpecifierNode>& type_opt) {
+	if (!type_opt.has_value()) {
+		return value;
+	}
+	const int bits = type_opt->size_in_bits();
+	// No masking required when the width is unknown, zero, or at the full
+	// 64-bit storage width — and (1ULL << 64) would be undefined behaviour.
+	if (bits <= 0 || bits >= 64) {
+		return value;
+	}
+	return value & ((1ULL << bits) - 1);
+}
 }
 
 const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
@@ -1458,33 +1492,47 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 			? std::get<unsigned long long>(rhs.value)
 			: static_cast<unsigned long long>(rhs.as_int());
 
-		if (op == "+")  return EvalResult::from_uint(lv + rv);
-		if (op == "-")  return EvalResult::from_uint(lv - rv);
-		if (op == "*")  return EvalResult::from_uint(lv * rv);
+		// Propagate the exact result type (usual arithmetic conversions) so that
+		// (a) subsequent shift-count validation uses the correct operand width,
+		// and (b) unsigned arithmetic wraps at the declared type's width rather
+		// than at the evaluator's internal 64-bit storage width.
+		const auto result_type = get_binary_arithmetic_result_type(lhs, rhs);
+
+		const auto make_arith = [&](unsigned long long val) -> EvalResult {
+			EvalResult result = EvalResult::from_uint(apply_uint_type_mask(val, result_type));
+			if (result_type) {
+				result.set_exact_type(*result_type);
+			}
+			return result;
+		};
+
+		if (op == "+")  return make_arith(lv + rv);
+		if (op == "-")  return make_arith(lv - rv);
+		if (op == "*")  return make_arith(lv * rv);
 		if (op == "/") {
 			if (rv == 0) return EvalResult::error("Division by zero in constant expression");
-			return EvalResult::from_uint(lv / rv);
+			return make_arith(lv / rv);
 		}
 		if (op == "%") {
 			if (rv == 0) return EvalResult::error("Modulo by zero in constant expression");
-			return EvalResult::from_uint(lv % rv);
+			return make_arith(lv % rv);
 		}
-		if (op == "&")  return EvalResult::from_uint(lv & rv);
-		if (op == "|")  return EvalResult::from_uint(lv | rv);
-		if (op == "^")  return EvalResult::from_uint(lv ^ rv);
+		if (op == "&")  return make_arith(lv & rv);
+		if (op == "|")  return make_arith(lv | rv);
+		if (op == "^")  return make_arith(lv ^ rv);
 		if (op == "<<") {
 			const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
 				return EvalResult::error("Left shift count >= width of type in constant expression");
 			}
-			return make_shift_result(shift_info.promoted_type, lv << rv);
+			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv << rv, shift_info.promoted_type));
 		}
 		if (op == ">>") {
 			const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 			if (rv >= static_cast<unsigned long long>(shift_info.width_bits)) {
 				return EvalResult::error("Right shift count >= width of type in constant expression");
 			}
-			return make_shift_result(shift_info.promoted_type, lv >> rv);
+			return make_shift_result(shift_info.promoted_type, apply_uint_type_mask(lv >> rv, shift_info.promoted_type));
 		}
 		if (op == "==" ) return EvalResult::from_bool(lv == rv);
 		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
@@ -1500,23 +1548,36 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 	// --- Signed integer path (default) ---
 	long long lhs_val = lhs.as_int();
 	long long rhs_val = rhs.as_int();
-	
+
+	// Propagate the exact result type so that subsequent shift-count validation
+	// uses the correct operand width (e.g. (a + b) << 33 is rejected when a, b
+	// are int).
+	const auto signed_result_type = get_binary_arithmetic_result_type(lhs, rhs);
+
+	const auto make_signed = [&](long long val) -> EvalResult {
+		EvalResult result = EvalResult::from_int(val);
+		if (signed_result_type) {
+			result.set_exact_type(*signed_result_type);
+		}
+		return result;
+	};
+
 	// Handle arithmetic operators with overflow checking
 	if (op == "+") {
 		if (auto result = safe_add(lhs_val, rhs_val)) {
-			return EvalResult::from_int(*result);
+			return make_signed(*result);
 		} else {
 			return EvalResult::error("Signed integer overflow in constant expression");
 		}
 	} else if (op == "-") {
 		if (auto result = safe_sub(lhs_val, rhs_val)) {
-			return EvalResult::from_int(*result);
+			return make_signed(*result);
 		} else {
 			return EvalResult::error("Signed integer overflow in constant expression");
 		}
 	} else if (op == "*") {
 		if (auto result = safe_mul(lhs_val, rhs_val)) {
-			return EvalResult::from_int(*result);
+			return make_signed(*result);
 		} else {
 			return EvalResult::error("Signed integer overflow in constant expression");
 		}
@@ -1528,21 +1589,21 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (lhs_val == LLONG_MIN && rhs_val == -1) {
 			return EvalResult::error("Signed integer overflow in constant expression");
 		}
-		return EvalResult::from_int(lhs_val / rhs_val);
+		return make_signed(lhs_val / rhs_val);
 	} else if (op == "%") {
 		if (rhs_val == 0) {
 			return EvalResult::error("Modulo by zero in constant expression");
 		}
-		return EvalResult::from_int(lhs_val % rhs_val);
+		return make_signed(lhs_val % rhs_val);
 	}
 	
 	// Handle bitwise operators
 	else if (op == "&") {
-		return EvalResult::from_int(lhs_val & rhs_val);
+		return make_signed(lhs_val & rhs_val);
 	} else if (op == "|") {
-		return EvalResult::from_int(lhs_val | rhs_val);
+		return make_signed(lhs_val | rhs_val);
 	} else if (op == "^") {
-		return EvalResult::from_int(lhs_val ^ rhs_val);
+		return make_signed(lhs_val ^ rhs_val);
 	} else if (op == "<<") {
 		const ShiftEvaluationInfo shift_info = get_shift_evaluation_info(lhs);
 		if (auto result = safe_shl(lhs_val, rhs_val, shift_info.width_bits)) {
@@ -1583,21 +1644,49 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
+	const bool operand_is_uint = std::holds_alternative<unsigned long long>(operand.value);
+
+	// Helper: build an unsigned result masked to the operand's declared type width.
+	const auto make_uint = [&](unsigned long long raw) {
+		EvalResult result = EvalResult::from_uint(apply_uint_type_mask(raw, operand.exact_type));
+		if (operand.exact_type.has_value()) {
+			result.set_exact_type(*operand.exact_type);
+		}
+		return result;
+	};
+
+	// Helper: build a signed result and propagate exact_type.
+	const auto make_sint = [&](long long val) {
+		EvalResult result = EvalResult::from_int(val);
+		if (operand.exact_type.has_value()) {
+			result.set_exact_type(*operand.exact_type);
+		}
+		return result;
+	};
+
 	if (op == "!") {
 		return EvalResult::from_bool(!operand.as_bool());
 	} else if (op == "~") {
-		return EvalResult::from_int(~operand.as_int());
+		if (operand_is_uint) {
+			return make_uint(~std::get<unsigned long long>(operand.value));
+		}
+		return make_sint(~operand.as_int());
 	} else if (op == "-") {
 		// Unary minus - negate the value
 		if (std::holds_alternative<double>(operand.value)) {
 			return EvalResult::from_double(-operand.as_double());
 		}
+		if (operand_is_uint) {
+			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
+			const unsigned long long lv = std::get<unsigned long long>(operand.value);
+			return make_uint(static_cast<unsigned long long>(0) - lv);
+		}
 		// Check for overflow: negating LLONG_MIN overflows
-		long long val = operand.as_int();
+		const long long val = operand.as_int();
 		if (val == LLONG_MIN) {
 			return EvalResult::error("Signed integer overflow in unary minus");
 		}
-		return EvalResult::from_int(-val);
+		return make_sint(-val);
 	} else if (op == "+") {
 		// Unary plus - no-op, just return the value
 		return operand;
