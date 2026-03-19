@@ -59,20 +59,22 @@ constexpr int fn_cast(double a) { return (int)a; }
 static_assert(fn_cast(3.9) == 3);       // truncation ✅
 ```
 
-**Known limitation — unsigned type width:**
-The evaluator stores all unsigned integers as `unsigned long long` (64-bit) internally.
-Wrapping arithmetic that depends on the *declared width* (e.g. `unsigned int` wrapping
-at 32 bits) will produce a 64-bit result instead:
+**Unsigned type width:**
+Unsigned arithmetic wraps at the *declared type's* width:
 
 ```cpp
 constexpr unsigned int wrap = 1u - 2u;
-// C++ standard: 4294967295 (UINT_MAX, wraps at 32 bits)
-// FlashCpp:     18446744073709551615 (ULLONG_MAX, wraps at 64 bits) ⚠️
-// static_assert(wrap == 4294967295u);  // ⚠️ fails in FlashCpp
+static_assert(wrap == 4294967295u);  // ✅ wraps at 32 bits (UINT_MAX)
+
+constexpr unsigned int add_overflow = 4294967295u + 1u;
+static_assert(add_overflow == 0u);   // ✅ wraps correctly
 ```
 
-This only affects expressions where the unsigned wrapping result is then observed
-(e.g. in `static_assert`); arithmetic that stays well within range is unaffected.
+The evaluator masks the result to the correct width after each arithmetic
+operation when both operands have known exact types.  When the declared type
+cannot be determined (e.g. some template-dependent expressions), the result
+may fall back to 64-bit storage; arithmetic that stays well within range is
+always unaffected.
 
 ### ✅ Basic Constexpr Variables
 ```cpp
@@ -543,17 +545,17 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Range-based for loops over local arrays (primitive and struct element types) in constexpr functions
 - ✅ All primitive types (`bool`, `char`, signed/unsigned integer variants, `float`, `double`, `long double`) in constexpr variables, arithmetic, comparisons, function parameters/return values, and C-style/`static_cast` conversions inside constexpr function bodies
 - ✅ Mixed-type arithmetic following C++ usual arithmetic conversions: float/double vs any → double path; unsigned long long vs signed → unsigned path; bool/char/short/int/long/long long → signed path
+- ✅ Unsigned arithmetic wraps at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits) when both operands have known exact types
+- ✅ Shift-count validation for arithmetic-produced left operands: e.g. `(1u + 1u) << 40` is correctly rejected because the result of `1u + 1u` is `unsigned int` (32 bits) and 40 ≥ 32
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
-- ⚠️ Unsigned wrapping arithmetic at the declared type's width: all unsigned values are stored as `unsigned long long` (64-bit) internally, so `unsigned int` wrapping (at 32 bits), `unsigned short` wrapping (at 16 bits), etc. give 64-bit results. Arithmetic that stays within range is unaffected.
-- ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, and chained shift results.
-  - `1u << 40` is now correctly rejected in constant evaluation.
-  - `static_cast<unsigned short>(1) << 17` remains valid after integer promotion.
-  - Some arithmetic-produced left operands can still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable (for example, shapes like `(1u + 1u) << 40` still need fuller type propagation).
+- ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
+- ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
+  - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
