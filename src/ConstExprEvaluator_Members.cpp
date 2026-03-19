@@ -28,7 +28,7 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	if (std::holds_alternative<long long>(value.value)) {
 		return TypeSpecifierNode(Type::LongLong, TypeQualifier::None, 64);
 	}
-	if (std::holds_alternative<unsigned long long>(value.value)) {
+	if (value.is_uint()) {
 		return TypeSpecifierNode(Type::UnsignedLongLong, TypeQualifier::None, 64);
 	}
 	if (std::holds_alternative<double>(value.value)) {
@@ -1079,16 +1079,40 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			const ASTNode& operand = unary_op.get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
-					const IdentifierNode& id = std::get<IdentifierNode>(operand_expr);
-					std::string_view var_name = id.name();
-					
+
+				// Resolve the target: either a plain identifier or a this->member access.
+				std::string_view var_name;
+				bool is_member_binding = false;
+				if (const auto* id_ptr = std::get_if<IdentifierNode>(&operand_expr)) {
+					var_name = id_ptr->name();
+				} else if (const auto* ma_ptr = std::get_if<MemberAccessNode>(&operand_expr)) {
+					const ASTNode& obj = ma_ptr->object();
+					if (obj.is<ExpressionNode>()) {
+						const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
+						if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
+							if (obj_id->name() == "this") {
+								var_name = ma_ptr->member_name();
+								is_member_binding = true;
+							}
+						}
+					}
+				}
+
+				if (!var_name.empty()) {
 					// Get current value
-						EvalResult* target_binding = findMutableBindingValue(var_name, bindings, context);
-						if (!target_binding) {
+					EvalResult* target_binding = nullptr;
+					if (is_member_binding) {
+						auto member_it = bindings.find(var_name);
+						if (member_it != bindings.end()) {
+							target_binding = &member_it->second;
+						}
+					} else {
+						target_binding = findMutableBindingValue(var_name, bindings, context);
+					}
+					if (!target_binding) {
 						return EvalResult::error("Variable not found for increment/decrement: " + std::string(var_name));
 					}
-						EvalResult current = *target_binding;
+					EvalResult current = *target_binding;
 					
 					// Calculate new value
 					EvalResult one = EvalResult::from_int(1);
@@ -1100,7 +1124,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					
 					if (!new_value.success()) return new_value;
-						*target_binding = new_value;
+
+					// Truncate to the declared type of the operand, matching C++
+					// assignment-conversion semantics.  For unsigned types narrower than
+					// 64 bits (e.g. unsigned char, unsigned short, unsigned int) the
+					// stored result must wrap at the declared type's width, regardless
+					// of any integer promotion that happened during the binary arithmetic.
+					if (current.exact_type.has_value() &&
+					    is_unsigned_integer_type(current.exact_type->type())) {
+						new_value = EvalResult::from_uint(apply_uint_type_mask(new_value.as_uint_raw(), current.exact_type));
+						new_value.set_exact_type(*current.exact_type);
+					}
+
+					*target_binding = new_value;
 					
 					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
@@ -1313,13 +1349,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			}
 			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
 			case Type::UnsignedLong: case Type::UnsignedLongLong: {
-				// Read the source value preserving full bit-width: if the inner result
-				// is already unsigned long long, read it directly to avoid the
-				// long long round-trip in as_int() for values above LLONG_MAX.
-				const bool inner_is_uint = std::holds_alternative<unsigned long long>(inner_result.value);
-				const unsigned long long uval = inner_is_uint
-					? std::get<unsigned long long>(inner_result.value)
-					: static_cast<unsigned long long>(inner_result.as_int());
+				// Read the source value preserving full bit-width using as_uint_raw()
+				// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
+				const unsigned long long uval = inner_result.as_uint_raw();
 				EvalResult r = EvalResult::from_uint(uval);
 				r.set_exact_type(type_spec);
 				return r;
@@ -1443,8 +1475,8 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 	const bool rhs_is_double    = std::holds_alternative<double>(rhs.value);
 	const bool either_is_double = lhs_is_double || rhs_is_double;
 
-	const bool lhs_is_uint  = std::holds_alternative<unsigned long long>(lhs.value);
-	const bool rhs_is_uint  = std::holds_alternative<unsigned long long>(rhs.value);
+	const bool lhs_is_uint  = lhs.is_uint();
+	const bool rhs_is_uint  = rhs.is_uint();
 	const bool either_is_uint = lhs_is_uint || rhs_is_uint;
 
 	// --- Floating-point path ---
@@ -1480,17 +1512,10 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 	// values as large unsigned values), matching C++ usual arithmetic
 	// conversions when the unsigned type is at least as wide as the signed type.
 	if (either_is_uint) {
-		// Read each side preserving its full bit pattern.
-		// For an already-unsigned operand we read directly to avoid the
-		// round-trip through as_int() which would sign-extend values > LLONG_MAX.
-		// For a signed or bool operand we cast to unsigned long long which is
-		// well-defined and matches C++ usual arithmetic conversions.
-		const unsigned long long lv = lhs_is_uint
-			? std::get<unsigned long long>(lhs.value)
-			: static_cast<unsigned long long>(lhs.as_int());
-		const unsigned long long rv = rhs_is_uint
-			? std::get<unsigned long long>(rhs.value)
-			: static_cast<unsigned long long>(rhs.as_int());
+		// Read each side preserving its full bit pattern using as_uint_raw()
+		// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
+		const unsigned long long lv = lhs.as_uint_raw();
+		const unsigned long long rv = rhs.as_uint_raw();
 
 		// Propagate the exact result type (usual arithmetic conversions) so that
 		// (a) subsequent shift-count validation uses the correct operand width,
@@ -1644,7 +1669,7 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
-	const bool operand_is_uint = std::holds_alternative<unsigned long long>(operand.value);
+	const bool operand_is_uint = operand.is_uint();
 
 	// Helper: build an unsigned result masked to the operand's declared type width.
 	const auto make_uint = [&](unsigned long long raw) {
@@ -1668,7 +1693,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 		return EvalResult::from_bool(!operand.as_bool());
 	} else if (op == "~") {
 		if (operand_is_uint) {
-			return make_uint(~std::get<unsigned long long>(operand.value));
+			return make_uint(~operand.as_uint_raw());
 		}
 		return make_sint(~operand.as_int());
 	} else if (op == "-") {
@@ -1678,8 +1703,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 		}
 		if (operand_is_uint) {
 			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
-			const unsigned long long lv = std::get<unsigned long long>(operand.value);
-			return make_uint(static_cast<unsigned long long>(0) - lv);
+			return make_uint(static_cast<unsigned long long>(0) - operand.as_uint_raw());
 		}
 		// Check for overflow: negating LLONG_MIN overflows
 		const long long val = operand.as_int();
