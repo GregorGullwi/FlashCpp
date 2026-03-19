@@ -1073,15 +1073,10 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 		case Type::UnsignedLong:
 		case Type::UnsignedLongLong:
 			// For unsigned types, convert to unsigned.
-			// Read the source value preserving full bit-width: if the source result
-			// is already unsigned long long, read it directly to avoid the
-			// long long round-trip in as_int() for values above LLONG_MAX.
 		{
-			const bool src_is_uint = std::holds_alternative<unsigned long long>(expr_result.value);
-			const unsigned long long uval = src_is_uint
-				? std::get<unsigned long long>(expr_result.value)
-				: static_cast<unsigned long long>(expr_result.as_int());
-			EvalResult result = EvalResult::from_uint(uval);
+			// Read the source value preserving full bit-width using as_uint_raw()
+			// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
+			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
 			result.set_exact_type(target_type);
 			return result;
 		}
@@ -2074,7 +2069,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			Type arg_type = Type::Int;
 			if (std::holds_alternative<bool>(arg_val.value)) {
 				arg_type = Type::Bool;
-			} else if (std::holds_alternative<unsigned long long>(arg_val.value)) {
+			} else if (arg_val.is_uint()) {
 				arg_type = Type::UnsignedLongLong;
 			}
 			template_args.emplace_back(arg_val.as_int(), arg_type);

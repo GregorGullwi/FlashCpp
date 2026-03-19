@@ -151,6 +151,31 @@ struct EvalResult {
 		return 0;
 	}
 
+	// Returns true when the stored variant holds an unsigned long long.
+	// Prefer this over std::holds_alternative<unsigned long long>(value)
+	// for consistency with the rest of the helpers.
+	bool is_uint() const {
+		return std::get_if<unsigned long long>(&value) != nullptr;
+	}
+
+	// Extracts the raw unsigned bit pattern without a signed round-trip.
+	// When the value is already unsigned long long it is returned directly,
+	// avoiding the sign-extension that as_int() would introduce for values
+	// above LLONG_MAX.  For all other types the result is a zero-extending
+	// reinterpretation (same as static_cast<unsigned long long>(as_int())).
+	unsigned long long as_uint_raw() const {
+		if (const auto* ull_val = std::get_if<unsigned long long>(&value)) {
+			return *ull_val;
+		} else if (const auto* ll_val = std::get_if<long long>(&value)) {
+			return static_cast<unsigned long long>(*ll_val);
+		} else if (const auto* b_val = std::get_if<bool>(&value)) {
+			return *b_val ? 1ULL : 0ULL;
+		} else if (const auto* d_val = std::get_if<double>(&value)) {
+			return static_cast<unsigned long long>(*d_val);
+		}
+		return 0;
+	}
+
 	double as_double() const {
 		if (!success()) return 0.0;
 		
