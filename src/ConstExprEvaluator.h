@@ -174,6 +174,77 @@ enum class StorageDuration {
 	Global        // Global/namespace scope variables
 };
 
+// Tracks variables declared in a single block scope so that the block
+// can clean them up on exit.  Each nested block level has its own tracker.
+// This enables proper C++ variable scoping: new declarations are removed
+// when the block exits, and variables that were shadowed (a declaration
+// in the inner block used the same name as an outer-scope variable) are
+// restored to their pre-block values.  Mutations to outer-scope variables
+// (e.g. `sum += i` inside a loop body) are NOT reverted — only declarations
+// trigger the cleanup logic.
+struct BlockScopeTracker {
+	// Names declared in this block scope (in declaration order).
+	std::vector<std::string_view> declared_names;
+	// For each name that shadowed an existing binding, the saved outer value.
+	std::unordered_map<std::string_view, EvalResult> saved_shadows;
+
+	// Called by the VariableDeclarationNode handler before writing the
+	// new binding into the flat map.  Pass the current bindings so that
+	// shadowing can be detected and the old value saved.
+	void on_declare(std::string_view name,
+	                const std::unordered_map<std::string_view, EvalResult>& bindings) {
+		declared_names.push_back(name);
+		auto it = bindings.find(name);
+		if (it != bindings.end()) {
+			// This declaration shadows an outer-scope binding — save the
+			// original value so the block exit can restore it.
+			saved_shadows.emplace(name, it->second);
+		}
+	}
+
+	// Called at block exit: remove new declarations and restore shadows.
+	// The method is const with respect to the tracker's own state; it only
+	// modifies the external bindings map passed by reference.
+	void cleanup(std::unordered_map<std::string_view, EvalResult>& bindings) const {
+		for (const auto& name : declared_names) {
+			auto shadow_it = saved_shadows.find(name);
+			if (shadow_it != saved_shadows.end()) {
+				// Restore the pre-block (outer) binding value.
+				bindings[name] = shadow_it->second;
+			} else {
+				// Brand-new variable — remove it so it does not leak.
+				bindings.erase(name);
+			}
+		}
+	}
+};
+
+// RAII guard that installs a BlockScopeTracker as the active scope in an
+// EvaluationContext and automatically cleans up declared variables (and
+// restores shadowed outer values) when it goes out of scope.  This allows
+// early returns from control-flow handlers without manually calling cleanup.
+struct BlockScopeGuard {
+	BlockScopeTracker scope;
+	std::unordered_map<std::string_view, EvalResult>& bindings;
+	BlockScopeTracker*& context_current_scope;
+	BlockScopeTracker* const outer_scope;
+
+	explicit BlockScopeGuard(std::unordered_map<std::string_view, EvalResult>& b,
+	                          BlockScopeTracker*& ctx_scope)
+		: bindings(b), context_current_scope(ctx_scope), outer_scope(ctx_scope) {
+		context_current_scope = &scope;
+	}
+
+	~BlockScopeGuard() {
+		scope.cleanup(bindings);
+		context_current_scope = outer_scope;
+	}
+
+	// Non-copyable, non-movable.
+	BlockScopeGuard(const BlockScopeGuard&) = delete;
+	BlockScopeGuard& operator=(const BlockScopeGuard&) = delete;
+};
+
 // Context for evaluation - provides access to compile-time information
 struct EvaluationContext {
 	// Symbol table for looking up constexpr variables/functions (required)
@@ -204,7 +275,12 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
-		std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
+	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
+
+	// Pointer to the innermost active block scope tracker (null at top level).
+	// Each BlockScopeGuard saves/restores this so that nested blocks each get
+	// their own tracker.
+	BlockScopeTracker* current_scope = nullptr;
 
 	// Template parameter names and arguments for evaluating template-dependent expressions
 	// (e.g., sizeof(T) inside a template member function)

@@ -2691,6 +2691,12 @@ EvalResult Evaluator::evaluate_block_with_bindings(
 
 	const BlockNode& body = body_node.as<BlockNode>();
 	const auto& statements = body.get_statements();
+
+	// Install a scope tracker for this block.  The guard automatically
+	// removes newly-declared variables and restores any shadowed outer
+	// values when it goes out of scope, even on early returns.
+	BlockScopeGuard guard(bindings, context.current_scope);
+
 	for (size_t i = 0; i < statements.size(); i++) {
 		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
 		if (result.success()) {
@@ -2727,6 +2733,12 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			const DeclarationNode& decl = var_decl.declaration_node().as<DeclarationNode>();
 			std::string_view var_name = decl.identifier_token().value();
 			auto& declaration_bindings = context.local_bindings ? *context.local_bindings : bindings;
+
+			// Register this declaration with the current block scope tracker so it
+			// can be cleaned up (or the shadowed outer value restored) on block exit.
+			if (context.current_scope) {
+				context.current_scope->on_declare(var_name, declaration_bindings);
+			}
 
 			// Evaluate the initializer if present
 			if (var_decl.initializer().has_value()) {
@@ -2844,10 +2856,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	if (stmt_node.is<ForStatementNode>()) {
 		const ForStatementNode& for_stmt = stmt_node.as<ForStatementNode>();
 		
+		// The for-loop init variable (e.g. `int i = 0`) is scoped to the entire
+		// loop (init + condition + body + update), not to the outer block.
+		// The guard automatically cleans it up when the for-loop exits.
+		BlockScopeGuard loop_guard(bindings, context.current_scope);
+		
 		// Execute init statement if present
 		if (for_stmt.has_init()) {
-			auto init_result = evaluate_statement_with_bindings(for_stmt.get_init_statement().value(), bindings, context);
-			// Ignore result for init statement (it's usually a variable declaration)
+			evaluate_statement_with_bindings(for_stmt.get_init_statement().value(), bindings, context);
 		}
 		
 		// Loop until condition is false
@@ -2883,8 +2899,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			
 			// Execute update expression if present
 			if (for_stmt.has_update()) {
-				auto update_result = evaluate_expression_with_bindings(for_stmt.get_update_expression().value(), bindings, context);
-				// Update expression result is ignored (side effects have been applied)
+				evaluate_expression_with_bindings(for_stmt.get_update_expression().value(), bindings, context);
 			}
 		}
 		
@@ -2932,10 +2947,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	if (stmt_node.is<IfStatementNode>()) {
 		const IfStatementNode& if_stmt = stmt_node.as<IfStatementNode>();
 		
+		// The if-init variable (C++17: `if (int x = foo(); x > 0)`) is scoped to
+		// the entire if statement (condition + then + else), not to the outer block.
+		// The guard automatically cleans it up on any exit path.
+		BlockScopeGuard if_guard(bindings, context.current_scope);
+		
 		// Execute init statement if present (C++17 feature)
 		if (if_stmt.has_init()) {
-			auto init_result = evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
-			// Ignore result for init statement
+			evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
 		}
 		
 		// Evaluate condition
@@ -2944,25 +2963,21 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return cond_result;
 		}
 		
-		// Execute then or else branch
+		// Execute then or else branch.
+		// Both success() and non-trivial errors propagate; only
+		// kStatementExecutedWithoutReturn is silently absorbed (the if
+		// statement itself "executed without a return").
 		if (cond_result.as_bool()) {
 			auto then_result = evaluate_statement_with_bindings(if_stmt.get_then_statement(), bindings, context);
-			if (then_result.success()) {
-				return then_result;
-			}
-			if (!isStatementExecutedWithoutReturn(then_result)) {
+			if (then_result.success() || !isStatementExecutedWithoutReturn(then_result)) {
 				return then_result;
 			}
 		} else if (if_stmt.has_else()) {
-			// Execute else branch
 			// Fix dangling reference warning by storing the value first
 			std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
 			if (else_stmt_opt.has_value()) {
 				auto else_result = evaluate_statement_with_bindings(*else_stmt_opt, bindings, context);
-				if (else_result.success()) {
-					return else_result;
-				}
-				if (!isStatementExecutedWithoutReturn(else_result)) {
+				if (else_result.success() || !isStatementExecutedWithoutReturn(else_result)) {
 					return else_result;
 				}
 			}
@@ -3008,10 +3023,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	if (stmt_node.is<RangedForStatementNode>()) {
 		const RangedForStatementNode& ranged_for = stmt_node.as<RangedForStatementNode>();
 		
+		// The loop variable and any C++20 init variable are scoped to the
+		// range-for loop, not to the surrounding block.
+		// The guard automatically cleans them up on any exit path.
+		BlockScopeGuard loop_guard(bindings, context.current_scope);
+		
 		// Execute optional init statement (C++20 feature)
 		if (ranged_for.has_init_statement()) {
-			auto init_result = evaluate_statement_with_bindings(*ranged_for.get_init_statement(), bindings, context);
-			// Ignore result for init statement
+			evaluate_statement_with_bindings(*ranged_for.get_init_statement(), bindings, context);
 		}
 		
 		// Evaluate the range expression to get the array
@@ -3038,6 +3057,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return EvalResult::error("Range-based for: could not determine loop variable name");
 		}
 		
+		// Register the loop variable with the scope guard so it is cleaned up
+		// when the loop ends (also handles the shadowing case if the outer scope
+		// already has a variable with the same name).
+		loop_guard.scope.on_declare(loop_var_name, bindings);
+		
 		// Iterate over array elements
 		for (const EvalResult& element : range_result.array_elements) {
 			// Check complexity limit
@@ -3051,23 +3075,19 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Execute the body
 			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
 			if (body_result.success()) {
-				bindings.erase(loop_var_name);  // Clean up before early return
 				return body_result;
 			}
 			if (isBreakExecuted(body_result)) {
-				break;  // break exits the loop; cleanup happens at post-loop erase below
+				break;  // break exits the loop
 			}
 			if (isContinueExecuted(body_result)) {
-				continue;  // continue overwrites binding on next iteration; post-loop erase handles last one
+				continue;  // continue goes to next element
 			}
 			if (!isStatementExecutedWithoutReturn(body_result)) {
-				bindings.erase(loop_var_name);  // Clean up before early return
 				return body_result;
 			}
 		}
 		
-		// Clean up loop variable binding (also handles the break and normal-completion paths)
-		bindings.erase(loop_var_name);
 		return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
 	}
 	
