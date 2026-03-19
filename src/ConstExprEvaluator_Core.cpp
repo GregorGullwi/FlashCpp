@@ -2934,11 +2934,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		
 		// The if-init variable (C++17: `if (int x = foo(); x > 0)`) is scoped to
 		// the entire if statement (condition + then + else), not to the outer block.
-		// The guard automatically cleans it up on any exit path.
-		BlockScopeGuard if_guard(context.resolve_declaration_bindings(bindings), context.current_scope);
-		
-		// Execute init statement if present (C++17 feature)
+		// Only create the scope guard when there is actually an init statement,
+		// since the vast majority of if-statements have no C++17 init-statement
+		// and the guard would just add overhead (default-constructing a
+		// BlockScopeTracker with its std::vector and std::unordered_map).
+		std::optional<BlockScopeGuard> if_guard;
 		if (if_stmt.has_init()) {
+			if_guard.emplace(context.resolve_declaration_bindings(bindings), context.current_scope);
 			evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
 		}
 		
