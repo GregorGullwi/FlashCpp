@@ -2,18 +2,20 @@
 // Regression test for the bug where EvalResult::from_int(1) lacked exact_type,
 // preventing apply_binary_op from masking the result to the operand's width.
 
-#include <climits>
+constexpr unsigned int  UINT_MAX_VAL  = 4294967295u;
+constexpr unsigned char UCHAR_MAX_VAL = 255;
+constexpr unsigned short USHRT_MAX_VAL = 65535;
 
 // --- unsigned int (32-bit) ---
 
 constexpr unsigned int uint_prefix_inc_wrap() {
-	unsigned int x = UINT_MAX;
+	unsigned int x = UINT_MAX_VAL;
 	++x;
 	return x;
 }
 
 constexpr unsigned int uint_postfix_inc_wrap() {
-	unsigned int x = UINT_MAX;
+	unsigned int x = UINT_MAX_VAL;
 	x++;
 	return x;
 }
@@ -60,8 +62,8 @@ constexpr unsigned short ushort_dec_wrap() {
 
 static_assert(uint_prefix_inc_wrap()  == 0u);
 static_assert(uint_postfix_inc_wrap() == 0u);
-static_assert(uint_prefix_dec_wrap()  == UINT_MAX);
-static_assert(uint_postfix_dec_wrap() == UINT_MAX);
+static_assert(uint_prefix_dec_wrap()  == UINT_MAX_VAL);
+static_assert(uint_postfix_dec_wrap() == UINT_MAX_VAL);
 
 static_assert(uchar_inc_wrap() == 0);
 static_assert(uchar_dec_wrap() == 255);
