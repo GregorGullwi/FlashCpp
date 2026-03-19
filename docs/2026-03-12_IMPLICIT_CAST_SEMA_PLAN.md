@@ -921,6 +921,7 @@ The right split is:
 - Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.
 - `inferExpressionType` still does not handle: `ArraySubscriptNode`, `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
+- Plain bitwise operators (`&`, `|`, `^`) with scoped enum operands are not diagnosed. The `diagnoseScopedEnumBinaryOperands` guard checks `is_arithmetic || is_comparison || is_compound_assign || is_shift`, which covers `+`, `-`, `*`, `/`, `%`, comparisons, compound assignments (`&=`, `|=`, `^=`), and shifts — but not the plain bitwise forms. Per C++20, `Color::Red | Color::Green` is ill-formed for scoped enums (no built-in bitwise operators). This gap is consistent with the broader sema annotation coverage (which also does not handle plain bitwise operators for type annotation).
 
 ### Parallel rollout guidance
 
