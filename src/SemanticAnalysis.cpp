@@ -1025,6 +1025,11 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (e.op() == "!") {
 					tryAnnotateContextualBool(e.get_operand());
 				}
+				// C++20 [expr.unary.op]: the operand of unary +, -, ~ undergoes
+				// integral promotion (bool/char/short → int).
+				else if (e.op() == "+" || e.op() == "-" || e.op() == "~") {
+					tryAnnotateUnaryOperandPromotion(e);
+				}
 				normalizeExpression(e.get_operand(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
@@ -1323,21 +1328,35 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				// Unary + and - apply integral promotion: types with rank < int become int.
 				const std::string_view op = e.op();
-				if (op == "+" || op == "-") {
+				// Unary +, - and ~ apply integral promotion: types with rank < int become int.
+				if (op == "+" || op == "-" || op == "~") {
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id) return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
+					// Resolve enum to underlying type
+					const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
 					const bool is_small_int =
-						(is_integer_type(operand_desc.base_type) || operand_desc.base_type == Type::Bool)
-						&& get_integer_rank(operand_desc.base_type) < 3;  // rank of int
+						(is_integer_type(operand_base) || operand_base == Type::Bool)
+						&& get_integer_rank(operand_base) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
 						promoted.base_type = Type::Int;
 						return type_context_.intern(promoted);
 					}
-					return operand_id;
+					CanonicalTypeDesc result_desc;
+					result_desc.base_type = operand_base;
+					return type_context_.intern(result_desc);
+				}
+				// Logical NOT always returns bool
+				if (op == "!") {
+					CanonicalTypeDesc desc;
+					desc.base_type = Type::Bool;
+					return type_context_.intern(desc);
+				}
+				// Prefix/postfix ++ and -- return the operand type
+				if (op == "++" || op == "--") {
+					return inferExpressionType(e.get_operand());
 				}
 				return {};
 			}
@@ -1613,6 +1632,37 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.base_type = promoted_rhs;
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc));
+	}
+}
+
+// --- Unary operand integral promotion annotation ---
+// C++20 [expr.unary.op]: The operand of unary +, -, and ~ shall have arithmetic or
+// unscoped enumeration type and the result is the value of its operand promoted.
+// Integral promotions are performed (bool/char/short → int).
+
+void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode& unary_op) {
+	const CanonicalTypeId operand_type_id = inferExpressionType(unary_op.get_operand());
+	if (!operand_type_id) return;
+
+	const CanonicalTypeDesc& operand_desc = type_context_.get(operand_type_id);
+
+	// Only handle plain primitive types and enum sources (no pointers, arrays, structs)
+	if (!operand_desc.pointer_levels.empty()) return;
+	if (!operand_desc.array_dimensions.empty()) return;
+	if (operand_desc.base_type == Type::Struct || operand_desc.base_type == Type::Invalid) return;
+	if (isPlaceholderAutoType(operand_desc.base_type)) return;
+
+	// Resolve enum operands to their underlying type for promote_integer_type
+	const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
+
+	// Unary +, -, ~ are only defined for arithmetic types
+	if (is_floating_point_type(operand_base)) return;  // float/double: no promotion needed
+
+	const Type promoted = promote_integer_type(operand_base);
+	if (promoted != operand_base) {
+		CanonicalTypeDesc promoted_desc;
+		promoted_desc.base_type = promoted;
+		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
 	}
 }
 
