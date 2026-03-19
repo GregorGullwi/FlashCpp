@@ -417,6 +417,9 @@
     <ClCompile Include="src\Parser_TypeSpecifiers.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\SemanticAnalysis.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\TypeTraitEvaluator.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -488,6 +491,7 @@
     <ClInclude Include="src\StackString.h" />
     <ClInclude Include="src\StringBuilder.h" />
     <ClInclude Include="src\StringTable.h" />
+    <ClInclude Include="src\SemanticAnalysis.h" />
     <ClInclude Include="src\SymbolTable.h" />
     <ClInclude Include="src\TemplateInstantiationHelper.h" />
     <ClInclude Include="src\TemplateProfilingStats.h" />
