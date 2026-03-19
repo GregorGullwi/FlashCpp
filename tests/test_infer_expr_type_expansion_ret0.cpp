@@ -1,7 +1,6 @@
 // Test inferExpressionType expansion: ConstructorCallNode, StringLiteralNode,
 // noexcept, offsetof.
 // Verifies these expression types are properly inferred by sema for annotation.
-#include <cstddef>
 
 struct Point {
 	int x;
