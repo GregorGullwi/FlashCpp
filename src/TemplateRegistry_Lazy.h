@@ -1495,12 +1495,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				break;
 			}
 			case TypeTraitKind::IsIntegral:
-				result = (first.base_type == Type::Bool || first.base_type == Type::Char ||
-				         first.base_type == Type::Short || first.base_type == Type::Int ||
-				         first.base_type == Type::Long || first.base_type == Type::LongLong ||
-				         first.base_type == Type::UnsignedChar || first.base_type == Type::UnsignedShort ||
-				         first.base_type == Type::UnsignedInt || first.base_type == Type::UnsignedLong ||
-				         first.base_type == Type::UnsignedLongLong)
+				result = isIntegralType(first.base_type)
 				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:

@@ -336,6 +336,10 @@ inline bool isIntegralType(Type type) {
 	case Type::UnsignedInt:
 	case Type::UnsignedLong:
 	case Type::UnsignedLongLong:
+	case Type::WChar:      // wchar_t is integral per C++20 [basic.fundamental]
+	case Type::Char8:      // char8_t is integral per C++20 [basic.fundamental]
+	case Type::Char16:     // char16_t is integral per C++20 [basic.fundamental]
+	case Type::Char32:     // char32_t is integral per C++20 [basic.fundamental]
 		return true;
 	default:
 		return false;
