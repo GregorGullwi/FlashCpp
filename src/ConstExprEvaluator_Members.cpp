@@ -3474,6 +3474,37 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
 	for (const auto& mem_init : ctor_decl.member_initializers()) {
+		// Handle multi-arg brace-init (e.g., arr{a, b, c}) stored as an InitializerListNode.
+		// This is used for array members and aggregate struct members.
+		if (mem_init.initializer_expr.is<InitializerListNode>()) {
+			const InitializerListNode& init_list = mem_init.initializer_expr.as<InitializerListNode>();
+			const StructMember* member_info = struct_info ? struct_info->findMember(mem_init.member_name) : nullptr;
+			if (!member_info) {
+				return EvalResult::error("Member '" + std::string(mem_init.member_name) +
+					"' not found for brace-init in constexpr constructor");
+			}
+			EvalResult member_result;
+			if (member_info->is_array) {
+				member_result = materialize_array_value(
+					member_info->type, member_info->type_index, init_list, context, &ctor_param_bindings);
+			} else if ((member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
+					member_result = materialize_aggregate_object_value(
+						member_struct_info, member_info->type_index, init_list, context);
+				} else {
+					member_result = EvalResult::error("Member struct type not found for brace-init");
+				}
+			} else {
+				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
+					std::string(mem_init.member_name) + "' in constexpr constructor");
+			}
+			if (!member_result.success()) {
+				return member_result;
+			}
+			member_bindings[mem_init.member_name] = std::move(member_result);
+			continue;
+		}
 		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
 		if (!member_result.success()) {
 			return member_result;

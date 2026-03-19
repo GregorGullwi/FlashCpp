@@ -1409,7 +1409,17 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			
 			// Add member initializer to constructor
 			if (ctor_ref && !init_args.empty()) {
-				ctor_ref->add_member_initializer(init_name, init_args[0]);
+				if (is_brace && init_args.size() > 1) {
+					// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
+					// so the constexpr evaluator can materialize array/struct members correctly.
+					auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+					for (auto& arg : init_args) {
+						init_list_ref.add_initializer(arg);
+					}
+					ctor_ref->add_member_initializer(init_name, init_list_node);
+				} else {
+					ctor_ref->add_member_initializer(init_name, init_args[0]);
+				}
 			}
 			
 			if (!consume(","_tok)) {

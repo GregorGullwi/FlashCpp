@@ -1991,18 +1991,24 @@
 
 							if (!handled_as_reference_init) {
 								// Use explicit initializer from constructor initializer list
-								ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
-								// Extract just the value (third element of init_operands)
-								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-									member_value = *temp_var;
-								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-									member_value = *ull_val;
-								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-									member_value = *d_val;
-								} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-									member_value = *string;
+								// Array members may have an InitializerListNode initializer; skip scalar
+								// IR emission for those (array member runtime init is not yet supported here).
+								if (!explicit_it->second->initializer_expr.is<ExpressionNode>()) {
+									member_value = 0ULL;  // non-scalar initializer: fall through to zero-init
 								} else {
-									member_value = 0ULL;  // fallback
+									ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+									// Extract just the value (third element of init_operands)
+									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+										member_value = *temp_var;
+									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										member_value = *ull_val;
+									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+										member_value = *d_val;
+									} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+										member_value = *string;
+									} else {
+										member_value = 0ULL;  // fallback
+									}
 								}
 							}
 						} else if (member.default_initializer.has_value()) {

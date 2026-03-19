@@ -336,9 +336,17 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 					if (!is_base_init) {
 						// It's a member initializer
-						// For simplicity, we'll use the first argument as the initializer expression
 						if (!init_args.empty()) {
-							delayed.ctor_node->add_member_initializer(init_name, init_args[0]);
+							if (is_brace && init_args.size() > 1) {
+								// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
+								auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+								for (auto& arg : init_args) {
+									init_list_ref.add_initializer(arg);
+								}
+								delayed.ctor_node->add_member_initializer(init_name, init_list_node);
+							} else {
+								delayed.ctor_node->add_member_initializer(init_name, init_args[0]);
+							}
 						}
 					}
 				}
