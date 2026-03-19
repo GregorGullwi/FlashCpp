@@ -1514,14 +1514,25 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node, Ca
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (from_desc.base_type != Type::Enum || to_desc.base_type == Type::Enum) return;
+	if (from_desc.base_type != Type::Enum) return;
+	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
+	if (to_desc.base_type == Type::Enum && from_desc.type_index == to_desc.type_index) return;
 	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size()) return;
 
 	if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
 		if (ei->is_scoped) {
+			// Build target type name: use enum name if target is an enum, otherwise use primitive name.
+			std::string target_name;
+			if (to_desc.base_type == Type::Enum && to_desc.type_index.is_valid() &&
+				to_desc.type_index.value < gTypeInfo.size()) {
+				if (const EnumTypeInfo* target_ei = gTypeInfo[to_desc.type_index.value].getEnumInfo())
+					target_name = StringTable::getStringView(target_ei->name);
+			}
+			if (target_name.empty())
+				target_name = getTypeName(to_desc.base_type);
 			throw CompileError("cannot implicitly convert from scoped enum '" +
 				std::string(StringTable::getStringView(ei->name)) +
-				"' to '" + std::string(getTypeName(to_desc.base_type)) +
+				"' to '" + target_name +
 				"'" + std::string(context_description) + "; use static_cast");
 		}
 	}

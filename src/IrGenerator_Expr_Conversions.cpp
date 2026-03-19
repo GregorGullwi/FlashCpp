@@ -1301,9 +1301,6 @@
 			}
 		}
 
-		// Create a temporary variable for the result
-		TempVar result_var = var_counter.next();
-
 		// C++20 [expr.unary.op]: For unary +, -, ~, the operand undergoes integral
 		// promotion (bool/char/short → int).  Apply sema annotation if present,
 		// otherwise apply promotion as fallback.
@@ -1336,7 +1333,15 @@
 				operandIrOperands = generateTypeConversion(operandIrOperands, Type::Bool, Type::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
+			// Unary plus is a no-op after promotion — return immediately without
+			// allocating an unused result_var.
+			if (unaryOperatorNode.op() == "+") {
+				return operandIrOperands;
+			}
 		}
+
+		// Create a temporary variable for the result (after unary + early-return).
+		TempVar result_var = var_counter.next();
 
 		// Generate the IR for the operation based on the operator
 		if (unaryOperatorNode.op() == "!") {
@@ -1368,10 +1373,6 @@
 				.result = result_var
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Negate, unary_op, Token()));
-		}
-		else if (unaryOperatorNode.op() == "+") {
-			// Unary plus (no-op, just return the operand)
-			return operandIrOperands;
 		}
 		else if (unaryOperatorNode.op() == "++") {
 			// Increment operator (prefix or postfix)
