@@ -550,7 +550,10 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
 - ⚠️ Unsigned wrapping arithmetic at the declared type's width: all unsigned values are stored as `unsigned long long` (64-bit) internally, so `unsigned int` wrapping (at 32 bits), `unsigned short` wrapping (at 16 bits), etc. give 64-bit results. Arithmetic that stays within range is unaffected.
-- ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, and chained shift results, so cases like `1u << 40` are correctly rejected while `static_cast<unsigned short>(1) << 17` remains valid after integer promotion. Remaining arithmetic-produced left operands can still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable (for example, some shapes like `(1u + 1u) << 40` may still need fuller type propagation).
+- ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, and chained shift results.
+  - `1u << 40` is now correctly rejected in constant evaluation.
+  - `static_cast<unsigned short>(1) << 17` remains valid after integer promotion.
+  - Some arithmetic-produced left operands can still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable (for example, shapes like `(1u + 1u) << 40` still need fuller type propagation).
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
