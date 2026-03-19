@@ -3487,6 +3487,18 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
 					member_info->type, member_info->type_index, init_list, context, &ctor_param_bindings);
+				// C++ aggregate init: zero-fill remaining elements up to the declared array size.
+				if (member_result.success() && !member_info->array_dimensions.empty()) {
+					size_t declared_size = member_info->array_dimensions[0];
+					while (member_result.array_elements.size() < declared_size) {
+						member_result.array_elements.push_back(EvalResult::from_int(0));
+					}
+					if (!member_result.array_values.empty()) {
+						while (member_result.array_values.size() < declared_size) {
+							member_result.array_values.push_back(0);
+						}
+					}
+				}
 			} else if ((member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
 				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
 				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
@@ -3509,7 +3521,30 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 		if (!member_result.success()) {
 			return member_result;
 		}
-		member_bindings[mem_init.member_name] = member_result;
+		// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
+		// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
+		// C++ requires: arr[0] = val, arr[1..n-1] = 0.
+		if (struct_info && !member_result.is_array) {
+			if (const StructMember* member_info = struct_info->findMember(mem_init.member_name)) {
+				if (member_info->is_array) {
+					int64_t first_val = member_result.as_int();
+					size_t array_size = member_info->array_dimensions.empty() ? 1 : member_info->array_dimensions[0];
+					EvalResult array_r;
+					array_r.error_type = EvalErrorType::None;
+					array_r.is_array = true;
+					array_r.array_elements.push_back(std::move(member_result));
+					for (size_t i = 1; i < array_size; ++i) {
+						array_r.array_elements.push_back(EvalResult::from_int(0));
+					}
+					array_r.array_values.push_back(first_val);
+					for (size_t i = 1; i < array_size; ++i) {
+						array_r.array_values.push_back(0);
+					}
+					member_result = std::move(array_r);
+				}
+			}
+		}
+		member_bindings[mem_init.member_name] = std::move(member_result);
 	}
 
 	for (const auto& member : struct_info->members) {
