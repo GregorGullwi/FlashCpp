@@ -99,6 +99,8 @@ private:
 
 	// Declaration handlers
 	void normalizeFunctionDeclaration(const FunctionDeclarationNode& func);
+	void normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor);
+	void normalizeDestructorDeclaration(const DestructorDeclarationNode& dtor);
 	void normalizeStructDeclaration(const StructDeclarationNode& decl);
 	void normalizeNamespace(const NamespaceDeclarationNode& ns);
 

@@ -1256,6 +1256,13 @@
 			}
 		}
 
+		// Phase 16: track whether sema normalized this constructor body.
+		sema_normalized_current_function_ = false;
+		if (sema_ && node.get_definition().has_value()) {
+			sema_normalized_current_function_ = sema_->hasNormalizedBody(
+				static_cast<const void*>(&(*node.get_definition())));
+		}
+
 		// Reset the temporary variable counter for each new constructor
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
@@ -2235,6 +2242,13 @@
 	void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& node) {
 		if (!node.get_definition().has_value())
 			return;
+
+		// Phase 16: track whether sema normalized this destructor body.
+		sema_normalized_current_function_ = false;
+		if (sema_ && node.get_definition().has_value()) {
+			sema_normalized_current_function_ = sema_->hasNormalizedBody(
+				static_cast<const void*>(&(*node.get_definition())));
+		}
 
 		// Reset the temporary variable counter for each new destructor
 		// Destructors are always member functions, so reserve TempVar(1) for 'this'
