@@ -507,6 +507,12 @@ private:
 		EvaluationContext& context);
 	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
 	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context);
+	// Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
+	// pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
+	// evaluates it.  If check_static is true, also handles access to static struct members.
+	static EvalResult evaluate_arrow_member_from_pointer_var(
+		std::string_view pointed_name, std::string_view member_name,
+		EvaluationContext& context, bool check_static = false);
 	// get_typespec_size_bytes: unified via getTypeSpecSizeBits (AstNodeTypes_DeclNodes.h)
 	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
 		return static_cast<size_t>(getTypeSpecSizeBits(type_spec)) / 8;
