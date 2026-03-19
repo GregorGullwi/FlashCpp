@@ -1149,9 +1149,35 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return EvalResult::error("Operand of increment/decrement must be a variable");
 		}
 		
+		// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
+		if (op == "&") {
+			const ASTNode& operand = unary_op.get_operand();
+			if (operand.is<ExpressionNode>()) {
+				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
+					return EvalResult::from_pointer(id->name());
+				}
+			}
+			return EvalResult::error("Address-of operator (&) is only supported on named constexpr variables in constant expressions");
+		}
+
 		// Regular unary operators
 		auto operand_result = evaluate_expression_with_bindings(unary_op.get_operand(), bindings, context);
 		if (!operand_result.success()) return operand_result;
+
+		// Handle dereference (*): look up the pointed-to variable.
+		if (op == "*") {
+			if (!operand_result.pointer_to_var.empty()) {
+				// Check local bindings first
+				auto it = bindings.find(operand_result.pointer_to_var);
+				if (it != bindings.end()) {
+					return it->second;
+				}
+				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
+			}
+			return EvalResult::error("Dereference operator (*) requires a pointer to a constexpr variable in constant expressions");
+		}
+
 		return apply_unary_op(operand_result, op);
 	}
 	
@@ -1258,9 +1284,37 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	
 	// For unary operators
 	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
+		std::string_view op = unary_op->op();
+
+		// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
+		if (op == "&") {
+			const ASTNode& operand = unary_op->get_operand();
+			if (operand.is<ExpressionNode>()) {
+				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
+					return EvalResult::from_pointer(id->name());
+				}
+			}
+			return EvalResult::error("Address-of operator (&) is only supported on named constexpr variables in constant expressions");
+		}
+
 		auto operand_result = recursive_eval(unary_op->get_operand(), bindings, context);
 		if (!operand_result.success()) return operand_result;
-		return apply_unary_op(operand_result, unary_op->op());
+
+		// Handle dereference (*): look up the pointed-to variable.
+		if (op == "*") {
+			if (!operand_result.pointer_to_var.empty()) {
+				// Check local bindings first
+				auto it = bindings.find(operand_result.pointer_to_var);
+				if (it != bindings.end()) {
+					return it->second;
+				}
+				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
+			}
+			return EvalResult::error("Dereference operator (*) requires a pointer to a constexpr variable in constant expressions");
+		}
+
+		return apply_unary_op(operand_result, op);
 	}
 	
 	// For ternary operators
@@ -1310,6 +1364,48 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 						return it->second;  // Return the bound member value
 					}
 					return EvalResult::error("Member not found in constexpr object: " + std::string(member_name));
+				}
+				// Handle arrow access (ptr->member) where ptr is a pointer in local bindings.
+				if (member_access.is_arrow()) {
+					auto binding_it = bindings.find(obj_id.name());
+					if (binding_it != bindings.end() && !binding_it->second.pointer_to_var.empty()) {
+						std::string_view pointed_name = binding_it->second.pointer_to_var;
+						// Resolve the pointed-to variable and extract the requested member.
+						ResolvedConstexprObject resolved_ptr_obj;
+						if (auto resolve_error = resolve_constexpr_object_source(
+							nullptr, pointed_name, context, "arrow member access", resolved_ptr_obj)) {
+							return *resolve_error;
+						}
+						if (!resolved_ptr_obj.initializer) {
+							return EvalResult::error("Arrow member access (->): could not resolve pointed-to object '" + std::string(pointed_name) + "'");
+						}
+						TypeIndex ptr_type_index = resolved_ptr_obj.declared_type_index;
+						const VariableDeclarationNode* ptr_var_decl = resolved_ptr_obj.var_decl;
+						if (ptr_var_decl) {
+							const ASTNode& var_type_node = ptr_var_decl->declaration().type_node();
+							if (var_type_node.is<TypeSpecifierNode>()) {
+								ptr_type_index = var_type_node.as<TypeSpecifierNode>().type_index();
+							}
+							if (!ptr_var_decl->is_constexpr()) {
+								return EvalResult::error("Arrow member access (->): pointed-to variable must be constexpr: " + std::string(pointed_name));
+							}
+						}
+						ResolvedConstexprMemberSource resolved_member;
+						if (auto member_error = resolve_constexpr_member_source_from_initializer(
+							*resolved_ptr_obj.initializer, ptr_type_index, member_name,
+							"arrow member access", context, resolved_member)) {
+							return *member_error;
+						}
+						if (resolved_member.value.has_value()) return resolved_member.value.value();
+						if (!resolved_member.initializer.has_value()) {
+							return EvalResult::error("Arrow member access (->): internal error resolving member '" + std::string(member_name) + "'");
+						}
+						if (!resolved_member.evaluation_bindings.empty()) {
+							return evaluate_expression_with_bindings(
+								resolved_member.initializer.value(), resolved_member.evaluation_bindings, context);
+						}
+						return evaluate(resolved_member.initializer.value(), context);
+					}
 				}
 			}
 		}
@@ -2130,7 +2226,70 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	// Get the object expression (e.g., 'p1' in 'p1.x')
 	const ASTNode& object_expr = member_access.object();
 	std::string_view member_name = member_access.member_name();
-	
+
+	// Handle arrow access (ptr->member): evaluate the pointer expression to get the
+	// pointed-to variable name, then perform member access on that variable.
+	if (member_access.is_arrow()) {
+		auto ptr_result = evaluate(object_expr, context);
+		if (!ptr_result.success()) return ptr_result;
+		if (ptr_result.pointer_to_var.empty()) {
+			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
+		}
+		std::string_view pointed_name = ptr_result.pointer_to_var;
+
+		// Resolve the pointed-to variable and extract the requested member.
+		ResolvedConstexprObject resolved_ptr_obj;
+		if (auto resolve_error = resolve_constexpr_object_source(
+			nullptr, pointed_name, context, "arrow member access", resolved_ptr_obj)) {
+			return *resolve_error;
+		}
+		if (!resolved_ptr_obj.initializer) {
+			return EvalResult::error("Arrow member access (->): could not resolve pointed-to object '" + std::string(pointed_name) + "'");
+		}
+
+		const VariableDeclarationNode* ptr_var_decl = resolved_ptr_obj.var_decl;
+		TypeIndex ptr_type_index = resolved_ptr_obj.declared_type_index;
+		if (ptr_var_decl) {
+			const ASTNode& var_type_node = ptr_var_decl->declaration().type_node();
+			if (var_type_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+				ptr_type_index = var_type_spec.type_index();
+
+				// Check for static member access
+				if (ptr_type_index.is_valid() && ptr_type_index.value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[ptr_type_index.value];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+						if (static_member && owner_struct) {
+							return evaluate_static_member_initializer_or_default(*static_member, context);
+						}
+					}
+				}
+			}
+			if (!ptr_var_decl->is_constexpr()) {
+				return EvalResult::error("Arrow member access (->): pointed-to variable must be constexpr: " + std::string(pointed_name));
+			}
+		}
+
+		ResolvedConstexprMemberSource resolved_member;
+		if (auto member_error = resolve_constexpr_member_source_from_initializer(
+			*resolved_ptr_obj.initializer, ptr_type_index, member_name,
+			"arrow member access", context, resolved_member)) {
+			return *member_error;
+		}
+		if (resolved_member.value.has_value()) return resolved_member.value.value();
+		if (!resolved_member.initializer.has_value()) {
+			return EvalResult::error("Arrow member access (->): internal error resolving member '" + std::string(member_name) + "'");
+		}
+		if (!resolved_member.evaluation_bindings.empty()) {
+			return evaluate_expression_with_bindings(
+				resolved_member.initializer.value(), resolved_member.evaluation_bindings, context);
+		}
+		return evaluate(resolved_member.initializer.value(), context);
+	}
+
 	// Check if this is a nested member access (e.g., obj.inner.value)
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
