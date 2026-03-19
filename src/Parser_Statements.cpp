@@ -756,6 +756,7 @@ ParseResult Parser::parse_variable_declaration()
 	if (peek() == ","_tok) {
 		// Create a block to hold multiple declarations
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
+		block_ref.set_synthetic_decl_list(true);
 
 		// Add the first declaration to the block
 		block_ref.add_statement_node(first_var_node);

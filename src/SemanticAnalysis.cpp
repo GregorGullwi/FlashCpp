@@ -824,20 +824,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 
 	if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
-		// The parser wraps comma-separated declarations (e.g. "int x = 3, y = 4;")
-		// in a synthetic BlockNode containing individual VariableDeclarationNodes.
-		// These must NOT push a new scope — the declared variables must remain
-		// visible in the enclosing scope for inferExpressionType to find them.
-		// Detect synthetic blocks: all children are VariableDeclarationNodes.
-		bool is_multi_decl_block = true;
-		for (const auto& stmt : block.get_statements()) {
-			if (!stmt.is<VariableDeclarationNode>()) {
-				is_multi_decl_block = false;
-				break;
-			}
-		}
-		if (is_multi_decl_block) {
-			// Process each declaration in the current scope (no push/pop).
+		if (block.is_synthetic_decl_list()) {
+			// Comma-separated declarations ("int x = 3, y = 4;") — no new scope.
 			for (const auto& stmt : block.get_statements()) {
 				normalizeStatement(stmt, ctx);
 			}

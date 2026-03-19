@@ -1532,8 +1532,12 @@ public:
 	const auto& get_statements() const { return statements_; }
 	void add_statement_node(ASTNode node) { statements_.push_back(node); }
 
+	bool is_synthetic_decl_list() const { return is_synthetic_decl_list_; }
+	void set_synthetic_decl_list(bool v) { is_synthetic_decl_list_ = v; }
+
 private:
 	ChunkedVector<ASTNode, 128, 256> statements_;
+	bool is_synthetic_decl_list_ = false;
 };
 
 class FunctionDeclarationNode {
