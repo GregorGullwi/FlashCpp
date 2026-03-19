@@ -3473,12 +3473,100 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
+
+	// Returns a type-correct zero EvalResult for a given element type.
+	// Floating-point types get 0.0, unsigned types get 0u, signed/bool get 0.
+	auto make_zero_element = [](Type element_type) -> EvalResult {
+		if (isFloatingPointType(element_type)) {
+			return EvalResult::from_double(0.0);
+		}
+		if (isUnsignedIntegralType(element_type)) {
+			return EvalResult::from_uint(0ULL);
+		}
+		return EvalResult::from_int(0LL);
+	};
+
 	for (const auto& mem_init : ctor_decl.member_initializers()) {
+		// Handle multi-arg brace-init (e.g., arr{a, b, c}) stored as an InitializerListNode.
+		// This is used for array members and aggregate struct members.
+		if (mem_init.initializer_expr.is<InitializerListNode>()) {
+			const InitializerListNode& init_list = mem_init.initializer_expr.as<InitializerListNode>();
+			const StructMember* member_info = struct_info ? struct_info->findMember(mem_init.member_name) : nullptr;
+			if (!member_info) {
+				return EvalResult::error("Member '" + std::string(mem_init.member_name) +
+					"' not found for brace-init in constexpr constructor");
+			}
+			EvalResult member_result;
+			if (member_info->is_array) {
+				member_result = materialize_array_value(
+					member_info->type, member_info->type_index, init_list, context, &ctor_param_bindings);
+				// C++ aggregate init: zero-fill remaining elements up to the declared array size
+				// using a type-correct zero for each native type.
+				if (member_result.success() && !member_info->array_dimensions.empty()) {
+					size_t declared_size = member_info->array_dimensions[0];
+					while (member_result.array_elements.size() < declared_size) {
+						member_result.array_elements.push_back(make_zero_element(member_info->type));
+					}
+					// Only extend array_values (legacy int64_t fallback) for integer types.
+					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->type)) {
+						while (member_result.array_values.size() < declared_size) {
+							member_result.array_values.push_back(0);
+						}
+					}
+				}
+			} else if ((member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
+					member_result = materialize_aggregate_object_value(
+						member_struct_info, member_info->type_index, init_list, context);
+				} else {
+					member_result = EvalResult::error("Member struct type not found for brace-init");
+				}
+			} else if (init_list.size() == 0) {
+				// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
+				member_result = make_zero_element(member_info->type);
+			} else {
+				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
+					std::string(mem_init.member_name) + "' in constexpr constructor");
+			}
+			if (!member_result.success()) {
+				return member_result;
+			}
+			member_bindings[mem_init.member_name] = std::move(member_result);
+			continue;
+		}
 		auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
 		if (!member_result.success()) {
 			return member_result;
 		}
-		member_bindings[mem_init.member_name] = member_result;
+		// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
+		// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
+		// C++ requires: arr[0] = val, arr[1..n-1] = zero-initialized for the element type.
+		if (struct_info && !member_result.is_array) {
+			if (const StructMember* member_info = struct_info->findMember(mem_init.member_name)) {
+				if (member_info->is_array) {
+					size_t array_size = member_info->array_dimensions.empty() ? 1 : member_info->array_dimensions[0];
+					EvalResult array_r;
+					array_r.error_type = EvalErrorType::None;
+					array_r.is_array = true;
+					array_r.array_elements.push_back(std::move(member_result));
+					for (size_t i = 1; i < array_size; ++i) {
+						array_r.array_elements.push_back(make_zero_element(member_info->type));
+					}
+					// Do not populate array_values for floating-point elements since array_values
+					// is int64_t and cannot represent doubles without truncation. array_elements
+					// is the authoritative source and is always checked first during subscript.
+					if (!isFloatingPointType(member_info->type)) {
+						for (size_t i = 0; i < array_size; ++i) {
+							array_r.array_values.push_back(
+								i == 0 ? array_r.array_elements[0].as_int() : 0LL);
+						}
+					}
+					member_result = std::move(array_r);
+				}
+			}
+		}
+		member_bindings[mem_init.member_name] = std::move(member_result);
 	}
 
 	for (const auto& member : struct_info->members) {

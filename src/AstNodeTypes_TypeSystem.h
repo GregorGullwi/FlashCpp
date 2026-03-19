@@ -323,6 +323,52 @@ inline bool isPlaceholderAutoType(Type type) {
 	return type == Type::Auto || type == Type::DeclTypeAuto;
 }
 
+inline bool isIntegralType(Type type) {
+	switch (type) {
+	case Type::Bool:
+	case Type::Char:
+	case Type::Short:
+	case Type::Int:
+	case Type::Long:
+	case Type::LongLong:
+	case Type::UnsignedChar:
+	case Type::UnsignedShort:
+	case Type::UnsignedInt:
+	case Type::UnsignedLong:
+	case Type::UnsignedLongLong:
+	case Type::WChar:      // wchar_t is integral per C++20 [basic.fundamental]
+	case Type::Char8:      // char8_t is integral per C++20 [basic.fundamental]
+	case Type::Char16:     // char16_t is integral per C++20 [basic.fundamental]
+	case Type::Char32:     // char32_t is integral per C++20 [basic.fundamental]
+		return true;
+	default:
+		return false;
+	}
+}
+
+inline bool isFloatingPointType(Type type) {
+	return type == Type::Float || type == Type::Double || type == Type::LongDouble;
+}
+
+inline bool isUnsignedIntegralType(Type type) {
+	switch (type) {
+	case Type::UnsignedChar:
+	case Type::UnsignedShort:
+	case Type::UnsignedInt:
+	case Type::UnsignedLong:
+	case Type::UnsignedLongLong:
+	case Type::Char8:
+	case Type::Char16:
+	case Type::Char32:
+		return true;
+	// wchar_t is target-dependent: unsigned on Windows (LLP64), signed on Linux (LP64)
+	case Type::WChar:
+		return g_target_data_model == TargetDataModel::LLP64;
+	default:
+		return false;
+	}
+}
+
 // Strong wrapper for type indices into gTypeInfo[].
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
 // conversion at write sites; read sites use .value explicitly.

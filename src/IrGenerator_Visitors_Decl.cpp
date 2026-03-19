@@ -1990,19 +1990,132 @@
 							}
 
 							if (!handled_as_reference_init) {
-								// Use explicit initializer from constructor initializer list
-								ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
-								// Extract just the value (third element of init_operands)
-								if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
-									member_value = *temp_var;
-								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-									member_value = *ull_val;
-								} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-									member_value = *d_val;
-								} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
-									member_value = *string;
+								// Use explicit initializer from constructor initializer list.
+								const ASTNode& init_expr_node = explicit_it->second->initializer_expr;
+								if (init_expr_node.is<InitializerListNode>()) {
+									// Array member brace-init (e.g., data{a, b, c}):
+									// emit one MemberStore per element at the correct byte offset.
+									if (member.is_array && !member.array_dimensions.empty()) {
+										const InitializerListNode& init_list = init_expr_node.as<InitializerListNode>();
+										const size_t declared_count = member.array_dimensions[0];
+										const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
+										const auto& init_elements = init_list.initializers();
+										const bool elem_is_fp = isFloatingPointType(member.type);
+
+										for (size_t i = 0; i < declared_count; ++i) {
+											IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
+											if (i < init_elements.size() && init_elements[i].is<ExpressionNode>()) {
+												ExprResult elem_op = visitExpressionNode(init_elements[i].as<ExpressionNode>());
+												if (const auto* tmp = std::get_if<TempVar>(&elem_op.value)) {
+													elem_val = *tmp;
+												} else if (const auto* ull = std::get_if<unsigned long long>(&elem_op.value)) {
+													elem_val = *ull;
+												} else if (const auto* dbl = std::get_if<double>(&elem_op.value)) {
+													elem_val = *dbl;
+												} else if (const auto* sh = std::get_if<StringHandle>(&elem_op.value)) {
+													elem_val = *sh;
+												}
+											}
+											MemberStoreOp elem_store;
+											elem_store.value.type = member.type;
+											assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
+											elem_store.value.value = elem_val;
+											elem_store.object = StringTable::getOrInternStringHandle("this");
+											elem_store.member_name = member.getName();
+											assert(member.offset + i * element_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.offset = static_cast<int>(member.offset + i * element_size);
+											elem_store.ref_qualifier = CVReferenceQualifier::None;
+											elem_store.struct_type_info = nullptr;
+											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(elem_store), node.name_token()));
+										}
+										continue;  // per-element stores emitted; skip single MemberStore below
+									}
+									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
+									if (init_expr_node.as<InitializerListNode>().size() == 0) {
+										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
+									} else if ((member.type == Type::Struct || member.type == Type::UserDefined) &&
+										member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
+										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
+										if (const StructTypeInfo* nested_info = gTypeInfo[member.type_index.value].getStructInfo()) {
+											const InitializerListNode& agg_init_list = init_expr_node.as<InitializerListNode>();
+											const auto& agg_elements = agg_init_list.initializers();
+											const auto& nested_members = nested_info->members;
+											for (size_t i = 0; i < nested_members.size(); ++i) {
+												const StructMember& nm = nested_members[i];
+												IrValue nm_val = isFloatingPointType(nm.type) ? IrValue{0.0} : IrValue{0ULL};
+												if (i < agg_elements.size() && agg_elements[i].is<ExpressionNode>()) {
+													ExprResult nm_op = visitExpressionNode(agg_elements[i].as<ExpressionNode>());
+													if (const auto* tmp = std::get_if<TempVar>(&nm_op.value)) {
+														nm_val = *tmp;
+													} else if (const auto* ull = std::get_if<unsigned long long>(&nm_op.value)) {
+														nm_val = *ull;
+													} else if (const auto* dbl = std::get_if<double>(&nm_op.value)) {
+														nm_val = *dbl;
+													} else if (const auto* sh = std::get_if<StringHandle>(&nm_op.value)) {
+														nm_val = *sh;
+													}
+												}
+												MemberStoreOp nm_store;
+												nm_store.value.type = nm.type;
+												nm_store.value.size_in_bits = SizeInBits{static_cast<int>(nm.size * 8)};
+												nm_store.value.value = nm_val;
+												nm_store.object = StringTable::getOrInternStringHandle("this");
+												nm_store.member_name = nm.getName();
+												nm_store.offset = static_cast<int>(member.offset + nm.offset);
+												nm_store.ref_qualifier = CVReferenceQualifier::None;
+												nm_store.struct_type_info = &gTypeInfo[member.type_index.value];
+												ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nm_store), node.name_token()));
+											}
+											continue;  // per-member stores emitted; skip single MemberStore below
+										}
+										member_value = 0ULL;  // can't resolve struct info, zero-init
+									} else {
+										// Scalar members with multiple brace-init values are not valid C++.
+										throw CompileError("Brace-initializer used on non-array member '" +
+											std::string(StringTable::getStringView(member.getName())) +
+											"': multiple initializer values for a scalar member.");
+									}
+								} else if (!init_expr_node.is<ExpressionNode>()) {
+									member_value = 0ULL;  // unexpected node type: fall back to zero
 								} else {
-									member_value = 0ULL;  // fallback
+									ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>());
+									// Extract just the value (third element of init_operands)
+									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+										member_value = *temp_var;
+									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										member_value = *ull_val;
+									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+										member_value = *d_val;
+									} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+										member_value = *string;
+									} else {
+										member_value = 0ULL;  // fallback
+									}
+									// Single-element brace-init for array member (e.g., arr{7} for int arr[4]):
+									// emit per-element stores (elem[0] = value, elem[1..N-1] = zero).
+									if (member.is_array && !member.array_dimensions.empty()) {
+										const size_t arr_count = member.array_dimensions[0];
+										const size_t arr_elem_size = arr_count > 0 ? member.size / arr_count : member.size;
+										const bool arr_is_fp = isFloatingPointType(member.type);
+										for (size_t i = 0; i < arr_count; ++i) {
+											IrValue arr_elem_val = (i == 0) ? member_value
+												: (arr_is_fp ? IrValue{0.0} : IrValue{0ULL});
+											MemberStoreOp arr_elem_store;
+											arr_elem_store.value.type = member.type;
+											assert(arr_elem_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											arr_elem_store.value.size_in_bits = SizeInBits{static_cast<int>(arr_elem_size * 8)};
+											arr_elem_store.value.value = arr_elem_val;
+											arr_elem_store.object = StringTable::getOrInternStringHandle("this");
+											arr_elem_store.member_name = member.getName();
+											assert(member.offset + i * arr_elem_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											arr_elem_store.offset = static_cast<int>(member.offset + i * arr_elem_size);
+											arr_elem_store.ref_qualifier = CVReferenceQualifier::None;
+											arr_elem_store.struct_type_info = nullptr;
+											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(arr_elem_store), node.name_token()));
+										}
+										continue;  // per-element stores emitted; skip single MemberStore below
+									}
 								}
 							}
 						} else if (member.default_initializer.has_value()) {

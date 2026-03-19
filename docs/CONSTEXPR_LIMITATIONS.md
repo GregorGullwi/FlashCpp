@@ -358,6 +358,49 @@ static_assert(obj.inner.value == 42);  // ✅ Works - nested access supported!
 **Note:** Multi-level nesting (e.g., `a.b.c.d`) is supported. The evaluator recursively 
 evaluates each level of member access.
 
+### ✅ Array Member Brace-Init in Constructor Initializer Lists (NEW)
+
+Member arrays initialized with a brace-init list in a constructor's member initializer list are now supported:
+
+```cpp
+struct Triplet {
+    int vals[3];
+    constexpr Triplet(int a, int b, int c) : vals{a, b, c} {}
+    constexpr int get(int i) const { return vals[i]; }
+};
+
+constexpr Triplet t(10, 20, 30);
+static_assert(t.vals[0] == 10);  // ✅ Works
+static_assert(t.vals[2] == 30);  // ✅ Works
+static_assert(t.get(1) == 20);   // ✅ Works - member function with literal index
+```
+
+Single-element and partial brace-init also correctly zero-fill trailing elements:
+
+```cpp
+struct A {
+    int arr[4];
+    constexpr A() : arr{7} {}     // ✅ arr[0]=7, arr[1..3]=0
+};
+struct B {
+    int arr[5];
+    constexpr B() : arr{1,2,3} {} // ✅ arr[0..2]=1,2,3, arr[3..4]=0
+};
+```
+
+Using a local variable as the array subscript inside a constexpr member function is also supported:
+
+```cpp
+struct Container {
+    int data[4];
+    constexpr Container() : data{1, 2, 3, 4} {}
+    constexpr int getSecond() const {
+        int idx = 1;
+        return data[idx];   // ✅ Works - local variable as subscript
+    }
+};
+```
+
 ### ⚠️ Array Access Has Partial Support
 
 Several array-related constexpr forms are supported in simple/supported shapes:
@@ -365,6 +408,8 @@ Several array-related constexpr forms are supported in simple/supported shapes:
 - direct array subscripts such as `values[1]`
 - array-element member access such as `items[1].value`
 - member-array subscripts such as `box.data[1]`, including straightforward local aggregate object cases inside constexpr functions
+- member-array brace-init in constructor initializer lists such as `arr{a, b, c}` with full C++ zero-fill for partial/single-element init
+- local variable as array subscript inside constexpr member functions such as `int idx = 1; return arr[idx];`
 
 ```cpp
 struct Container {
@@ -372,8 +417,8 @@ struct Container {
     constexpr Container() : data{1, 2, 3} {}
 };
 
-constexpr Container c;
-static_assert(c.data[0] == 1);  // ✅ Works in this simple form
+constexpr Container c{};
+static_assert(c.data[0] == 1);  // ✅ Works
 ```
 
 Array support is still incomplete in more complex cases.
@@ -552,6 +597,9 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Unsigned arithmetic wraps at the declared type's width (e.g. `unsigned int` wraps at 32 bits, `unsigned long long` wraps at 64 bits) when both operands have known exact types
 - ✅ Increment/decrement operators (`++` / `--`) correctly wrap at the declared unsigned type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`)
 - ✅ Shift-count validation for arithmetic-produced left operands: e.g. `(1u + 1u) << 40` is correctly rejected because the result of `1u + 1u` is `unsigned int` (32 bits) and 40 ≥ 32
+- ✅ Member array brace-init in constructor initializer lists (e.g., `arr{a, b, c}` for `int arr[3]`) is correctly materialized as an array value in constexpr evaluation
+- ✅ C++ aggregate-init zero-fill for partially-specified and single-element array brace-init: `arr{val}` sets `arr[0]=val` and zero-fills the rest; `arr{1,2,3}` for `int arr[5]` zero-fills elements 3 and 4
+- ✅ Local variable as array subscript inside constexpr member functions (e.g., `int idx = 1; return arr[idx];`)
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -689,6 +737,11 @@ struct Outer { Inner inner; constexpr Outer(int v) : inner(v) {} };
 constexpr Outer outer{42};
 static_assert(outer.inner.value == 42);
 
+// Good: Member array brace-init (now supported!)
+struct Triplet { int vals[3]; constexpr Triplet(int a, int b, int c) : vals{a, b, c} {} };
+constexpr Triplet t(10, 20, 30);
+static_assert(t.vals[1] == 20);
+
 // Good: Simple member array access
 struct Data { int arr[3]; constexpr Data() : arr{1, 2, 3} {} };
 constexpr Data data{};
@@ -727,14 +780,11 @@ struct CaptureExample {
     }
 };
 
-// Bad: Complex statement-heavy constexpr member logic
-struct Data {
-    int arr[3];
-    constexpr int getSecond() const {
-        int idx = 1;
-        return arr[idx];
-    }
-};
+// Note: local variable as array subscript in constexpr member functions NOW WORKS:
+// struct Data {
+//     int arr[3];
+//     constexpr int getSecond() const { int idx = 1; return arr[idx]; }  // ✅ Works
+// };
 ```
 
 ## Related Features

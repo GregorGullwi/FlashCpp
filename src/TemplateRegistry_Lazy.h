@@ -780,37 +780,7 @@ struct ConstraintEvaluationResult {
 	}
 };
 
-// Helper function to check if a type is integral
-inline bool isIntegralType(Type type) {
-	switch (type) {
-		case Type::Bool:
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-			return true;
-		default:
-			return false;
-	}
-}
-
-// Helper function to check if a type is floating point
-inline bool isFloatingPointType(Type type) {
-	switch (type) {
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-			return true;
-		default:
-			return false;
-	}
-}
+// isIntegralType and isFloatingPointType moved to AstNodeTypes_TypeSystem.h
 
 // Helper function to evaluate type traits like std::is_integral_v<T>
 inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<TemplateTypeArg>& type_args) {
@@ -1525,12 +1495,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				break;
 			}
 			case TypeTraitKind::IsIntegral:
-				result = (first.base_type == Type::Bool || first.base_type == Type::Char ||
-				         first.base_type == Type::Short || first.base_type == Type::Int ||
-				         first.base_type == Type::Long || first.base_type == Type::LongLong ||
-				         first.base_type == Type::UnsignedChar || first.base_type == Type::UnsignedShort ||
-				         first.base_type == Type::UnsignedInt || first.base_type == Type::UnsignedLong ||
-				         first.base_type == Type::UnsignedLongLong)
+				result = isIntegralType(first.base_type)
 				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:
