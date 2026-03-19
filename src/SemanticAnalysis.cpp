@@ -1027,10 +1027,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (op == "=" &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
-					const CanonicalTypeId assignment_lhs_type_id = inferExpressionType(e.get_lhs());
-					if (assignment_lhs_type_id) {
-						tryAnnotateConversion(e.get_rhs(), assignment_lhs_type_id);
-						diagnoseScopedEnumConversion(e.get_rhs(), assignment_lhs_type_id,
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					if (lhs_id) {
+						tryAnnotateConversion(e.get_rhs(), lhs_id);
+						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
 							" in assignment");
 					}
 				}
