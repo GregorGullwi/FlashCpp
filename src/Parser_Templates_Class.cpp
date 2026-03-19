@@ -1734,20 +1734,43 @@ ParseResult Parser::parse_template_declaration() {
 									    "Expected '}' after initializer arguments", peek_info());
 								}
 								
-								// Member initializer
-								if (is_brace && init_args.empty()) {
-									// Empty brace-init (e.g., arr{}): C++ requires value-initialization
-									auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-									ctor_ref.add_member_initializer(init_name, init_list_node);
-								} else if (is_brace && init_args.size() > 1) {
-									// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
-									auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-									for (auto& arg : init_args) {
-										init_list_ref.add_initializer(arg);
+								// Check if this is a base class or member initializer
+								bool is_base_init = false;
+								{
+									StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+									for (const auto& base : struct_ref.base_classes()) {
+										if (base.name == init_name) {
+											is_base_init = true;
+											ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+											break;
+										}
 									}
-									ctor_ref.add_member_initializer(init_name, init_list_node);
-								} else if (!init_args.empty()) {
-									ctor_ref.add_member_initializer(init_name, init_args[0]);
+									if (!is_base_init) {
+										for (const auto& deferred_base : struct_ref.deferred_template_base_classes()) {
+											if (deferred_base.base_template_name == init_name_handle) {
+												is_base_init = true;
+												ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+												break;
+											}
+										}
+									}
+								}
+								if (!is_base_init) {
+									// Member initializer
+									if (is_brace && init_args.empty()) {
+										// Empty brace-init (e.g., arr{}): C++ requires value-initialization
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										ctor_ref.add_member_initializer(init_name, init_list_node);
+									} else if (is_brace && init_args.size() > 1) {
+										// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										for (auto& arg : init_args) {
+											init_list_ref.add_initializer(arg);
+										}
+										ctor_ref.add_member_initializer(init_name, init_list_node);
+									} else if (!init_args.empty()) {
+										ctor_ref.add_member_initializer(init_name, init_args[0]);
+									}
 								}
 								
 								if (!consume(","_tok)) {
@@ -3177,20 +3200,43 @@ ParseResult Parser::parse_template_declaration() {
 									    "Expected '}' after initializer arguments", peek_info());
 								}
 								
-								// Member initializer
-								if (is_brace && init_args.empty()) {
-									// Empty brace-init (e.g., arr{}): C++ requires value-initialization
-									auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-									ctor_ref.add_member_initializer(init_name, init_list_node);
-								} else if (is_brace && init_args.size() > 1) {
-									// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
-									auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-									for (auto& arg : init_args) {
-										init_list_ref.add_initializer(arg);
+								// Check if this is a base class or member initializer
+								bool is_base_init = false;
+								{
+									StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+									for (const auto& base : struct_ref.base_classes()) {
+										if (base.name == init_name) {
+											is_base_init = true;
+											ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+											break;
+										}
 									}
-									ctor_ref.add_member_initializer(init_name, init_list_node);
-								} else if (!init_args.empty()) {
-									ctor_ref.add_member_initializer(init_name, init_args[0]);
+									if (!is_base_init) {
+										for (const auto& deferred_base : struct_ref.deferred_template_base_classes()) {
+											if (deferred_base.base_template_name == init_name_handle) {
+												is_base_init = true;
+												ctor_ref.add_base_initializer(init_name_handle, std::move(init_args));
+												break;
+											}
+										}
+									}
+								}
+								if (!is_base_init) {
+									// Member initializer
+									if (is_brace && init_args.empty()) {
+										// Empty brace-init (e.g., arr{}): C++ requires value-initialization
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										ctor_ref.add_member_initializer(init_name, init_list_node);
+									} else if (is_brace && init_args.size() > 1) {
+										// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										for (auto& arg : init_args) {
+											init_list_ref.add_initializer(arg);
+										}
+										ctor_ref.add_member_initializer(init_name, init_list_node);
+									} else if (!init_args.empty()) {
+										ctor_ref.add_member_initializer(init_name, init_args[0]);
+									}
 								}
 								
 								if (!consume(","_tok)) {
