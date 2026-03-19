@@ -950,7 +950,7 @@ The right split is:
 	- When `sema_` is null (e.g., template instantiation contexts without sema)
 	- When `sema_normalized_current_function_` is false (function body not visited by sema, e.g. template instantiation member functions)
 - **Sema gaps fixed:**
-	- Comma-separated variable declarations (`int x = 3, y = 4;`) — the parser wraps these in a synthetic `BlockNode`; sema now detects all-`VariableDeclarationNode` blocks and processes them without a scope push, so all declarators are visible in the enclosing scope.
+	- Comma-separated variable declarations (`int x = 3, y = 4;`) — `parse_declaration_or_function_definition` in `Parser_Decl_FunctionOrVar.cpp` (used for built-in type keywords) now sets `is_synthetic_decl_list=true` on the wrapper `BlockNode`, matching `Parser_Statements.cpp`. This ensures all declarators are visible in the enclosing sema scope.
 	- `ArraySubscriptNode` handler added to `inferExpressionType` — resolves element type by stripping one array dimension (or pointer level).
 	- Struct member function lookup fallback in `tryAnnotateCallArgConversions` — for qualified calls where symbol table lookup fails, searches `gTypesByName` struct member functions using two-pass approach (exact `DeclarationNode` address match first, then name+arity match only when unambiguous).
 - **Remaining known limitation:** One test (`test_member_template_func_in_specialization_ret0.cpp`) — template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address, and the struct name in `gTypesByName` may include template parameters preventing lookup. Documented for Phase 16+.

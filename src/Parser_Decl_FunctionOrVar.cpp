@@ -1062,6 +1062,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (peek() == ","_tok) {
 			// Create a block to hold all declarations
 			auto [block_node, block_ref] = emplace_node_ref<BlockNode>();
+			block_ref.set_synthetic_decl_list(true);
 			
 			// Add the first declaration to the block
 			block_ref.add_statement_node(global_var_node);
