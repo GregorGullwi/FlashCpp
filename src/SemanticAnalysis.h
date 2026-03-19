@@ -34,6 +34,10 @@ struct LambdaInfo;
 //   Phase 6: Function call argument conversions + callable operator() resolution
 //   Phase 7: Ternary branch conversions, assignment RHS, variable initialiser
 //   Phase 8: Constructor arg conversions, enum/pointer contextual bool, float→int folding
+//   Phase 9-12: Global/static assignment, sema target verification, buildConversionPlan,
+//               enum→primitive annotations, identifier type inference fallback
+//   Phase 13: Unary operator integral promotions, scoped enum diagnostic,
+//             inferExpressionType expansion (~/!/++/--/sizeof/alignof)
 
 class SemanticAnalysis {
 public:
