@@ -30,6 +30,62 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 
 	return std::nullopt;
 }
+
+int get_promoted_shift_width_bits(const EvalResult& value) {
+	auto type_opt = try_get_type_from_eval_result(value);
+	if (!type_opt.has_value()) {
+		return 64;
+	}
+
+	const TypeSpecifierNode& type_spec = *type_opt;
+	if (!is_integral_type(type_spec.type())) {
+		return 64;
+	}
+
+	const Type promoted_type = promote_integer_type(type_spec.type());
+	const int promoted_width = get_type_size_bits(promoted_type);
+	if (promoted_width > 0) {
+		return promoted_width;
+	}
+
+	return type_spec.size_in_bits() > 0 ? type_spec.size_in_bits() : 64;
+}
+
+std::optional<TypeSpecifierNode> try_get_promoted_shift_result_type(const EvalResult& value) {
+	auto type_opt = try_get_type_from_eval_result(value);
+	if (!type_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	const TypeSpecifierNode& type_spec = *type_opt;
+	if (!is_integral_type(type_spec.type())) {
+		return std::nullopt;
+	}
+
+	const Type promoted_type = promote_integer_type(type_spec.type());
+	const int promoted_width = get_type_size_bits(promoted_type);
+	if (promoted_width <= 0) {
+		return std::nullopt;
+	}
+
+	return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width);
+}
+
+EvalResult make_shift_result(const EvalResult& lhs, unsigned long long value) {
+	EvalResult result = EvalResult::from_uint(value);
+	if (auto promoted_type = try_get_promoted_shift_result_type(lhs)) {
+		result.set_exact_type(*promoted_type);
+	}
+	return result;
+}
+
+EvalResult make_shift_result(const EvalResult& lhs, long long value) {
+	EvalResult result = EvalResult::from_int(value);
+	if (auto promoted_type = try_get_promoted_shift_result_type(lhs)) {
+		result.set_exact_type(*promoted_type);
+	}
+	return result;
+}
 }
 
 const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
@@ -1304,8 +1360,11 @@ std::optional<long long> Evaluator::safe_mul(long long a, long long b) {
 }
 
 // Perform left shift with validation and overflow checking, return result or nullopt on error
-std::optional<long long> Evaluator::safe_shl(long long a, long long b) {
-	if (b < 0 || b >= 64) {
+std::optional<long long> Evaluator::safe_shl(long long a, long long b, int width_bits) {
+	if (width_bits <= 0 || width_bits > 64) {
+		width_bits = 64;
+	}
+	if (b < 0 || b >= width_bits) {
 		return std::nullopt; // Negative shift or shift >= bit width is undefined
 	}
 	if (a == 0) {
@@ -1324,8 +1383,11 @@ std::optional<long long> Evaluator::safe_shl(long long a, long long b) {
 }
 
 // Perform right shift with validation, return result or nullopt on error
-std::optional<long long> Evaluator::safe_shr(long long a, long long b) {
-	if (b < 0 || b >= 64) {
+std::optional<long long> Evaluator::safe_shr(long long a, long long b, int width_bits) {
+	if (width_bits <= 0 || width_bits > 64) {
+		width_bits = 64;
+	}
+	if (b < 0 || b >= width_bits) {
 		return std::nullopt; // Negative shift or shift >= bit width is undefined
 	}
 	return a >> b; // Right shift never overflows mathematically
@@ -1409,16 +1471,16 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (op == "|")  return EvalResult::from_uint(lv | rv);
 		if (op == "^")  return EvalResult::from_uint(lv ^ rv);
 		if (op == "<<") {
-			// Note: we check against 64 (the storage width of unsigned long long)
-			// rather than the declared type's width because exact_type is not
-			// reliably propagated through all operations yet.  See
-			// docs/CONSTEXPR_LIMITATIONS.md "Shift-count validation" for details.
-			if (rv >= 64) return EvalResult::error("Left shift count >= width of type in constant expression");
-			return EvalResult::from_uint(lv << rv);
+			if (rv >= static_cast<unsigned long long>(get_promoted_shift_width_bits(lhs))) {
+				return EvalResult::error("Left shift count >= width of type in constant expression");
+			}
+			return make_shift_result(lhs, lv << rv);
 		}
 		if (op == ">>") {
-			if (rv >= 64) return EvalResult::error("Right shift count >= width of type in constant expression");
-			return EvalResult::from_uint(lv >> rv);
+			if (rv >= static_cast<unsigned long long>(get_promoted_shift_width_bits(lhs))) {
+				return EvalResult::error("Right shift count >= width of type in constant expression");
+			}
+			return make_shift_result(lhs, lv >> rv);
 		}
 		if (op == "==" ) return EvalResult::from_bool(lv == rv);
 		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
@@ -1478,14 +1540,14 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 	} else if (op == "^") {
 		return EvalResult::from_int(lhs_val ^ rhs_val);
 	} else if (op == "<<") {
-		if (auto result = safe_shl(lhs_val, rhs_val)) {
-			return EvalResult::from_int(*result);
+		if (auto result = safe_shl(lhs_val, rhs_val, get_promoted_shift_width_bits(lhs))) {
+			return make_shift_result(lhs, *result);
 		} else {
 			return EvalResult::error("Left shift overflow or invalid shift count in constant expression");
 		}
 	} else if (op == ">>") {
-		if (auto result = safe_shr(lhs_val, rhs_val)) {
-			return EvalResult::from_int(*result);
+		if (auto result = safe_shr(lhs_val, rhs_val, get_promoted_shift_width_bits(lhs))) {
+			return make_shift_result(lhs, *result);
 		} else {
 			return EvalResult::error("Invalid shift count in constant expression");
 		}
