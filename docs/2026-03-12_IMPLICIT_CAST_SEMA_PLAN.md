@@ -883,7 +883,7 @@ The right split is:
 	- `SizeofExprNode` and `AlignofExprNode` now return `Type::UnsignedLongLong` (matching codegen's 64-bit `size_t`).
 - Scoped enum diagnostic: `diagnoseScopedEnumConversion()` helper throws `CompileError` when an implicit conversion from a scoped enum (`enum class`) to a different type is attempted. Active in variable initialization and return statement contexts. `tryAnnotateConversion` silently rejects scoped enum source types (returning false) so that binary operator comparisons of same-type scoped enums (`Color::Red == Color::Green`) continue to work correctly.
 - `normalizeExpression` for `UnaryOperatorNode`: now calls `tryAnnotateUnaryOperandPromotion(e)` for `+`, `-`, `~` operators (previously only handled `!` via `tryAnnotateContextualBool`).
-- Tests: `test_unary_promotion_sema_ret0` (unary +/-/~ on char/short/bool/unsigned char with integral promotion), `test_sizeof_alignof_sema_ret0` (sizeof/alignof type inference in expressions), `test_scoped_enum_implicit_conv_fail` (scoped enum → int rejected). Suite: 1590 pass / 0 fail / 57 expected-fail.
+- Tests: `test_unary_promotion_sema_ret0` (unary +/-/~ on char/short/bool/unsigned char with integral promotion), `test_sizeof_alignof_sema_ret0` (sizeof/alignof type inference in expressions), `test_scoped_enum_implicit_conv_fail` (scoped enum → int rejected). Suite: 1588 pass / 0 fail / 57 expected-fail.
 
 **Known limitations (Phase 14+):**
 - User-defined `operator bool()` / converting constructors remain in codegen.

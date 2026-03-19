@@ -866,7 +866,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
 				tryAnnotateConversion(*init, decl_type_id);
-				diagnoseScopedEnumConversion(*init, decl_type_id, "");
+				diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
 			}
 			normalizeExpression(*init, ctx);
 		}
