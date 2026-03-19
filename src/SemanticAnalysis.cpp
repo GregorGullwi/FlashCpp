@@ -829,6 +829,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// before the normal traversal (which just counts).
 			if (ctx.current_function_return_type_id) {
 				tryAnnotateReturnConversion(*expr, ctx);
+				diagnoseScopedEnumConversion(*expr, *ctx.current_function_return_type_id,
+					" in return statement");
 			}
 			normalizeExpression(*expr, ctx);
 		}
@@ -862,8 +864,10 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				}
 			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
-			if (decl_type_id)
+			if (decl_type_id) {
 				tryAnnotateConversion(*init, decl_type_id);
+				diagnoseScopedEnumConversion(*init, decl_type_id, "");
+			}
 			normalizeExpression(*init, ctx);
 		}
 	}
@@ -1472,6 +1476,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(tt.template as<TypeSpecifierNode>());
 				return {};
 			}
+			else if constexpr (std::is_same_v<T, SizeofExprNode> ||
+			                   std::is_same_v<T, AlignofExprNode>) {
+				// sizeof and alignof always return size_t (UnsignedLongLong on 64-bit).
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::UnsignedLongLong;
+				return type_context_.intern(desc);
+			}
 			return {};
 		}, expr);
 	}
@@ -1489,6 +1500,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	}
 
 	return {};
+}
+
+// --- Scoped enum diagnostic helper ---
+// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
+
+void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+	const char* context_description) {
+	if (!target_type_id || !expr_node.is<ExpressionNode>()) return;
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id || expr_type_id == target_type_id) return;
+
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+
+	if (from_desc.base_type != Type::Enum || to_desc.base_type == Type::Enum) return;
+	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size()) return;
+
+	if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+		if (ei->is_scoped) {
+			throw CompileError("cannot implicitly convert from scoped enum '" +
+				std::string(StringTable::getStringView(ei->name)) +
+				"' to '" + std::string(getTypeName(to_desc.base_type)) +
+				"'" + std::string(context_description) + "; use static_cast");
+		}
+	}
 }
 
 // --- Core conversion annotation helper ---
@@ -1520,6 +1556,16 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
 	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
+	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
+	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
+	// check isScopedEnum() and throw CompileError themselves.
+	if (from_desc.base_type == Type::Enum && from_desc.type_index.is_valid() &&
+		from_desc.type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+			if (ei->is_scoped)
+				return false;
+		}
+	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);

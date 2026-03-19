@@ -163,6 +163,12 @@ private:
 	void addLocalType(StringHandle name, CanonicalTypeId type_id);
 	CanonicalTypeId lookupLocalType(StringHandle name) const;
 
+	// Diagnose implicit conversion from scoped enum.
+	// C++11+: scoped enums do not allow implicit conversion to other types.
+	// Throws CompileError if expr_node is a scoped enum and target type differs.
+	void diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
+		const char* context_description);
+
 	// State
 	Parser& parser_;
 	CompileContext& context_;
