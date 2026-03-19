@@ -2031,10 +2031,15 @@
 										}
 										continue;  // per-element stores emitted; skip single MemberStore below
 									}
-									// Brace-initializers are only supported for array members in constructor initializer lists.
-									throw CompileError("Brace-initializer used on non-array member '" +
-										std::string(StringTable::getStringView(member.getName())) +
-										"'. Use a scalar initializer (e.g., member(val)) for non-array members.");
+									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
+									if (init_expr_node.as<InitializerListNode>().size() == 0) {
+										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
+									} else {
+										// Non-empty brace-initializers on non-array members are not yet supported.
+										throw CompileError("Brace-initializer used on non-array member '" +
+											std::string(StringTable::getStringView(member.getName())) +
+											"'. Use a scalar initializer (e.g., member(val)) for non-array members.");
+									}
 								} else if (!init_expr_node.is<ExpressionNode>()) {
 									member_value = 0ULL;  // unexpected node type: fall back to zero
 								} else {

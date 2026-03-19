@@ -1408,8 +1408,14 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			}
 			
 			// Add member initializer to constructor
-			if (ctor_ref && !init_args.empty()) {
-				if (is_brace && init_args.size() > 1) {
+			if (ctor_ref) {
+				if (is_brace && init_args.empty()) {
+					// Empty brace-init (e.g., arr{}): C++ requires value-initialization
+					// (zero-init for scalars/arrays). Store an empty InitializerListNode so
+					// the constexpr evaluator and IR generator can zero-fill correctly.
+					auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+					ctor_ref->add_member_initializer(init_name, init_list_node);
+				} else if (is_brace && init_args.size() > 1) {
 					// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
 					// so the constexpr evaluator can materialize array/struct members correctly.
 					auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
@@ -1417,7 +1423,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 						init_list_ref.add_initializer(arg);
 					}
 					ctor_ref->add_member_initializer(init_name, init_list_node);
-				} else {
+				} else if (!init_args.empty()) {
 					ctor_ref->add_member_initializer(init_name, init_args[0]);
 				}
 			}

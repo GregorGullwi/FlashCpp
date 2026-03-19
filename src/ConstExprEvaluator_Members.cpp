@@ -3522,6 +3522,9 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 				} else {
 					member_result = EvalResult::error("Member struct type not found for brace-init");
 				}
+			} else if (init_list.size() == 0) {
+				// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
+				member_result = make_zero_element(member_info->type);
 			} else {
 				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
 					std::string(mem_init.member_name) + "' in constexpr constructor");
