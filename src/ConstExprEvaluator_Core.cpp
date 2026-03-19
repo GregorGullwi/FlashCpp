@@ -3163,13 +3163,18 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				continue;
 			}
 			
-			// Execute the block of statements for this case/default
-			auto block_result = evaluate_block_with_bindings(
-				block_to_exec,
-				bindings,
-				context,
-				"Switch case body is not a block",
-				kStatementExecutedWithoutReturn);
+			// Execute the block of statements for this case/default.
+			// The parser normally wraps case bodies in a BlockNode, but
+			// handle bare statements (e.g. a single ReturnStatementNode)
+			// gracefully in case the AST representation ever changes.
+			EvalResult block_result = block_to_exec.is<BlockNode>()
+				? evaluate_block_with_bindings(
+					block_to_exec,
+					bindings,
+					context,
+					"Switch case body is not a block",
+					kStatementExecutedWithoutReturn)
+				: evaluate_statement_with_bindings(block_to_exec, bindings, context);
 			
 			if (block_result.success()) {
 				return block_result;  // Propagate return value
