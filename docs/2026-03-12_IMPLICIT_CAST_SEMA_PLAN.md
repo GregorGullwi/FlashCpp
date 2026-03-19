@@ -893,7 +893,7 @@ The right split is:
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
 - ~~Scoped enum diagnostic covers variable init and return contexts; assignment RHS (`scoped_val = x;` where x is a scoped enum) and function call argument contexts are not yet diagnosed. Scoped enum used in binary arithmetic (e.g., `scoped_val + 1`) silently resolves to underlying type without diagnostic.~~ (resolved in Phase 14)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.
+- ~~Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.~~ (resolved in Phase 15)
 
 ### Phase 14: scoped enum diagnostic expansion + `inferExpressionType` coverage ✅
 - `diagnoseScopedEnumBinaryOperands`: new diagnostic function for scoped enums used in binary arithmetic, comparison (cross-type), compound assignment, and shift operations. Per C++20, scoped enums only support relational/equality operators between values of the same scoped enum type; all other binary operator usage with a scoped enum operand is ill-formed.
@@ -924,20 +924,22 @@ The right split is:
 - Plain bitwise operators (`&`, `|`, `^`) with scoped enum operands are not diagnosed. The `diagnoseScopedEnumBinaryOperands` guard checks `is_arithmetic || is_comparison || is_compound_assign || is_shift`, which covers `+`, `-`, `*`, `/`, `%`, comparisons, compound assignments (`&=`, `|=`, `^=`), and shifts — but not the plain bitwise forms. Per C++20, `Color::Red | Color::Green` is ill-formed for scoped enums (no built-in bitwise operators). This gap is consistent with the broader sema annotation coverage (which also does not handle plain bitwise operators for type annotation).
 
 ### Phase 15: remove codegen conversion fallbacks for sema-covered contexts ✅
-- **Goal:** For every conversion context where sema already annotates (binary arithmetic, shift, unary promotion, return, call args, constructor args, variable init, assignment, compound assignment, ternary branches): replace the codegen-local `generateTypeConversion` fallback with a sema-first pattern. Codegen trusts sema exclusively for standard arithmetic type conversions. Any remaining fallback is logged as a warning.
+- **Goal:** For every conversion context where sema already annotates (binary arithmetic, shift, unary promotion, return, call args, constructor args, variable init, assignment, compound assignment, ternary branches): replace the codegen-local `generateTypeConversion` fallback with hard enforcement. Codegen trusts sema exclusively for standard arithmetic type conversions. Any remaining fallback for arithmetic types throws `InternalError`.
 - Added `is_standard_arithmetic_type()` helper in `AstNodeTypes_DeclNodes.h`: returns true for integer types, floating-point types, and bool — the types where sema owns implicit conversion annotation.
+- Added `hasNormalizedBody()` tracking in `SemanticAnalysis`: sema records which function bodies it normalized; codegen's `IrGenerator` checks this via `sema_normalized_current_function_` before enforcing, correctly excluding template instantiation contexts that sema never visited.
+- Added `hasUnresolvedCallArgs()` in `SemanticAnalysis`: tracks `FunctionCallNode` pointers where sema attempted call-arg annotation but couldn't resolve the callee (e.g. template specialization with separate `DeclarationNode` copies). Codegen checks this to suppress hard enforcement for known unresolvable cases.
 - **Fallback sites audited and converted (11 total):**
-	1. **Function call arguments** (`IrGenerator_Call_Direct.cpp`): sema annotation checked first; fallback with FLASH_LOG warning for arithmetic types.
-	2. **Return value conversion** (`IrGenerator_Visitors_Namespace.cpp`): non-struct return conversions protected. Same-type size mismatches (e.g., int 64→32 from function-pointer call) excluded from assertion since those are size adjustments, not type conversions.
-	3. **Variable init** (`IrGenerator_Stmt_Decl.cpp`): sema annotation checked first; fallback with warning for arithmetic types.
-	4. **Constructor arguments** (`IrGenerator_Expr_Conversions.cpp`): sema annotation checked first; fallback with warning for arithmetic types.
-	5. **Unary promotion** (`IrGenerator_Expr_Conversions.cpp`): sema annotation checked first; fallback with warning for promotable types (bool, small integers).
-	6. **Global/static assignment** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; fallback with warning for arithmetic types.
-	7. **Compound assignment to global: LHS conversion** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first.
-	8. **Compound assignment to global: shift RHS promotion** (`IrGenerator_Expr_Operators.cpp`): now tries sema annotation before falling back (previously was codegen-only).
-	9. **Compound assignment to global: RHS conversion** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first.
-	10. **Local assignment** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; fallback with warning for arithmetic types.
-	11. **Binary arithmetic LHS/RHS** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; fallback with warning for arithmetic types. Shift RHS promotion now also tries sema annotation before falling back.
+	1. **Function call arguments** (`IrGenerator_Call_Direct.cpp`): sema annotation checked first; `InternalError` for arithmetic types when sema missed (with `hasUnresolvedCallArgs` escape hatch).
+	2. **Return value conversion** (`IrGenerator_Visitors_Namespace.cpp`): non-struct return conversions protected with `InternalError`. Same-type size mismatches (e.g., int 64→32 from function-pointer call) excluded since those are size adjustments, not type conversions.
+	3. **Variable init** (`IrGenerator_Stmt_Decl.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	4. **Constructor arguments** (`IrGenerator_Expr_Conversions.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	5. **Unary promotion** (`IrGenerator_Expr_Conversions.cpp`): sema annotation checked first; `InternalError` for promotable types (bool, small integers). Fallback preserved when `sema_` is null (template instantiation contexts).
+	6. **Global/static assignment** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	7. **Compound assignment to global: LHS conversion** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	8. **Compound assignment to global: shift RHS promotion** (`IrGenerator_Expr_Operators.cpp`): now tries sema annotation before falling back (previously was codegen-only); `InternalError` for arithmetic types.
+	9. **Compound assignment to global: RHS conversion** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	10. **Local assignment** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; `InternalError` for arithmetic types.
+	11. **Binary arithmetic LHS/RHS** (`IrGenerator_Expr_Operators.cpp`): sema annotation checked first; `InternalError` for arithmetic types. Shift RHS promotion now also tries sema annotation before falling back; `InternalError` when missed.
 - **Contexts that keep unconditional fallback (sema doesn't own these yet):**
 	- Struct/user-defined type conversions (user-defined `operator T()`, converting constructors)
 	- Enum types (resolved to underlying type by `generateTypeConversion`)
@@ -946,10 +948,12 @@ The right split is:
 	- Compound assignment result back-conversion (`commonType → lhsType`, C++20 `[expr.ass]/7`)
 	- Ternary branch conversions (sema-determined `common_type` used directly, not a fallback pattern)
 	- When `sema_` is null (e.g., template instantiation contexts without sema)
-- **Sema gaps discovered (logged as warnings, not hard errors):**
-	- Comma-separated variable declarations (`int x = 3, y = 4;`) — sema `addLocalType` only tracks the first declarator; subsequent declarators in the same statement are not added to `scope_stack_`, causing `inferExpressionType` to return invalid for those identifiers in downstream expressions.
-	- Template-instantiated function call arguments — sema may not visit template instantiation contexts, leaving function call argument annotations missing.
-	- These gaps are tracked as known limitations for future phases.
+	- When `sema_normalized_current_function_` is false (function body not visited by sema, e.g. template instantiation member functions)
+- **Sema gaps fixed:**
+	- Comma-separated variable declarations (`int x = 3, y = 4;`) — the parser wraps these in a synthetic `BlockNode`; sema now detects all-`VariableDeclarationNode` blocks and processes them without a scope push, so all declarators are visible in the enclosing scope.
+	- `ArraySubscriptNode` handler added to `inferExpressionType` — resolves element type by stripping one array dimension (or pointer level).
+	- Struct member function lookup fallback in `tryAnnotateCallArgConversions` — for qualified calls where symbol table lookup fails, searches `gTypesByName` struct member functions using two-pass approach (exact `DeclarationNode` address match first, then name+arity match only when unambiguous).
+- **Remaining known limitation:** One test (`test_member_template_func_in_specialization_ret0.cpp`) — template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address, and the struct name in `gTypesByName` may include template parameters preventing lookup. Documented for Phase 16+.
 - Tests: `test_phase15_sema_fallback_removal_ret0`. Suite: 1599 pass / 0 fail / 64 expected-fail.
 
 **Known limitations (Phase 16+):**
@@ -959,11 +963,11 @@ The right split is:
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `ArraySubscriptNode`, `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
+- `inferExpressionType` still does not handle: `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
 - Plain bitwise operators (`&`, `|`, `^`) with scoped enum operands are not diagnosed.
-- Phase 15 codegen fallback warnings still fire for sema gaps (comma-separated declarations, template instantiation contexts). The FLASH_LOG warnings can be used to track progress on closing these gaps.
-- Sema scope-stack does not track variables from comma-separated declarations — only the first declarator is added to `scope_stack_`. Fix: the `VariableDeclarationNode` handler should iterate all declarators in multi-declaration statements.
+- Template specialization callee resolution: `test_member_template_func_in_specialization_ret0.cpp` still triggers the `hasUnresolvedCallArgs` escape hatch because template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address. Improve template specialization callee resolution so `tryAnnotateCallArgConversions` can annotate these cases.
+- `sema_normalized_current_function_` is only set in `visitFunctionDeclarationNode`; constructor and destructor codegen entry points do not set this flag, so Phase 15 hard enforcement does not cover constructor/destructor bodies even when sema normalized them.
 
 ### Parallel rollout guidance
 
@@ -1794,7 +1798,7 @@ Mitigation:
 
 - phase each migrated context fully
 - once a context is rewritten semantically, remove its codegen-local standard-conversion policy instead of leaving duplicate fallback paths
-- **Phase 15 status:** All 11 codegen fallback sites for standard conversions now use "sema-first" pattern. For standard arithmetic types, a FLASH_LOG warning is emitted when the fallback is used, documenting the sema gap. Non-arithmetic types (struct, enum, user_defined, etc.) keep unconditional fallbacks since sema doesn't own those yet. The dual-path "sema annotation wins; codegen policy is fallback" pattern is eliminated for standard arithmetic conversions — any remaining fallback invocation is a documented sema gap, not silent policy duplication.
+- **Phase 15 status:** All 11 codegen fallback sites for standard conversions now use hard enforcement. For standard arithmetic types in sema-normalized function bodies, codegen throws `InternalError` if sema missed the annotation — the fallback is no longer silent. Non-arithmetic types (struct, enum, user_defined, etc.) keep unconditional fallbacks since sema doesn't own those yet. Functions not normalized by sema (e.g. template instantiation member functions) are excluded via `sema_normalized_current_function_`. The dual-path "sema annotation wins; codegen policy is fallback" pattern is fully eliminated for standard arithmetic conversions.
 
 #### Risk 6: diagnostics remain split across parser / sema / codegen
 
