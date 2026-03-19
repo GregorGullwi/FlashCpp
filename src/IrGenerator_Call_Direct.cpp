@@ -974,8 +974,8 @@
 						standard_conversion.rank != ConversionRank::UserDefined) {
 						if (sema_ && is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type)) {
 							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for function call argument conversion (",
-								type_to_string(arg_type, TypeQualifier::None), " -> ",
-								type_to_string(param_base_type, TypeQualifier::None), ") — sema gap");
+								getTypeName(arg_type), " -> ",
+								getTypeName(param_base_type), ") — sema gap");
 						}
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
 						arg_type = argumentIrOperands.type;

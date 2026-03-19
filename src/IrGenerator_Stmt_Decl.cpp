@@ -1492,8 +1492,8 @@
 								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
 									if (sema_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type)) {
 										FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for variable init conversion (",
-											type_to_string(init_type, TypeQualifier::None), " -> ",
-											type_to_string(decl_type, TypeQualifier::None), ") — sema gap");
+											getTypeName(init_type), " -> ",
+											getTypeName(decl_type), ") — sema gap");
 									}
 									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
 								}
