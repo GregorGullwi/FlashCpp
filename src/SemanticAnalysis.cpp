@@ -1598,7 +1598,7 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node, Ca
 // C++20: scoped enums only support relational/equality operators between values
 // of the same scoped enum type.  Any other binary operator usage is ill-formed.
 
-static bool isScopedEnumDesc(const CanonicalTypeDesc& desc) {
+static bool isScopedEnum(const CanonicalTypeDesc& desc) {
 	if (desc.base_type != Type::Enum) return false;
 	if (!desc.type_index.is_valid() || desc.type_index.value >= gTypeInfo.size()) return false;
 	if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
@@ -1606,7 +1606,7 @@ static bool isScopedEnumDesc(const CanonicalTypeDesc& desc) {
 	return false;
 }
 
-static std::string scopedEnumName(const CanonicalTypeDesc& desc) {
+static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
 	if (desc.type_index.is_valid() && desc.type_index.value < gTypeInfo.size()) {
 		if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
 			return std::string(StringTable::getStringView(ei->name));
@@ -1622,8 +1622,8 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
-	const bool lhs_scoped = isScopedEnumDesc(lhs_desc);
-	const bool rhs_scoped = isScopedEnumDesc(rhs_desc);
+	const bool lhs_scoped = isScopedEnum(lhs_desc);
+	const bool rhs_scoped = isScopedEnum(rhs_desc);
 	if (!lhs_scoped && !rhs_scoped) return;
 
 	const std::string_view op = bin_op.op();
@@ -1640,7 +1640,7 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 
 	// All other binary ops with a scoped enum operand are ill-formed.
 	const std::string enum_name = lhs_scoped
-		? scopedEnumName(lhs_desc) : scopedEnumName(rhs_desc);
+		? getScopedEnumName(lhs_desc) : getScopedEnumName(rhs_desc);
 	throw CompileError("invalid operands to binary expression involving scoped enum '" +
 		enum_name + "' with operator '" + std::string(op) +
 		"'; use static_cast for explicit conversion");
