@@ -370,7 +370,17 @@
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
 					} else {
-						// Not a struct type - use standard type conversion
+						// Phase 15: sema should annotate standard arithmetic return conversions.
+						// Log a warning when sema missed it (inferExpressionType may fail for
+						// some expression contexts). Same-type size mismatches are not type
+						// conversions — no annotation expected.
+						if (sema_ && expr_type != return_type &&
+							is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
+							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for return conversion (",
+								type_to_string(expr_type, TypeQualifier::None), " -> ",
+								type_to_string(return_type, TypeQualifier::None), ") — sema gap");
+						}
+						// Fallback for non-arithmetic types (enum, user_defined, etc.)
 						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				}

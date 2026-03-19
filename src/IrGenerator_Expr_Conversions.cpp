@@ -1324,13 +1324,12 @@
 					}
 				}
 			}
-			// Fallback: apply integral promotion if operand is a small integer type
-			if (!promoted && is_integer_type(operandType) && get_integer_rank(operandType) < 3) {
+			// Phase 15: sema must annotate all unary operand integral promotions.
+			if (!promoted && sema_ && (operandType == Type::Bool ||
+				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
+				FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for unary promotion (",
+					type_to_string(operandType, TypeQualifier::None), " -> int) — sema gap");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
-				operandType = Type::Int;
-			}
-			if (!promoted && operandType == Type::Bool) {
-				operandIrOperands = generateTypeConversion(operandIrOperands, Type::Bool, Type::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
 			// Unary plus is a no-op after promotion — return immediately without
@@ -2376,11 +2375,17 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			}
 		}
 
-		// 2. Fallback: standard primitive conversion for non-pointer parameters.
+		// Phase 15: sema must annotate all standard constructor arg conversions.
 		if (!sema_applied && param_type.pointer_depth() == 0 &&
 			arg_result.type != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+				if (sema_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type)) {
+					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for constructor arg conversion (",
+						type_to_string(arg_result.type, TypeQualifier::None), " -> ",
+						type_to_string(param_base_type, TypeQualifier::None), ") — sema gap");
+				}
+				// Fallback for non-arithmetic types (enum, etc.)
 				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
 			}
 		}

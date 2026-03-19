@@ -676,10 +676,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
-					// Prefer sema annotation (consistent with binary operator path); fall back to local policy.
-					// Pass expected_target=gsi.type so the sema annotation is verified against the LHS type.
+					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
 						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
+						if (sema_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
+							FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for global/static assignment (",
+								type_to_string(rhsExprResult.type, TypeQualifier::None), " -> ",
+								type_to_string(gsi.type, TypeQualifier::None), ")");
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
@@ -760,21 +763,39 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded});
 					if (gsi.type != commonType) {
-						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType))
+						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
+							if (sema_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
+								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global LHS (",
+									type_to_string(gsi.type, TypeQualifier::None), " -> ",
+									type_to_string(commonType, TypeQualifier::None), ")");
 							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+						}
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 					// NOT conversion to the LHS/result type. Other operators convert RHS to commonType.
+					// Phase 15: prefer sema annotation; log warning on fallback.
 					if (is_shift_op) {
 						// Reject float RHS before promotion to avoid unnecessary conversion work.
 						if (is_floating_point_type(rhs_result.type))
 							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 						const Type promoted_rhs = promote_integer_type(rhs_result.type);
-						if (rhs_result.type != promoted_rhs)
-							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+						if (rhs_result.type != promoted_rhs) {
+							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
+								if (sema_ && is_standard_arithmetic_type(rhs_result.type))
+									FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
+										type_to_string(rhs_result.type, TypeQualifier::None), " -> ",
+										type_to_string(promoted_rhs, TypeQualifier::None), ")");
+								rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+							}
+						}
 					} else if (rhs_result.type != commonType) {
-						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType))
+						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
+							if (sema_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
+								FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for compound assign global RHS (",
+									type_to_string(rhs_result.type, TypeQualifier::None), " -> ",
+									type_to_string(commonType, TypeQualifier::None), ")");
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+						}
 					}
 
 					// Select the correct opcode for the common type.
@@ -2139,11 +2160,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
-			// Prefer sema annotation (consistent with global assignment and binary operator paths);
-			// pass expected_target=lhsType so the annotation is verified before being applied.
+			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {
-				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType))
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
+					if (sema_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(lhsType))
+						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for local assignment (",
+							type_to_string(rhsType, TypeQualifier::None), " -> ",
+							type_to_string(lhsType, TypeQualifier::None), ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+				}
 			}
 			// Now both are the same type, create assignment
 			AssignmentOp assign_op;
@@ -2174,23 +2199,41 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
 
-		// Generate conversions if needed — prefer sema annotations, fall back to local policy.
+		// Phase 15: generate conversions — prefer sema annotations; log warning on fallback.
 		// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 		// guard, expected-target verification, enum type mismatch handling, and conversion.
-		// Pass expected_target=commonType so the sema annotation is verified against the
-		// codegen-computed common type before applying the conversion.
 		if (lhsType != commonType) {
-			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType))
+			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
+				if (sema_ && is_standard_arithmetic_type(lhsType) && is_standard_arithmetic_type(commonType))
+					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary LHS (",
+						type_to_string(lhsType, TypeQualifier::None), " -> ",
+						type_to_string(commonType, TypeQualifier::None), ")");
 				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
+			}
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
 		// NOT conversion to the LHS/result type.  Only apply sema-annotated promotion
 		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
+		// Phase 15: if sema missed the promotion and it's needed, log and apply fallback.
 		if (is_shift_op) {
-			tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs());
+			const Type promoted_rhs = promote_integer_type(rhsType);
+			if (rhsType != promoted_rhs) {
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
+					if (sema_ && is_standard_arithmetic_type(rhsType))
+						FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for shift RHS promotion (",
+							type_to_string(rhsType, TypeQualifier::None), " -> ",
+							type_to_string(promoted_rhs, TypeQualifier::None), ")");
+					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, promoted_rhs, binaryOperatorNode.get_token());
+				}
+			}
 		} else if (rhsType != commonType) {
-			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType))
+			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
+				if (sema_ && is_standard_arithmetic_type(rhsType) && is_standard_arithmetic_type(commonType))
+					FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for binary RHS (",
+						type_to_string(rhsType, TypeQualifier::None), " -> ",
+						type_to_string(commonType, TypeQualifier::None), ")");
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
+			}
 		}
 
 		// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the behavior is equivalent

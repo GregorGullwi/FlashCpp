@@ -1485,11 +1485,18 @@
 									}
 								}
 							}
+							// Phase 15: sema should annotate standard variable init conversions.
 							if (!sema_applied) {
 								const TypeConversionResult conv =
 									can_convert_type(init_type, decl_type);
-								if (conv.is_valid && conv.rank != ConversionRank::UserDefined)
+								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+									if (sema_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type)) {
+										FLASH_LOG(Codegen, Warning, "Phase 15: codegen fallback for variable init conversion (",
+											type_to_string(init_type, TypeQualifier::None), " -> ",
+											type_to_string(decl_type, TypeQualifier::None), ") — sema gap");
+									}
 									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
+								}
 							}
 						}
 					}
