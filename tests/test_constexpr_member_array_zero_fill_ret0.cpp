@@ -17,8 +17,8 @@ static_assert(s.arr[3] == 0);
 
 // 2. Partial brace-init: arr{a,b,c} for int arr[5] → arr[3] and arr[4] are 0
 struct PartialInit {
-int arr[5];
-constexpr PartialInit() : arr{10, 20, 30} {}
+	int arr[5];
+	constexpr PartialInit() : arr{10, 20, 30} {}
 };
 
 constexpr PartialInit p{};
@@ -30,8 +30,8 @@ static_assert(p.arr[4] == 0);
 
 // 3. Single-element with constructor parameter
 struct WithParam {
-int data[3];
-constexpr WithParam(int v) : data{v} {}
+	int data[3];
+	constexpr WithParam(int v) : data{v} {}
 };
 
 constexpr WithParam w(42);
@@ -41,13 +41,13 @@ static_assert(w.data[2] == 0);
 
 // 4. Sum to verify zero-fill doesn't produce garbage
 struct Sumable {
-int arr[4];
-constexpr Sumable() : arr{1} {}  // Only first element = 1, rest = 0
-constexpr int sum() const {
-int s = 0;
-for (int i = 0; i < 4; i++) s += arr[i];
-return s;
-}
+	int arr[4];
+	constexpr Sumable() : arr{1} {}  // Only first element = 1, rest = 0
+	constexpr int sum() const {
+		int s = 0;
+		for (int i = 0; i < 4; i++) s += arr[i];
+		return s;
+	}
 };
 constexpr Sumable sm{};
 static_assert(sm.sum() == 1);  // Only arr[0]=1, rest are 0

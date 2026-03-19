@@ -780,37 +780,7 @@ struct ConstraintEvaluationResult {
 	}
 };
 
-// Helper function to check if a type is integral
-inline bool isIntegralType(Type type) {
-	switch (type) {
-		case Type::Bool:
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-			return true;
-		default:
-			return false;
-	}
-}
-
-// Helper function to check if a type is floating point
-inline bool isFloatingPointType(Type type) {
-	switch (type) {
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-			return true;
-		default:
-			return false;
-	}
-}
+// isIntegralType and isFloatingPointType moved to AstNodeTypes_TypeSystem.h
 
 // Helper function to evaluate type traits like std::is_integral_v<T>
 inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<TemplateTypeArg>& type_args) {

@@ -1990,13 +1990,55 @@
 							}
 
 							if (!handled_as_reference_init) {
-								// Use explicit initializer from constructor initializer list
-								// Array members may have an InitializerListNode initializer; skip scalar
-								// IR emission for those (array member runtime init is not yet supported here).
-								if (!explicit_it->second->initializer_expr.is<ExpressionNode>()) {
-									member_value = 0ULL;  // non-scalar initializer: fall through to zero-init
+								// Use explicit initializer from constructor initializer list.
+								const ASTNode& init_expr_node = explicit_it->second->initializer_expr;
+								if (init_expr_node.is<InitializerListNode>()) {
+									// Array member brace-init (e.g., data{a, b, c}):
+									// emit one MemberStore per element at the correct byte offset.
+									if (member.is_array && !member.array_dimensions.empty()) {
+										const InitializerListNode& init_list = init_expr_node.as<InitializerListNode>();
+										const size_t declared_count = member.array_dimensions[0];
+										const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
+										const auto& init_elements = init_list.initializers();
+										const bool elem_is_fp = isFloatingPointType(member.type);
+
+										for (size_t i = 0; i < declared_count; ++i) {
+											IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
+											if (i < init_elements.size() && init_elements[i].is<ExpressionNode>()) {
+												ExprResult elem_op = visitExpressionNode(init_elements[i].as<ExpressionNode>());
+												if (const auto* tmp = std::get_if<TempVar>(&elem_op.value)) {
+													elem_val = *tmp;
+												} else if (const auto* ull = std::get_if<unsigned long long>(&elem_op.value)) {
+													elem_val = *ull;
+												} else if (const auto* dbl = std::get_if<double>(&elem_op.value)) {
+													elem_val = *dbl;
+												} else if (const auto* sh = std::get_if<StringHandle>(&elem_op.value)) {
+													elem_val = *sh;
+												}
+											}
+											MemberStoreOp elem_store;
+											elem_store.value.type = member.type;
+											assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
+											elem_store.value.value = elem_val;
+											elem_store.object = StringTable::getOrInternStringHandle("this");
+											elem_store.member_name = member.getName();
+											assert(member.offset + i * element_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+											elem_store.offset = static_cast<int>(member.offset + i * element_size);
+											elem_store.ref_qualifier = CVReferenceQualifier::None;
+											elem_store.struct_type_info = nullptr;
+											ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(elem_store), node.name_token()));
+										}
+										continue;  // per-element stores emitted; skip single MemberStore below
+									}
+									// Brace-initializers are only supported for array members in constructor initializer lists.
+									throw CompileError("Brace-initializer used on non-array member '" +
+										std::string(StringTable::getStringView(member.getName())) +
+										"'. Use a scalar initializer (e.g., member(val)) for non-array members.");
+								} else if (!init_expr_node.is<ExpressionNode>()) {
+									member_value = 0ULL;  // unexpected node type: fall back to zero
 								} else {
-									ExprResult init_operands = visitExpressionNode(explicit_it->second->initializer_expr.as<ExpressionNode>());
+									ExprResult init_operands = visitExpressionNode(init_expr_node.as<ExpressionNode>());
 									// Extract just the value (third element of init_operands)
 									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
 										member_value = *temp_var;

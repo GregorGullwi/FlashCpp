@@ -19,17 +19,17 @@ static_assert(t.get(2) == 30);
 
 // Access via constexpr member function with local variable index
 struct Container {
-int data[4];
-constexpr Container() : data{1, 2, 3, 4} {}
-constexpr int getSecond() const {
-int idx = 1;
-return data[idx];
-}
-constexpr int sum() const {
-int s = 0;
-for (int i = 0; i < 4; i++) s += data[i];
-return s;
-}
+	int data[4];
+	constexpr Container() : data{1, 2, 3, 4} {}
+	constexpr int getSecond() const {
+		int idx = 1;
+		return data[idx];
+	}
+	constexpr int sum() const {
+		int s = 0;
+		for (int i = 0; i < 4; i++) s += data[i];
+		return s;
+	}
 };
 
 constexpr Container c{};

@@ -323,6 +323,46 @@ inline bool isPlaceholderAutoType(Type type) {
 	return type == Type::Auto || type == Type::DeclTypeAuto;
 }
 
+inline bool isIntegralType(Type type) {
+	switch (type) {
+	case Type::Bool:
+	case Type::Char:
+	case Type::Short:
+	case Type::Int:
+	case Type::Long:
+	case Type::LongLong:
+	case Type::UnsignedChar:
+	case Type::UnsignedShort:
+	case Type::UnsignedInt:
+	case Type::UnsignedLong:
+	case Type::UnsignedLongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
+inline bool isFloatingPointType(Type type) {
+	return type == Type::Float || type == Type::Double || type == Type::LongDouble;
+}
+
+inline bool isUnsignedIntegralType(Type type) {
+	switch (type) {
+	case Type::UnsignedChar:
+	case Type::UnsignedShort:
+	case Type::UnsignedInt:
+	case Type::UnsignedLong:
+	case Type::UnsignedLongLong:
+	case Type::WChar:
+	case Type::Char8:
+	case Type::Char16:
+	case Type::Char32:
+		return true;
+	default:
+		return false;
+	}
+}
+
 // Strong wrapper for type indices into gTypeInfo[].
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
 // conversion at write sites; read sites use .value explicitly.
