@@ -1408,8 +1408,18 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (op == "&")  return EvalResult::from_uint(lv & rv);
 		if (op == "|")  return EvalResult::from_uint(lv | rv);
 		if (op == "^")  return EvalResult::from_uint(lv ^ rv);
-		if (op == "<<") return EvalResult::from_uint(lv << rv);
-		if (op == ">>") return EvalResult::from_uint(lv >> rv);
+		if (op == "<<") {
+			// Note: we check against 64 (the storage width of unsigned long long)
+			// rather than the declared type's width because exact_type is not
+			// reliably propagated through all operations yet.  See
+			// docs/CONSTEXPR_LIMITATIONS.md "Shift-count validation" for details.
+			if (rv >= 64) return EvalResult::error("Left shift count >= width of type in constant expression");
+			return EvalResult::from_uint(lv << rv);
+		}
+		if (op == ">>") {
+			if (rv >= 64) return EvalResult::error("Right shift count >= width of type in constant expression");
+			return EvalResult::from_uint(lv >> rv);
+		}
 		if (op == "==" ) return EvalResult::from_bool(lv == rv);
 		if (op == "!=" ) return EvalResult::from_bool(lv != rv);
 		if (op == "<"  ) return EvalResult::from_bool(lv <  rv);
