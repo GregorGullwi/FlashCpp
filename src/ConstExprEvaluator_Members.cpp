@@ -1679,7 +1679,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 		if (operand_is_uint) {
 			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
 			const unsigned long long lv = std::get<unsigned long long>(operand.value);
-			return make_uint(static_cast<unsigned long long>(-static_cast<long long>(lv)));
+			return make_uint(static_cast<unsigned long long>(0) - lv);
 		}
 		// Check for overflow: negating LLONG_MIN overflows
 		const long long val = operand.as_int();
