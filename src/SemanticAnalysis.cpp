@@ -995,6 +995,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				const bool is_shift =
 					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
+				// C++20: scoped enums do not participate in implicit arithmetic
+				// conversions.  Diagnose before annotation so the error fires
+				// early with a clear message.
+				if ((is_arithmetic || is_comparison || is_compound_assign || is_shift) &&
+					e.get_lhs().template is<ExpressionNode>() &&
+					e.get_rhs().template is<ExpressionNode>()) {
+					diagnoseScopedEnumBinaryOperands(e);
+				}
 				if (is_shift &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
@@ -1017,8 +1025,11 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
 					const CanonicalTypeId lhs_type_id = inferExpressionType(e.get_lhs());
-					if (lhs_type_id)
+					if (lhs_type_id) {
 						tryAnnotateConversion(e.get_rhs(), lhs_type_id);
+						diagnoseScopedEnumConversion(e.get_rhs(), lhs_type_id,
+							" in assignment");
+					}
 				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
@@ -1483,6 +1494,51 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.base_type = Type::UnsignedLongLong;
 				return type_context_.intern(desc);
 			}
+			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				// Constructor call returns the type being constructed.
+				const ASTNode& type_node = e.type_node();
+				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>())
+					return canonicalizeType(type_node.template as<TypeSpecifierNode>());
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+				// String literal has type "const char*" (array of const char).
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Char;
+				desc.base_cv = CVQualifier::Const;
+				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				// Qualified identifier (e.g., std::foo): fall back to parser type resolution.
+				if (auto type_opt = parser_.get_expression_type(node))
+					return canonicalizeType(*type_opt);
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+				const ASTNode& tt = e.target_type();
+				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
+					return canonicalizeType(tt.template as<TypeSpecifierNode>());
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
+				// offsetof returns size_t (UnsignedLongLong on 64-bit).
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::UnsignedLongLong;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+				// noexcept(expr) returns bool.
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Bool;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
+				// Type trait intrinsics return bool (e.g., __is_integral(T)).
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Bool;
+				return type_context_.intern(desc);
+			}
 			return {};
 		}, expr);
 	}
@@ -1536,6 +1592,58 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node, Ca
 				"'" + std::string(context_description) + "; use static_cast");
 		}
 	}
+}
+
+// --- Scoped enum binary operand diagnostic ---
+// C++20: scoped enums only support relational/equality operators between values
+// of the same scoped enum type.  Any other binary operator usage is ill-formed.
+
+static bool isScopedEnumDesc(const CanonicalTypeDesc& desc) {
+	if (desc.base_type != Type::Enum) return false;
+	if (!desc.type_index.is_valid() || desc.type_index.value >= gTypeInfo.size()) return false;
+	if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
+		return ei->is_scoped;
+	return false;
+}
+
+static std::string scopedEnumName(const CanonicalTypeDesc& desc) {
+	if (desc.type_index.is_valid() && desc.type_index.value < gTypeInfo.size()) {
+		if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
+			return std::string(StringTable::getStringView(ei->name));
+	}
+	return "scoped enum";
+}
+
+void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op) {
+	const CanonicalTypeId lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	const CanonicalTypeId rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id) return;
+
+	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	const bool lhs_scoped = isScopedEnumDesc(lhs_desc);
+	const bool rhs_scoped = isScopedEnumDesc(rhs_desc);
+	if (!lhs_scoped && !rhs_scoped) return;
+
+	const std::string_view op = bin_op.op();
+
+	// Same scoped enum type: relational and equality comparisons are valid.
+	if (lhs_scoped && rhs_scoped &&
+		lhs_desc.base_type == rhs_desc.base_type &&
+		lhs_desc.type_index == rhs_desc.type_index) {
+		const bool is_comparison =
+			op == "==" || op == "!=" || op == "<" || op == ">" ||
+			op == "<=" || op == ">=";
+		if (is_comparison) return;  // valid same-type scoped enum comparison
+	}
+
+	// All other binary ops with a scoped enum operand are ill-formed.
+	const std::string enum_name = lhs_scoped
+		? scopedEnumName(lhs_desc) : scopedEnumName(rhs_desc);
+	throw CompileError("invalid operands to binary expression involving scoped enum '" +
+		enum_name + "' with operator '" + std::string(op) +
+		"'; use static_cast for explicit conversion");
 }
 
 // --- Core conversion annotation helper ---
@@ -1952,6 +2060,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
+		diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
 	}
 }
 

@@ -173,6 +173,11 @@ private:
 	void diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
 		const char* context_description);
 
+	// Diagnose scoped enum used as operand in binary arithmetic/comparison with a
+	// different type.  Per C++20, scoped enums only support relational/equality
+	// operators between values of the same scoped enum type.
+	void diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op);
+
 	// State
 	Parser& parser_;
 	CompileContext& context_;
