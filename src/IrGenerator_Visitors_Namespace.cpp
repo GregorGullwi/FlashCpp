@@ -245,9 +245,13 @@
 					if (slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 						if (from_type != Type::Struct && to_type != Type::Struct) {
+							// Sema may annotate as Type::Enum while codegen resolves enum
+							// constants to their underlying type; use actual runtime type.
+							if (from_type == Type::Enum && from_type != operands.type)
+								from_type = operands.type;
 							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;
 						}

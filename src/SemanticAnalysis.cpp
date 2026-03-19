@@ -1275,7 +1275,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 	if (node.is<ExpressionNode>()) {
 		const auto& expr = node.as<ExpressionNode>();
-		return std::visit([this](const auto& e) -> CanonicalTypeId {
+		return std::visit([this, &node](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -1288,7 +1288,15 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
-				return lookupLocalType(e.nameHandle());
+				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
+				if (local_id) return local_id;
+				// Fall back to parser-resolved type for identifiers not in
+				// the sema scope stack (e.g. enumerator constants, globals).
+				auto expr_type = parser_.get_expression_type(node);
+				if (expr_type.has_value()) {
+					return canonicalizeType(*expr_type);
+				}
+				return {};
 			}
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
@@ -1481,15 +1489,18 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
 	if (from_desc.base_type == to_desc.base_type) return false;
 
-	// Bail out if either side is not a plain primitive scalar.
-	// Checking one lambda against both sides covers all non-handleable types in one place.
+	// Bail out if either side is not a plain primitive scalar (or enum source).
+	// Enum source types are allowed: C++20 permits implicit enum→primitive conversions
+	// (integral promotion, integral/floating conversion, boolean conversion).
+	// Enum as *target* is rejected: C++11+ forbids implicit conversion TO enum.
 	auto is_non_primitive = [](Type t) {
-		return t == Type::Struct || t == Type::Enum || t == Type::UserDefined ||
+		return t == Type::Struct || t == Type::UserDefined ||
 		       t == Type::Invalid || isPlaceholderAutoType(t);
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
+	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);
@@ -1536,15 +1547,19 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
-	// Only handle plain primitive types (no pointers, no arrays, no structs, no enums)
+	// Only handle plain primitive types and enum sources (no pointers, no arrays, no structs)
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
 	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
-	const Type common = get_common_type(lhs_desc.base_type, rhs_desc.base_type);
+	// Resolve enum operands to their underlying type for get_common_type,
+	// which only handles primitive integer/floating-point types.
+	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+
+	const Type common = get_common_type(lhs_base, rhs_base);
 	if (common == Type::Invalid) return;
 
 	// Intern the common type
@@ -1570,26 +1585,31 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
-	// Only handle plain primitive integral types (no pointers, arrays, structs, enums, floats)
+	// Only handle plain primitive integral types and enum sources (no pointers, arrays, structs, floats)
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Enum   || rhs_desc.base_type == Type::Enum)   return;
 	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+
+	// Resolve enum operands to their underlying type for promote_integer_type,
+	// which only handles primitive integer types.
+	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+
 	// Shift is only defined for integral operands
-	if (is_floating_point_type(lhs_desc.base_type) || is_floating_point_type(rhs_desc.base_type)) return;
+	if (is_floating_point_type(lhs_base) || is_floating_point_type(rhs_base)) return;
 
 	// Independent integral promotion for each operand
-	const Type promoted_lhs = promote_integer_type(lhs_desc.base_type);
-	const Type promoted_rhs = promote_integer_type(rhs_desc.base_type);
+	const Type promoted_lhs = promote_integer_type(lhs_base);
+	const Type promoted_rhs = promote_integer_type(rhs_base);
 
-	if (promoted_lhs != lhs_desc.base_type) {
+	if (promoted_lhs != lhs_base) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.base_type = promoted_lhs;
 		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc));
 	}
-	if (promoted_rhs != rhs_desc.base_type) {
+	if (promoted_rhs != rhs_base) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.base_type = promoted_rhs;
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc));

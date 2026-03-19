@@ -4,6 +4,10 @@
 #include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
+		// Resolve enum to its underlying integer type so downstream size/signedness
+		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
+		fromType = resolveEnumUnderlyingType(fromType, operands.type_index);
+
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
 
@@ -17,7 +21,21 @@
 		}
 
 		if (fromType == toType && fromSize == toSize) {
-			return operands; // No conversion needed
+			// No conversion instruction needed.  However, the operands may still
+			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingType
+			// mapped fromType to the underlying int).  Ensure the returned ExprResult
+			// reflects the requested target type so downstream consumers see the
+			// correct primitive type for signedness / domain queries.
+			if (operands.type != toType) {
+				return makeExprResult(
+					toType,
+					SizeInBits{toSize},
+					operands.value,
+					operands.type_index,
+					operands.pointer_depth
+				);
+			}
+			return operands;
 		}
 
 		// Check for int-to-float or float-to-int conversions
