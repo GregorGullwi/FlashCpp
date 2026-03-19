@@ -674,8 +674,8 @@ private:
 	static std::optional<long long> safe_add(long long a, long long b);
 	static std::optional<long long> safe_sub(long long a, long long b);
 	static std::optional<long long> safe_mul(long long a, long long b);
-	static std::optional<long long> safe_shl(long long a, long long b);
-	static std::optional<long long> safe_shr(long long a, long long b);
+	static std::optional<long long> safe_shl(long long a, long long b, int width_bits = 64);
+	static std::optional<long long> safe_shr(long long a, long long b, int width_bits = 64);
 };
 
 // Evaluate a fold expression with concrete pack values
