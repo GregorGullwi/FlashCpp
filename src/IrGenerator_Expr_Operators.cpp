@@ -3793,6 +3793,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	}
 
 	ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+		// The IR opcode produces a 32-bit exception code value.  The declared return type
+		// may differ (e.g., unsigned long vs unsigned int).  Derive the expression type
+		// from the function declaration so the intrinsic result matches what the caller
+		// expects — same as regular function calls derive their type from the declaration.
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		if (seh_in_filter_funclet_) {
 			// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
@@ -3811,23 +3819,31 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			op.result = result;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
 		}
-		return makeExprResult(Type::UnsignedInt, SizeInBits{32}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		SehAbnormalTerminationOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 	ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
+		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+		const Type result_type = ret_type_spec.type();
+		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
+
 		TempVar result = var_counter.next();
 		SehExceptionIntrinsicOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{result});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result});
 	}
 
 

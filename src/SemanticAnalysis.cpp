@@ -984,6 +984,32 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 		}
 	}
+	else if (node.is<SehTryExceptStatementNode>()) {
+		const auto& stmt = node.as<SehTryExceptStatementNode>();
+		normalizeStatement(stmt.try_block(), ctx);
+		const auto& except_clause = stmt.except_clause();
+		if (except_clause.is<SehExceptClauseNode>()) {
+			const auto& clause = except_clause.as<SehExceptClauseNode>();
+			// Visit filter expression: unwrap SehFilterExpressionNode and annotate inner expr
+			const auto& filter_expr_node = clause.filter_expression();
+			if (filter_expr_node.is<SehFilterExpressionNode>()) {
+				const auto& inner_expr = filter_expr_node.as<SehFilterExpressionNode>().expression();
+				if (inner_expr.is<ExpressionNode>()) {
+					normalizeExpression(inner_expr, ctx);
+				}
+			}
+			// Visit except body
+			normalizeStatement(clause.body(), ctx);
+		}
+	}
+	else if (node.is<SehTryFinallyStatementNode>()) {
+		const auto& stmt = node.as<SehTryFinallyStatementNode>();
+		normalizeStatement(stmt.try_block(), ctx);
+		const auto& finally_clause = stmt.finally_clause();
+		if (finally_clause.is<SehFinallyClauseNode>()) {
+			normalizeStatement(finally_clause.as<SehFinallyClauseNode>().body(), ctx);
+		}
+	}
 	// BreakStatementNode, ContinueStatementNode, GotoStatementNode,
 	// LabelStatementNode, ThrowStatementNode, etc. - no children to walk in Phase 1
 }
