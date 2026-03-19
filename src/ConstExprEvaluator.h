@@ -5,6 +5,7 @@
 #include "TypeTraitEvaluator.h"  // For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
 #include "Log.h"  // For FLASH_LOG
+#include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
 #include <string>
 #include <variant>
@@ -184,7 +185,9 @@ enum class StorageDuration {
 // trigger the cleanup logic.
 struct BlockScopeTracker {
 	// Names declared in this block scope (in declaration order).
-	std::vector<std::string_view> declared_names;
+	// Most scopes declare 0–3 variables; InlineVector avoids heap allocation
+	// for the common case.
+	InlineVector<std::string_view, 4> declared_names;
 	// For each name that shadowed an existing binding, the saved outer value.
 	std::unordered_map<std::string_view, EvalResult> saved_shadows;
 
