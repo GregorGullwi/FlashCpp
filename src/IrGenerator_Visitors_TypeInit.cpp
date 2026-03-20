@@ -651,40 +651,35 @@
 											}
 										}
 										if (!matching_ctor) {
-											for (const auto& mf : ctor_struct_info->member_functions) {
-												if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-												const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-												const auto& params = ctor.parameter_nodes();
-												if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-													const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-													if (param_type_node.is<TypeSpecifierNode>()) {
-														const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-														if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-															continue;
-														}
-													}
-												}
-												if (params.size() == ctor_call.arguments().size()) {
-													matching_ctor = &ctor;
-													break;
-												}
-											}
+											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
+											matching_ctor = arity_resolution.selected_overload;
 										}
 										if (matching_ctor) {
 											// Evaluate arguments
 											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+											std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
+											eval_ctx.local_bindings = &param_bindings;
 											std::unordered_map<std::string_view, long long> param_values;
 											bool args_ok = true;
 											const auto& params = matching_ctor->parameter_nodes();
-											for (size_t ai = 0; ai < params.size() && ai < ctor_call.arguments().size(); ++ai) {
-												if (params[ai].is<DeclarationNode>()) {
-													auto arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
-													if (arg_result.success()) {
-														param_values[params[ai].as<DeclarationNode>().identifier_token().value()] = arg_result.as_int();
-													} else {
-														args_ok = false;
-														break;
-													}
+											for (size_t ai = 0; ai < params.size(); ++ai) {
+												if (!params[ai].is<DeclarationNode>()) continue;
+												const auto& param_decl = params[ai].as<DeclarationNode>();
+												ConstExpr::EvalResult arg_result;
+												if (ai < ctor_call.arguments().size()) {
+													arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
+												} else if (param_decl.has_default_value()) {
+													arg_result = ConstExpr::Evaluator::evaluate(param_decl.default_value(), eval_ctx);
+												} else {
+													args_ok = false;
+													break;
+												}
+												if (arg_result.success()) {
+													param_bindings[param_decl.identifier_token().value()] = arg_result;
+													param_values[param_decl.identifier_token().value()] = arg_result.as_int();
+												} else {
+													args_ok = false;
+													break;
 												}
 											}
 											if (args_ok) {

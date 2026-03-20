@@ -2593,46 +2593,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 
 			if (!matching_ctor) {
-		for (const auto& func : struct_info->member_functions) {
-			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-				const auto& params = ctor_node.parameter_nodes();
-
-				// Skip implicit copy/move constructors — they only apply when the
-				// argument is actually the same struct type, not for aggregate-like
-				// brace init with scalar values like my_type{0}
-				if (ctor_node.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-					const auto& param_type = params[0].as<DeclarationNode>().type_node();
-					if (param_type.is<TypeSpecifierNode>()) {
-						const auto& pts = param_type.as<TypeSpecifierNode>();
-						if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-						is_struct_type(pts.type())) {
-							continue;  // Skip implicit copy/move ctors
-						}
-					}
-				}
-
-				// Match constructor with same number of parameters or with default parameters
-				if (params.size() == num_args) {
-					matching_ctor = &ctor_node;
-					break;
-				} else if (params.size() > num_args) {
-					// Check if remaining params have defaults
-					bool all_have_defaults = true;
-					for (size_t i = num_args; i < params.size(); ++i) {
-						if (!params[i].is<DeclarationNode>() ||
-						!params[i].as<DeclarationNode>().has_default_value()) {
-							all_have_defaults = false;
-							break;
-						}
-					}
-					if (all_have_defaults) {
-						matching_ctor = &ctor_node;
-						break;
-					}
-				}
-			}
-			}
+			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
+			matching_ctor = arity_resolution.selected_overload;
 		}
 	}
 	// Get constructor parameter types for reference handling

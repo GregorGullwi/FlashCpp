@@ -2505,46 +2505,16 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		const ASTNode& arg = initializers[arg_idx];
 		auto arg_type_opt = parser_.get_expression_type(arg);
 		if (!arg_type_opt.has_value()) {
-			// Parser couldn't resolve the type — we can't do full overload resolution.
-			// However, we can still diagnose obvious scoped enum misuse: if sema knows
-			// the argument is a scoped enum, check whether any constructor parameter
-			// at this exact argument position accepts that scoped enum type.
-			// If none do, it's an implicit conversion error.
-			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-			if (arg_type_id) {
-				const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
-				if (arg_desc.base_type == Type::Enum && arg_desc.type_index.is_valid() &&
-					arg_desc.type_index.value < gTypeInfo.size()) {
-					if (const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo()) {
-						if (ei->is_scoped) {
-							// Check if any constructor accepts this exact scoped enum type
-							// at the current argument's position (arg_idx).
-							bool has_matching_ctor = false;
-							for (const auto& mf : struct_info.member_functions) {
-								if (!mf.is_constructor) continue;
-								if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor.parameter_nodes();
-								if (params.size() < initializers.size()) continue;
-								// arg_idx < initializers.size() <= params.size() is guaranteed here
-								if (!params[arg_idx].is<DeclarationNode>()) continue;
-								const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
-								if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;
-								const CanonicalTypeId param_id = canonicalizeType(ptype.as<TypeSpecifierNode>());
-								if (canonical_types_match(arg_type_id, param_id)) {
-									has_matching_ctor = true;
-									break;
-								}
-							}
-							if (!has_matching_ctor) {
-								throw CompileError("cannot implicitly convert from scoped enum '" +
-									std::string(StringTable::getStringView(ei->name)) +
-									"' to constructor parameter; use static_cast");
-							}
-						}
-					}
-				}
+			// Parser couldn't resolve the type — fall back to inferExpressionType()
+			// + materializeTypeSpecifier() so the normal resolve_constructor_overload
+			// path can still run for all arguments (including scoped enum values and
+			// constructors with default parameters).
+			const CanonicalTypeId inferred_type_id = inferExpressionType(arg);
+			if (inferred_type_id) {
+				arg_type_opt = materializeTypeSpecifier(type_context_.get(inferred_type_id));
 			}
+		}
+		if (!arg_type_opt.has_value()) {
 			return;
 		}
 		TypeSpecifierNode arg_type = *arg_type_opt;
@@ -2553,7 +2523,43 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
-	if (!resolution.selected_overload) return;
+	if (!resolution.selected_overload) {
+		// No constructor matched — restore the old scoped-enum diagnostic.
+		// If any argument is a scoped enum that couldn't be implicitly converted,
+		// find the closest ctor by arity and diagnose the bad arg against its
+		// parameter type so the user gets a clear "use static_cast" message.
+		auto arity_res = resolve_constructor_overload_arity(struct_info, initializers.size(), true);
+		const ConstructorDeclarationNode* closest_ctor = arity_res.selected_overload;
+		for (size_t i = 0; i < initializers.size(); ++i) {
+			const ASTNode& arg = initializers[i];
+			if (!arg.is<ExpressionNode>()) continue;
+			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+			if (!arg_type_id) continue;
+			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
+			if (arg_desc.base_type != Type::Enum) continue;
+			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.value >= gTypeInfo.size()) continue;
+			const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo();
+			if (!ei || !ei->is_scoped) continue;
+			// Found a scoped enum arg that caused the no-match.
+			// Use the parameter type from the closest arity match for a precise error message.
+			if (closest_ctor) {
+				const auto& params = closest_ctor->parameter_nodes();
+				if (i < params.size() && params[i].is<DeclarationNode>()) {
+					const ASTNode& param_type_node = params[i].as<DeclarationNode>().type_node();
+					if (param_type_node.is<TypeSpecifierNode>()) {
+						const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+						diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument");
+					}
+				}
+			} else {
+				// No arity match at all; diagnose against the first constructor parameter we can find.
+				throw CompileError("cannot implicitly convert from scoped enum '" +
+					std::string(StringTable::getStringView(ei->name)) +
+					"' in constructor argument; use static_cast");
+			}
+		}
+		return;
+	}
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
 

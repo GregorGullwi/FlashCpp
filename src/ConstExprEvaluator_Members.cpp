@@ -190,16 +190,7 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 		}
 		if (ctor_candidates.size() == 1 && ctor_candidates[0] && ctor_candidates[0]->function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& only_ctor = ctor_candidates[0]->function_decl.as<ConstructorDeclarationNode>();
-			const auto& params = only_ctor.parameter_nodes();
-			bool is_implicit_copy_or_move = false;
-			if (only_ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-				if (param_type_node.is<TypeSpecifierNode>()) {
-					const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-					is_implicit_copy_or_move = (param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type());
-				}
-			}
-			if (!is_implicit_copy_or_move) {
+			if (!isImplicitCopyOrMoveConstructorCandidate(*struct_info, only_ctor)) {
 				return &only_ctor;
 			}
 		}
@@ -2895,16 +2886,8 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return init_arg_result;
 	}
 
-	const ConstructorDeclarationNode* inner_matching_ctor = nullptr;
-	for (const auto& member_func : inner_struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == 1) {
-			inner_matching_ctor = &ctor;
-			break;
-		}
-	}
+	auto inner_ctor_resolution = resolve_constructor_overload_arity(*inner_struct_info, 1, true);
+	const ConstructorDeclarationNode* inner_matching_ctor = inner_ctor_resolution.selected_overload;
 
 	if (!inner_matching_ctor) {
 		return EvalResult::error("No matching single-argument constructor for inner struct");

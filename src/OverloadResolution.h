@@ -688,6 +688,34 @@ inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
 	return min_required;
 }
 
+inline bool isImplicitCopyOrMoveConstructorCandidate(
+	const StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode& ctor_decl)
+{
+	if (!ctor_decl.is_implicit() || !struct_info.own_type_index_.has_value()) {
+		return false;
+	}
+
+	const auto& parameters = ctor_decl.parameter_nodes();
+	if (parameters.size() != 1 || !parameters[0].is<DeclarationNode>()) {
+		return false;
+	}
+
+	const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
+	if (!param_type_node.is<TypeSpecifierNode>()) {
+		return false;
+	}
+
+	const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+	if (!(param_type.is_reference() || param_type.is_rvalue_reference()) ||
+		!is_struct_type(param_type.type())) {
+		return false;
+	}
+
+	return param_type.type_index().is_valid() &&
+		param_type.type_index() == *struct_info.own_type_index_;
+}
+
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	const StructTypeInfo& struct_info,
 	const std::vector<TypeSpecifierNode>& argument_types,
@@ -704,7 +732,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		}
 
 		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (skip_implicit && ctor_decl.is_implicit()) {
+		const bool is_implicit_copy_or_move =
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+		if (skip_implicit && is_implicit_copy_or_move) {
 			continue;
 		}
 
@@ -714,21 +744,13 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			continue;
 		}
 
-		if (ctor_decl.is_implicit() && parameters.size() == 1 && argument_types.size() == 1 &&
-			parameters[0].is<DeclarationNode>()) {
-			const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
-			if (param_type_node.is<TypeSpecifierNode>()) {
-				const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-				if ((param_type.is_reference() || param_type.is_rvalue_reference()) &&
-					is_struct_type(param_type.type()) && struct_info.own_type_index_.has_value()) {
-					const TypeSpecifierNode& arg_type = argument_types[0];
-					Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
-					bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
-						arg_type.type_index() == *struct_info.own_type_index_;
-					if (!is_same_struct_type) {
-						continue;
-					}
-				}
+		if (is_implicit_copy_or_move && argument_types.size() == 1) {
+			const TypeSpecifierNode& arg_type = argument_types[0];
+			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+				arg_type.type_index() == *struct_info.own_type_index_;
+			if (!is_same_struct_type) {
+				continue;
 			}
 		}
 
@@ -832,6 +854,73 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	}
 
 	return ConstructorOverloadResolutionResult(best_match);
+}
+
+// Arity-only constructor overload resolution — used as fallback when argument type
+// information is unavailable.  Selects the best constructor where
+// min_required_args <= num_args <= params.size().
+// When skip_implicit=true, implicit copy/move constructors are skipped.
+// Tiebreaking: prefer value-param ctors over same-type-reference ctors (copy/move-like).
+// Ambiguous only when multiple non-copy-like explicit ctors match.
+inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
+	const StructTypeInfo& struct_info,
+	size_t num_args,
+	bool skip_implicit = false)
+{
+	auto is_same_type_ref_ctor = [&](const ConstructorDeclarationNode& ctor) -> bool {
+		const auto& params = ctor.parameter_nodes();
+		if (params.empty() || !params[0].is<DeclarationNode>()) return false;
+		const auto& ptype_node = params[0].as<DeclarationNode>().type_node();
+		if (!ptype_node.is<TypeSpecifierNode>()) return false;
+		const auto& ptype = ptype_node.as<TypeSpecifierNode>();
+		if (!(ptype.is_reference() || ptype.is_rvalue_reference())) return false;
+		if (ptype.type() != Type::Struct) return false;
+		return struct_info.isOwnTypeIndex(ptype.type_index());
+	};
+
+	const ConstructorDeclarationNode* best_value_explicit = nullptr;
+	int num_value_explicit_matches = 0;
+	const ConstructorDeclarationNode* first_ref_explicit = nullptr;
+	const ConstructorDeclarationNode* first_implicit = nullptr;
+
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		const bool is_implicit_copy_or_move =
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+		if (skip_implicit && is_implicit_copy_or_move) {
+			continue;
+		}
+		const auto& parameters = ctor_decl.parameter_nodes();
+		size_t min_required = countMinRequiredArgs(ctor_decl);
+		if (num_args < min_required || num_args > parameters.size()) {
+			continue;
+		}
+		if (ctor_decl.is_implicit()) {
+			if (!first_implicit) first_implicit = &ctor_decl;
+		} else if (is_same_type_ref_ctor(ctor_decl)) {
+			if (!first_ref_explicit) first_ref_explicit = &ctor_decl;
+		} else {
+			best_value_explicit = &ctor_decl;
+			num_value_explicit_matches++;
+		}
+	}
+
+	if (num_value_explicit_matches > 1) {
+		return ConstructorOverloadResolutionResult::ambiguous();
+	}
+	if (best_value_explicit) {
+		return ConstructorOverloadResolutionResult(best_value_explicit);
+	}
+	if (first_ref_explicit) {
+		return ConstructorOverloadResolutionResult(first_ref_explicit);
+	}
+	if (first_implicit) {
+		return ConstructorOverloadResolutionResult(first_implicit);
+	}
+	return ConstructorOverloadResolutionResult::no_match();
 }
 
 // countMinRequiredArgs is defined in SymbolTable.h (included above)
@@ -1739,4 +1828,3 @@ inline OverloadResolutionResult resolve_overload_cached(
 	
 	return result;
 }
-

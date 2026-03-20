@@ -1020,9 +1020,19 @@ The right split is:
 - `tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.
 - Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.
 
-### Phase 18 (planned): unified `resolve_constructor` + remove codegen constructor matching
+### Phase 18 ✅: unified `resolve_constructor` + remove codegen constructor matching
 
 **Goal:** Extract a single `resolve_constructor_overload()` function in `OverloadResolution.h` and remove all hand-rolled constructor matching loops from codegen, constexpr evaluator, and sema.
+
+**Implementation (completed):**
+
+- Added shared constructor-resolution helpers in `src/OverloadResolution.h`:
+  - `resolve_constructor_overload()` for type-ranked matching via `can_convert_type()`
+  - `resolve_constructor_overload_arity()` for arity-only fallback when argument types are unavailable
+- Both shared helpers honor default-argument viability, and the copy/move skip path now filters only compiler-generated copy/move candidates instead of all implicit constructors.
+- The type-inference gap in `tryAnnotateInitListConstructorArgs` was fixed: when `parser_.get_expression_type()` returns `nullopt` for an argument (for example a scoped enum value like `Color::Red`), sema now falls back to `inferExpressionType()` + `materializeTypeSpecifier()` so valid direct-init constructor calls still reach normal overload resolution.
+- Codegen/IR/constexpr constructor selection now flows through the shared helpers instead of repeating open-coded constructor loops.
+- Regression coverage includes `tests/test_ctor_default_arg_overload_ret0.cpp` and `tests/test_global_ctor_default_arg_ret0.cpp`.
 
 **Problem statement:**
 
