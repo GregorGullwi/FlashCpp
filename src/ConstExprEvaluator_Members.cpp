@@ -2895,7 +2895,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return init_arg_result;
 	}
 
-	auto inner_ctor_resolution = resolve_constructor_overload_arity(*inner_struct_info, 1, false);
+	auto inner_ctor_resolution = resolve_constructor_overload_arity(*inner_struct_info, 1, true);
 	const ConstructorDeclarationNode* inner_matching_ctor = inner_ctor_resolution.selected_overload;
 
 	if (!inner_matching_ctor) {

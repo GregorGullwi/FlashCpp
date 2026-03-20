@@ -651,7 +651,7 @@
 											}
 										}
 										if (!matching_ctor) {
-											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), false);
+											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
 											matching_ctor = arity_resolution.selected_overload;
 										}
 										if (matching_ctor) {

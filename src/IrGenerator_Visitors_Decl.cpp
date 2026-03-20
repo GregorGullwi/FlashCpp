@@ -2593,7 +2593,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 
 			if (!matching_ctor) {
-			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, false);
+			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
 			matching_ctor = arity_resolution.selected_overload;
 		}
 	}

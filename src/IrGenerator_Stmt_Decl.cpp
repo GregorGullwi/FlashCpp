@@ -360,7 +360,7 @@
 						}
 
 						if (!matching_ctor) {
-							auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), false);
+							auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
 							matching_ctor = arity_resolution.selected_overload;
 						}
 						if (matching_ctor) {
@@ -871,7 +871,7 @@
 													if (init_type.type() == Type::Struct &&
 														init_type.type_index() == type_index) {
 														// Try to find copy constructor
-														const StructMemberFunction* copy_ctor = struct_info.findCopyConstructor();
+														const StructMemberFunction* copy_ctor = struct_info.findPreferredSameTypeConstructor(false, true);
 														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 															has_matching_constructor = true;
 															matching_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -939,7 +939,7 @@
 								}
 								}
 								if (!has_matching_constructor) {
-									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, false);
+									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, true);
 									if (arity_resolution.has_match) {
 										has_matching_constructor = true;
 										matching_ctor = arity_resolution.selected_overload;
@@ -1673,7 +1673,7 @@
 
 									// Only select copy constructor if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
+										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findPreferredSameTypeConstructor(false, true);
 										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
 											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
 											FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
@@ -1707,7 +1707,7 @@
 										}
 
 										if (!matching_ctor) {
-											auto arity_resolution = resolve_constructor_overload_arity(*type_info.struct_info_, num_args, false);
+											auto arity_resolution = resolve_constructor_overload_arity(*type_info.struct_info_, num_args, true);
 											matching_ctor = arity_resolution.selected_overload;
 										}
 								}
