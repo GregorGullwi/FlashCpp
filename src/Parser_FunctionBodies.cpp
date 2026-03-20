@@ -55,47 +55,31 @@ ParseResult Parser::parse_function_body_with_context(
 		return ParseResult::error("Expected '{' or ';' after function declaration", current_token_);
 	}
 
-	// Set up function scope using RAII guard (Phase 3)
+	// Set up function scope using RAII guard
 	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
-	// Inject 'this' pointer for member functions, constructors, and destructors
-	if (ctx.kind == FlashCpp::FunctionKind::Member ||
-	    ctx.kind == FlashCpp::FunctionKind::Constructor ||
-	    ctx.kind == FlashCpp::FunctionKind::Destructor) {
-		// Find the parent struct type
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(ctx.parent_struct_name));
-		if (type_it != gTypesByName.end()) {
-			// Create 'this' pointer type: StructName*
-			auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-				Type::Struct, type_it->second->type_index_,
-				64,  // Pointer size in bits
-				Token()
-			);
-			this_type_ref.add_pointer_level();
-
-			// Create a declaration node for 'this'
-			Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-			auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-
-			// Insert 'this' into the symbol table
-			gSymbolTable.insert("this"sv, this_decl_node);
-		}
+	// Member function context: push context stack, register member functions, inject 'this'.
+	// Uses the same setup_member_function_context() helper as parse_delayed_function_body()
+	// so both immediate and delayed paths share identical scope/context setup.
+	const bool is_member = ctx.kind == FlashCpp::FunctionKind::Member ||
+	                        ctx.kind == FlashCpp::FunctionKind::Constructor ||
+	                        ctx.kind == FlashCpp::FunctionKind::Destructor;
+	if (is_member && ctx.parent_struct) {
+		setup_member_function_context(
+			ctx.parent_struct,
+			StringTable::getOrInternStringHandle(ctx.parent_struct_name),
+			TypeIndex{ctx.parent_struct_type_index});
 	}
 
-	// Register parameters in the symbol table
-	for (const auto& param : header.params.parameters) {
-		if (param.is<DeclarationNode>()) {
-			const auto& param_decl_node = param.as<DeclarationNode>();
-			const Token& param_token = param_decl_node.identifier_token();
-			gSymbolTable.insert(param_token.value(), param);
-		}
-	}
+	// Register parameters using the shared helper
+	register_parameters_in_scope(header.params.parameters);
 
 	// Parse the block (or function-try-block)
 	const bool is_ctor_or_dtor = ctx.kind == FlashCpp::FunctionKind::Constructor ||
 	                              ctx.kind == FlashCpp::FunctionKind::Destructor;
 	auto block_result = parse_function_body(is_ctor_or_dtor);
 	if (block_result.is_error()) {
+		if (is_member && ctx.parent_struct) member_function_context_stack_.pop_back();
 		return block_result;
 	}
 
@@ -103,7 +87,10 @@ ParseResult Parser::parse_function_body_with_context(
 		out_body = *block_result.node();
 	}
 
-	// func_scope automatically exits scope when destroyed
+	// Pop member function context (scope exits via RAII)
+	if (is_member && ctx.parent_struct) {
+		member_function_context_stack_.pop_back();
+	}
 
 	return ParseResult::success();
 }
@@ -153,7 +140,13 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 	}
 }
 
-// Phase 5: Helper method to set up member function context and scope
+// Phase 5: Helper method to set up member function context and scope.
+// Handles all member-function entry work in one place:
+//  1. Push member_function_context_stack_
+//  2. Register member functions in symbol table (complete-class context)
+//  3. Inject 'this' pointer into the symbol table
+// Both immediate (parse_function_body_with_context) and delayed
+// (parse_delayed_function_body) paths call this so they share identical setup.
 void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index) {
 	// Push member function context
 	member_function_context_stack_.push_back({
@@ -165,6 +158,22 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 
 	// Register member functions in symbol table for complete-class context
 	register_member_functions_in_scope(struct_node, struct_type_index);
+
+	// Inject 'this' pointer into the symbol table.
+	// Every member function, constructor, and destructor has an implicit 'this'
+	// parameter of type StructName* (C++20 [class.this]).
+	if (struct_type_index.value < gTypeInfo.size()) {
+		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+			Type::Struct, struct_type_index,
+			64,  // Pointer size in bits
+			Token()
+		);
+		this_type_ref.add_pointer_level();
+
+		Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
+		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
+		gSymbolTable.insert("this"sv, this_decl_node);
+	}
 }
 
 // Phase 5: Helper to register function parameters in the symbol table
@@ -181,22 +190,50 @@ void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
 	}
 }
 
-// Phase 5: Unified delayed function body parsing
+// Phase 5: Unified delayed function body parsing.
+// Shares scope setup, 'this' injection, parameter registration, and member-function
+// context handling with parse_function_body_with_context() via the same helpers:
+//   setup_member_function_context()  — context stack + member-func registration + 'this'
+//   register_parameters_in_scope()   — parameter symbol-table insertion
+// RAII guards (SymbolTableScope + MemberContextCleanup) handle all cleanup on every
+// exit path, replacing the former scattered manual cleanup blocks.
 ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
 	out_body = std::nullopt;
-	
-	// Enter function scope
-	gSymbolTable.enter_scope(ScopeType::Function);
-	
-	// Set up member function context (skip for free friend functions - no 'this', no member context)
-	if (!delayed.is_free_function) {
+
+	// --- RAII scope guard: enters function scope, exits on destruction ---
+	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+
+	// --- RAII cleanup for member-function context stack and current_function_ ---
+	// Saves current_function_ on construction, restores it and (optionally) pops the
+	// member-function context stack on destruction — so every early return is safe.
+	// NOTE: This local guard is intentionally kept here rather than promoted to a
+	// shared class.  The Priority 2 plan (docs/2026-03-16_Parser_Code_Sharing_Plan.md)
+	// proposes a full FunctionParsingScopeGuard that will supersede this; extracting
+	// it prematurely would create a one-off abstraction that would immediately be
+	// replaced.
+	const bool has_member_ctx = !delayed.is_free_function;
+	struct MemberContextCleanup {
+		Parser& parser;
+		const FunctionDeclarationNode* saved_function;
+		bool pop_context;
+		MemberContextCleanup(Parser& p, bool pop)
+			: parser(p), saved_function(p.current_function_), pop_context(pop) {}
+		~MemberContextCleanup() {
+			parser.current_function_ = saved_function;
+			if (pop_context) parser.member_function_context_stack_.pop_back();
+		}
+	} ctx_cleanup(*this, has_member_ctx);
+
+	// Set up member function context: push context stack, register member functions,
+	// inject 'this'.  Same helper used by parse_function_body_with_context().
+	if (has_member_ctx) {
 		setup_member_function_context(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
 	}
-	
+
 	// Get the appropriate function node and parameters
 	FunctionDeclarationNode* func_node = nullptr;
 	const std::vector<ASTNode>* params = nullptr;
-	
+
 	if (delayed.is_constructor && delayed.ctor_node) {
 		current_function_ = nullptr;  // Constructors don't have return type
 		params = &delayed.ctor_node->parameter_nodes();
@@ -208,17 +245,17 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		current_function_ = func_node;
 		params = &func_node->parameter_nodes();
 	}
-	
-	// Register parameters in symbol table
+
+	// Register parameters using the shared helper (same as parse_function_body_with_context)
 	if (params) {
 		register_parameters_in_scope(*params);
 	}
-	
+
 	// Parse constructor initializer list if present (for constructors with delayed parsing)
 	if (delayed.is_constructor && delayed.has_initializer_list && delayed.ctor_node) {
 		// Restore to the position of the initializer list (':')
 		restore_token_position(delayed.initializer_list_start);
-		
+
 		// Parse the initializer list now that all class members are visible
 		if (peek() == ":"_tok) {
 			advance();  // consume ':'
@@ -229,10 +266,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				// Parse initializer name (could be base class or member)
 				auto init_name_token = advance();
 				if (init_name_token.type() != Token::Type::Identifier) {
-					// Clean up
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
 					return ParseResult::error("Expected member or base class name in initializer list", init_name_token);
 				}
 
@@ -251,10 +284,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				bool is_brace = peek() == "{"_tok;
 
 				if (!is_paren && !is_brace) {
-					// Clean up
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
 					return ParseResult::error("Expected '(' or '{' after initializer name", peek_info());
 				}
 
@@ -267,10 +296,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 					do {
 						ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
-							// Clean up
-							current_function_ = nullptr;
-							member_function_context_stack_.pop_back();
-							gSymbolTable.exit_scope();
 							return arg_result;
 						}
 						if (auto arg_node = arg_result.node()) {
@@ -286,10 +311,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 				// Expect closing delimiter
 				if (!consume(close_kind)) {
-					// Clean up
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
 					return ParseResult::error(is_paren ? "Expected ')' after initializer arguments"
 					                                   : "Expected '}' after initializer arguments", peek_info());
 				}
@@ -297,15 +318,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				// Determine if this is a delegating, base class, or member initializer
 				bool is_delegating = (init_name == delayed.struct_name);
 				bool is_base_init = false;
-				
+
 				if (is_delegating) {
 					// Delegating constructor: Point() : Point(0, 0) {}
 					// In C++11, if a constructor delegates, it CANNOT have other initializers
 					if (!delayed.ctor_node->member_initializers().empty() || !delayed.ctor_node->base_initializers().empty()) {
-						// Clean up
-						current_function_ = nullptr;
-						member_function_context_stack_.pop_back();
-						gSymbolTable.exit_scope();
 						return ParseResult::error("Delegating constructor cannot have other member or base initializers", init_name_token);
 					}
 					delayed.ctor_node->set_delegating_initializer(std::move(init_args));
@@ -362,11 +379,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				}
 			}
 		}
-		
+
 		// After parsing initializer list, restore to the body position
 		restore_token_position(delayed.body_start);
 	}
-	
+
 	// Parse the function body.  For normal functions or member functions with body_start at 'try',
 	// parse_function_body() handles everything.  For constructors/destructors with has_function_try
 	// set, the 'try' was already consumed during the first pass so body_start is at '{'; in that
@@ -380,12 +397,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		block_result = parse_function_body(is_ctor_or_dtor);
 	}
 	if (block_result.is_error()) {
-		// Clean up
-		current_function_ = nullptr;
-		if (!delayed.is_free_function) {
-			member_function_context_stack_.pop_back();
-		}
-		gSymbolTable.exit_scope();
 		return block_result;
 	}
 
@@ -398,30 +409,21 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		ASTNode try_body = *block_result.node();
 		std::vector<ASTNode> catch_clauses;
 
-		// Helper lambda to clean up context before returning an error
-		auto cleanup = [&]() {
-			current_function_ = nullptr;
-			if (!delayed.is_free_function) member_function_context_stack_.pop_back();
-			gSymbolTable.exit_scope();
-		};
-
 		while (peek() == "catch"_tok) {
 			auto clause_result = parse_one_catch_clause(catch_clauses);
 			if (clause_result.is_error()) {
-				cleanup();
 				return clause_result;
 			}
 		}
 
 		if (catch_clauses.empty()) {
-			cleanup();
 			return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 		}
 
 		ASTNode try_stmt_block = make_try_block_body(try_body, std::move(catch_clauses), try_token, is_ctor_or_dtor);
 		block_result = ParseResult::success(try_stmt_block);
 	}
-	
+
 	// Set the body on the appropriate node
 	if (block_result.node().has_value()) {
 		out_body = *block_result.node();
@@ -434,14 +436,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 			finalize_function_after_definition(*delayed.func_node, true);
 		}
 	}
-	
-	// Clean up context
-	current_function_ = nullptr;
-	if (!delayed.is_free_function) {
-		member_function_context_stack_.pop_back();
-	}
-	gSymbolTable.exit_scope();
-	
+
+	// All cleanup handled by RAII: func_scope exits symbol-table scope,
+	// ctx_cleanup restores current_function_ and pops member context.
 	return ParseResult::success();
 }
 

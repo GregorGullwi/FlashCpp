@@ -3880,67 +3880,15 @@ if (struct_type_info.getStructInfo()) {
 			for (auto& delayed : delayed_function_bodies_) {
 				// Restore token position to the start of the function body
 				restore_token_position(delayed.body_start);
-				
-				// Set up function context
-				gSymbolTable.enter_scope(ScopeType::Function);
-				member_function_context_stack_.push_back({
-					delayed.struct_name,
-					delayed.struct_type_index,
-					delayed.struct_node,
-					nullptr  // local_struct_info - not needed for delayed function bodies
-				});
-				
-				// Register member functions in symbol table so member-to-member calls resolve correctly
-				register_member_functions_in_scope(delayed.struct_node, delayed.struct_type_index);
-				
-				// Add 'this' pointer to symbol table
-				auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-					Type::Struct, delayed.struct_type_index,
-					0, Token()
-				);
-				this_type_ref.add_pointer_level();
-				
-				Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-				auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-				gSymbolTable.insert("this"sv, this_decl_node);
-				
-				// Add function parameters to scope
-				if (delayed.func_node) {
-					for (const auto& param : delayed.func_node->parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& param_decl = param.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param);
-						}
-					}
-				} else if (delayed.ctor_node) {
-					for (const auto& param : delayed.ctor_node->parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& param_decl = param.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param);
-						}
-					}
+
+				// Use the shared delayed body parsing path — identical scope setup,
+				// 'this' injection, parameter registration, and member-function context
+				// as all other delayed-body call sites.
+				std::optional<ASTNode> body;
+				auto result = parse_delayed_function_body(delayed, body);
+				if (result.is_error()) {
+					return result;
 				}
-				
-				// Parse the function body (handles function-try-blocks too)
-				const bool is_ctor_or_dtor = (delayed.ctor_node != nullptr) || delayed.is_destructor;
-				auto block_result = parse_function_body(is_ctor_or_dtor);
-				if (block_result.is_error()) {
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
-					return block_result;
-				}
-				
-				if (auto block = block_result.node()) {
-					if (delayed.func_node) {
-						delayed.func_node->set_definition(*block);
-						finalize_function_after_definition(*delayed.func_node);
-					} else if (delayed.ctor_node) {
-						delayed.ctor_node->set_definition(*block);
-					}
-				}
-				
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
 			}
 			
 			// Clear delayed function bodies
