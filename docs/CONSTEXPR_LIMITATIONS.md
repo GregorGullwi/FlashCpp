@@ -684,6 +684,7 @@ Potential areas for enhancement (in order of complexity):
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
+- ⚠️ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** — The bindings-aware evaluation paths (inside constexpr function bodies) already short-circuit correctly (`ConstExprEvaluator_Members.cpp`). However, the top-level path used by `static_assert` and constexpr variable initializers (`ConstExprEvaluator_Core.cpp:evaluate_binary_operator`) eagerly evaluates both sides. Adding short-circuit there causes a regression: `try_evaluate_constant_expression` is used speculatively by the parser to disambiguate `<` (comparison vs template-argument-list). With short-circuit, expressions like `41.5 || non_constexpr_var` succeed (returning `true`), which falsely convinces the heuristic that `<` starts template arguments, breaking parsing of `if (p.a < 41.5 || p.a > 42.5)`. **Fix requires:** coordinating with the template disambiguation logic so that speculative evaluation does not change observable parse behavior when short-circuit is enabled.
 - ❌ Dynamic allocation in constexpr (`new` / `delete`)
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
