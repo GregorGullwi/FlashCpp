@@ -2515,7 +2515,43 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
-	if (!resolution.selected_overload) return;
+	if (!resolution.selected_overload) {
+		for (size_t arg_idx = 0; arg_idx < initializers.size(); ++arg_idx) {
+			const ASTNode& arg = initializers[arg_idx];
+			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+			if (!arg_type_id) continue;
+			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
+			if (arg_desc.base_type != Type::Enum || !arg_desc.type_index.is_valid() ||
+				arg_desc.type_index.value >= gTypeInfo.size()) {
+				continue;
+			}
+			const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo();
+			if (!ei || !ei->is_scoped) continue;
+
+			bool has_matching_ctor = false;
+			for (const auto& mf : struct_info.member_functions) {
+				if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+				const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+				const auto& params = ctor.parameter_nodes();
+				const size_t min_required_args = countMinRequiredArgs(ctor);
+				if (initializers.size() < min_required_args || initializers.size() > params.size()) continue;
+				if (arg_idx >= params.size() || !params[arg_idx].is<DeclarationNode>()) continue;
+				const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
+				if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;
+				const CanonicalTypeId param_id = canonicalizeType(ptype.as<TypeSpecifierNode>());
+				if (canonical_types_match(arg_type_id, param_id)) {
+					has_matching_ctor = true;
+					break;
+				}
+			}
+			if (!has_matching_ctor) {
+				throw CompileError("cannot implicitly convert from scoped enum '" +
+					std::string(StringTable::getStringView(ei->name)) +
+					"' to constructor parameter; use static_cast");
+			}
+		}
+		return;
+	}
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
 

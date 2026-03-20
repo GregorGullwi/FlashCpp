@@ -2,6 +2,25 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+	namespace {
+		TypeSpecifierNode materializeTypeSpecifierFromStructMember(const StructMember& member) {
+			int size_bits = static_cast<int>(member.size * 8);
+			if (member.reference_qualifier != ReferenceQualifier::None || member.pointer_depth > 0) {
+				size_bits = 64;
+			}
+			TypeSpecifierNode type_node(member.type, member.type_index, size_bits, Token());
+			type_node.set_reference_qualifier(member.reference_qualifier);
+			type_node.add_pointer_levels(member.pointer_depth);
+			if (member.is_array) {
+				type_node.set_array_dimensions(member.array_dimensions);
+			}
+			if (member.function_signature.has_value()) {
+				type_node.set_function_signature(*member.function_signature);
+			}
+			return type_node;
+		}
+	}
+
 	TypedValue AstToIr::materializeRefArgFromTempVar(
 		const ExprResult& expr_result,
 		ReferenceQualifier ref_qual,
@@ -69,11 +88,7 @@
 			const StructMember* member_info = nullptr;
 			if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
 				member_info) {
-				return TypeSpecifierNode(
-					member_info->type,
-					member_info->type_index,
-					static_cast<int>(member_info->size * 8),
-					Token());
+				return materializeTypeSpecifierFromStructMember(*member_info);
 			}
 		}
 
@@ -415,62 +430,57 @@
 					if (si && !ctor_call.arguments().empty()) {
 						// Find matching constructor
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
-						if (parser_) {
-							std::vector<TypeSpecifierNode> arg_types;
-							arg_types.reserve(ctor_call.arguments().size());
-							for (const auto& arg : ctor_call.arguments()) {
-								auto arg_type_opt = parser_->get_expression_type(arg);
-								if (!arg_type_opt.has_value()) {
-									arg_types.clear();
-									break;
-								}
-								TypeSpecifierNode arg_type = *arg_type_opt;
-								adjust_argument_type_for_overload_resolution(arg, arg_type);
-								arg_types.push_back(std::move(arg_type));
+						std::vector<TypeSpecifierNode> arg_types;
+						arg_types.reserve(ctor_call.arguments().size());
+						bool has_all_arg_types = true;
+						for (const auto& arg : ctor_call.arguments()) {
+							auto arg_type_opt = inferExpressionTypeForOverload(arg);
+							if (!arg_type_opt.has_value()) {
+								has_all_arg_types = false;
+								break;
 							}
-							if (arg_types.size() == ctor_call.arguments().size()) {
-								auto resolution = resolve_constructor_overload(*si, arg_types, false);
-								if (resolution.is_ambiguous) {
-									throw CompileError("Ambiguous constructor call");
-								}
-								matching_ctor = resolution.selected_overload;
-							}
+							TypeSpecifierNode arg_type = *arg_type_opt;
+							adjust_argument_type_for_overload_resolution(arg, arg_type);
+							arg_types.push_back(std::move(arg_type));
 						}
-
-						if (!matching_ctor) {
-							for (const auto& mf : si->member_functions) {
-								if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor.parameter_nodes();
-								if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-									const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-									if (param_type_node.is<TypeSpecifierNode>()) {
-										const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-										if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-											continue;
-										}
-									}
-								}
-								if (params.size() == ctor_call.arguments().size()) {
-									matching_ctor = &ctor;
-									break;
-								}
+						if (has_all_arg_types && arg_types.size() == ctor_call.arguments().size()) {
+							auto resolution = resolve_constructor_overload(*si, arg_types, false);
+							if (resolution.is_ambiguous) {
+								throw CompileError("Ambiguous constructor call");
 							}
+							matching_ctor = resolution.selected_overload;
+						} else {
+							auto resolution = resolve_constructor_overload(*si, ctor_call.arguments().size(), true);
+							if (resolution.is_ambiguous) {
+								throw CompileError("Ambiguous constructor call");
+							}
+							matching_ctor = resolution.selected_overload;
 						}
 						if (matching_ctor) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
+							eval_ctx.local_bindings = &param_bindings;
 							std::unordered_map<std::string_view, long long> param_values;
 							bool args_ok = true;
 							const auto& params = matching_ctor->parameter_nodes();
-							for (size_t ai = 0; ai < params.size() && ai < ctor_call.arguments().size(); ++ai) {
-								if (params[ai].is<DeclarationNode>()) {
-									auto arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
-									if (arg_result.success()) {
-										param_values[params[ai].as<DeclarationNode>().identifier_token().value()] = arg_result.as_int();
-									} else {
-										args_ok = false;
-										break;
-									}
+							for (size_t ai = 0; ai < params.size(); ++ai) {
+								if (!params[ai].is<DeclarationNode>()) continue;
+								const auto& param_decl = params[ai].as<DeclarationNode>();
+								ConstExpr::EvalResult arg_result;
+								if (ai < ctor_call.arguments().size()) {
+									arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
+								} else if (param_decl.has_default_value()) {
+									arg_result = ConstExpr::Evaluator::evaluate(param_decl.default_value(), eval_ctx);
+								} else {
+									args_ok = false;
+									break;
+								}
+								if (arg_result.success()) {
+									param_bindings[param_decl.identifier_token().value()] = arg_result;
+									param_values[param_decl.identifier_token().value()] = arg_result.as_int();
+								} else {
+									args_ok = false;
+									break;
 								}
 							}
 							if (args_ok) {

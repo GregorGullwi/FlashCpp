@@ -183,6 +183,12 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 		if (resolution.is_ambiguous) {
 			return nullptr;
 		}
+		if (!resolution.selected_overload) {
+			auto arity_resolution = resolve_constructor_overload(*struct_info, arguments.size(), true);
+			if (arity_resolution.has_match) {
+				return arity_resolution.selected_overload;
+			}
+		}
 		return nullptr;
 	}
 
@@ -244,6 +250,10 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 
 	if (constexpr_match) {
 		return constexpr_ambiguous ? nullptr : constexpr_match;
+	}
+
+	if (non_constexpr_ambiguous) {
+		return nullptr;
 	}
 
 	if (non_constexpr_match && !non_constexpr_ambiguous) {
