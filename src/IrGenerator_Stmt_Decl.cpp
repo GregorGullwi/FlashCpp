@@ -2,6 +2,43 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+	TypedValue AstToIr::materializeRefArgFromTempVar(
+		const ExprResult& expr_result,
+		ReferenceQualifier ref_qual,
+		TypeIndex type_index)
+	{
+		Type expr_type = expr_result.type;
+		int expr_size = expr_result.size_in_bits.value;
+		TempVar expr_var = std::get<TempVar>(expr_result.value);
+		bool is_already_address = false;
+
+		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+		if (metadata_storage.hasMetadata(expr_var)) {
+			TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+			if (metadata.category == ValueCategory::LValue ||
+				metadata.category == ValueCategory::XValue) {
+				is_already_address = true;
+			}
+		}
+		if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+			is_already_address = true;
+		}
+
+		TypedValue tv;
+		if (is_already_address) {
+			tv = toTypedValue(expr_result);
+		} else {
+			TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+			tv.type = expr_type;
+			tv.ir_type = toIrType(expr_type);
+			tv.size_in_bits = SizeInBits{64};
+			tv.value = addr_var;
+		}
+		tv.ref_qualifier = ref_qual;
+		tv.type_index = type_index;
+		return tv;
+	}
+
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
@@ -1076,36 +1113,10 @@
 													tv = toTypedValue(init_operands);
 												}
 											} else if (param_is_ref && std::holds_alternative<TempVar>(init_operands.value)) {
-												Type expr_type = init_operands.type;
-												int expr_size = init_operands.size_in_bits.value;
-												TempVar expr_var = std::get<TempVar>(init_operands.value);
-												bool is_already_address = false;
-
-												auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-												if (metadata_storage.hasMetadata(expr_var)) {
-													TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
-													if (metadata.category == ValueCategory::LValue ||
-														metadata.category == ValueCategory::XValue) {
-														is_already_address = true;
-													}
-												}
-												if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
-													is_already_address = true;
-												}
-
-												if (is_already_address) {
-													tv = toTypedValue(init_operands);
-												} else {
-													TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-													tv.type = expr_type;
-													tv.ir_type = toIrType(expr_type);
-													tv.size_in_bits = SizeInBits{64};
-													tv.value = addr_var;
-												}
-												tv.ref_qualifier = param_type->is_rvalue_reference() ?
+												ReferenceQualifier ref_qual = param_type->is_rvalue_reference() ?
 													ReferenceQualifier::RValueReference :
 													ReferenceQualifier::LValueReference;
-												tv.type_index = param_type->type_index();
+												tv = materializeRefArgFromTempVar(init_operands, ref_qual, param_type->type_index());
 											} else {
 												tv = toTypedValue(init_operands);
 											}
@@ -1974,36 +1985,10 @@
 											tv = toTypedValue(argumentIrOperands);
 										}
 									} else if (param_is_ref && std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-										Type expr_type = argumentIrOperands.type;
-										int expr_size = argumentIrOperands.size_in_bits.value;
-										TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
-										bool is_already_address = false;
-
-										auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-										if (metadata_storage.hasMetadata(expr_var)) {
-											TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
-											if (metadata.category == ValueCategory::LValue ||
-												metadata.category == ValueCategory::XValue) {
-												is_already_address = true;
-											}
-										}
-										if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
-											is_already_address = true;
-										}
-
-										if (is_already_address) {
-											tv = toTypedValue(argumentIrOperands);
-										} else {
-											TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-											tv.type = expr_type;
-											tv.ir_type = toIrType(expr_type);
-											tv.size_in_bits = SizeInBits{64};
-											tv.value = addr_var;
-										}
-										tv.ref_qualifier = param_type->is_rvalue_reference() ?
+										ReferenceQualifier ref_qual = param_type->is_rvalue_reference() ?
 											ReferenceQualifier::RValueReference :
 											ReferenceQualifier::LValueReference;
-										tv.type_index = param_type->type_index();
+										tv = materializeRefArgFromTempVar(argumentIrOperands, ref_qual, param_type->type_index());
 									} else {
 										tv = toTypedValue(argumentIrOperands);
 									}
@@ -2182,34 +2167,8 @@
 										init_arg = toTypedValue(init_operands);
 									}
 								} else if (!is_converting_ctor && std::holds_alternative<TempVar>(init_operands.value)) {
-									Type expr_type = init_operands.type;
-									int expr_size = init_operands.size_in_bits.value;
-									TempVar expr_var = std::get<TempVar>(init_operands.value);
-									bool is_already_address = false;
-
-									auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-									if (metadata_storage.hasMetadata(expr_var)) {
-										TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
-										if (metadata.category == ValueCategory::LValue ||
-											metadata.category == ValueCategory::XValue) {
-											is_already_address = true;
-										}
-									}
-									if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
-										is_already_address = true;
-									}
-
-									if (is_already_address) {
-										init_arg = toTypedValue(init_operands);
-									} else {
-										TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
-										init_arg.type = expr_type;
-										init_arg.ir_type = toIrType(expr_type);
-										init_arg.size_in_bits = SizeInBits{64};
-										init_arg.value = addr_var;
-									}
-									init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-									init_arg.type_index = type_node.type_index();
+									init_arg = materializeRefArgFromTempVar(
+										init_operands, ReferenceQualifier::LValueReference, type_node.type_index());
 								} else {
 									init_arg = toTypedValue(init_operands);
 								}

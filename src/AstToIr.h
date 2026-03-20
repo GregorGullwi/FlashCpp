@@ -620,6 +620,15 @@ private:
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
 	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token());
 
+	/// Build a TypedValue suitable for passing a TempVar expression result to a
+	/// constructor parameter that expects a reference.  Checks whether the TempVar
+	/// already represents an address (via GlobalTempVarMetadataStorage or the
+	/// 64-bit-struct heuristic) and emits AddressOf if needed.
+	TypedValue materializeRefArgFromTempVar(
+		const ExprResult& expr_result,
+		ReferenceQualifier ref_qual,
+		TypeIndex type_index);
+
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
 
