@@ -712,7 +712,52 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 		return false;
 	}
 
-	return param_type.type_index() == *struct_info.own_type_index_;
+	return param_type.type_index().is_valid() &&
+		param_type.type_index() == *struct_info.own_type_index_;
+}
+
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info,
+	size_t argument_count,
+	bool skip_implicit = false)
+{
+	const ConstructorDeclarationNode* first_viable = nullptr;
+	const ConstructorDeclarationNode* first_viable_non_implicit = nullptr;
+
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		const bool is_implicit_copy_or_move =
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+		if (skip_implicit && is_implicit_copy_or_move) {
+			continue;
+		}
+
+		const auto& parameters = ctor_decl.parameter_nodes();
+		const size_t min_required = countMinRequiredArgs(ctor_decl);
+		if (argument_count < min_required || argument_count > parameters.size()) {
+			continue;
+		}
+
+		if (!first_viable) {
+			first_viable = &ctor_decl;
+		}
+		if (!ctor_decl.is_implicit() && !first_viable_non_implicit) {
+			first_viable_non_implicit = &ctor_decl;
+		}
+	}
+
+	if (first_viable_non_implicit) {
+		return ConstructorOverloadResolutionResult(first_viable_non_implicit);
+	}
+	if (first_viable) {
+		return ConstructorOverloadResolutionResult(first_viable);
+	}
+
+	return ConstructorOverloadResolutionResult::no_match();
 }
 
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(

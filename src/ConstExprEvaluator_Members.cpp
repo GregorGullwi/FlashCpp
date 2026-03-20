@@ -2913,6 +2913,12 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			inner_matching_ctor = resolution.selected_overload;
 		}
 	}
+	if (!inner_matching_ctor) {
+		auto resolution = resolve_constructor_overload(*inner_struct_info, size_t{1}, false);
+		if (resolution.has_match) {
+			inner_matching_ctor = resolution.selected_overload;
+		}
+	}
 
 	if (!inner_matching_ctor) {
 		return EvalResult::error("No matching single-argument constructor for inner struct");

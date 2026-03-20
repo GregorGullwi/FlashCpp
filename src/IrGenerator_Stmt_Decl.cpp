@@ -876,24 +876,54 @@
 								if (num_initializers == 1) {
 									const ASTNode& init_expr = initializers[0];
 									if (init_expr.is<ExpressionNode>()) {
-										const auto& expr = init_expr.as<ExpressionNode>();
-										if (std::holds_alternative<IdentifierNode>(expr)) {
-											const auto& ident = std::get<IdentifierNode>(expr);
-											std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-											if (init_symbol.has_value()) {
-												if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-													const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-													// Check if initializer is of the same struct type
-													if (init_type.type() == Type::Struct &&
-														init_type.type_index() == type_index) {
-														// Try to find copy constructor
-														const StructMemberFunction* copy_ctor = struct_info.findCopyConstructor();
-														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-															has_matching_constructor = true;
-															matching_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
-															FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", struct_info.name);
-														}
+										std::optional<TypeSpecifierNode> init_type_opt;
+										if (parser_) {
+											init_type_opt = parser_->get_expression_type(init_expr);
+										}
+										if (!init_type_opt.has_value()) {
+											const auto& expr = init_expr.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(expr)) {
+												const auto& ident = std::get<IdentifierNode>(expr);
+												std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+												if (init_symbol.has_value()) {
+													const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+													if (!init_decl && init_symbol->is<VariableDeclarationNode>()) {
+														init_decl = &init_symbol->as<VariableDeclarationNode>().declaration();
 													}
+													if (init_decl && init_decl->type_node().is<TypeSpecifierNode>()) {
+														init_type_opt = init_decl->type_node().as<TypeSpecifierNode>();
+													}
+												}
+											}
+											if (!init_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(expr)) {
+												const StructTypeInfo* member_owner = nullptr;
+												const StructMember* member_info = nullptr;
+												if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
+													member_info) {
+													init_type_opt = TypeSpecifierNode(
+														member_info->type,
+														member_info->type_index,
+														static_cast<unsigned char>(member_info->size * 8),
+														Token());
+												}
+											}
+										}
+
+										if (init_type_opt.has_value()) {
+											const TypeSpecifierNode& init_type = *init_type_opt;
+											const Type resolved_init_type =
+												resolve_type_alias(init_type.type(), init_type.type_index());
+											if (type_index.is_valid() &&
+												is_struct_type(resolved_init_type) &&
+												init_type.type_index() == type_index) {
+												const bool prefer_move_ctor =
+													!is_lvalue_expression_for_overload_resolution(init_expr);
+												const StructMemberFunction* same_type_ctor =
+													struct_info.findPreferredSameTypeConstructor(prefer_move_ctor);
+												if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+													has_matching_constructor = true;
+													matching_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+													FLASH_LOG(Codegen, Debug, "Matched same-type constructor for ", struct_info.name);
 												}
 											}
 										}
@@ -933,6 +963,18 @@
 													}
 												}
 											}
+											if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(arg_expr)) {
+												const StructTypeInfo* member_owner = nullptr;
+												const StructMember* member_info = nullptr;
+												if (resolveMemberAccessType(std::get<MemberAccessNode>(arg_expr), member_owner, member_info) &&
+													member_info) {
+													arg_type_opt = TypeSpecifierNode(
+														member_info->type,
+														member_info->type_index,
+														static_cast<unsigned char>(member_info->size * 8),
+														Token());
+												}
+											}
 										}
 										if (!arg_type_opt.has_value()) { all_arg_types_known = false; break; }
 										TypeSpecifierNode arg_type = *arg_type_opt;
@@ -940,10 +982,11 @@
 										arg_types.push_back(std::move(arg_type));
 									}
 									if (all_arg_types_known) {
-										// skip_implicit=true: avoid false ambiguity when an explicit
-										// copy/move ctor coexists with a compiler-generated implicit one
-										// having the same signature.
-										auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+										// Keep implicit same-type copy/move constructors available here.
+										// The shared resolver already filters them out for non-same-type
+										// brace/direct-init arguments, so blanket skipping would break
+										// valid same-type copy construction.
+										auto resolution = resolve_constructor_overload(struct_info, arg_types, false);
 										if (resolution.is_ambiguous) {
 											throw CompileError("Ambiguous constructor call");
 										}
@@ -1030,11 +1073,40 @@
 														tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
 													}
 												} else {
-													// Not a simple identifier or not found - use as-is
 													tv = toTypedValue(init_operands);
 												}
+											} else if (param_is_ref && std::holds_alternative<TempVar>(init_operands.value)) {
+												Type expr_type = init_operands.type;
+												int expr_size = init_operands.size_in_bits.value;
+												TempVar expr_var = std::get<TempVar>(init_operands.value);
+												bool is_already_address = false;
+
+												auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+												if (metadata_storage.hasMetadata(expr_var)) {
+													TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+													if (metadata.category == ValueCategory::LValue ||
+														metadata.category == ValueCategory::XValue) {
+														is_already_address = true;
+													}
+												}
+												if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+													is_already_address = true;
+												}
+
+												if (is_already_address) {
+													tv = toTypedValue(init_operands);
+												} else {
+													TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+													tv.type = expr_type;
+													tv.ir_type = toIrType(expr_type);
+													tv.size_in_bits = SizeInBits{64};
+													tv.value = addr_var;
+												}
+												tv.ref_qualifier = param_type->is_rvalue_reference() ?
+													ReferenceQualifier::RValueReference :
+													ReferenceQualifier::LValueReference;
+												tv.type_index = param_type->type_index();
 											} else {
-												// Not a reference parameter or not an identifier - use as-is
 												tv = toTypedValue(init_operands);
 											}
 
@@ -1655,7 +1727,8 @@
 								// This ensures copy constructors are preferred over converting constructors
 								// But only when the argument is actually of the same struct type
 								if (num_args == 1) {
-									// Check if the argument is an identifier of the same struct type
+									// Check if the argument is of the same struct type so copy/move
+									// constructors are preferred over converting constructors.
 									ASTNode first_arg;
 									direct_ctor->arguments().visit([&](ASTNode arg) {
 										if (!first_arg.has_value()) first_arg = arg;
@@ -1663,29 +1736,59 @@
 
 									bool arg_is_same_struct_type = false;
 									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
-										const auto& expr = first_arg.as<ExpressionNode>();
-										if (std::holds_alternative<IdentifierNode>(expr)) {
-											const auto& ident = std::get<IdentifierNode>(expr);
-											std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
-											if (arg_symbol.has_value()) {
-												if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
-													const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-													// Check if argument is of the same struct type
-													if (arg_type.type() == Type::Struct &&
-														arg_type.type_index() == type_node.type_index()) {
-														arg_is_same_struct_type = true;
+										std::optional<TypeSpecifierNode> arg_type_opt;
+										if (parser_) {
+											arg_type_opt = parser_->get_expression_type(first_arg);
+										}
+										if (!arg_type_opt.has_value()) {
+											const auto& expr = first_arg.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(expr)) {
+												const auto& ident = std::get<IdentifierNode>(expr);
+												std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
+												if (arg_symbol.has_value()) {
+													const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol);
+													if (!arg_decl && arg_symbol->is<VariableDeclarationNode>()) {
+														arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
+													}
+													if (arg_decl && arg_decl->type_node().is<TypeSpecifierNode>()) {
+														arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
 													}
 												}
+											}
+											if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(expr)) {
+												const StructTypeInfo* member_owner = nullptr;
+												const StructMember* member_info = nullptr;
+												if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
+													member_info) {
+													arg_type_opt = TypeSpecifierNode(
+														member_info->type,
+														member_info->type_index,
+														static_cast<unsigned char>(member_info->size * 8),
+														Token());
+												}
+											}
+										}
+
+										if (arg_type_opt.has_value()) {
+											const TypeSpecifierNode& arg_type = *arg_type_opt;
+											const Type resolved_arg_type =
+												resolve_type_alias(arg_type.type(), arg_type.type_index());
+											if (type_node.type_index().is_valid() &&
+												is_struct_type(resolved_arg_type) &&
+												arg_type.type_index() == type_node.type_index()) {
+												arg_is_same_struct_type = true;
 											}
 										}
 									}
 
-									// Only select copy constructor if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
-										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
-											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
-											FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
+										const bool prefer_move_ctor =
+											!is_lvalue_expression_for_overload_resolution(first_arg);
+										const StructMemberFunction* same_type_ctor =
+											type_info.struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor);
+										if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+											matching_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+											FLASH_LOG(Codegen, Debug, "Matched same-type constructor for ", type_info.name());
 										}
 									}
 								}
@@ -1713,6 +1816,18 @@
 																if (vd.declaration().type_node().is<TypeSpecifierNode>())
 																	arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
 															}
+														}
+													}
+													if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(arg_expr)) {
+														const StructTypeInfo* member_owner = nullptr;
+														const StructMember* member_info = nullptr;
+														if (resolveMemberAccessType(std::get<MemberAccessNode>(arg_expr), member_owner, member_info) &&
+															member_info) {
+															arg_type_opt = TypeSpecifierNode(
+																member_info->type,
+																member_info->type_index,
+																static_cast<unsigned char>(member_info->size * 8),
+																Token());
 														}
 													}
 												}
@@ -1817,12 +1932,14 @@
 									TypedValue tv;
 
 									// Check if parameter expects a reference and argument is an identifier
-									if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
-									std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+									const bool param_is_ref = param_type &&
+										(param_type->is_reference() || param_type->is_rvalue_reference());
+									const bool arg_is_identifier =
+										std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>());
+									if (param_is_ref && arg_is_identifier) {
 										const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 										std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 
-										// Handle both DeclarationNode and VariableDeclarationNode
 										const DeclarationNode* arg_decl = nullptr;
 										if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 											arg_decl = &symbol->as<DeclarationNode>();
@@ -1834,34 +1951,60 @@
 											const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 
 											if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
-												// Argument is already a reference - just pass it through
 												tv = toTypedValue(argumentIrOperands);
 											} else {
-												// Argument is a value - take its address
 												TempVar addr_var = var_counter.next();
 												AddressOfOp addr_op;
 												addr_op.result = addr_var;
 												addr_op.operand.type = arg_type.type();
 												addr_op.operand.ir_type = toIrType(arg_type.type());
 												addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
-												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
+												addr_op.operand.pointer_depth = PointerDepth{};
 												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
-												// Create TypedValue with the address
 												tv.type = arg_type.type();
 												tv.ir_type = toIrType(arg_type.type());
-												tv.size_in_bits = SizeInBits{64};  // Pointer size
+												tv.size_in_bits = SizeInBits{64};
 												tv.value = addr_var;
-												tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
-												tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
+												tv.ref_qualifier = ReferenceQualifier::LValueReference;
+												tv.type_index = arg_type.type_index();
 											}
 										} else {
-											// Not a simple identifier or not found - use as-is
 											tv = toTypedValue(argumentIrOperands);
 										}
+									} else if (param_is_ref && std::holds_alternative<TempVar>(argumentIrOperands.value)) {
+										Type expr_type = argumentIrOperands.type;
+										int expr_size = argumentIrOperands.size_in_bits.value;
+										TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
+										bool is_already_address = false;
+
+										auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+										if (metadata_storage.hasMetadata(expr_var)) {
+											TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+											if (metadata.category == ValueCategory::LValue ||
+												metadata.category == ValueCategory::XValue) {
+												is_already_address = true;
+											}
+										}
+										if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+											is_already_address = true;
+										}
+
+										if (is_already_address) {
+											tv = toTypedValue(argumentIrOperands);
+										} else {
+											TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+											tv.type = expr_type;
+											tv.ir_type = toIrType(expr_type);
+											tv.size_in_bits = SizeInBits{64};
+											tv.value = addr_var;
+										}
+										tv.ref_qualifier = param_type->is_rvalue_reference() ?
+											ReferenceQualifier::RValueReference :
+											ReferenceQualifier::LValueReference;
+										tv.type_index = param_type->type_index();
 									} else {
-										// Not a reference parameter or not an identifier - use as-is
 										tv = toTypedValue(argumentIrOperands);
 									}
 
@@ -2038,8 +2181,36 @@
 										// Symbol not found - use as-is
 										init_arg = toTypedValue(init_operands);
 									}
+								} else if (!is_converting_ctor && std::holds_alternative<TempVar>(init_operands.value)) {
+									Type expr_type = init_operands.type;
+									int expr_size = init_operands.size_in_bits.value;
+									TempVar expr_var = std::get<TempVar>(init_operands.value);
+									bool is_already_address = false;
+
+									auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+									if (metadata_storage.hasMetadata(expr_var)) {
+										TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+										if (metadata.category == ValueCategory::LValue ||
+											metadata.category == ValueCategory::XValue) {
+											is_already_address = true;
+										}
+									}
+									if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+										is_already_address = true;
+									}
+
+									if (is_already_address) {
+										init_arg = toTypedValue(init_operands);
+									} else {
+										TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+										init_arg.type = expr_type;
+										init_arg.ir_type = toIrType(expr_type);
+										init_arg.size_in_bits = SizeInBits{64};
+										init_arg.value = addr_var;
+									}
+									init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+									init_arg.type_index = type_node.type_index();
 								} else {
-									// Not an identifier (e.g., temporary, expression result) - use as-is
 									init_arg = toTypedValue(init_operands);
 								}
 
