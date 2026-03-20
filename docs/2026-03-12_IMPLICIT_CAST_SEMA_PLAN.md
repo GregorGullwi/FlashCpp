@@ -956,7 +956,25 @@ The right split is:
 - **Remaining known limitation:** One test (`test_member_template_func_in_specialization_ret0.cpp`) — template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address, and the struct name in `gTypesByName` may include template parameters preventing lookup. Documented for Phase 16+.
 - Tests: `test_phase15_sema_fallback_removal_ret0`. Suite: 1599 pass / 0 fail / 64 expected-fail.
 
-**Known limitations (Phase 16+):**
+### Phase 16: constructor/destructor sema coverage + bitwise operator classification ✅
+- **Goal:** Extend Phase 15 hard enforcement to constructor and destructor bodies. Add bitwise operator (`&`, `|`, `^`) classification to semantic normalization for proper scoped enum diagnostics and usual arithmetic conversion annotations.
+- **Constructor/destructor sema normalization fix:**
+	- Added `normalizeConstructorDeclaration()` and `normalizeDestructorDeclaration()` in `SemanticAnalysis.cpp`, mirroring `normalizeFunctionDeclaration()` with proper `pushScope()` / parameter registration / `popScope()` scope management.
+	- Previously, constructor bodies were normalized with a plain `SemanticContext` and no parameter scope — constructor parameters were invisible to `lookupLocalType()`, causing type inference failures and missed sema annotations.
+	- Refactored `normalizeTopLevelNode()` and `normalizeStructDeclaration()` to use these new helpers, eliminating duplicated inline normalization code.
+	- Extracted shared `registerParametersInScope()` helper used by both `normalizeFunctionDeclaration` and `normalizeConstructorDeclaration`, eliminating code duplication.
+	- `normalizeConstructorDeclaration` now walks member initializer expressions (`MemberInitializer::initializer_expr`), base initializer arguments (`BaseInitializer::arguments`), and delegating constructor arguments (`DelegatingInitializer::arguments`) through `normalizeExpression()`. This ensures arithmetic conversions in expressions like `Foo(short x) : result(x + 1) {}` are sema-annotated, preventing Phase 15 `InternalError`.
+	- Added forward declarations for `ConstructorDeclarationNode` and `DestructorDeclarationNode` in `SemanticAnalysis.h` for consistency with other node types.
+- **Constructor/destructor codegen flag:**
+	- `visitConstructorDeclarationNode()` and `visitDestructorDeclarationNode()` in `IrGenerator_Visitors_Decl.cpp` now set `sema_normalized_current_function_` using `hasNormalizedBody()`, matching the pattern in `visitFunctionDeclarationNode()`.
+	- Phase 15 hard enforcement now covers constructor and destructor bodies when sema has normalized them.
+- **Bitwise operator sema classification:**
+	- Added `is_bitwise` classification for `&`, `|`, `^` in `normalizeExpression` (C++20 `[expr.bit.and]`, `[expr.bit.or]`, `[expr.bit.xor]`).
+	- `is_bitwise` is included in `needs_binary_type_inference`, triggering `diagnoseScopedEnumBinaryOperands()` for scoped enum operand diagnosis.
+	- `is_bitwise` operators use `tryAnnotateBinaryOperandConversions()` for usual arithmetic conversion annotations (same as `is_arithmetic`).
+- Tests: `test_scoped_enum_bitwise_fail`, `test_ctor_sema_conversion_ret0`, `test_bitwise_sema_conversion_ret0`, `test_ctor_member_init_expr_ret0`. Suite: 1609 pass / 0 fail / 65 expected-fail.
+
+**Known limitations (Phase 17+):**
 - User-defined `operator bool()` / converting constructors remain in codegen.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
@@ -965,9 +983,7 @@ The right split is:
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - `inferExpressionType` still does not handle: `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
-- Plain bitwise operators (`&`, `|`, `^`) with scoped enum operands are not diagnosed.
 - Template specialization callee resolution: `test_member_template_func_in_specialization_ret0.cpp` still triggers the `hasUnresolvedCallArgs` escape hatch because template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address. Improve template specialization callee resolution so `tryAnnotateCallArgConversions` can annotate these cases.
-- `sema_normalized_current_function_` is only set in `visitFunctionDeclarationNode`; constructor and destructor codegen entry points do not set this flag, so Phase 15 hard enforcement does not cover constructor/destructor bodies even when sema normalized them.
 
 ### Parallel rollout guidance
 

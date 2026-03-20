@@ -718,22 +718,10 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		normalizeNamespace(node.as<NamespaceDeclarationNode>());
 	}
 	else if (node.is<ConstructorDeclarationNode>()) {
-		auto& ctor = node.as<ConstructorDeclarationNode>();
-		const auto& def = ctor.get_definition();
-		if (def.has_value()) {
-			normalized_bodies_.insert(static_cast<const void*>(&(*def)));
-			SemanticContext ctx;
-			normalizeStatement(*def, ctx);
-		}
+		normalizeConstructorDeclaration(node.as<ConstructorDeclarationNode>());
 	}
 	else if (node.is<DestructorDeclarationNode>()) {
-		auto& dtor = node.as<DestructorDeclarationNode>();
-		const auto& def = dtor.get_definition();
-		if (def.has_value()) {
-			normalized_bodies_.insert(static_cast<const void*>(&(*def)));
-			SemanticContext ctx;
-			normalizeStatement(*def, ctx);
-		}
+		normalizeDestructorDeclaration(node.as<DestructorDeclarationNode>());
 	}
 	else if (node.is<VariableDeclarationNode>()) {
 		auto& var = node.as<VariableDeclarationNode>();
@@ -748,6 +736,21 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 }
 
 // --- Declaration handlers ---
+
+void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& parameter_nodes) {
+	for (const auto& param_node : parameter_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& decl = param_node.as<DeclarationNode>();
+			const ASTNode ptype = decl.type_node();
+			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
+				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
+				const StringHandle pname = decl.identifier_token().handle();
+				if (pname.isValid())
+					addLocalType(pname, tid);
+			}
+		}
+	}
+}
 
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	const auto& def = func.get_definition();
@@ -765,19 +768,58 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 
 	// Push a scope for this function's parameters
 	pushScope();
-	for (const auto& param_node : func.parameter_nodes()) {
-		if (param_node.is<DeclarationNode>()) {
-			const auto& decl = param_node.as<DeclarationNode>();
-			const ASTNode ptype = decl.type_node();
-			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
-				const StringHandle pname = decl.identifier_token().handle();
-				if (pname.isValid())
-					addLocalType(pname, tid);
-			}
+	registerParametersInScope(func.parameter_nodes());
+
+	normalizeStatement(*def, ctx);
+	popScope();
+}
+
+void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor) {
+	const auto& def = ctor.get_definition();
+	if (!def.has_value()) return;
+
+	// Record that sema has normalized this constructor body.
+	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
+
+	SemanticContext ctx;
+
+	// Push a scope for this constructor's parameters.
+	pushScope();
+	registerParametersInScope(ctor.parameter_nodes());
+
+	// C++20 [class.base.init]: normalize member initializer expressions so
+	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
+	for (const auto& mi : ctor.member_initializers()) {
+		normalizeExpression(mi.initializer_expr, ctx);
+	}
+	// Normalize base class initializer arguments as well.
+	for (const auto& bi : ctor.base_initializers()) {
+		for (const auto& arg : bi.arguments) {
+			normalizeExpression(arg, ctx);
+		}
+	}
+	// Normalize delegating constructor arguments if present.
+	if (ctor.delegating_initializer().has_value()) {
+		for (const auto& arg : ctor.delegating_initializer()->arguments) {
+			normalizeExpression(arg, ctx);
 		}
 	}
 
+	normalizeStatement(*def, ctx);
+	popScope();
+}
+
+void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclarationNode& dtor) {
+	const auto& def = dtor.get_definition();
+	if (!def.has_value()) return;
+
+	// Record that sema has normalized this destructor body.
+	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
+
+	SemanticContext ctx;
+	// Destructors cannot have parameters; push/pop a scope for consistency
+	// with the function normalization pattern.
+	pushScope();
 	normalizeStatement(*def, ctx);
 	popScope();
 }
@@ -789,20 +831,10 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 		if (!func_node.has_value()) continue;
 
 		if (member_func.is_constructor && func_node.is<ConstructorDeclarationNode>()) {
-			const auto& def = func_node.as<ConstructorDeclarationNode>().get_definition();
-			if (def.has_value()) {
-				normalized_bodies_.insert(static_cast<const void*>(&(*def)));
-				SemanticContext ctx;
-				normalizeStatement(*def, ctx);
-			}
+			normalizeConstructorDeclaration(func_node.as<ConstructorDeclarationNode>());
 		}
 		else if (member_func.is_destructor && func_node.is<DestructorDeclarationNode>()) {
-			const auto& def = func_node.as<DestructorDeclarationNode>().get_definition();
-			if (def.has_value()) {
-				normalized_bodies_.insert(static_cast<const void*>(&(*def)));
-				SemanticContext ctx;
-				normalizeStatement(*def, ctx);
-			}
+			normalizeDestructorDeclaration(func_node.as<DestructorDeclarationNode>());
 		}
 		else if (func_node.is<FunctionDeclarationNode>()) {
 			normalizeFunctionDeclaration(func_node.as<FunctionDeclarationNode>());
@@ -1027,6 +1059,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				const std::string_view op = e.op();
 				const bool is_arithmetic =
 					op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+				// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]:
+				// usual arithmetic conversions are performed on the operands.
+				const bool is_bitwise =
+					op == "&" || op == "|" || op == "^";
 				const bool is_comparison =
 					op == "<" || op == ">" || op == "<=" || op == ">=" ||
 					op == "==" || op == "!=";
@@ -1037,7 +1073,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
 				const bool needs_binary_type_inference =
-					(is_arithmetic || is_comparison || is_compound_assign || is_shift) &&
+					(is_arithmetic || is_bitwise || is_comparison || is_compound_assign || is_shift) &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>();
 				CanonicalTypeId lhs_type_id{};
@@ -1053,7 +1089,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (is_shift && needs_binary_type_inference) {
 					tryAnnotateShiftOperandPromotions(e, lhs_type_id, rhs_type_id);
 				}
-				else if ((is_arithmetic || is_comparison ||
+				else if ((is_arithmetic || is_bitwise || is_comparison ||
 					(is_compound_assign && !is_shift)) &&
 					needs_binary_type_inference) {
 					tryAnnotateBinaryOperandConversions(e, lhs_type_id, rhs_type_id);
