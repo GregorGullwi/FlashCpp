@@ -1724,16 +1724,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								bool is_copy_ctor = false;
 								bool is_move_ctor = false;
 								
-								// Compute min-required-args to handle default-arg ctors
-								// e.g. Foo(const Foo&, int = 0) = delete;
-								size_t min_required = num_params;
-								for (size_t i = num_params; i > 0; --i) {
-									if (!params.parameters[i - 1].is<DeclarationNode>() ||
-										!params.parameters[i - 1].as<DeclarationNode>().has_default_value()) {
-										break;
-									}
-									--min_required;
-								}
+								size_t min_required = computeMinRequiredArgs(params.parameters);
 
 								if (min_required <= 1 && num_params >= 1) {
 									// Check if the parameter is a reference to this type
@@ -2769,14 +2760,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const auto& ctor_node = func_decl.function_declaration.as<ConstructorDeclarationNode>();
 			const auto& params = ctor_node.parameter_nodes();
 			if (!params.empty() && params[0].is<DeclarationNode>()) {
-				size_t min_required = params.size();
-				for (size_t i = params.size(); i > 0; --i) {
-					if (!params[i - 1].is<DeclarationNode>() ||
-						!params[i - 1].as<DeclarationNode>().has_default_value()) {
-						break;
-					}
-					--min_required;
-				}
+				size_t min_required = computeMinRequiredArgs(params);
 				if (min_required <= 1) {
 					const auto& param_decl = params[0].as<DeclarationNode>();
 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -2907,14 +2891,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// with all remaining params having defaults (min-required-args <= 1).
 				const auto& base_params = base_ctor.parameter_nodes();
 				if (!base_params.empty() && base_params[0].is<DeclarationNode>()) {
-					size_t min_required = base_params.size();
-					for (size_t i = base_params.size(); i > 0; --i) {
-						if (!base_params[i - 1].is<DeclarationNode>() ||
-							!base_params[i - 1].as<DeclarationNode>().has_default_value()) {
-							break;
-						}
-						--min_required;
-					}
+					size_t min_required = computeMinRequiredArgs(base_params);
 					if (min_required <= 1) {
 						const auto& param_decl = base_params[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();

@@ -1347,14 +1347,7 @@
 				// use "other" as the conventional name. This must match the body generation code
 				// that references "other" for memberwise copy operations.
 				// Accept ctors with trailing default args (min-required-args <= 1).
-				size_t min_required = node.parameter_nodes().size();
-				for (size_t pi = node.parameter_nodes().size(); pi > 0; --pi) {
-					if (!node.parameter_nodes()[pi - 1].is<DeclarationNode>() ||
-						!node.parameter_nodes()[pi - 1].as<DeclarationNode>().has_default_value()) {
-						break;
-					}
-					--min_required;
-				}
+				size_t min_required = computeMinRequiredArgs(node.parameter_nodes());
 				bool is_copy_or_move_param = ctor_unnamed_param_counter == 0 &&
 					(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
 					min_required <= 1;

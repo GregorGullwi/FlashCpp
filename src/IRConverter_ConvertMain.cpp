@@ -4736,11 +4736,14 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			if (struct_info) {
 				// FIRST: If we have exactly one IR-level argument that's a reference to the same
 				// struct type, prefer the corresponding same-type copy/move constructor.
-				// Note: num_params == 1 is correct here because the IrGenerator's
-				// fillInConstructorDefaultArguments (IrGenerator_Stmt_Decl.cpp) expands
-				// default arguments *before* emitting the ConstructorCallOp. So `Foo b(a)`
-				// with `Foo(const Foo&, int=0)` produces num_params==2 and skips this
-				// fast-path, falling through to resolve_constructor_overload below.
+				// Note: num_params == 1 is correct here because:
+				//   (a) For direct-init `Foo b(a)` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       calls fillInConstructorDefaultArguments before emitting ConstructorCallOp,
+				//       producing num_params==2 which skips this branch and falls through to
+				//       resolve_constructor_overload below.
+				//   (b) For copy-init `Foo b = a` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       also fills in defaults (IrGenerator_Stmt_Decl.cpp copy-init path),
+				//       again producing num_params==2.
 				if (num_params == 1 && !ctor_op.arguments.empty()) {
 					const TypedValue& arg = ctor_op.arguments[0];
 					bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&

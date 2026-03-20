@@ -99,3 +99,21 @@ checking `is_array` is safe; code that reads it based only on emptiness should
 also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
+
+## Assignment operator finders: `params.size() == 1` guard not relaxed
+
+`findCopyAssignmentOperator()` and `findMoveAssignmentOperator()` in
+`AstNodeTypes.cpp` still use `params.size() == 1` in their slow-path loops.
+Assignment operators with trailing default arguments (e.g.
+`Foo& operator=(const Foo&, int = 0)`) are extremely rare in practice and are
+not recognized by these helpers. If such operators are ever used, the slow path
+will fail to match and the operator will not be found. The same applies to the
+assignment operator refinement in `Parser_Decl_StructEnum.cpp:2806`.
+
+## Boolean negation + struct member access in chained if-statements
+
+A pre-existing codegen bug causes incorrect results when `!obj.bool_member` is
+used in an `if` statement preceding another `if` that reads a different member
+of the same struct. The workaround is to use `int` flags instead of `bool`
+members, or avoid chaining `if (!obj.bool_field)` with subsequent member
+accesses. Observed during copy/move constructor regression testing.

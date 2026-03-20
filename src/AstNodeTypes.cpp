@@ -759,15 +759,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 		}
 
 		// Accept ctors where only the first arg is required (rest have defaults).
-		// Inline min-required-args computation to avoid header dependency.
-		size_t min_required = params.size();
-		for (size_t i = params.size(); i > 0; --i) {
-			if (!params[i - 1].is<DeclarationNode>() ||
-				!params[i - 1].as<DeclarationNode>().has_default_value()) {
-				break;
-			}
-			--min_required;
-		}
+		size_t min_required = computeMinRequiredArgs(params);
 		if (min_required > 1) {
 			continue;
 		}
