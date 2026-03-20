@@ -859,7 +859,8 @@ struct GlobalVariableDeclOp {
 	size_t element_count = 1;       // Number of elements (1 for scalars, N for arrays)
 	std::vector<char> init_data;    // Raw bytes for initialized data
 	StringHandle reloc_target;      // If valid, init_data holds zeros and a data relocation (R_X86_64_64) is emitted for this symbol
-	
+	bool is_rodata = false;         // If true, init_data is emitted to .rodata (read-only) instead of .data
+
 	// Helper to get var_name as StringHandle
 	StringHandle getVarName() const {
 		return var_name;

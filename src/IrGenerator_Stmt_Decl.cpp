@@ -511,6 +511,52 @@
 							handled_as_reloc = true;
 						}
 					}
+					if (!handled_as_reloc && type_node.is_pointer() && std::holds_alternative<StringLiteralNode>(init_expr)) {
+						// Global pointer initialized with a string literal: const char* s = "hello";
+						// Emit the string bytes as a .rodata global (same copy-bytes path as any other global),
+						// then use its name as reloc_target -- identical to the &var case.
+						const auto& str_node = std::get<StringLiteralNode>(init_expr);
+						std::string_view raw = str_node.value();
+						// Process the string literal: strip quotes and handle escape sequences.
+						std::string str_bytes;
+						std::string_view str_content = (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
+							? std::string_view(raw.data() + 1, raw.size() - 2) : raw;
+						for (size_t si = 0; si < str_content.size(); ++si) {
+							if (str_content[si] == '\\' && si + 1 < str_content.size()) {
+								switch (str_content[si + 1]) {
+									case 'n': str_bytes += '\n'; ++si; break;
+									case 't': str_bytes += '\t'; ++si; break;
+									case 'r': str_bytes += '\r'; ++si; break;
+									case '\\': str_bytes += '\\'; ++si; break;
+									case '"': str_bytes += '"'; ++si; break;
+									case '0': str_bytes += '\0'; ++si; break;
+									default: str_bytes += str_content[si]; break;
+								}
+							} else {
+								str_bytes += str_content[si];
+							}
+						}
+						str_bytes += '\0';  // null terminator
+						// Emit a synthetic .rodata global for the string content.
+						StringBuilder str_name_builder;
+						str_name_builder.append(".str.");
+						str_name_builder.append(static_cast<uint64_t>(string_literal_counter_++));
+						StringHandle str_sym = StringTable::getOrInternStringHandle(str_name_builder.commit());
+						GlobalVariableDeclOp str_op;
+						str_op.type = Type::Char;
+						str_op.size_in_bits = SizeInBits{8};
+						str_op.var_name = str_sym;
+						str_op.element_count = str_bytes.size();
+						str_op.is_initialized = true;
+						str_op.is_rodata = true;
+						str_op.init_data.assign(str_bytes.begin(), str_bytes.end());
+						ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(str_op), decl.identifier_token()));
+						// Pointer variable: zero init_data + reloc_target pointing to the string symbol.
+						op.is_initialized = true;
+						op.init_data.resize(element_size, 0);
+						op.reloc_target = str_sym;
+						handled_as_reloc = true;
+					}
 					if (!handled_as_reloc) {
 						unsigned long long value = evalToValue(init_node, type_node.type());
 						op.is_initialized = true;

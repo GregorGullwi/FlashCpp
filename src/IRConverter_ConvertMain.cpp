@@ -6012,6 +6012,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 		global_info.reloc_target = op.reloc_target;
+		global_info.is_rodata = op.is_rodata;
 
 		// Copy raw init data if present
 		if (op.is_initialized) {
@@ -15490,11 +15491,11 @@ void IrToObjConverter<TWriterClass>::handleSehLeave(const IrInstruction& instruc
 
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::finalizeSections()  {
-		// Emit global variables to .data or .bss sections FIRST
+		// Emit global variables to .data/.rodata/.bss sections FIRST
 		// This creates the symbols that relocations will reference
 		for (const auto& global : global_variables_) {
 			writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
-			                                global.is_initialized, global.init_data);
+			                                global.is_initialized, global.init_data, global.is_rodata);
 		}
 
 		// Emit data section relocations for pointer/reference globals initialized with &symbol
