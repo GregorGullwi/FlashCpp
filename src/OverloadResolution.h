@@ -723,6 +723,11 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 {
 	const ConstructorDeclarationNode* first_viable = nullptr;
 	const ConstructorDeclarationNode* first_viable_non_implicit = nullptr;
+	// Track implicit copy/move constructors separately: without type
+	// information we cannot verify the argument is the same struct type,
+	// so these are only used as a last resort when no other viable
+	// constructor exists.
+	const ConstructorDeclarationNode* first_viable_implicit_copy_move = nullptr;
 
 	for (const auto& member_func : struct_info.member_functions) {
 		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -742,6 +747,17 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			continue;
 		}
 
+		// Without argument type information we cannot verify that the
+		// argument is actually the same struct type, so exclude implicit
+		// copy/move constructors from the primary candidate set and only
+		// consider them as a last-resort fallback below.
+		if (is_implicit_copy_or_move) {
+			if (!first_viable_implicit_copy_move) {
+				first_viable_implicit_copy_move = &ctor_decl;
+			}
+			continue;
+		}
+
 		if (!first_viable) {
 			first_viable = &ctor_decl;
 		}
@@ -755,6 +771,13 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	}
 	if (first_viable) {
 		return ConstructorOverloadResolutionResult(first_viable);
+	}
+	// Last resort: return an implicit copy/move constructor only when no
+	// other viable constructor was found.  The caller is in a late
+	// lowering path without type info, so this may still be correct if
+	// the argument happens to be the same struct type.
+	if (first_viable_implicit_copy_move) {
+		return ConstructorOverloadResolutionResult(first_viable_implicit_copy_move);
 	}
 
 	return ConstructorOverloadResolutionResult::no_match();
