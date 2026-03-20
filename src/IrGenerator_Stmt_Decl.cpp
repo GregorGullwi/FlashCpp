@@ -75,7 +75,7 @@
 				return TypeSpecifierNode(
 					member_info->type,
 					member_info->type_index,
-					static_cast<unsigned char>(member_info->size * 8),
+					static_cast<int>(member_info->size * 8),
 					Token());
 			}
 		}
