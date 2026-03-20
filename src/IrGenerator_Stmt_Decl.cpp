@@ -539,7 +539,7 @@
 						str_bytes += '\0';  // null terminator
 						// Emit a synthetic .rodata global for the string content.
 						StringBuilder str_name_builder;
-						str_name_builder.append(".str.");
+						str_name_builder.append(".gstr.");
 						str_name_builder.append(static_cast<uint64_t>(string_literal_counter_++));
 						StringHandle str_sym = StringTable::getOrInternStringHandle(str_name_builder.commit());
 						GlobalVariableDeclOp str_op;
