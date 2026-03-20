@@ -202,21 +202,21 @@ std::string_view ObjectFileWriter::add_string_literal(std::string_view str_conte
 
 // Add a global variable with raw initialization data
 void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes, 
-                              bool is_initialized, std::span<const char> init_data) {
-	SectionType section_type = is_initialized ? SectionType::DATA : SectionType::BSS;
+                              bool is_initialized, std::span<const char> init_data, bool is_rodata) {
+	SectionType section_type = is_rodata ? SectionType::RDATA : (is_initialized ? SectionType::DATA : SectionType::BSS);
 	auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 	uint32_t offset = static_cast<uint32_t>(section->get_data_size());
 
 	if (g_enable_debug_output) std::cerr << "DEBUG: add_global_variable_data - var_name=" << var_name 
-		<< " size=" << size_in_bytes << " is_initialized=" << is_initialized << "\n";
+		<< " size=" << size_in_bytes << " is_initialized=" << is_initialized << " is_rodata=" << is_rodata << "\n";
 
-	if (is_initialized && !init_data.empty()) {
-		// Add initialized data to .data section
-		add_data(init_data, SectionType::DATA);
+	if ((is_initialized || is_rodata) && !init_data.empty()) {
+		// Add initialized data to .data or .rdata section
+		add_data(init_data, section_type);
 	} else {
 		// For .bss or uninitialized, use zero-filled data
 		std::vector<char> zero_data(size_in_bytes, 0);
-		add_data(zero_data, is_initialized ? SectionType::DATA : SectionType::BSS);
+		add_data(zero_data, (is_initialized || is_rodata) ? section_type : SectionType::BSS);
 	}
 
 	// Add a symbol for this global variable
@@ -227,7 +227,7 @@ void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_
 	symbol->set_value(offset);
 
 	if (g_enable_debug_output) std::cerr << "Added global variable '" << var_name << "' at offset " << offset
-	          << " in " << (is_initialized ? ".data" : ".bss") << " section (size: " << size_in_bytes << " bytes)" << std::endl;
+	          << " in " << (is_rodata ? ".rdata" : (is_initialized ? ".data" : ".bss")) << " section (size: " << size_in_bytes << " bytes)" << std::endl;
 }
 
 // Add a vtable to .rdata section with RTTI support

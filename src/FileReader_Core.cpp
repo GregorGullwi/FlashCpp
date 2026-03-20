@@ -164,16 +164,76 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
-		size_t start_comment_pos = line.find("/*");
-		if (start_comment_pos != std::string::npos) {
-			size_t end_comment_pos = line.find("*/", start_comment_pos);
-			if (end_comment_pos != std::string::npos) {
-				line.erase(start_comment_pos, end_comment_pos - start_comment_pos + 2);
+		// Strip /* ... */ block comments in a single left-to-right pass,
+		// respecting string and char literals.  Handles multiple block
+		// comments on one line and unterminated block comments that span
+		// to subsequent lines.
+		//
+		// IMPORTANT: We intentionally do NOT strip // line comments here.
+		// Per the C++ standard, line splicing (phase 2: backslash-newline
+		// continuation) must happen before comment removal (phase 3).
+		// The #directive continuation handler below (lines with trailing \)
+		// needs to see the full line including any // and trailing \.
+		// The // comments are stripped later by stripLineComment() after
+		// line continuation has been processed.
+		{
+			std::string result;
+			result.reserve(line.size());
+			bool l_in_string = false;
+			bool l_in_char = false;
+			size_t i = 0;
+			while (i < line.size()) {
+				char c = line[i];
+				// Skip escaped characters inside string/char literals
+				if ((l_in_string || l_in_char) && c == '\\' && i + 1 < line.size()) {
+					result += c;
+					result += line[i + 1];
+					i += 2;
+					continue;
+				}
+				if (c == '"' && !l_in_char) {
+					l_in_string = !l_in_string;
+					result += c;
+					++i;
+				} else if (c == '\'' && !l_in_string) {
+					l_in_char = !l_in_char;
+					result += c;
+					++i;
+				} else if (!l_in_string && !l_in_char && c == '/' && i + 1 < line.size()) {
+					if (line[i + 1] == '*') {
+						// Block comment: find closing */
+						size_t close = line.find("*/", i + 2);
+						if (close != std::string::npos) {
+							// Warn about /* inside block comment (-Wcomment equivalent)
+							size_t nested = line.find("/*", i + 2);
+							if (nested != std::string::npos && nested < close && !filestack_.empty()) {
+								FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
+								          filestack_.top().file_name, ":", line_number);
+							}
+							i = close + 2; // skip past */
+						} else {
+							// Unterminated block comment — spans to next line(s)
+							in_comment = true;
+							break;
+						}
+					} else if (line[i + 1] == '/') {
+						// Line comment: stop scanning for block comments on the
+						// rest of this line.  Copy the // and everything after it
+						// verbatim — stripLineComment() will remove it later,
+						// AFTER line continuation has been processed.
+						result.append(line, i, line.size() - i);
+						i = line.size();
+					} else {
+						result += c;
+						++i;
+					}
+				} else {
+					result += c;
+					++i;
+				}
 			}
-			else {
-				in_comment = true;
-				continue;
-			}
+			line = std::move(result);
+			if (in_comment) continue;
 		}
 
 		if (skipping_stack.size() == 0) {

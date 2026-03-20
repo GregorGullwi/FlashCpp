@@ -255,6 +255,8 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 
 EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
 	std::string_view op, EvaluationContext& context) {
+	// TODO: short-circuit && / || — see docs/CONSTEXPR_LIMITATIONS.md
+
 	// Recursively evaluate left and right operands
 	auto lhs_result = evaluate(lhs_node, context);
 	auto rhs_result = evaluate(rhs_node, context);
@@ -1295,8 +1297,9 @@ EvalResult Evaluator::evaluate_ternary_operator(const TernaryOperatorNode& terna
 		return cond_result;
 	}
 
-	// Evaluate the appropriate branch based on the condition
-	if (cond_result.as_bool()) {
+	// Evaluate the appropriate branch based on the condition.
+	// A valid constexpr pointer (pointer_to_var.isValid()) is always non-null (truthy).
+	if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 		return evaluate(ternary.true_expr(), context);
 	} else {
 		return evaluate(ternary.false_expr(), context);

@@ -635,6 +635,7 @@ private:
 
 	Ir ir_;
 	TempVar var_counter{ 0 };
+	uint32_t string_literal_counter_ = 0;  // Counter for unique .str.N global names
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags

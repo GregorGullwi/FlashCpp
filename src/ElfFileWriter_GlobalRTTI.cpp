@@ -50,15 +50,33 @@ namespace {
 }
 
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
-                              bool is_initialized, std::span<const char> init_data) {
+                              bool is_initialized, std::span<const char> init_data, bool is_rodata) {
 	if (g_enable_debug_output) {
 		std::cerr << "Adding global variable: " << var_name 
 		          << " size=" << size_in_bytes 
-		          << " initialized=" << is_initialized << std::endl;
+		          << " initialized=" << is_initialized
+		          << " rodata=" << is_rodata << std::endl;
 	}
 
 	ELFIO::section* section;
-	if (is_initialized) {
+	if (is_rodata) {
+		section = getSectionByName(".rodata");
+		if (!section) {
+			throw std::runtime_error(".rodata section not found");
+		}
+
+		uint32_t offset = section->get_size();
+
+		if (!init_data.empty()) {
+			section->append_data(init_data.data(), init_data.size());
+		} else {
+			std::vector<char> zero_data(size_in_bytes, 0);
+			section->append_data(zero_data.data(), zero_data.size());
+		}
+
+		getOrCreateSymbol(var_name, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL,
+		                 section->get_index(), offset, init_data.empty() ? size_in_bytes : init_data.size());
+	} else if (is_initialized) {
 		section = getSectionByName(".data");
 		if (!section) {
 			throw std::runtime_error(".data section not found");

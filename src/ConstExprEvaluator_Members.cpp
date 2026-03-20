@@ -1060,6 +1060,21 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		}
 		
 		// Regular binary operators (non-assignment)
+		// Short-circuit && and || per C++ semantics: evaluate LHS first, skip RHS
+		// when the result is already determined.  This is critical for guard patterns
+		// like `p && *p` where the RHS must not be evaluated when LHS is falsy.
+		if (op == "&&" || op == "||") {
+			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
+			if (!lhs_result.success()) return lhs_result;
+			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+			if (op == "&&" && !lhs_bool) return EvalResult::from_bool(false);
+			if (op == "||" && lhs_bool)  return EvalResult::from_bool(true);
+			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+			if (!rhs_result.success()) return rhs_result;
+			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+			return EvalResult::from_bool(rhs_bool);
+		}
+
 		auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
 		auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 		
@@ -1200,7 +1215,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		
 		if (!cond_result.success()) return cond_result;
 		
-		if (cond_result.as_bool()) {
+		if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 			return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
 		} else {
 			return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
@@ -1285,6 +1300,21 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
+		std::string_view op = bin_op.op();
+
+		// Short-circuit && and || per C++ semantics (see mutable-bindings path above).
+		if (op == "&&" || op == "||") {
+			auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
+			if (!lhs_result.success()) return lhs_result;
+			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+			if (op == "&&" && !lhs_bool) return EvalResult::from_bool(false);
+			if (op == "||" && lhs_bool)  return EvalResult::from_bool(true);
+			auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
+			if (!rhs_result.success()) return rhs_result;
+			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+			return EvalResult::from_bool(rhs_bool);
+		}
+
 		auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
 		auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
 		
@@ -1348,7 +1378,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		
 		if (!cond_result.success()) return cond_result;
 		
-		if (cond_result.as_bool()) {
+		if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 			return recursive_eval(ternary.true_expr(), bindings, context);
 		} else {
 			return recursive_eval(ternary.false_expr(), bindings, context);
@@ -1559,11 +1589,53 @@ std::optional<long long> Evaluator::safe_shr(long long a, long long b, int width
 
 // Helper to apply binary operators
 EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
-	// Reject pointer operands: pointer arithmetic (ptr + n, ptr - ptr, ptr == ptr, etc.)
-	// is not yet supported in constexpr evaluation.  Without this guard, pointer results
-	// (which carry value = 0LL) would silently participate in arithmetic/comparison and
-	// produce wrong results.
+	// Handle operations involving constexpr pointers.
+	// Valid constexpr pointers (pointer_to_var.isValid()) are always non-null since they
+	// represent address-of named constexpr variables.  nullptr evaluates to integer 0.
 	if (lhs.pointer_to_var.isValid() || rhs.pointer_to_var.isValid()) {
+		const bool lhs_is_ptr = lhs.pointer_to_var.isValid();
+		const bool rhs_is_ptr = rhs.pointer_to_var.isValid();
+
+		// Equality / inequality comparisons
+		if (op == "==" || op == "!=") {
+			bool are_equal;
+			if (lhs_is_ptr && rhs_is_ptr) {
+				// ptr1 == ptr2: equal iff they point to the same named variable
+				are_equal = (lhs.pointer_to_var == rhs.pointer_to_var);
+			} else if (lhs_is_ptr) {
+				// ptr == integer: nullptr (0) is the only null-pointer constant.
+				// Use raw unsigned comparison to avoid implementation-defined signed overflow.
+				const unsigned long long rhs_raw = rhs.is_uint() ? rhs.as_uint_raw()
+					: static_cast<unsigned long long>(rhs.as_int());
+				if (rhs_raw != 0ULL) {
+					return EvalResult::error("Pointer comparison with non-zero integer is not supported in constant expressions");
+				}
+				are_equal = false; // valid constexpr pointer is always non-null
+			} else {
+				// integer == ptr: same treatment as above
+				const unsigned long long lhs_raw = lhs.is_uint() ? lhs.as_uint_raw()
+					: static_cast<unsigned long long>(lhs.as_int());
+				if (lhs_raw != 0ULL) {
+					return EvalResult::error("Pointer comparison with non-zero integer is not supported in constant expressions");
+				}
+				are_equal = false; // valid constexpr pointer is always non-null
+			}
+			return EvalResult::from_bool(op == "==" ? are_equal : !are_equal);
+		}
+
+		// Logical operators: a valid constexpr pointer is always truthy
+		if (op == "&&") {
+			const bool lhs_bool = lhs_is_ptr ? true : lhs.as_bool();
+			const bool rhs_bool = rhs_is_ptr ? true : rhs.as_bool();
+			return EvalResult::from_bool(lhs_bool && rhs_bool);
+		}
+		if (op == "||") {
+			const bool lhs_bool = lhs_is_ptr ? true : lhs.as_bool();
+			const bool rhs_bool = rhs_is_ptr ? true : rhs.as_bool();
+			return EvalResult::from_bool(lhs_bool || rhs_bool);
+		}
+
+		// All other pointer operations (arithmetic, relational, etc.) are unsupported
 		return EvalResult::error("Pointer arithmetic/comparison is not supported in constant expressions");
 	}
 
@@ -1773,11 +1845,13 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
-	// Reject pointer operands for arithmetic/logical unary operators.
-	// Address-of (&) and dereference (*) are handled before apply_unary_op is
-	// called, so any pointer reaching here is being used in an unsupported way
-	// (e.g. !ptr, -ptr, ~ptr).
+	// Handle unary operators on constexpr pointers.
+	// A valid constexpr pointer (pointer_to_var.isValid()) is always non-null (truthy).
+	// Address-of (&) and dereference (*) are handled before apply_unary_op is called.
 	if (operand.pointer_to_var.isValid()) {
+		if (op == "!") {
+			return EvalResult::from_bool(false); // !non_null_ptr is false
+		}
 		return EvalResult::error("Unary operator '" + std::string(op) + "' on pointer value is not supported in constant expressions");
 	}
 
