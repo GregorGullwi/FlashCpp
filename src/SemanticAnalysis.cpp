@@ -2525,8 +2525,8 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 								if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
 								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
 								const auto& params = ctor.parameter_nodes();
-								if (params.size() != initializers.size()) continue;
-								// arg_idx < initializers.size() == params.size() is guaranteed here
+								if (params.size() < initializers.size()) continue;
+								// arg_idx < initializers.size() <= params.size() is guaranteed here
 								if (!params[arg_idx].is<DeclarationNode>()) continue;
 								const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
 								if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;

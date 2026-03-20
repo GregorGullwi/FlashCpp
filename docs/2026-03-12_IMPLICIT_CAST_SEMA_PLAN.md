@@ -1010,6 +1010,75 @@ The right split is:
 	- When `parser_.get_expression_type()` returns `nullopt` in the init-list path, the method bails out without diagnostics (cannot determine target parameter type). This is safe: the scoped enum diagnostic still fires in expression-syntax constructor calls via `tryAnnotateConstructorCallArgConversions`.
 - Tests: `test_compound_assign_back_conv_sema_ret0`, `test_new_expr_type_inference_ret0`, `test_scoped_enum_ctor_arg_fail`, `test_scoped_enum_ctor_same_type_ret0`. Suite: 1615 pass / 0 fail / 66 expected-fail.
 
+**Known limitations (Phase 18+):**
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
+- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
+- `tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.
+- Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.
+
+### Phase 18 (planned): unified `resolve_constructor` + remove codegen constructor matching
+
+**Goal:** Extract a single `resolve_constructor_overload()` function in `OverloadResolution.h` and remove all hand-rolled constructor matching loops from codegen, constexpr evaluator, and sema.
+
+**Problem statement:**
+
+Constructor overload resolution is currently implemented independently in at least **9 separate sites** across 4 files:
+
+| File | Sites | Default arg handling | Type matching |
+|------|-------|---------------------|---------------|
+| `CodeGen.h` | 2 (lines ~5703, ~6318) | ✅ `has_default_value()` loop | ❌ arity only |
+| `ConstExprEvaluator.h` | 5 (lines ~2882, ~2963, ~3168, ~3603, ~3773) | ❌ strict `params.size() == args.size()` | ❌ arity only |
+| `IRConverter.h` | 1 (line ~6772) | ❌ arity only | ❌ arity only |
+| `SemanticAnalysis.cpp` | 1 (`tryAnnotateInitListConstructorArgs` fallback, line ~2522) | ⚠️ `params.size() < initializers.size()` (no `has_default_value` check) | ✅ checks `canonical_types_match` at `arg_idx` |
+
+Every site re-implements the same pattern: iterate `struct_info.member_functions`, filter `is_constructor`, compare parameter counts, optionally check default arguments. The codegen sites at `CodeGen.h:5784-5804` and `CodeGen.h:6327-6341` are the most complete (they verify `has_default_value()` on surplus parameters), but even those don't do type-based overload resolution — they match by arity alone and take the first match.
+
+The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was added in Phase 17 specifically because `parser_.get_expression_type()` returns `nullopt` for scoped enum variables in init-list contexts, preventing the normal `resolve_constructor_overload` path (line 2555) from running. This is a workaround for a type-inference gap, not a principled design.
+
+**Plan:**
+
+1. **Add `resolve_constructor_overload()` to `OverloadResolution.h`:**
+	- Accepts `const StructTypeInfo&` + argument types (as `std::vector<TypeSpecifierNode>` for type-based resolution, with an arity-only fallback when types are unavailable).
+	- Handles default arguments: a constructor is viable when `min_required_args <= num_args <= params.size()`, where `min_required_args` counts parameters without `has_default_value()`.
+	- Handles copy/move constructor skipping for brace-init contexts (currently inline in `CodeGen.h:5720-5774`).
+	- Returns `OverloadResolutionResult` with the selected `ConstructorDeclarationNode*`, consistent with the existing `resolve_overload` API.
+	- The `skip_implicit` parameter (already used by sema's `tryAnnotateConstructorCallArgConversions`) should be part of this API.
+
+2. **Fix `tryAnnotateInitListConstructorArgs` type-inference gap:**
+	- When `parser_.get_expression_type()` returns `nullopt`, fall back to `inferExpressionType()` + `materializeTypeSpecifier()` to build the `TypeSpecifierNode` for that argument.
+	- This eliminates the need for the hand-rolled scoped-enum-specific constructor matching loop at lines 2507-2548 entirely — the normal `resolve_constructor_overload` path (line 2555) can run, and `diagnoseScopedEnumConversion` (line 2574) handles the diagnostic.
+	- This also fixes the default-argument false-positive bug without needing a separate patch.
+
+3. **Replace codegen constructor matching in `CodeGen.h`:**
+	- Both sites (~5703 and ~6318) should call `resolve_constructor_overload()` instead of inline loops.
+	- The brace-init copy/move constructor skip logic (~5720-5774) moves into the shared function.
+	- Default argument fill-in (~5892-5910) stays in codegen (it generates IR for default value expressions), but the *selection* of which constructor to use moves to the shared resolver.
+
+4. **Replace constexpr evaluator constructor matching in `ConstExprEvaluator.h`:**
+	- All 5 sites (~2882, ~2963, ~3168, ~3603, ~3773) should call `resolve_constructor_overload()`.
+	- These currently don't handle default arguments at all (`params.size() == args.size()` strict equality), so this is also a bug fix — constexpr evaluation of constructors with default arguments likely fails silently today.
+
+5. **Replace IRConverter constructor matching:**
+	- The site at `IRConverter.h:~6772` should also use the shared resolver.
+
+**Expected outcome:**
+- One canonical constructor resolution function, shared by sema, codegen, constexpr evaluator, and IR converter.
+- Default argument handling is correct everywhere (not just in 2 of 9 sites).
+- Type-based overload resolution for constructors (not just arity matching).
+- The scoped enum init-list diagnostic fallback in sema is eliminated — the normal overload resolution path handles it.
+- Easier to add future constructor-related features (explicit constructors, deleted constructors, inherited constructors) in one place.
+
+**Files to modify:**
+- `src/OverloadResolution.h` — add `resolve_constructor_overload()`
+- `src/SemanticAnalysis.cpp` — remove hand-rolled fallback; use `inferExpressionType` + `materializeTypeSpecifier` when parser can't resolve arg type
+- `src/CodeGen.h` — replace 2 inline constructor matching loops
+- `src/ConstExprEvaluator.h` — replace 5 inline constructor matching loops
+- `src/IRConverter.h` — replace 1 inline constructor matching loop
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.
