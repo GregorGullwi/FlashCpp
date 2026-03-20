@@ -1088,11 +1088,37 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 				if (is_shift && needs_binary_type_inference) {
 					tryAnnotateShiftOperandPromotions(e, lhs_type_id, rhs_type_id);
+					// C++20 [expr.ass]/7: shift compound assignment back-conversion
+					// from promoted LHS type to original LHS type.
+					if (is_compound_assign && lhs_type_id) {
+						const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+						if (!lhs_desc.pointer_levels.empty() || lhs_desc.base_type == Type::Struct ||
+							lhs_desc.base_type == Type::Invalid || isPlaceholderAutoType(lhs_desc.base_type)) {
+							// Skip non-primitive types
+						} else {
+							const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+							const Type promoted = promote_integer_type(lhs_base);
+							if (promoted != lhs_base) {
+								CanonicalTypeDesc promoted_desc;
+								promoted_desc.base_type = promoted;
+								const CanonicalTypeId promoted_id = type_context_.intern(promoted_desc);
+								CanonicalTypeDesc lhs_base_desc;
+								lhs_base_desc.base_type = lhs_base;
+								const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
+								storeCompoundAssignBackConvSlot(e, promoted_id, lhs_base_id);
+							}
+						}
+					}
 				}
 				else if ((is_arithmetic || is_bitwise || is_comparison ||
 					(is_compound_assign && !is_shift)) &&
 					needs_binary_type_inference) {
 					tryAnnotateBinaryOperandConversions(e, lhs_type_id, rhs_type_id);
+					// C++20 [expr.ass]/7: compound assignment back-conversion
+					// from common type to LHS type. Annotate so codegen can verify.
+					if (is_compound_assign) {
+						tryAnnotateCompoundAssignBackConversion(e, lhs_type_id, rhs_type_id);
+					}
 				}
 				// C++20 [expr.log.and], [expr.log.or]: each operand is
 				// contextually converted to bool.
@@ -1642,6 +1668,47 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.base_type = Type::Bool;
 				return type_context_.intern(desc);
 			}
+			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+				// C++20 [expr.new]: new T returns T*; new T[n] returns T*.
+				const ASTNode& type_node = e.type_node();
+				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>()) {
+					CanonicalTypeId base_id = canonicalizeType(type_node.template as<TypeSpecifierNode>());
+					if (base_id) {
+						CanonicalTypeDesc ptr_desc = type_context_.get(base_id);
+						ptr_desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+						return type_context_.intern(ptr_desc);
+					}
+				}
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+				// C++20 [expr.delete]: delete-expression is a void expression.
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Void;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+				// Lambda expression: its type is a unique closure class.
+				// Look up the generated __lambda_N struct in gTypesByName.
+				const StringHandle lambda_name = e.generate_lambda_name();
+				auto it = gTypesByName.find(lambda_name);
+				if (it != gTypesByName.end() && it->second) {
+					CanonicalTypeDesc desc;
+					desc.base_type = Type::Struct;
+					desc.type_index = it->second->type_index_;
+					return type_context_.intern(desc);
+				}
+				// Fallback: parser type resolution (lambda may not have been generated yet).
+				if (auto type_opt = parser_.get_expression_type(node))
+					return canonicalizeType(*type_opt);
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+				// C++20 [expr.throw]: a throw-expression is of type void.
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Void;
+				return type_context_.intern(desc);
+			}
 			return {};
 		}, expr);
 	}
@@ -1858,6 +1925,78 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id);
+}
+
+// --- Compound assignment back-conversion annotation ---
+// C++20 [expr.ass]/7: E1 op= E2 is equivalent to E1 = static_cast<T1>(E1 op E2).
+// When the common type differs from the LHS type, the arithmetic result must be
+// converted back from common type to LHS type.  Annotate this on the
+// BinaryOperatorNode so that codegen hard enforcement can verify sema ownership.
+
+// Shared helper: build an ImplicitCastInfo for source_type → target_type and
+// store the resulting SemanticSlot in compound_assign_back_conv_ keyed on &bin_op.
+// Both shift and non-shift compound assignments use this same slot structure.
+void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
+	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
+	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
+	const ConversionPlan plan = buildConversionPlan(src_desc.base_type, tgt_desc.base_type);
+	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = source_type_id;
+	cast_info.target_type_id = target_type_id;
+	cast_info.cast_kind = plan.kind;
+	cast_info.value_category_after = ValueCategory::PRValue;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = target_type_id;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	compound_assign_back_conv_[static_cast<const void*>(&bin_op)] = slot;
+	stats_.slots_filled++;
+
+	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
+		static_cast<int>(src_desc.base_type), " → ", static_cast<int>(tgt_desc.base_type),
+		" (kind=", static_cast<int>(plan.kind), ")");
+}
+
+void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id) return;
+
+	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
+	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	// Same guards as tryAnnotateBinaryOperandConversions
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
+	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
+	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+
+	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
+	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+
+	const Type common = get_common_type(lhs_base, rhs_base);
+	if (common == Type::Invalid) return;
+	if (lhs_base == common) return;  // No back-conversion needed
+
+	// Build the back-conversion: common → lhs_base
+	CanonicalTypeDesc common_desc;
+	common_desc.base_type = common;
+	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
+
+	CanonicalTypeDesc lhs_base_desc;
+	lhs_base_desc.base_type = lhs_base;
+	const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
+
+	storeCompoundAssignBackConvSlot(bin_op, common_type_id, lhs_base_id);
 }
 
 // --- Shift operand independent promotion annotation ---
@@ -2121,6 +2260,61 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 			// by searching struct member functions for a matching DeclarationNode address.
 			// This handles template specialization static member calls that the parser
 			// resolved but didn't register under any name in the symbol table.
+
+			// Helper lambda: search a StructTypeInfo for a matching member function.
+			auto searchStructMembers = [&](const StructTypeInfo* si) -> bool {
+				if (!si) return false;
+				const std::string_view func_name = decl.identifier_token().value();
+				// First pass: exact DeclarationNode address match.
+				for (const auto& mf : si->member_functions) {
+					if (!mf.function_decl.has_value()) continue;
+					if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+					const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+					if (&candidate.decl_node() == &decl) {
+						func_decl = &candidate;
+						return true;
+					}
+				}
+				// Second pass: match by mangled name (template specializations may have
+				// separate DeclarationNode copies but identical mangled names).
+				if (call_node.has_mangled_name()) {
+					const std::string_view call_mangled = call_node.mangled_name();
+					for (const auto& mf : si->member_functions) {
+						if (!mf.function_decl.has_value()) continue;
+						if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+						const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+						if (candidate.has_mangled_name() &&
+							candidate.mangled_name() == call_mangled) {
+							func_decl = &candidate;
+							return true;
+						}
+					}
+				}
+				// Third pass: match by name + arity, but only if unambiguous.
+				// Template instantiations create separate DeclarationNode copies,
+				// so address match may fail. Name+arity is safe only when exactly
+				// one candidate matches (multiple same-arity overloads are ambiguous).
+				{
+					const FunctionDeclarationNode* name_match = nullptr;
+					bool ambiguous = false;
+					for (const auto& mf : si->member_functions) {
+						if (!mf.function_decl.has_value()) continue;
+						if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+						const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
+						if (candidate.decl_node().identifier_token().value() == func_name &&
+							candidate.parameter_nodes().size() == arguments.size()) {
+							if (name_match) { ambiguous = true; break; }
+							name_match = &candidate;
+						}
+					}
+					if (name_match && !ambiguous) {
+						func_decl = name_match;
+						return true;
+					}
+				}
+				return false;
+			};
+
 			if (call_node.has_qualified_name()) {
 				const std::string_view qname = call_node.qualified_name();
 				auto scope_sep = qname.rfind("::");
@@ -2129,48 +2323,50 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 					const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
 					auto struct_it = gTypesByName.find(struct_name_handle);
 					if (struct_it != gTypesByName.end()) {
-						const StructTypeInfo* si = struct_it->second->getStructInfo();
-						if (si) {
-							const std::string_view func_name = decl.identifier_token().value();
-							// First pass: exact DeclarationNode address match.
-							for (const auto& mf : si->member_functions) {
-								if (!mf.function_decl.has_value()) continue;
-								if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
-								const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
-								if (&candidate.decl_node() == &decl) {
-									func_decl = &candidate;
+						searchStructMembers(struct_it->second->getStructInfo());
+					}
+					// Phase 17: if direct name lookup failed, scan gTypesByName for
+					// entries whose name ends with the struct name fragment. Template
+					// specializations may be registered under different namespace-qualified
+					// or template-argument-decorated keys.
+					if (!func_decl) {
+						for (const auto& [handle, ti] : gTypesByName) {
+							if (!ti) continue;
+							const std::string_view registered_name = handle.view();
+							// Match if the registered name equals or ends with the struct name
+							// (handles namespace prefix differences).
+							if (registered_name == struct_name_sv) {
+								if (searchStructMembers(ti->getStructInfo()))
 									break;
+							} else if (registered_name.size() > struct_name_sv.size() + 1) {
+								// Check suffix match: registered name ends with struct name
+								// preceded by '::' or '<' (namespace or template boundary).
+								// e.g., "Ns::MyStruct" matches struct_name "MyStruct".
+								const size_t prefix_end = registered_name.size() - struct_name_sv.size();
+								if (registered_name.substr(prefix_end) == struct_name_sv &&
+									(registered_name[prefix_end - 1] == ':' ||
+									 registered_name[prefix_end - 1] == '<')) {
+									if (searchStructMembers(ti->getStructInfo()))
+										break;
 								}
 							}
-							// Second pass: match by name + arity, but only if unambiguous.
-							// Template instantiations create separate DeclarationNode copies,
-							// so address match may fail. Name+arity is safe only when exactly
-							// one candidate matches (multiple same-arity overloads are ambiguous).
-							if (!func_decl) {
-								const FunctionDeclarationNode* name_match = nullptr;
-								bool ambiguous = false;
-								for (const auto& mf : si->member_functions) {
-									if (!mf.function_decl.has_value()) continue;
-									if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
-									const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
-									if (candidate.decl_node().identifier_token().value() == func_name &&
-										candidate.parameter_nodes().size() == arguments.size()) {
-										if (name_match) { ambiguous = true; break; }
-										name_match = &candidate;
-									}
-								}
-								if (name_match && !ambiguous)
-									func_decl = name_match;
+							// Check prefix match: registered name starts with struct name
+							// followed by '<' (handles template specializations like
+							// MyStruct<int> where caller uses undecorated name MyStruct).
+							// e.g., "MyStruct<int>" matches struct_name "MyStruct".
+							if (registered_name.size() > struct_name_sv.size() &&
+								registered_name[struct_name_sv.size()] == '<' &&
+								registered_name.starts_with(struct_name_sv)) {
+								if (searchStructMembers(ti->getStructInfo()))
+									break;
 							}
 						}
 					}
 				}
 			}
 			if (!func_decl) {
-				// Record that sema tried and failed — callee unresolvable (e.g. template
-				// specialization with separate DeclarationNode copies). Codegen checks
-				// hasUnresolvedCallArgs() to skip hard enforcement for this call.
-				// Phase 16+: improve template specialization callee resolution.
+				// Record that sema tried and failed — callee unresolvable.
+				// Codegen checks hasUnresolvedCallArgs() to skip hard enforcement.
 				unresolved_call_args_.insert(&call_node);
 				return;
 			}
@@ -2289,6 +2485,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) { ++i; return; }
 		tryAnnotateConversion(arg, param_type_id);
+		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument");
 		++i;
 	});
 }
@@ -2304,9 +2501,52 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	// to avoid false ambiguity between explicit and implicit copy/move ctors.
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(initializers.size());
-	for (const ASTNode& arg : initializers) {
+	for (size_t arg_idx = 0; arg_idx < initializers.size(); ++arg_idx) {
+		const ASTNode& arg = initializers[arg_idx];
 		auto arg_type_opt = parser_.get_expression_type(arg);
-		if (!arg_type_opt.has_value()) return;
+		if (!arg_type_opt.has_value()) {
+			// Parser couldn't resolve the type — we can't do full overload resolution.
+			// However, we can still diagnose obvious scoped enum misuse: if sema knows
+			// the argument is a scoped enum, check whether any constructor parameter
+			// at this exact argument position accepts that scoped enum type.
+			// If none do, it's an implicit conversion error.
+			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+			if (arg_type_id) {
+				const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
+				if (arg_desc.base_type == Type::Enum && arg_desc.type_index.is_valid() &&
+					arg_desc.type_index.value < gTypeInfo.size()) {
+					if (const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo()) {
+						if (ei->is_scoped) {
+							// Check if any constructor accepts this exact scoped enum type
+							// at the current argument's position (arg_idx).
+							bool has_matching_ctor = false;
+							for (const auto& mf : struct_info.member_functions) {
+								if (!mf.is_constructor) continue;
+								if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
+								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
+								const auto& params = ctor.parameter_nodes();
+								if (params.size() < initializers.size()) continue;
+								// arg_idx < initializers.size() <= params.size() is guaranteed here
+								if (!params[arg_idx].is<DeclarationNode>()) continue;
+								const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
+								if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;
+								const CanonicalTypeId param_id = canonicalizeType(ptype.as<TypeSpecifierNode>());
+								if (canonical_types_match(arg_type_id, param_id)) {
+									has_matching_ctor = true;
+									break;
+								}
+							}
+							if (!has_matching_ctor) {
+								throw CompileError("cannot implicitly convert from scoped enum '" +
+									std::string(StringTable::getStringView(ei->name)) +
+									"' to constructor parameter; use static_cast");
+							}
+						}
+					}
+				}
+			}
+			return;
+		}
 		TypeSpecifierNode arg_type = *arg_type_opt;
 		adjust_argument_type_for_overload_resolution(arg, arg_type);
 		arg_types.push_back(std::move(arg_type));
@@ -2328,8 +2568,10 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		FLASH_LOG(General, Debug, "SemanticAnalysis: init-list arg param_type=", param_type_id.value, " arg_type=", arg_type_id.value, " match=", (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
+		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument");
 	}
 }
 
@@ -2347,6 +2589,9 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)
 	if (true_desc.base_type == Type::Struct || false_desc.base_type == Type::Struct) return;
 	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
+	// C++20 [expr.cond]/2: when one branch is a throw-expression (or delete-expression),
+	// its type is void. The result type is the other branch's type — no conversion needed.
+	if (true_desc.base_type == Type::Void || false_desc.base_type == Type::Void) return;
 
 	Type common = get_common_type(true_desc.base_type, false_desc.base_type);
 	CanonicalTypeDesc common_desc;

@@ -75,6 +75,14 @@ public:
 		return unresolved_call_args_.count(call) > 0;
 	}
 
+	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
+	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
+	std::optional<SemanticSlot> getCompoundAssignBackConv(const void* binop_key) const {
+		auto it = compound_assign_back_conv_.find(binop_key);
+		if (it == compound_assign_back_conv_.end()) return {};
+		return it->second;
+	}
+
 	// Look up the pre-resolved callable operator() for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
@@ -147,11 +155,24 @@ private:
 	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
 		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
+	// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the result of the
+	// arithmetic is converted back from the common type to the LHS type
+	// (equivalent to static_cast<T1>(E1 op E2)).  Annotate this on the
+	// BinaryOperatorNode so codegen can verify sema ownership.
+	void tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
+
+	// Shared helper: build a back-conversion SemanticSlot from source_type → target_type
+	// and store it in compound_assign_back_conv_ keyed on &bin_op.
+	void storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId source_type_id, CanonicalTypeId target_type_id);
+
 	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 	// NOT the usual arithmetic conversions.  Each operand is promoted separately
 	// (bool/char/short → int); the result type is the promoted LHS type.
 	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
 		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+
 
 	// C++20 [expr.unary.op]: the operand of unary +, -, and ~ undergoes integral
 	// promotion.  Types with conversion rank less than int (bool, char, short, etc.)
@@ -213,6 +234,11 @@ private:
 	// Side table: expression node pointer → semantic slot.
 	std::unordered_map<const void*, SemanticSlot> semantic_slots_;
 
+	// Side table: BinaryOperatorNode pointer → back-conversion slot for compound assignments.
+	// Stores the commonType→lhsType conversion that C++20 [expr.ass]/7 requires after the
+	// arithmetic is performed in the promoted common type.
+	std::unordered_map<const void*, SemanticSlot> compound_assign_back_conv_;
+
 	// Side table: FunctionCallNode pointer → resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
@@ -225,7 +251,6 @@ private:
 	// Track FunctionCallNode pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members
 	// whose DeclarationNode addresses differ from the call's stored decl).
-	// Phase 16+ work: improve template specialization callee resolution.
 	std::unordered_set<const FunctionCallNode*> unresolved_call_args_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.

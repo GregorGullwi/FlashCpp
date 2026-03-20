@@ -823,6 +823,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Convert result back to global's type if needed
 					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var});
 					if (commonType != gsi.type) {
+						// Phase 17: verify sema annotated the back-conversion.
+						if (sema_ && sema_normalized_current_function_ &&
+							is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type)) {
+							auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
+							if (!back_conv.has_value())
+								throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.type)) + ")");
+						}
 						op_result = generateTypeConversion(op_result, commonType, gsi.type, binaryOperatorNode.get_token());
 					}
 
@@ -2256,6 +2263,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 				// 2. Convert result back to original LHS type
+				// Phase 17: verify sema annotated the back-conversion (ownership transfer).
+				if (sema_ && sema_normalized_current_function_ &&
+					is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(lhsType)) {
+					auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
+					if (!back_conv.has_value())
+						throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
+				}
 				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result});
 				ExprResult converted = generateTypeConversion(op_expr, commonType, lhsType, binaryOperatorNode.get_token());
 

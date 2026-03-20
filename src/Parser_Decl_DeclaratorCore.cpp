@@ -1172,6 +1172,18 @@ bool Parser::looks_like_function_parameters()
 			// Check if this identifier is a known type in the type registry
 			auto type_iter = gTypesByName.find(id_handle);
 			if (type_iter != gTypesByName.end()) {
+				// Before deciding it's a function parameter type, check if '::' follows.
+				// If so, this is a qualified-name expression (e.g., Color::Green, Ns::val)
+				// used as a direct-initialization argument, NOT a parameter type name.
+				// For enum types in particular, `EnumType::Enumerator` is always a value.
+				// Exception: class/struct types with '::' may still be nested types used as
+				// parameter types (e.g., MyClass::NestedType x), so only skip for enum types.
+				advance();  // consume the identifier
+				if (peek() == "::"_tok && type_iter->second && type_iter->second->getEnumInfo()) {
+					// Qualified enum value access (e.g., Color::Green) = direct init argument
+					restore_token_position(saved);
+					return false;
+				}
 				// It's a known type = function parameters
 				restore_token_position(saved);
 				return true;
