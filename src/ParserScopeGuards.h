@@ -13,6 +13,8 @@
 // Forward declarations
 class Parser;
 struct TypeInfo;
+class StructDeclarationNode;
+class FunctionDeclarationNode;
 
 namespace FlashCpp {
 
@@ -262,7 +264,55 @@ private:
 
 
 // =============================================================================
-// ScopedState<T>
+// FunctionParsingScopeGuard
+// =============================================================================
+// RAII guard that owns ALL per-function parser entry/exit work:
+//
+//  Construction:
+//   - Enters a function scope in the symbol table
+//   - Saves and overwrites current_function_
+//   - For member functions: calls setup_member_function_context() which handles
+//     context-stack push, member-function registration, and 'this' injection
+//   - Registers function parameters in the symbol table
+//
+//  Destruction (in reverse order):
+//   - For member functions: pops member_function_context_stack_
+//   - Restores current_function_
+//   - Exits the function scope (via SymbolTableScope)
+//
+// Usage:
+//   FunctionParsingScopeGuard guard(parser, is_member,
+//                                   struct_node, struct_name, struct_type_index,
+//                                   params, current_function);
+//   // ... parse function body ...
+//   // All cleanup happens automatically on scope exit, including on every early return
+
+class FunctionParsingScopeGuard {
+public:
+	FunctionParsingScopeGuard(
+		Parser& parser,
+		bool is_member,
+		StructDeclarationNode* struct_node,
+		StringHandle struct_name,
+		TypeIndex struct_type_index,
+		const std::vector<ASTNode>& params,
+		const FunctionDeclarationNode* current_function
+	);
+	~FunctionParsingScopeGuard();
+
+	// Non-copyable, non-movable
+	FunctionParsingScopeGuard(const FunctionParsingScopeGuard&) = delete;
+	FunctionParsingScopeGuard& operator=(const FunctionParsingScopeGuard&) = delete;
+
+private:
+	Parser& parser_;
+	SymbolTableScope scope_;
+	bool pop_member_ctx_;
+	const FunctionDeclarationNode* saved_function_;
+};
+
+
+
 // =============================================================================
 // Generic RAII guard that saves a value on construction and restores it on
 // destruction.  Intended for parser state fields that must be temporarily

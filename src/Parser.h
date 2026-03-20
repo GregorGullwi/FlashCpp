@@ -269,6 +269,7 @@ class Parser {
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	friend class SemanticAnalysis;
+	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
@@ -743,7 +744,6 @@ private:
         ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
-        ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
         void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
         void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
@@ -1559,4 +1559,36 @@ inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
 	
 	// Insert 'this' into the symbol table
 	gSymbolTable.insert("this"sv, this_decl);
+}
+
+// =============================================================================
+// FunctionParsingScopeGuard constructor/destructor inline implementations
+// (defined here because they need access to Parser internals)
+// =============================================================================
+
+inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
+	Parser& parser,
+	bool is_member,
+	StructDeclarationNode* struct_node,
+	StringHandle struct_name,
+	TypeIndex struct_type_index,
+	const std::vector<ASTNode>& params,
+	const FunctionDeclarationNode* current_function)
+	: parser_(parser)
+	, scope_(ScopeType::Function)
+	, pop_member_ctx_(is_member)
+	, saved_function_(parser.current_function_) {
+	parser_.current_function_ = current_function;
+	if (is_member) {
+		parser_.setup_member_function_context(struct_node, struct_name, struct_type_index);
+	}
+	parser_.register_parameters_in_scope(params);
+}
+
+inline FlashCpp::FunctionParsingScopeGuard::~FunctionParsingScopeGuard() {
+	if (pop_member_ctx_) {
+		parser_.member_function_context_stack_.pop_back();
+	}
+	parser_.current_function_ = saved_function_;
+	// scope_ auto-exits the symbol table scope in its own destructor
 }

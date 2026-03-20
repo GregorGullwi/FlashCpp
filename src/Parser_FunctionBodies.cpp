@@ -5,96 +5,6 @@
 #include "TypeTraitEvaluator.h"
 
 
-// Phase 5: Unified function body parsing
-// This method handles all the common body parsing logic including:
-// - = default handling
-// - = delete handling
-// - Declaration-only (no body)
-// - Scope setup with RAII guards
-// - 'this' pointer injection for member functions
-// - Parameter registration
-// - Block parsing
-ParseResult Parser::parse_function_body_with_context(
-	const FlashCpp::FunctionParsingContext& ctx,
-	const FlashCpp::ParsedFunctionHeader& header,
-	std::optional<ASTNode>& out_body
-) {
-	// Initialize output
-	out_body = std::nullopt;
-
-	// Handle = default
-	if (header.specifiers.is_defaulted()) {
-		auto [block_node, block_ref] = create_node_ref(BlockNode());
-		out_body = block_node;
-		// Note: semicolon should already be consumed by the caller after parsing specifiers
-		return ParseResult::success();
-	}
-
-	// Handle = delete
-	if (header.specifiers.is_deleted()) {
-		// No body for deleted functions
-		// Note: semicolon should already be consumed by the caller after parsing specifiers
-		return ParseResult::success();
-	}
-
-	// Handle pure virtual (= 0)
-	if (header.specifiers.is_pure_virtual()) {
-		// No body for pure virtual functions
-		// Note: semicolon should already be consumed by the caller after parsing specifiers
-		return ParseResult::success();
-	}
-
-	// Check for declaration only (no body) - semicolon
-	if (peek() == ";"_tok) {
-		advance();  // consume ';'
-		return ParseResult::success();  // Declaration only, no body
-	}
-
-	// Expect function body with '{' or 'try' (function-try-block)
-	if (peek() != "{"_tok && peek() != "try"_tok) {
-		return ParseResult::error("Expected '{' or ';' after function declaration", current_token_);
-	}
-
-	// Set up function scope using RAII guard
-	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-
-	// Member function context: push context stack, register member functions, inject 'this'.
-	// Uses the same setup_member_function_context() helper as parse_delayed_function_body()
-	// so both immediate and delayed paths share identical scope/context setup.
-	const bool is_member = ctx.kind == FlashCpp::FunctionKind::Member ||
-	                        ctx.kind == FlashCpp::FunctionKind::Constructor ||
-	                        ctx.kind == FlashCpp::FunctionKind::Destructor;
-	if (is_member && ctx.parent_struct) {
-		setup_member_function_context(
-			ctx.parent_struct,
-			StringTable::getOrInternStringHandle(ctx.parent_struct_name),
-			TypeIndex{ctx.parent_struct_type_index});
-	}
-
-	// Register parameters using the shared helper
-	register_parameters_in_scope(header.params.parameters);
-
-	// Parse the block (or function-try-block)
-	const bool is_ctor_or_dtor = ctx.kind == FlashCpp::FunctionKind::Constructor ||
-	                              ctx.kind == FlashCpp::FunctionKind::Destructor;
-	auto block_result = parse_function_body(is_ctor_or_dtor);
-	if (block_result.is_error()) {
-		if (is_member && ctx.parent_struct) member_function_context_stack_.pop_back();
-		return block_result;
-	}
-
-	if (block_result.node().has_value()) {
-		out_body = *block_result.node();
-	}
-
-	// Pop member function context (scope exits via RAII)
-	if (is_member && ctx.parent_struct) {
-		member_function_context_stack_.pop_back();
-	}
-
-	return ParseResult::success();
-}
-
 // Phase 5: Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
 void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index) {
@@ -190,66 +100,37 @@ void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
 	}
 }
 
-// Phase 5: Unified delayed function body parsing.
-// Shares scope setup, 'this' injection, parameter registration, and member-function
-// context handling with parse_function_body_with_context() via the same helpers:
-//   setup_member_function_context()  — context stack + member-func registration + 'this'
-//   register_parameters_in_scope()   — parameter symbol-table insertion
-// RAII guards (SymbolTableScope + MemberContextCleanup) handle all cleanup on every
-// exit path, replacing the former scattered manual cleanup blocks.
+// Phase 5 + Priority 2: Unified delayed function body parsing.
+// Uses FunctionParsingScopeGuard to handle all per-function entry/exit work:
+//   - Symbol table function scope (enter on construction, exit on destruction)
+//   - current_function_ save/restore
+//   - setup_member_function_context() — context stack + member-func registration + 'this'
+//   - register_parameters_in_scope()  — parameter symbol-table insertion
+// The guard replaces the former SymbolTableScope + MemberContextCleanup combo,
+// eliminating scattered manual cleanup blocks on every early return.
 ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body) {
 	out_body = std::nullopt;
 
-	// --- RAII scope guard: enters function scope, exits on destruction ---
-	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-
-	// --- RAII cleanup for member-function context stack and current_function_ ---
-	// Saves current_function_ on construction, restores it and (optionally) pops the
-	// member-function context stack on destruction — so every early return is safe.
-	// NOTE: This local guard is intentionally kept here rather than promoted to a
-	// shared class.  The Priority 2 plan (docs/2026-03-16_Parser_Code_Sharing_Plan.md)
-	// proposes a full FunctionParsingScopeGuard that will supersede this; extracting
-	// it prematurely would create a one-off abstraction that would immediately be
-	// replaced.
 	const bool has_member_ctx = !delayed.is_free_function;
-	struct MemberContextCleanup {
-		Parser& parser;
-		const FunctionDeclarationNode* saved_function;
-		bool pop_context;
-		MemberContextCleanup(Parser& p, bool pop)
-			: parser(p), saved_function(p.current_function_), pop_context(pop) {}
-		~MemberContextCleanup() {
-			parser.current_function_ = saved_function;
-			if (pop_context) parser.member_function_context_stack_.pop_back();
-		}
-	} ctx_cleanup(*this, has_member_ctx);
 
-	// Set up member function context: push context stack, register member functions,
-	// inject 'this'.  Same helper used by parse_function_body_with_context().
-	if (has_member_ctx) {
-		setup_member_function_context(delayed.struct_node, delayed.struct_name, delayed.struct_type_index);
-	}
-
-	// Get the appropriate function node and parameters
+	// Determine function node and parameters before constructing the guard,
+	// so we can pass current_function to the guard constructor.
 	FunctionDeclarationNode* func_node = nullptr;
-	const std::vector<ASTNode>* params = nullptr;
-
+	const std::vector<ASTNode>* params_ptr = nullptr;
 	if (delayed.is_constructor && delayed.ctor_node) {
-		current_function_ = nullptr;  // Constructors don't have return type
-		params = &delayed.ctor_node->parameter_nodes();
-	} else if (delayed.is_destructor && delayed.dtor_node) {
-		current_function_ = nullptr;  // Destructors don't have return type
-		// Destructors have no parameters
-	} else if (delayed.func_node) {
+		params_ptr = &delayed.ctor_node->parameter_nodes();
+	} else if (delayed.func_node && !delayed.is_destructor) {
 		func_node = delayed.func_node;
-		current_function_ = func_node;
-		params = &func_node->parameter_nodes();
+		params_ptr = &func_node->parameter_nodes();
 	}
 
-	// Register parameters using the shared helper (same as parse_function_body_with_context)
-	if (params) {
-		register_parameters_in_scope(*params);
-	}
+	// FunctionParsingScopeGuard owns scope, current_function_ save/restore,
+	// member-context push/pop, 'this' injection, and parameter registration.
+	// s_empty_params is used for destructors (no parameters) and as a fallback.
+	static const std::vector<ASTNode> s_empty_params;
+	FlashCpp::FunctionParsingScopeGuard func_guard(*this, has_member_ctx,
+		delayed.struct_node, delayed.struct_name, delayed.struct_type_index,
+		params_ptr ? *params_ptr : s_empty_params, func_node);
 
 	// Parse constructor initializer list if present (for constructors with delayed parsing)
 	if (delayed.is_constructor && delayed.has_initializer_list && delayed.ctor_node) {
@@ -437,8 +318,8 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		}
 	}
 
-	// All cleanup handled by RAII: func_scope exits symbol-table scope,
-	// ctx_cleanup restores current_function_ and pops member context.
+	// All cleanup handled by FunctionParsingScopeGuard (func_guard):
+	// exits symbol-table scope, restores current_function_, pops member context.
 	return ParseResult::success();
 }
 
