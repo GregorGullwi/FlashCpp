@@ -997,7 +997,7 @@ The right split is:
 	- Codegen: both local and global compound assignment paths now verify sema annotation with `InternalError` if missing for standard arithmetic types.
 - **Template specialization callee resolution:**
 	- Refactored `tryAnnotateCallArgConversions` struct member function search into a reusable lambda (`searchStructMembers`) with a 3-pass strategy: (1) exact `DeclarationNode` address match, (2) mangled name match via `FunctionCallNode::mangled_name()` / `FunctionDeclarationNode::mangled_name()`, (3) unambiguous name + arity match.
-	- Added fallback scan of `gTypesByName` when direct struct name lookup fails, matching entries whose name ends with the struct name fragment (handles namespace prefix differences and template-argument-decorated keys).
+	- Added fallback scan of `gTypesByName` when direct struct name lookup fails, matching entries whose name ends with the struct name fragment (handles namespace prefix differences and template-argument-decorated keys). This is an O(n) linear scan over all registered types and should be removed once type registration keys are consistent (see `docs/TYPE_LOOKUP_OPTIMIZATION_PLAN.md` Phase 2).
 	- Reduces reliance on the `hasUnresolvedCallArgs` escape hatch for template specialization callee resolution.
 - **Expand `inferExpressionType` coverage:**
 	- `NewExpressionNode`: returns pointer to allocated type (wraps the new'd type in a `PointerLevel`).
