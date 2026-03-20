@@ -2523,7 +2523,43 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
-	if (!resolution.selected_overload) return;
+	if (!resolution.selected_overload) {
+		// No constructor matched — restore the old scoped-enum diagnostic.
+		// If any argument is a scoped enum that couldn't be implicitly converted,
+		// find the closest ctor by arity and diagnose the bad arg against its
+		// parameter type so the user gets a clear "use static_cast" message.
+		auto arity_res = resolve_constructor_overload_arity(struct_info, initializers.size(), true);
+		const ConstructorDeclarationNode* closest_ctor = arity_res.selected_overload;
+		for (size_t i = 0; i < initializers.size(); ++i) {
+			const ASTNode& arg = initializers[i];
+			if (!arg.is<ExpressionNode>()) continue;
+			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+			if (!arg_type_id) continue;
+			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
+			if (arg_desc.base_type != Type::Enum) continue;
+			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.value >= gTypeInfo.size()) continue;
+			const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo();
+			if (!ei || !ei->is_scoped) continue;
+			// Found a scoped enum arg that caused the no-match.
+			// Use the parameter type from the closest arity match for a precise error message.
+			if (closest_ctor) {
+				const auto& params = closest_ctor->parameter_nodes();
+				if (i < params.size() && params[i].is<DeclarationNode>()) {
+					const ASTNode& param_type_node = params[i].as<DeclarationNode>().type_node();
+					if (param_type_node.is<TypeSpecifierNode>()) {
+						const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+						diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument");
+					}
+				}
+			} else {
+				// No arity match at all; diagnose against the first constructor parameter we can find.
+				throw CompileError("cannot implicitly convert from scoped enum '" +
+					std::string(StringTable::getStringView(ei->name)) +
+					"' in constructor argument; use static_cast");
+			}
+		}
+		return;
+	}
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
 
