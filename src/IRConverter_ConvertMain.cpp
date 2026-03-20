@@ -4762,7 +4762,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					}
 
 					if (!actual_ctor) {
-						auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_params, true);
+						auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_params, false);
 						actual_ctor = arity_resolution.selected_overload;
 					}
 				}
