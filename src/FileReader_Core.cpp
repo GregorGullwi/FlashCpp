@@ -23,6 +23,12 @@ static void stripLineComment(std::string& line) {
 	}
 }
 
+static void stripTrailingCarriageReturn(std::string& line) {
+	if (!line.empty() && line.back() == '\r') {
+		line.pop_back();
+	}
+}
+
 FileReader::FileReader(CompileContext& settings, FileTree& tree) : settings_(settings), tree_(tree) {
 	addBuiltinDefines();
 	result_.reserve(default_result_size);
@@ -129,9 +135,14 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		if (has_pending_line) {
 			line = std::move(pending_line);
 			has_pending_line = false;
+			stripTrailingCarriageReturn(line);
 			return true;
 		}
-		return static_cast<bool>(std::getline(stream, line));
+		if (!std::getline(stream, line)) {
+			return false;
+		}
+		stripTrailingCarriageReturn(line);
+		return true;
 	};
 	
 	while (getNextLine()) {
@@ -262,6 +273,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			while (((i = line.rfind('\\')) != std::string::npos) && (i == line.size() - 1)) {
 				std::string next_line;
 				std::getline(stream, next_line);
+				stripTrailingCarriageReturn(next_line);
 				line.erase(line.end() - 1);
 				line.append(next_line);
 				++line_number;
@@ -511,6 +523,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			auto mergeNextLine = [&]() -> bool {
 				std::string next_line;
 				if (!std::getline(stream, next_line)) return false;
+				stripTrailingCarriageReturn(next_line);
 				++line_number;
 				
 				size_t first_non_ws = next_line.find_first_not_of(" \t");
@@ -556,6 +569,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 								peek_line = pending_line;
 								got_peek = true;
 							} else if (std::getline(stream, peek_line)) {
+								stripTrailingCarriageReturn(peek_line);
 								++line_number;
 								got_peek = true;
 							}
