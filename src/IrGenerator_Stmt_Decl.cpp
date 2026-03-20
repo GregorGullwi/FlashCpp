@@ -1011,6 +1011,16 @@
 											matching_ctor = resolution.selected_overload;
 										}
 									}
+								// Arity-only fallback: when type inference failed for any
+								// argument, fall back to matching by argument count (respects
+								// default arguments).  This preserves the old behaviour for
+								// complex expressions the type-inference layers cannot resolve.
+								if (!has_matching_constructor && !all_arg_types_known) {
+									auto arity_resolution = resolve_constructor_overload(struct_info, num_initializers, false);
+									if (arity_resolution.has_match) {
+										has_matching_constructor = true;
+										matching_ctor = arity_resolution.selected_overload;
+									}
 								}
 								}
 							}
@@ -1773,6 +1783,16 @@
 											throw CompileError("Ambiguous constructor call");
 										}
 										matching_ctor = resolution.selected_overload;
+									}
+									// Arity-only fallback: when type inference failed for any
+									// argument, fall back to matching by argument count so that
+									// default arguments are filled in and reference parameters
+									// are properly handled.
+									if (!matching_ctor && arg_types.size() != num_args) {
+										auto arity_resolution = resolve_constructor_overload(*type_info.struct_info_, num_args, false);
+										if (arity_resolution.has_match) {
+											matching_ctor = arity_resolution.selected_overload;
+										}
 									}
 								}
 							}

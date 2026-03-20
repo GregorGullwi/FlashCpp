@@ -2589,6 +2589,15 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 			matching_ctor = resolution.selected_overload;
 		}
+		// Arity-only fallback: when type inference failed for any argument,
+		// fall back to matching by argument count so that default arguments
+		// are filled in and reference parameters are properly handled.
+		if (!matching_ctor && arg_types.size() != num_args) {
+			auto arity_resolution = resolve_constructor_overload(*struct_info, num_args, false);
+			if (arity_resolution.has_match) {
+				matching_ctor = arity_resolution.selected_overload;
+			}
+		}
 	}
 	// Get constructor parameter types for reference handling
 	// But first check for aggregate initialization: if no matching constructor was found
