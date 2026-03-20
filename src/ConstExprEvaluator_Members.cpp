@@ -1573,20 +1573,19 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 				// ptr1 == ptr2: equal iff they point to the same named variable
 				are_equal = (lhs.pointer_to_var == rhs.pointer_to_var);
 			} else if (lhs_is_ptr) {
-				// ptr == integer: nullptr (0) is the only null-pointer constant
-				const long long rhs_val = rhs.is_uint()
-					? static_cast<long long>(rhs.as_uint_raw())
-					: rhs.as_int();
-				if (rhs_val != 0) {
+				// ptr == integer: nullptr (0) is the only null-pointer constant.
+				// Use raw unsigned comparison to avoid implementation-defined signed overflow.
+				const unsigned long long rhs_raw = rhs.is_uint() ? rhs.as_uint_raw()
+					: static_cast<unsigned long long>(rhs.as_int());
+				if (rhs_raw != 0ULL) {
 					return EvalResult::error("Pointer comparison with non-zero integer is not supported in constant expressions");
 				}
 				are_equal = false; // valid constexpr pointer is always non-null
 			} else {
-				// integer == ptr
-				const long long lhs_val = lhs.is_uint()
-					? static_cast<long long>(lhs.as_uint_raw())
-					: lhs.as_int();
-				if (lhs_val != 0) {
+				// integer == ptr: same treatment as above
+				const unsigned long long lhs_raw = lhs.is_uint() ? lhs.as_uint_raw()
+					: static_cast<unsigned long long>(lhs.as_int());
+				if (lhs_raw != 0ULL) {
 					return EvalResult::error("Pointer comparison with non-zero integer is not supported in constant expressions");
 				}
 				are_equal = false; // valid constexpr pointer is always non-null
