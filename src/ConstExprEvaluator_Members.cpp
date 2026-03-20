@@ -1378,7 +1378,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		
 		if (!cond_result.success()) return cond_result;
 		
-		if (cond_result.as_bool()) {
+		if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 			return recursive_eval(ternary.true_expr(), bindings, context);
 		} else {
 			return recursive_eval(ternary.false_expr(), bindings, context);
