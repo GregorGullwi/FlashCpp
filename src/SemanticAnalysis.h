@@ -12,6 +12,8 @@ class CompileContext;
 class SymbolTable;
 class StructDeclarationNode;
 class FunctionDeclarationNode;
+class ConstructorDeclarationNode;
+class DestructorDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
 class BinaryOperatorNode;
@@ -112,6 +114,7 @@ private:
 	SemanticExprInfo normalizeExpression(const ASTNode& node, const SemanticContext& ctx);
 
 	// Helpers
+	void registerParametersInScope(const std::vector<ASTNode>& parameter_nodes);
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
 	void resolveRemainingAutoReturns();
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);

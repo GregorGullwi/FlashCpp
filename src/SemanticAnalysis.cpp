@@ -737,6 +737,21 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 
 // --- Declaration handlers ---
 
+void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& parameter_nodes) {
+	for (const auto& param_node : parameter_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& decl = param_node.as<DeclarationNode>();
+			const ASTNode ptype = decl.type_node();
+			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
+				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
+				const StringHandle pname = decl.identifier_token().handle();
+				if (pname.isValid())
+					addLocalType(pname, tid);
+			}
+		}
+	}
+}
+
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	const auto& def = func.get_definition();
 	if (!def.has_value()) return;  // Forward declaration only
@@ -753,18 +768,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 
 	// Push a scope for this function's parameters
 	pushScope();
-	for (const auto& param_node : func.parameter_nodes()) {
-		if (param_node.is<DeclarationNode>()) {
-			const auto& decl = param_node.as<DeclarationNode>();
-			const ASTNode ptype = decl.type_node();
-			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
-				const StringHandle pname = decl.identifier_token().handle();
-				if (pname.isValid())
-					addLocalType(pname, tid);
-			}
-		}
-	}
+	registerParametersInScope(func.parameter_nodes());
 
 	normalizeStatement(*def, ctx);
 	popScope();
@@ -779,18 +783,25 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 	SemanticContext ctx;
 
-	// Push a scope for this constructor's parameters (mirrors normalizeFunctionDeclaration).
+	// Push a scope for this constructor's parameters.
 	pushScope();
-	for (const auto& param_node : ctor.parameter_nodes()) {
-		if (param_node.is<DeclarationNode>()) {
-			const auto& decl = param_node.as<DeclarationNode>();
-			const ASTNode ptype = decl.type_node();
-			if (ptype.has_value() && ptype.is<TypeSpecifierNode>()) {
-				const CanonicalTypeId tid = canonicalizeType(ptype.as<TypeSpecifierNode>());
-				const StringHandle pname = decl.identifier_token().handle();
-				if (pname.isValid())
-					addLocalType(pname, tid);
-			}
+	registerParametersInScope(ctor.parameter_nodes());
+
+	// C++20 [class.base.init]: normalize member initializer expressions so
+	// they receive sema annotations (e.g. integral promotions in `result(x + 1)`).
+	for (const auto& mi : ctor.member_initializers()) {
+		normalizeExpression(mi.initializer_expr, ctx);
+	}
+	// Normalize base class initializer arguments as well.
+	for (const auto& bi : ctor.base_initializers()) {
+		for (const auto& arg : bi.arguments) {
+			normalizeExpression(arg, ctx);
+		}
+	}
+	// Normalize delegating constructor arguments if present.
+	if (ctor.delegating_initializer().has_value()) {
+		for (const auto& arg : ctor.delegating_initializer()->arguments) {
+			normalizeExpression(arg, ctx);
 		}
 	}
 

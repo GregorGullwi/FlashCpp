@@ -962,6 +962,9 @@ The right split is:
 	- Added `normalizeConstructorDeclaration()` and `normalizeDestructorDeclaration()` in `SemanticAnalysis.cpp`, mirroring `normalizeFunctionDeclaration()` with proper `pushScope()` / parameter registration / `popScope()` scope management.
 	- Previously, constructor bodies were normalized with a plain `SemanticContext` and no parameter scope — constructor parameters were invisible to `lookupLocalType()`, causing type inference failures and missed sema annotations.
 	- Refactored `normalizeTopLevelNode()` and `normalizeStructDeclaration()` to use these new helpers, eliminating duplicated inline normalization code.
+	- Extracted shared `registerParametersInScope()` helper used by both `normalizeFunctionDeclaration` and `normalizeConstructorDeclaration`, eliminating code duplication.
+	- `normalizeConstructorDeclaration` now walks member initializer expressions (`MemberInitializer::initializer_expr`), base initializer arguments (`BaseInitializer::arguments`), and delegating constructor arguments (`DelegatingInitializer::arguments`) through `normalizeExpression()`. This ensures arithmetic conversions in expressions like `Foo(short x) : result(x + 1) {}` are sema-annotated, preventing Phase 15 `InternalError`.
+	- Added forward declarations for `ConstructorDeclarationNode` and `DestructorDeclarationNode` in `SemanticAnalysis.h` for consistency with other node types.
 - **Constructor/destructor codegen flag:**
 	- `visitConstructorDeclarationNode()` and `visitDestructorDeclarationNode()` in `IrGenerator_Visitors_Decl.cpp` now set `sema_normalized_current_function_` using `hasNormalizedBody()`, matching the pattern in `visitFunctionDeclarationNode()`.
 	- Phase 15 hard enforcement now covers constructor and destructor bodies when sema has normalized them.
@@ -969,7 +972,7 @@ The right split is:
 	- Added `is_bitwise` classification for `&`, `|`, `^` in `normalizeExpression` (C++20 `[expr.bit.and]`, `[expr.bit.or]`, `[expr.bit.xor]`).
 	- `is_bitwise` is included in `needs_binary_type_inference`, triggering `diagnoseScopedEnumBinaryOperands()` for scoped enum operand diagnosis.
 	- `is_bitwise` operators use `tryAnnotateBinaryOperandConversions()` for usual arithmetic conversion annotations (same as `is_arithmetic`).
-- Tests: `test_scoped_enum_bitwise_fail`, `test_ctor_sema_conversion_ret0`, `test_bitwise_sema_conversion_ret0`. Suite: 1608 pass / 0 fail / 65 expected-fail.
+- Tests: `test_scoped_enum_bitwise_fail`, `test_ctor_sema_conversion_ret0`, `test_bitwise_sema_conversion_ret0`, `test_ctor_member_init_expr_ret0`. Suite: 1609 pass / 0 fail / 65 expected-fail.
 
 **Known limitations (Phase 17+):**
 - User-defined `operator bool()` / converting constructors remain in codegen.
