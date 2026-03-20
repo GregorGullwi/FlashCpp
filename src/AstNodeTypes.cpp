@@ -845,7 +845,7 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
         if (params.size() == 1) {
             const auto& param_decl = params[0].as<DeclarationNode>();
             const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-            if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+            if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct
                 && isOwnTypeIndex(param_type.type_index())) {
                 return &func;
             }

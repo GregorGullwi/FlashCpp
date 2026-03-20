@@ -1724,7 +1724,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								bool is_copy_ctor = false;
 								bool is_move_ctor = false;
 								
-								if (num_params == 1) {
+								// Compute min-required-args to handle default-arg ctors
+								// e.g. Foo(const Foo&, int = 0) = delete;
+								size_t min_required = num_params;
+								for (size_t i = num_params; i > 0; --i) {
+									if (!params.parameters[i - 1].is<DeclarationNode>() ||
+										!params.parameters[i - 1].as<DeclarationNode>().has_default_value()) {
+										break;
+									}
+									--min_required;
+								}
+
+								if (min_required <= 1 && num_params >= 1) {
 									// Check if the parameter is a reference to this type
 									const auto& param = params.parameters[0];
 									if (param.is<DeclarationNode>()) {
@@ -1739,7 +1750,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 												// It's a reference to this type
 												if (type_spec.is_rvalue_reference()) {
 													is_move_ctor = true;
-												} else if (type_spec.is_reference()) {
+												} else if (type_spec.is_lvalue_reference()) {
 													is_copy_ctor = true;
 												}
 											}
@@ -2150,7 +2161,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Check if it's a move or copy assignment operator based on parameter type
 					bool is_move_assign = false;
 					const auto& params = member_func_ref.parameter_nodes();
-					if (params.size() == 1) {
+					if (!params.empty()) {
 						const auto& param = params[0];
 						if (param.is<DeclarationNode>()) {
 							const auto& param_decl = param.as<DeclarationNode>();
@@ -2752,17 +2763,29 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			);
 			has_user_defined_constructor = true;
 
-			// Check if this is a copy or move constructor
+			// Check if this is a copy or move constructor.
+			// A copy/move ctor's first param is a reference to the same struct type,
+			// with all remaining params having defaults (min-required-args <= 1).
 			const auto& ctor_node = func_decl.function_declaration.as<ConstructorDeclarationNode>();
 			const auto& params = ctor_node.parameter_nodes();
-			if (params.size() == 1) {
-				const auto& param_decl = params[0].as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			if (!params.empty() && params[0].is<DeclarationNode>()) {
+				size_t min_required = params.size();
+				for (size_t i = params.size(); i > 0; --i) {
+					if (!params[i - 1].is<DeclarationNode>() ||
+						!params[i - 1].as<DeclarationNode>().has_default_value()) {
+						break;
+					}
+					--min_required;
+				}
+				if (min_required <= 1) {
+					const auto& param_decl = params[0].as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				if (param_type.is_reference() && param_type.type() == Type::Struct) {
-					has_user_defined_copy_constructor = true;
-				} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-					has_user_defined_move_constructor = true;
+					if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct) {
+						has_user_defined_copy_constructor = true;
+					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						has_user_defined_move_constructor = true;
+					}
 				}
 			}
 		} else if (func_decl.is_destructor) {
@@ -2782,7 +2805,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					const auto& params = func_node.parameter_nodes();
 					if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						if (param_type.is_reference() && !param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
 						} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
 							refined_kind = OverloadableOperator::MoveAssign;
@@ -2879,15 +2902,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				const ConstructorDeclarationNode& base_ctor = 
 					base_ctor_info.function_decl.as<ConstructorDeclarationNode>();
 				
-				// Skip copy and move constructors (they are not inherited)
+				// Skip copy and move constructors (they are not inherited per C++20 [class.inhctor]/1).
+				// A copy/move ctor has a first param that is a reference to the same struct type,
+				// with all remaining params having defaults (min-required-args <= 1).
 				const auto& base_params = base_ctor.parameter_nodes();
-				if (base_params.size() == 1) {
-					const auto& param_decl = base_params[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					
-					if (param_type.is_reference() && param_type.type() == Type::Struct) {
-						// This is a copy or move constructor - skip it
-						continue;
+				if (!base_params.empty() && base_params[0].is<DeclarationNode>()) {
+					size_t min_required = base_params.size();
+					for (size_t i = base_params.size(); i > 0; --i) {
+						if (!base_params[i - 1].is<DeclarationNode>() ||
+							!base_params[i - 1].as<DeclarationNode>().has_default_value()) {
+							break;
+						}
+						--min_required;
+					}
+					if (min_required <= 1) {
+						const auto& param_decl = base_params[0].as<DeclarationNode>();
+						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+						if ((param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
+							param_type.type() == Type::Struct) {
+							// This is a copy or move constructor - skip it
+							continue;
+						}
 					}
 				}
 				
