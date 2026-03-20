@@ -1393,8 +1393,18 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (member_access.is_arrow()) {
 					auto binding_it = bindings.find(obj_id.name());
 					if (binding_it != bindings.end() && binding_it->second.pointer_to_var.isValid()) {
+						// Check snapshot first (covers pointers to local / outer-scope variables).
+						// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
+						// "array_elements field reused for pointer value snapshot").
+						if (!binding_it->second.array_elements.empty()) {
+							const EvalResult& snapshot = binding_it->second.array_elements[0];
+							auto member_it = snapshot.object_member_bindings.find(member_name);
+							if (member_it != snapshot.object_member_bindings.end()) {
+								return member_it->second;
+							}
+						}
 						return evaluate_arrow_member_from_pointer_var(
-							StringTable::getStringView(binding_it->second.pointer_to_var), member_name, context);
+							StringTable::getStringView(binding_it->second.pointer_to_var), member_name, context, /*check_static=*/true);
 					}
 				}
 			}

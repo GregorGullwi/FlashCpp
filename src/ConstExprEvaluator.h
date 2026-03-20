@@ -133,7 +133,12 @@ struct EvalResult {
 	// Convenience helpers for common operations
 	bool as_bool() const {
 		if (!success()) return false;
-		
+
+		// A valid non-null constexpr pointer is truthy (matches C++ semantics for if(ptr)).
+		// pointer_to_var.isValid() is true when the StringHandle holds an interned variable
+		// name (i.e., the pointer was produced by &identifier and points to a known variable).
+		if (pointer_to_var.isValid()) return true;
+
 		// Any non-zero value is true
 		if (const auto* b_val = std::get_if<bool>(&value)) {
 			return *b_val;
