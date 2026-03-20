@@ -1549,6 +1549,14 @@ std::optional<long long> Evaluator::safe_shr(long long a, long long b, int width
 
 // Helper to apply binary operators
 EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
+	// Reject pointer operands: pointer arithmetic (ptr + n, ptr - ptr, ptr == ptr, etc.)
+	// is not yet supported in constexpr evaluation.  Without this guard, pointer results
+	// (which carry value = 0LL) would silently participate in arithmetic/comparison and
+	// produce wrong results.
+	if (lhs.pointer_to_var.isValid() || rhs.pointer_to_var.isValid()) {
+		return EvalResult::error("Pointer arithmetic/comparison is not supported in constant expressions");
+	}
+
 	// Determine the operand kinds so we can dispatch to the correct domain.
 	// This mirrors C++ "usual arithmetic conversions" (C++20 [expr.arith.conv]):
 	//   1. If either operand is floating-point → promote both to double.
@@ -1755,6 +1763,14 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
+	// Reject pointer operands for arithmetic/logical unary operators.
+	// Address-of (&) and dereference (*) are handled before apply_unary_op is
+	// called, so any pointer reaching here is being used in an unsupported way
+	// (e.g. !ptr, -ptr, ~ptr).
+	if (operand.pointer_to_var.isValid()) {
+		return EvalResult::error("Unary operator '" + std::string(op) + "' on pointer value is not supported in constant expressions");
+	}
+
 	const bool operand_is_uint = operand.is_uint();
 
 	// Helper: build an unsigned result masked to the operand's declared type width.
