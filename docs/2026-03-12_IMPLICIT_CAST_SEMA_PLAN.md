@@ -1017,8 +1017,9 @@ The right split is:
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
 - `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- `tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.
-- Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.
+- ~~`tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.~~ (Resolved: default-arg support added to shared helper.)
+- ~~Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.~~ (Resolved: `findSameTypeConstructorCore` is the single shared helper.)
+- Deleted special member function usage is not yet diagnosed at compile time (tracked in `docs/KNOWN_ISSUES.md`).
 
 ### Phase 18 ✅: unified `resolve_constructor` + remove codegen constructor matching
 
@@ -1088,6 +1089,29 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - `src/CodeGen.h` — replace 2 inline constructor matching loops
 - `src/ConstExprEvaluator.h` — replace 5 inline constructor matching loops
 - `src/IRConverter.h` — replace 1 inline constructor matching loop
+
+### Post-Phase-18 cleanup ✅: unified `findSameTypeConstructorCore`
+
+**Goal:** Replace the three separate `StructTypeInfo` helper functions (`findCopyConstructor`, `findMoveConstructor`, `findPreferredSameTypeConstructor`) — and the per-function iteration loops they contained — with a single shared core helper that all three delegate to.
+
+**Bugs fixed:**
+1. `findCopyConstructor()` used `is_reference()` which returns `true` for both lvalue *and* rvalue references, potentially matching a move constructor as a "copy" constructor. The unified helper uses `is_lvalue_reference()` for copy and `is_rvalue_reference()` for move.
+2. None of the three finder functions accepted constructors with default arguments (e.g. `Foo(const Foo&, int = 0)` has `params.size() == 2` but is a valid copy constructor per C++20 [class.copy.ctor]/1). The unified helper computes minimum required args and accepts any constructor where only the first parameter is required.
+
+**Implementation:**
+- Added `StructTypeInfo::findSameTypeConstructorCore(bool want_move, bool include_implicit)` in `src/AstNodeTypes.cpp` as the single iteration loop.
+- `findCopyConstructor()` → delegates to `findSameTypeConstructorCore(false, false)`.
+- `findMoveConstructor()` → delegates to `findSameTypeConstructorCore(true, false)`.
+- `findPreferredSameTypeConstructor()` → calls `findSameTypeConstructorCore()` twice (move then copy) with deletion-flag guards, preserving its existing fallback semantics.
+- All existing callers (`IRConverter_ConvertMain.cpp`, `IrGenerator_Stmt_Decl.cpp`, `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_MemberAccess.cpp`) are unchanged — they call the same public API which now routes through the shared core.
+- Declaration updated in `src/AstNodeTypes_DeclNodes.h`.
+
+**Regression tests added:**
+- `tests/test_copy_ctor_default_arg_ret0.cpp` — copy constructor with trailing default argument.
+- `tests/test_copy_move_ctor_select_ret0.cpp` — lvalue correctly selects copy constructor.
+- `tests/test_implicit_copy_ctor_ret0.cpp` — implicit (compiler-generated) copy on POD struct.
+
+**Suite:** 1626 pass / 0 fail / 67 expected-fail.
 
 ### Parallel rollout guidance
 

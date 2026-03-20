@@ -60,6 +60,15 @@ uses a different code path.
 
 **Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.
 
+## Deleted special member functions not fully diagnosed
+
+FlashCpp tracks `= delete` on copy/move constructors and assignment operators
+(`has_deleted_copy_constructor`, etc.) and the unified constructor lookup
+(`findPreferredSameTypeConstructor`) respects these flags.  However, semantic
+analysis does not yet emit a diagnostic when user code **calls** a deleted
+constructor (e.g. `NoCopy b(a);` where `NoCopy(const NoCopy&) = delete`).
+The code currently compiles silently and may produce incorrect object code.
+
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 
 When `&x` is evaluated where `x` is a local constexpr variable (in bindings),

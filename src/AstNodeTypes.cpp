@@ -728,97 +728,98 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     return false;
 }
 
-const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
-    for (const auto& func : member_functions) {
-        if (func.is_constructor) {
-            const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-            if (ctor_node.is_implicit()) continue;
-            const auto& params = ctor_node.parameter_nodes();
-
-            // Copy constructor has exactly one parameter of the same type (by reference)
-            if (params.size() == 1) {
-                const auto& param_decl = params[0].as<DeclarationNode>();
-                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-                // Check if it's a reference to the same struct type
-                if (param_type.is_reference() && param_type.type() == Type::Struct
-                    && isOwnTypeIndex(param_type.type_index())) {
-                    return &func;
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
-    for (const auto& func : member_functions) {
-        if (func.is_constructor) {
-            const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-            if (ctor_node.is_implicit()) continue;
-            const auto& params = ctor_node.parameter_nodes();
-
-            // Move constructor has exactly one parameter of the same type (by rvalue reference)
-            if (params.size() == 1) {
-                const auto& param_decl = params[0].as<DeclarationNode>();
-                const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-                // Check if it's an rvalue reference to the same struct type
-                if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
-                    && isOwnTypeIndex(param_type.type_index())) {
-                    return &func;
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
-	bool prefer_move,
+// ── Shared core for copy/move constructor lookup ────────────────────────
+//
+// Matches a constructor whose *first* parameter is a reference (lvalue or
+// rvalue, selected by want_move) to the struct's own type.  Constructors
+// with additional defaulted parameters also qualify (min-required == 1).
+//
+// This single helper replaces the three ad-hoc loops that previously lived
+// in findCopyConstructor, findMoveConstructor, and
+// findPreferredSameTypeConstructor, fixing two latent issues:
+//   1. findCopyConstructor used is_reference() which matched rvalue-refs.
+//   2. None of the finders accepted ctors with default arguments
+//      (e.g. Foo(const Foo&, int = 0)).
+const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
+	bool want_move,
 	bool include_implicit) const {
-	auto findMatchingConstructor = [&](bool want_move) -> const StructMemberFunction* {
-		for (const auto& func : member_functions) {
-			if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
+	for (const auto& func : member_functions) {
+		if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
 
-			const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-			if (!include_implicit && ctor_node.is_implicit()) {
-				continue;
-			}
+		const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+		if (!include_implicit && ctor_node.is_implicit()) {
+			continue;
+		}
 
-			const auto& params = ctor_node.parameter_nodes();
-			if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
-				continue;
-			}
+		const auto& params = ctor_node.parameter_nodes();
+		if (params.empty() || !params[0].is<DeclarationNode>()) {
+			continue;
+		}
 
-			const auto& param_decl = params[0].as<DeclarationNode>();
-			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			if (param_type.type() != Type::Struct || !isOwnTypeIndex(param_type.type_index())) {
-				continue;
+		// Accept ctors where only the first arg is required (rest have defaults).
+		// Inline min-required-args computation to avoid header dependency.
+		size_t min_required = params.size();
+		for (size_t i = params.size(); i > 0; --i) {
+			if (!params[i - 1].is<DeclarationNode>() ||
+				!params[i - 1].as<DeclarationNode>().has_default_value()) {
+				break;
 			}
+			--min_required;
+		}
+		if (min_required > 1) {
+			continue;
+		}
 
-			if (want_move) {
-				if (param_type.is_rvalue_reference()) {
-					return &func;
-				}
-			} else if (param_type.is_lvalue_reference()) {
+		const auto& param_decl = params[0].as<DeclarationNode>();
+		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
+			continue;
+		}
+		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		if (param_type.type() != Type::Struct || !isOwnTypeIndex(param_type.type_index())) {
+			continue;
+		}
+
+		if (want_move) {
+			if (param_type.is_rvalue_reference()) {
+				return &func;
+			}
+		} else {
+			if (param_type.is_lvalue_reference()) {
 				return &func;
 			}
 		}
+	}
 
-		return nullptr;
-	};
+	return nullptr;
+}
 
+// Explicit copy constructor only (skips implicit).
+const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
+	return findSameTypeConstructorCore(/*want_move=*/false, /*include_implicit=*/false);
+}
+
+// Explicit move constructor only (skips implicit).
+const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
+	return findSameTypeConstructorCore(/*want_move=*/true, /*include_implicit=*/false);
+}
+
+// Preferred same-type constructor: try move (if not deleted) then copy (if not
+// deleted), with optional implicit-ctor participation.
+const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
+	bool prefer_move,
+	bool include_implicit) const {
 	if (prefer_move && !isMoveConstructorDeleted()) {
-		if (const StructMemberFunction* move_ctor = findMatchingConstructor(true)) {
+		if (const StructMemberFunction* move_ctor =
+				findSameTypeConstructorCore(true, include_implicit)) {
 			return move_ctor;
 		}
 	}
 
 	if (!isCopyConstructorDeleted()) {
-		if (const StructMemberFunction* copy_ctor = findMatchingConstructor(false)) {
+		if (const StructMemberFunction* copy_ctor =
+				findSameTypeConstructorCore(false, include_implicit)) {
 			return copy_ctor;
 		}
 	}
