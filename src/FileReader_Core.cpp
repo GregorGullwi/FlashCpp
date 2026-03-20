@@ -200,6 +200,12 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 						// Block comment: find closing */
 						size_t close = line.find("*/", i + 2);
 						if (close != std::string::npos) {
+							// Warn about /* inside block comment (-Wcomment equivalent)
+							size_t nested = line.find("/*", i + 2);
+							if (nested != std::string::npos && nested < close && !filestack_.empty()) {
+								FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
+								          filestack_.top().file_name, ":", line_number);
+							}
 							i = close + 2; // skip past */
 						} else {
 							// Unterminated block comment — spans to next line(s)
