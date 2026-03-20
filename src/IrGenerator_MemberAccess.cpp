@@ -994,6 +994,15 @@
 					throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
 			}
+			else if (const QualifiedIdentifierNode* qualified_ident = tryGetQualifiedIdentifier(object_node)) {
+				auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident);
+				if (!extractBaseFromOperands(qualified_result, base_object, base_type, base_type_index, "qualified identifier")) {
+					throw InternalError(std::string("Failed to extract base from qualified identifier result for '") + std::string(memberAccessNode.member_token().value()) + "'");
+				}
+				if (is_arrow) {
+					is_pointer_dereference = true;
+				}
+			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
 				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
