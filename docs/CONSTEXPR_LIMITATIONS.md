@@ -454,16 +454,59 @@ constexpr int sum(const Point* pt) { return pt->x + pt->y; }
 static_assert(sum(&p) == 30);  // ✅ Works
 ```
 
+### ✅ Null Pointer Checks and Pointer Comparisons in Constexpr (NEW)
+
+Null pointer checks and pointer equality comparisons are now supported:
+
+```cpp
+constexpr int val = 42;
+constexpr const int* ptr = &val;
+
+// ptr == nullptr → false (valid constexpr pointer is always non-null)
+static_assert(!(ptr == nullptr));   // ✅ Works
+static_assert(ptr != nullptr);      // ✅ Works
+static_assert(!(nullptr == ptr));   // ✅ Works
+
+// Pointer equality (same/different variables)
+constexpr const int* ptr2 = &val;
+static_assert(ptr == ptr2);         // ✅ Works — same variable
+
+constexpr int other = 99;
+constexpr const int* ptr3 = &other;
+static_assert(ptr != ptr3);         // ✅ Works — different variables
+
+// Logical not: !ptr → false (non-null pointer is truthy)
+static_assert(!(!ptr));             // ✅ Works
+
+// Logical and/or with pointers
+static_assert(ptr && true);         // ✅ Works
+static_assert(ptr || false);        // ✅ Works
+
+// Null check helper function
+constexpr bool is_null(const int* p) { return p == nullptr; }
+static_assert(!is_null(&val));      // ✅ Works
+
+// Conditional using pointer truthiness
+constexpr int deref_or(const int* p, int def) {
+    if (p) return *p;
+    return def;
+}
+static_assert(deref_or(&val, 0) == 42);  // ✅ Works
+```
+
 **Supported pointer forms:**
 - `&named_var` (address-of a named constexpr variable)
 - `*ptr` (dereference to get the pointed-to value)
 - `ptr->member` (arrow member access through constexpr pointer)
 - Pointer parameters in constexpr functions (`const T* p`)
+- `ptr == nullptr`, `ptr != nullptr` (null pointer check — always false/true for valid pointers)
+- `nullptr == ptr`, `nullptr != ptr` (null pointer check, symmetric form)
+- `ptr1 == ptr2`, `ptr1 != ptr2` (pointer equality — compares which variable is pointed to)
+- `if (ptr)` / `!ptr` / `ptr && x` / `ptr || x` (pointer truthiness — valid pointer is always truthy)
 
 **Still unsupported pointer forms:**
 - Pointer arithmetic (`ptr + n`, `ptr[i]`)
 - Pointers to array elements (`&arr[0]`)
-- Null pointer checks (`ptr == nullptr`)
 - Pointer-to-member (`obj.*pmf`)
 
 ### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
@@ -627,6 +670,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ C++ aggregate-init zero-fill for partially-specified and single-element array brace-init: `arr{val}` sets `arr[0]=val` and zero-fills the rest; `arr{1,2,3}` for `int arr[5]` zero-fills elements 3 and 4
 - ✅ Local variable as array subscript inside constexpr member functions (e.g., `int idx = 1; return arr[idx];`)
 - ✅ Basic constexpr pointer dereference: `&named_var` (address-of), `*ptr` (dereference), `ptr->member` (arrow member access), and pointer function parameters (e.g., `const T* p`) in supported shapes
+- ✅ Constexpr null pointer checks and pointer comparisons: `ptr == nullptr`, `ptr != nullptr`, `ptr1 == ptr2`, `ptr1 != ptr2`, `!ptr`, `ptr && x`, `ptr || x` (valid constexpr pointer is always non-null/truthy)
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -660,7 +704,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Basic pointer dereference is now supported** - `&named_var`, `*ptr`, and `ptr->member` work for named constexpr variables and pointer function parameters; pointer arithmetic and pointers to array elements are not yet supported
+5. **Basic pointer dereference is now supported** - `&named_var`, `*ptr`, and `ptr->member` work for named constexpr variables and pointer function parameters; null pointer checks (`ptr == nullptr`), pointer equality (`ptr1 == ptr2`), and pointer truthiness (`if (ptr)`, `!ptr`, `ptr && x`) are now also supported; pointer arithmetic and pointers to array elements are not yet supported
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
@@ -785,6 +829,14 @@ struct Vec2 { int x, y; constexpr Vec2(int a, int b) : x(a), y(b) {} };
 constexpr Vec2 v{3, 4};
 constexpr const Vec2* vp = &v;
 static_assert(vp->x == 3);
+
+// Good: Null pointer checks and pointer comparisons (now supported!)
+constexpr const int* nn_ptr = &val;
+static_assert(nn_ptr != nullptr);   // non-null check
+static_assert(!(nn_ptr == nullptr)); // same
+static_assert(!!nn_ptr);            // truthiness via double-negation
+constexpr bool isNull(const int* p) { return p == nullptr; }
+static_assert(!isNull(&val));       // false: &val is non-null
 ```
 
 ### ❌ Patterns to Avoid
@@ -811,8 +863,9 @@ static_assert(f() == 42);  // Dynamic allocation not supported
 // Unsupported pointer forms:
 // - Pointer arithmetic: ptr + n, ptr - n
 // - Pointers to array elements: &arr[0]
-// - Pointer comparisons with nullptr: ptr == nullptr
 // - Pointer-to-member: obj.*pmf
+// Note: null pointer checks (ptr == nullptr), pointer equality (ptr1 == ptr2),
+//       and pointer truthiness (if (ptr), !ptr, ptr && x) are now supported
 
 // Still risky: richer captured-object aliasing/identity behavior in constexpr lambdas
 struct CaptureExample {
