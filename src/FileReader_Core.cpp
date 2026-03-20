@@ -164,50 +164,59 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
-		// Strip // single-line comments before checking for /* — but only when
-		// the // appears before the first /* on the line.  This prevents a /*
-		// inside a // comment (e.g. "// *p/*q.") from falsely triggering
-		// block-comment mode, while preserving // that appears inside a /* */
-		// block comment (e.g. "/* http://example.com */").
+		// Strip all comments from the line in a single left-to-right pass,
+		// respecting string and char literals.  Handles //, /* ... */
+		// (including multiple block comments on one line), and unterminated
+		// block comments that span to subsequent lines.
 		{
-			size_t line_comment_pos = std::string::npos;
-			// Find the first // outside string/char literals
-			{
-				bool in_string = false;
-				bool in_char = false;
-				for (size_t i = 0; i < line.size(); ++i) {
-					char c = line[i];
-					if (c == '\\' && (in_string || in_char)) {
-						++i;
-						continue;
-					}
-					if (c == '"' && !in_char) {
-						in_string = !in_string;
-					} else if (c == '\'' && !in_string) {
-						in_char = !in_char;
-					} else if (c == '/' && !in_string && !in_char && i + 1 < line.size() && line[i + 1] == '/') {
-						line_comment_pos = i;
+			std::string result;
+			result.reserve(line.size());
+			bool l_in_string = false;
+			bool l_in_char = false;
+			size_t i = 0;
+			while (i < line.size()) {
+				char c = line[i];
+				// Skip escaped characters inside string/char literals
+				if ((l_in_string || l_in_char) && c == '\\' && i + 1 < line.size()) {
+					result += c;
+					result += line[i + 1];
+					i += 2;
+					continue;
+				}
+				if (c == '"' && !l_in_char) {
+					l_in_string = !l_in_string;
+					result += c;
+					++i;
+				} else if (c == '\'' && !l_in_string) {
+					l_in_char = !l_in_char;
+					result += c;
+					++i;
+				} else if (!l_in_string && !l_in_char && c == '/' && i + 1 < line.size()) {
+					if (line[i + 1] == '/') {
+						// Line comment: discard rest of line
 						break;
 					}
+					if (line[i + 1] == '*') {
+						// Block comment: find closing */
+						size_t close = line.find("*/", i + 2);
+						if (close != std::string::npos) {
+							i = close + 2; // skip past */
+						} else {
+							// Unterminated block comment — spans to next line(s)
+							in_comment = true;
+							break;
+						}
+					} else {
+						result += c;
+						++i;
+					}
+				} else {
+					result += c;
+					++i;
 				}
 			}
-			size_t block_comment_pos = line.find("/*");
-			if (line_comment_pos != std::string::npos &&
-			    (block_comment_pos == std::string::npos || line_comment_pos < block_comment_pos)) {
-				line.resize(line_comment_pos);
-			}
-		}
-
-		size_t start_comment_pos = line.find("/*");
-		if (start_comment_pos != std::string::npos) {
-			size_t end_comment_pos = line.find("*/", start_comment_pos);
-			if (end_comment_pos != std::string::npos) {
-				line.erase(start_comment_pos, end_comment_pos - start_comment_pos + 2);
-			}
-			else {
-				in_comment = true;
-				continue;
-			}
+			line = std::move(result);
+			if (in_comment) continue;
 		}
 
 		if (skipping_stack.size() == 0) {
