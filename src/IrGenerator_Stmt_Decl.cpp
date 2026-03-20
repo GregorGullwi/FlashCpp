@@ -982,12 +982,7 @@
 
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
-								// Try type-based constructor overload resolution first.
-								// Infer argument types: try parser first (handles literals,
-								// member access, etc.), then fall back to the IR generator's
-								// own symbol table for local variable identifiers whose type
-								// may not be available through the parser at IR-generation time.
-								{
+									// Try type-based constructor overload resolution first.
 									std::vector<TypeSpecifierNode> arg_types;
 									bool all_arg_types_known = true;
 									for (const auto& init_arg : initializers) {
@@ -998,10 +993,6 @@
 										arg_types.push_back(std::move(arg_type));
 									}
 									if (all_arg_types_known) {
-										// Keep implicit same-type copy/move constructors available here.
-										// The shared resolver already filters them out for non-same-type
-										// brace/direct-init arguments, so blanket skipping would break
-										// valid same-type copy construction.
 										auto resolution = resolve_constructor_overload(struct_info, arg_types, false);
 										if (resolution.is_ambiguous) {
 											throw CompileError("Ambiguous constructor call");
@@ -1011,17 +1002,16 @@
 											matching_ctor = resolution.selected_overload;
 										}
 									}
-								// Arity-only fallback: when type inference failed for any
-								// argument, fall back to matching by argument count (respects
-								// default arguments).  This preserves the old behaviour for
-								// complex expressions the type-inference layers cannot resolve.
-								if (!has_matching_constructor && !all_arg_types_known) {
-									auto arity_resolution = resolve_constructor_overload(struct_info, num_initializers, false);
-									if (arity_resolution.has_match) {
-										has_matching_constructor = true;
-										matching_ctor = arity_resolution.selected_overload;
+									// Arity-only fallback: when type inference failed for any
+									// argument, fall back to matching by argument count (respects
+									// default arguments).
+									if (!has_matching_constructor && !all_arg_types_known) {
+										auto arity_resolution = resolve_constructor_overload(struct_info, num_initializers, false);
+										if (arity_resolution.has_match) {
+											has_matching_constructor = true;
+											matching_ctor = arity_resolution.selected_overload;
+										}
 									}
-								}
 								}
 							}
 
