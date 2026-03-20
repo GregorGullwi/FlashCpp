@@ -24,12 +24,10 @@ int case4() { return /* first */ 1 /* http://x */ + 2; }
 int case5() { return 5 /* nothing special */ + 5; }
 
 // ---- 6. // in a string literal must not be treated as a comment ----
-const char* case6_url = "http://example.com";
-int case6() { return case6_url[0] == 'h' ? 1 : 0; }
+int case6() { const char* url = "http://example.com"; return url[0] == 'h' ? 1 : 0; }
 
 // ---- 7. /* in a string literal must not start a block comment ----
-const char* case7_str = "/* not a comment */";
-int case7() { return case7_str[0] == '/' ? 1 : 0; }
+int case7() { const char* s = "/* not a comment */"; return s[0] == '/' ? 1 : 0; }
 
 // ---- 8. // after a block comment on the same line ----
 int case8_val = 42; /* block */ // line comment after block
