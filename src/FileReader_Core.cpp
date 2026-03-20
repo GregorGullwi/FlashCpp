@@ -164,10 +164,18 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
-		// Strip all comments from the line in a single left-to-right pass,
-		// respecting string and char literals.  Handles //, /* ... */
-		// (including multiple block comments on one line), and unterminated
-		// block comments that span to subsequent lines.
+		// Strip /* ... */ block comments in a single left-to-right pass,
+		// respecting string and char literals.  Handles multiple block
+		// comments on one line and unterminated block comments that span
+		// to subsequent lines.
+		//
+		// IMPORTANT: We intentionally do NOT strip // line comments here.
+		// Per the C++ standard, line splicing (phase 2: backslash-newline
+		// continuation) must happen before comment removal (phase 3).
+		// The #directive continuation handler below (lines with trailing \)
+		// needs to see the full line including any // and trailing \.
+		// The // comments are stripped later by stripLineComment() after
+		// line continuation has been processed.
 		{
 			std::string result;
 			result.reserve(line.size());
@@ -192,10 +200,6 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 					result += c;
 					++i;
 				} else if (!l_in_string && !l_in_char && c == '/' && i + 1 < line.size()) {
-					if (line[i + 1] == '/') {
-						// Line comment: discard rest of line
-						break;
-					}
 					if (line[i + 1] == '*') {
 						// Block comment: find closing */
 						size_t close = line.find("*/", i + 2);
@@ -212,6 +216,13 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 							in_comment = true;
 							break;
 						}
+					} else if (line[i + 1] == '/') {
+						// Line comment: stop scanning for block comments on the
+						// rest of this line.  Copy the // and everything after it
+						// verbatim — stripLineComment() will remove it later,
+						// AFTER line continuation has been processed.
+						result.append(line, i, line.size() - i);
+						i = line.size();
 					} else {
 						result += c;
 						++i;

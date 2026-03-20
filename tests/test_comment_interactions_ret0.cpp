@@ -55,6 +55,21 @@ int case12() {
 	return (a == '/' && b == '/') ? 1 : 0;
 }
 
+// ---- 13. // comment with line-continuation backslash ----
+// Per C++ standard, line splicing (phase 2) happens BEFORE comment removal
+// (phase 3).  A // comment ending with \ must still trigger continuation so
+// that the next physical line is consumed as part of the comment — NOT treated
+// as a separate code line.
+#define CASE13_VAL 13 // comment with backslash \
+this_should_be_swallowed_by_continuation
+int case13() { return CASE13_VAL; }
+
+// ---- 14. Block comment inside a // comment must not leak ----
+// Once // strips the rest of the line, any /* inside it is inert.
+int case14_a() { return 70; } // comment /* with block start
+int case14_b() { return 30; } // this must not be swallowed
+int case14() { return case14_a() + case14_b(); }
+
 int main() {
 	// 1. /* inside // comment
 	if (case1_a() + case1_b() != 3) return 1;
@@ -91,6 +106,13 @@ int main() {
 
 	// 12. / in char literals not a comment
 	if (case12() != 1) return 12;
+
+	// 13. // comment with line-continuation backslash
+	// The continuation line should be swallowed into the comment, not parsed as code.
+	if (case13() != 13) return 13;
+
+	// 14. /* inside // comment must not start block-comment mode
+	if (case14() != 100) return 14;
 
 	return 0;
 }
