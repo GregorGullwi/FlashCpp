@@ -190,16 +190,7 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 		}
 		if (ctor_candidates.size() == 1 && ctor_candidates[0] && ctor_candidates[0]->function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& only_ctor = ctor_candidates[0]->function_decl.as<ConstructorDeclarationNode>();
-			const auto& params = only_ctor.parameter_nodes();
-			bool is_implicit_copy_or_move = false;
-			if (only_ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-				if (param_type_node.is<TypeSpecifierNode>()) {
-					const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-					is_implicit_copy_or_move = (param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type());
-				}
-			}
-			if (!is_implicit_copy_or_move) {
+			if (!isImplicitCopyOrMoveConstructorCandidate(*struct_info, only_ctor)) {
 				return &only_ctor;
 			}
 		}
