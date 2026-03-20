@@ -2572,27 +2572,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		std::vector<TypeSpecifierNode> arg_types;
 		arg_types.reserve(num_args);
 		constructorCallNode.arguments().visit([&](ASTNode arg) {
-					std::optional<TypeSpecifierNode> arg_type_opt;
-					if (parser_) {
-						arg_type_opt = parser_->get_expression_type(arg);
-					}
-					if (!arg_type_opt.has_value() && arg.is<ExpressionNode>()) {
-						const auto& arg_expr = arg.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-							const auto& ident = std::get<IdentifierNode>(arg_expr);
-							auto sym = symbol_table.lookup(ident.name());
-							if (sym.has_value()) {
-								if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
-									if (arg_decl->type_node().is<TypeSpecifierNode>())
-										arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
-								} else if (sym->is<VariableDeclarationNode>()) {
-									const auto& vd = sym->as<VariableDeclarationNode>();
-									if (vd.declaration().type_node().is<TypeSpecifierNode>())
-										arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
-								}
-							}
-						}
-					}
+					auto arg_type_opt = inferExpressionTypeForOverload(arg);
 					if (!arg_type_opt.has_value()) {
 						arg_types.clear();
 						return;

@@ -39,6 +39,50 @@
 		return tv;
 	}
 
+	std::optional<TypeSpecifierNode> AstToIr::inferExpressionTypeForOverload(const ASTNode& expr_node) const {
+		// Layer 1: parser type inference (handles literals, casts, function calls, etc.)
+		if (parser_) {
+			auto result = parser_->get_expression_type(expr_node);
+			if (result.has_value()) return result;
+		}
+
+		// Layer 2+3: symbol-table / member-access fallback for expression nodes
+		if (!expr_node.is<ExpressionNode>()) return std::nullopt;
+		const auto& expr = expr_node.as<ExpressionNode>();
+
+		// Layer 2: identifier → symbol table lookup
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const auto& ident = std::get<IdentifierNode>(expr);
+			auto sym = symbol_table.lookup(ident.name());
+			if (sym.has_value()) {
+				if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
+					if (decl->type_node().is<TypeSpecifierNode>())
+						return decl->type_node().as<TypeSpecifierNode>();
+				} else if (sym->is<VariableDeclarationNode>()) {
+					const auto& vd = sym->as<VariableDeclarationNode>();
+					if (vd.declaration().type_node().is<TypeSpecifierNode>())
+						return vd.declaration().type_node().as<TypeSpecifierNode>();
+				}
+			}
+		}
+
+		// Layer 3: member access → resolveMemberAccessType
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const StructTypeInfo* member_owner = nullptr;
+			const StructMember* member_info = nullptr;
+			if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
+				member_info) {
+				return TypeSpecifierNode(
+					member_info->type,
+					member_info->type_index,
+					static_cast<unsigned char>(member_info->size * 8),
+					Token());
+			}
+		}
+
+		return std::nullopt;
+	}
+
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
@@ -913,38 +957,7 @@
 								if (num_initializers == 1) {
 									const ASTNode& init_expr = initializers[0];
 									if (init_expr.is<ExpressionNode>()) {
-										std::optional<TypeSpecifierNode> init_type_opt;
-										if (parser_) {
-											init_type_opt = parser_->get_expression_type(init_expr);
-										}
-										if (!init_type_opt.has_value()) {
-											const auto& expr = init_expr.as<ExpressionNode>();
-											if (std::holds_alternative<IdentifierNode>(expr)) {
-												const auto& ident = std::get<IdentifierNode>(expr);
-												std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-												if (init_symbol.has_value()) {
-													const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
-													if (!init_decl && init_symbol->is<VariableDeclarationNode>()) {
-														init_decl = &init_symbol->as<VariableDeclarationNode>().declaration();
-													}
-													if (init_decl && init_decl->type_node().is<TypeSpecifierNode>()) {
-														init_type_opt = init_decl->type_node().as<TypeSpecifierNode>();
-													}
-												}
-											}
-											if (!init_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(expr)) {
-												const StructTypeInfo* member_owner = nullptr;
-												const StructMember* member_info = nullptr;
-												if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
-													member_info) {
-													init_type_opt = TypeSpecifierNode(
-														member_info->type,
-														member_info->type_index,
-														static_cast<unsigned char>(member_info->size * 8),
-														Token());
-												}
-											}
-										}
+										auto init_type_opt = inferExpressionTypeForOverload(init_expr);
 
 										if (init_type_opt.has_value()) {
 											const TypeSpecifierNode& init_type = *init_type_opt;
@@ -978,41 +991,7 @@
 									std::vector<TypeSpecifierNode> arg_types;
 									bool all_arg_types_known = true;
 									for (const auto& init_arg : initializers) {
-										std::optional<TypeSpecifierNode> arg_type_opt;
-										if (parser_) {
-											arg_type_opt = parser_->get_expression_type(init_arg);
-										}
-										// If parser couldn't infer the type, try symbol table lookup
-										// for simple identifier expressions (e.g., local variables).
-										if (!arg_type_opt.has_value() && init_arg.is<ExpressionNode>()) {
-											const auto& arg_expr = init_arg.as<ExpressionNode>();
-											if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-												const auto& ident = std::get<IdentifierNode>(arg_expr);
-												auto sym = symbol_table.lookup(ident.name());
-												if (sym.has_value()) {
-													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
-														if (arg_decl->type_node().is<TypeSpecifierNode>())
-															arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
-													} else if (sym->is<VariableDeclarationNode>()) {
-														const auto& vd = sym->as<VariableDeclarationNode>();
-														if (vd.declaration().type_node().is<TypeSpecifierNode>())
-															arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
-													}
-												}
-											}
-											if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(arg_expr)) {
-												const StructTypeInfo* member_owner = nullptr;
-												const StructMember* member_info = nullptr;
-												if (resolveMemberAccessType(std::get<MemberAccessNode>(arg_expr), member_owner, member_info) &&
-													member_info) {
-													arg_type_opt = TypeSpecifierNode(
-														member_info->type,
-														member_info->type_index,
-														static_cast<unsigned char>(member_info->size * 8),
-														Token());
-												}
-											}
-										}
+										auto arg_type_opt = inferExpressionTypeForOverload(init_arg);
 										if (!arg_type_opt.has_value()) { all_arg_types_known = false; break; }
 										TypeSpecifierNode arg_type = *arg_type_opt;
 										adjust_argument_type_for_overload_resolution(init_arg, arg_type);
@@ -1747,38 +1726,7 @@
 
 									bool arg_is_same_struct_type = false;
 									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
-										std::optional<TypeSpecifierNode> arg_type_opt;
-										if (parser_) {
-											arg_type_opt = parser_->get_expression_type(first_arg);
-										}
-										if (!arg_type_opt.has_value()) {
-											const auto& expr = first_arg.as<ExpressionNode>();
-											if (std::holds_alternative<IdentifierNode>(expr)) {
-												const auto& ident = std::get<IdentifierNode>(expr);
-												std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
-												if (arg_symbol.has_value()) {
-													const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol);
-													if (!arg_decl && arg_symbol->is<VariableDeclarationNode>()) {
-														arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
-													}
-													if (arg_decl && arg_decl->type_node().is<TypeSpecifierNode>()) {
-														arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
-													}
-												}
-											}
-											if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(expr)) {
-												const StructTypeInfo* member_owner = nullptr;
-												const StructMember* member_info = nullptr;
-												if (resolveMemberAccessType(std::get<MemberAccessNode>(expr), member_owner, member_info) &&
-													member_info) {
-													arg_type_opt = TypeSpecifierNode(
-														member_info->type,
-														member_info->type_index,
-														static_cast<unsigned char>(member_info->size * 8),
-														Token());
-												}
-											}
-										}
+										auto arg_type_opt = inferExpressionTypeForOverload(first_arg);
 
 										if (arg_type_opt.has_value()) {
 											const TypeSpecifierNode& arg_type = *arg_type_opt;
@@ -1809,39 +1757,7 @@
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.reserve(num_args);
 									direct_ctor->arguments().visit([&](ASTNode arg) {
-												std::optional<TypeSpecifierNode> arg_type_opt;
-												if (parser_) {
-													arg_type_opt = parser_->get_expression_type(arg);
-												}
-												if (!arg_type_opt.has_value() && arg.is<ExpressionNode>()) {
-													const auto& arg_expr = arg.as<ExpressionNode>();
-													if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-														const auto& ident = std::get<IdentifierNode>(arg_expr);
-														auto sym = symbol_table.lookup(ident.name());
-														if (sym.has_value()) {
-															if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
-																if (arg_decl->type_node().is<TypeSpecifierNode>())
-																	arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
-															} else if (sym->is<VariableDeclarationNode>()) {
-																const auto& vd = sym->as<VariableDeclarationNode>();
-																if (vd.declaration().type_node().is<TypeSpecifierNode>())
-																	arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
-															}
-														}
-													}
-													if (!arg_type_opt.has_value() && std::holds_alternative<MemberAccessNode>(arg_expr)) {
-														const StructTypeInfo* member_owner = nullptr;
-														const StructMember* member_info = nullptr;
-														if (resolveMemberAccessType(std::get<MemberAccessNode>(arg_expr), member_owner, member_info) &&
-															member_info) {
-															arg_type_opt = TypeSpecifierNode(
-																member_info->type,
-																member_info->type_index,
-																static_cast<unsigned char>(member_info->size * 8),
-																Token());
-														}
-													}
-												}
+												auto arg_type_opt = inferExpressionTypeForOverload(arg);
 												if (!arg_type_opt.has_value()) {
 													arg_types.clear();
 													return;

@@ -629,6 +629,13 @@ private:
 		ReferenceQualifier ref_qual,
 		TypeIndex type_index);
 
+	/// Infer the TypeSpecifierNode for an expression AST node using a layered
+	/// strategy: (1) parser_->get_expression_type, (2) symbol-table lookup for
+	/// IdentifierNode (handling both DeclarationNode and VariableDeclarationNode),
+	/// (3) resolveMemberAccessType for MemberAccessNode.
+	/// Returns std::nullopt if the type cannot be determined.
+	std::optional<TypeSpecifierNode> inferExpressionTypeForOverload(const ASTNode& expr_node) const;
+
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
 
