@@ -2349,16 +2349,16 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 									if (searchStructMembers(ti->getStructInfo()))
 										break;
 								}
-								// Check prefix match: registered name starts with struct name
-								// followed by '<' (handles template specializations like
-								// MyStruct<int> where caller uses undecorated name MyStruct).
-								// e.g., "MyStruct<int>" matches struct_name "MyStruct".
-								if (registered_name.size() > struct_name_sv.size() &&
-									registered_name[struct_name_sv.size()] == '<' &&
-									registered_name.starts_with(struct_name_sv)) {
-									if (searchStructMembers(ti->getStructInfo()))
-										break;
-								}
+							}
+							// Check prefix match: registered name starts with struct name
+							// followed by '<' (handles template specializations like
+							// MyStruct<int> where caller uses undecorated name MyStruct).
+							// e.g., "MyStruct<int>" matches struct_name "MyStruct".
+							if (registered_name.size() > struct_name_sv.size() &&
+								registered_name[struct_name_sv.size()] == '<' &&
+								registered_name.starts_with(struct_name_sv)) {
+								if (searchStructMembers(ti->getStructInfo()))
+									break;
 							}
 						}
 					}
