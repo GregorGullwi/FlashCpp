@@ -1174,9 +1174,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
-			if (!operand_result.pointer_to_var.empty()) {
+			if (operand_result.pointer_to_var.isValid()) {
 				// Check local bindings first
-				auto it = bindings.find(operand_result.pointer_to_var);
+				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
+				auto it = bindings.find(ptr_var_name);
 				if (it != bindings.end()) {
 					return it->second;
 				}
@@ -1184,7 +1185,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				if (!operand_result.array_elements.empty()) {
 					return operand_result.array_elements[0];
 				}
-				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
+				return dereference_constexpr_pointer(ptr_var_name, context);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -1321,9 +1322,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
-			if (!operand_result.pointer_to_var.empty()) {
+			if (operand_result.pointer_to_var.isValid()) {
 				// Check local bindings first
-				auto it = bindings.find(operand_result.pointer_to_var);
+				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
+				auto it = bindings.find(ptr_var_name);
 				if (it != bindings.end()) {
 					return it->second;
 				}
@@ -1331,7 +1333,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (!operand_result.array_elements.empty()) {
 					return operand_result.array_elements[0];
 				}
-				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
+				return dereference_constexpr_pointer(ptr_var_name, context);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -1390,9 +1392,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				// Handle arrow access (ptr->member) where ptr is a pointer in local bindings.
 				if (member_access.is_arrow()) {
 					auto binding_it = bindings.find(obj_id.name());
-					if (binding_it != bindings.end() && !binding_it->second.pointer_to_var.empty()) {
+					if (binding_it != bindings.end() && binding_it->second.pointer_to_var.isValid()) {
 						return evaluate_arrow_member_from_pointer_var(
-							binding_it->second.pointer_to_var, member_name, context);
+							StringTable::getStringView(binding_it->second.pointer_to_var), member_name, context);
 					}
 				}
 			}
@@ -2279,10 +2281,10 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	if (member_access.is_arrow()) {
 		auto ptr_result = evaluate(object_expr, context);
 		if (!ptr_result.success()) return ptr_result;
-		if (ptr_result.pointer_to_var.empty()) {
+		if (!ptr_result.pointer_to_var.isValid()) {
 			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
 		}
-		return evaluate_arrow_member_from_pointer_var(ptr_result.pointer_to_var, member_name, context, /*check_static=*/true);
+		return evaluate_arrow_member_from_pointer_var(StringTable::getStringView(ptr_result.pointer_to_var), member_name, context, /*check_static=*/true);
 	}
 
 	// Check if this is a nested member access (e.g., obj.inner.value)

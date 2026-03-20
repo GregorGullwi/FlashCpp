@@ -291,8 +291,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 
 	// Handle dereference (*): if the operand is a constexpr pointer, look up and evaluate the target variable.
 	if (op == "*") {
-		if (!operand_result.pointer_to_var.empty()) {
-			return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
+		if (operand_result.pointer_to_var.isValid()) {
+			return dereference_constexpr_pointer(StringTable::getStringView(operand_result.pointer_to_var), context);
 		}
 		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}

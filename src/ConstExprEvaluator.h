@@ -79,9 +79,11 @@ struct EvalResult {
 	std::optional<TypeSpecifierNode> exact_type;
 	TypeIndex object_type_index {};
 	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
-	// Constexpr pointer support: when non-empty, this result represents a pointer
+	// Constexpr pointer support: when valid, this result represents a pointer
 	// to a named constexpr variable (produced by the address-of operator &identifier).
-	std::string pointer_to_var;
+	// Uses StringHandle (lightweight 32-bit integer) instead of std::string to avoid
+	// heap allocation overhead on every EvalResult copy.
+	StringHandle pointer_to_var;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -119,7 +121,7 @@ struct EvalResult {
 
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables)
 	static EvalResult from_pointer(std::string_view var_name) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, std::string(var_name)};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name)};
 		return r;
 	}
 
