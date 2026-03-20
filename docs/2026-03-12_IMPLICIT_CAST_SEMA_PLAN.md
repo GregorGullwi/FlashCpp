@@ -981,9 +981,34 @@ The right split is:
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
-- Template specialization callee resolution: `test_member_template_func_in_specialization_ret0.cpp` still triggers the `hasUnresolvedCallArgs` escape hatch because template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address. Improve template specialization callee resolution so `tryAnnotateCallArgConversions` can annotate these cases.
+- ~~`inferExpressionType` still does not handle: `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.~~ (Partially resolved in Phase 17: `NewExpressionNode`, `DeleteExpressionNode`, `LambdaExpressionNode`, `ThrowExpressionNode` now handled.)
+- `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
+- ~~Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).~~ (Resolved in Phase 17.)
+- ~~Template specialization callee resolution: `test_member_template_func_in_specialization_ret0.cpp` still triggers the `hasUnresolvedCallArgs` escape hatch because template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address. Improve template specialization callee resolution so `tryAnnotateCallArgConversions` can annotate these cases.~~ (Improved in Phase 17: 3-pass search with mangled-name matching and namespace-tolerant gTypesByName scan.)
+- `tryAnnotateInitListConstructorArgs` uses `parser_.get_expression_type()` for arg types, which may fail for some variable types (e.g., scoped enums). Fallback scoped enum detection added in Phase 17, but full overload resolution still depends on parser type resolution.
+
+### Phase 17: compound assignment back-conversion sema ownership + template callee resolution + inferExpressionType expansion + scoped enum ctor diagnostics ✅
+- **Goal:** Address the highest-impact remaining known limitations from Phase 16.
+- **Compound assignment result back-conversion sema ownership (C++20 [expr.ass]/7):**
+	- Added `tryAnnotateCompoundAssignBackConversion()` method that annotates the `commonType → lhsType` back-conversion on the `BinaryOperatorNode` itself (keyed in `compound_assign_back_conv_` side table).
+	- Covers both regular compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`) and shift compound assignment operators (`<<=`, `>>=`).
+	- For shifts, the back-conversion is from `promote_integer_type(lhsType)` to `lhsType` (independent integral promotion, not usual arithmetic conversions).
+	- Added `getCompoundAssignBackConv()` public accessor for codegen verification.
+	- Codegen: both local and global compound assignment paths now verify sema annotation with `InternalError` if missing for standard arithmetic types.
+- **Template specialization callee resolution:**
+	- Refactored `tryAnnotateCallArgConversions` struct member function search into a reusable lambda (`searchStructMembers`) with a 3-pass strategy: (1) exact `DeclarationNode` address match, (2) mangled name match via `FunctionCallNode::mangled_name()` / `FunctionDeclarationNode::mangled_name()`, (3) unambiguous name + arity match.
+	- Added fallback scan of `gTypesByName` when direct struct name lookup fails, matching entries whose name ends with the struct name fragment (handles namespace prefix differences and template-argument-decorated keys).
+	- Reduces reliance on the `hasUnresolvedCallArgs` escape hatch for template specialization callee resolution.
+- **Expand `inferExpressionType` coverage:**
+	- `NewExpressionNode`: returns pointer to allocated type (wraps the new'd type in a `PointerLevel`).
+	- `DeleteExpressionNode`: returns `Type::Void` per C++20 `[expr.delete]`.
+	- `LambdaExpressionNode`: looks up the generated `__lambda_N` struct in `gTypesByName`; falls back to `parser_.get_expression_type()` if not yet generated.
+	- `ThrowExpressionNode`: returns `Type::Void` per C++20 `[expr.throw]`.
+- **Scoped enum constructor argument diagnostics:**
+	- Added `diagnoseScopedEnumConversion()` in `tryAnnotateConstructorCallArgConversions` (for `ConstructorCallNode` expression contexts).
+	- Added `diagnoseScopedEnumConversion()` in `tryAnnotateInitListConstructorArgs` (for direct-init syntax like `Struct s(scoped_enum_var)`).
+	- Added fallback scoped enum detection in `tryAnnotateInitListConstructorArgs`: when `parser_.get_expression_type()` returns `nullopt`, uses `inferExpressionType()` via the sema scope stack to detect and diagnose scoped enum misuse before early-returning from overload resolution.
+- Tests: `test_compound_assign_back_conv_sema_ret0`, `test_new_expr_type_inference_ret0`, `test_scoped_enum_ctor_arg_fail`. Suite: 1614 pass / 0 fail / 66 expected-fail.
 
 ### Parallel rollout guidance
 
