@@ -4760,35 +4760,6 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					if (resolution.has_match && resolution.selected_overload) {
 						actual_ctor = resolution.selected_overload;
 					}
-
-					if (!actual_ctor) {
-						for (const auto& func : struct_info->member_functions) {
-							if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-								const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor_node.parameter_nodes();
-
-								if (ctor_node.is_implicit() && params.size() == 1 && num_params == 1 &&
-									params[0].is<DeclarationNode>()) {
-									const auto& param_type = params[0].as<DeclarationNode>().type_node();
-									if (param_type.is<TypeSpecifierNode>()) {
-										const auto& pts = param_type.as<TypeSpecifierNode>();
-										if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-											isIrStructType(toIrType(pts.type()))) {
-											const TypedValue& arg = ctor_op.arguments[0];
-											if (!isIrStructType(arg.effectiveIrType()) || arg.type_index != struct_type_it->second->type_index_) {
-												continue;
-											}
-										}
-									}
-								}
-
-								if (params.size() == num_params) {
-									actual_ctor = &ctor_node;
-									break;
-								}
-							}
-						}
-					}
 				}
 			}
 		}

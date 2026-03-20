@@ -2569,11 +2569,30 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
 	if (struct_info) {
-			if (parser_) {
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(num_args);
-				constructorCallNode.arguments().visit([&](ASTNode arg) {
-					auto arg_type_opt = parser_->get_expression_type(arg);
+		std::vector<TypeSpecifierNode> arg_types;
+		arg_types.reserve(num_args);
+		constructorCallNode.arguments().visit([&](ASTNode arg) {
+					std::optional<TypeSpecifierNode> arg_type_opt;
+					if (parser_) {
+						arg_type_opt = parser_->get_expression_type(arg);
+					}
+					if (!arg_type_opt.has_value() && arg.is<ExpressionNode>()) {
+						const auto& arg_expr = arg.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+							const auto& ident = std::get<IdentifierNode>(arg_expr);
+							auto sym = symbol_table.lookup(ident.name());
+							if (sym.has_value()) {
+								if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
+									if (arg_decl->type_node().is<TypeSpecifierNode>())
+										arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
+								} else if (sym->is<VariableDeclarationNode>()) {
+									const auto& vd = sym->as<VariableDeclarationNode>();
+									if (vd.declaration().type_node().is<TypeSpecifierNode>())
+										arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
+								}
+							}
+						}
+					}
 					if (!arg_type_opt.has_value()) {
 						arg_types.clear();
 						return;
@@ -2581,58 +2600,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					TypeSpecifierNode arg_type = *arg_type_opt;
 					adjust_argument_type_for_overload_resolution(arg, arg_type);
 					arg_types.push_back(std::move(arg_type));
-				});
+		});
 
-				if (arg_types.size() == num_args) {
-					auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
-					if (resolution.is_ambiguous) {
-						throw CompileError("Ambiguous constructor call");
-					}
-					matching_ctor = resolution.selected_overload;
-				}
+		if (arg_types.size() == num_args) {
+			auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+			if (resolution.is_ambiguous) {
+				throw CompileError("Ambiguous constructor call");
 			}
-
-			if (!matching_ctor) {
-		for (const auto& func : struct_info->member_functions) {
-			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-				const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-				const auto& params = ctor_node.parameter_nodes();
-
-				// Skip implicit copy/move constructors — they only apply when the
-				// argument is actually the same struct type, not for aggregate-like
-				// brace init with scalar values like my_type{0}
-				if (ctor_node.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-					const auto& param_type = params[0].as<DeclarationNode>().type_node();
-					if (param_type.is<TypeSpecifierNode>()) {
-						const auto& pts = param_type.as<TypeSpecifierNode>();
-						if ((pts.is_reference() || pts.is_rvalue_reference()) &&
-						is_struct_type(pts.type())) {
-							continue;  // Skip implicit copy/move ctors
-						}
-					}
-				}
-
-				// Match constructor with same number of parameters or with default parameters
-				if (params.size() == num_args) {
-					matching_ctor = &ctor_node;
-					break;
-				} else if (params.size() > num_args) {
-					// Check if remaining params have defaults
-					bool all_have_defaults = true;
-					for (size_t i = num_args; i < params.size(); ++i) {
-						if (!params[i].is<DeclarationNode>() ||
-						!params[i].as<DeclarationNode>().has_default_value()) {
-							all_have_defaults = false;
-							break;
-						}
-					}
-					if (all_have_defaults) {
-						matching_ctor = &ctor_node;
-						break;
-					}
-				}
-			}
-			}
+			matching_ctor = resolution.selected_overload;
 		}
 	}
 	// Get constructor parameter types for reference handling

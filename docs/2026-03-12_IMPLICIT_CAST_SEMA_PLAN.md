@@ -1020,9 +1020,16 @@ The right split is:
 - `tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.
 - Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.
 
-### Phase 18 (planned): unified `resolve_constructor` + remove codegen constructor matching
+### Phase 18 ✅: unified `resolve_constructor` + remove codegen constructor matching
 
 **Goal:** Extract a single `resolve_constructor_overload()` function in `OverloadResolution.h` and remove all hand-rolled constructor matching loops from codegen, constexpr evaluator, and sema.
+
+**Implementation notes:**
+
+- Added shared `resolve_constructor_overload()` ranking in `src/OverloadResolution.h`, including default-argument viability checks and `can_convert_type()`-based constructor ranking.
+- `tryAnnotateInitListConstructorArgs` now falls back to `inferExpressionType()` + `materializeTypeSpecifier()` when parser-only type lookup fails, so scoped-enum direct-init arguments flow through normal constructor resolution.
+- Remaining constructor-selection loops in IR/codegen/constexpr paths were replaced with the shared resolver; constexpr constructor matching now also respects constructors that are only viable via default arguments.
+- Added `tests/test_ctor_default_arg_overload_ret0.cpp` to cover the direct-init regression where the only viable constructor uses a default parameter.
 
 **Problem statement:**
 

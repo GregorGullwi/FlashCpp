@@ -2505,47 +2505,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		const ASTNode& arg = initializers[arg_idx];
 		auto arg_type_opt = parser_.get_expression_type(arg);
 		if (!arg_type_opt.has_value()) {
-			// Parser couldn't resolve the type — we can't do full overload resolution.
-			// However, we can still diagnose obvious scoped enum misuse: if sema knows
-			// the argument is a scoped enum, check whether any constructor parameter
-			// at this exact argument position accepts that scoped enum type.
-			// If none do, it's an implicit conversion error.
 			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-			if (arg_type_id) {
-				const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
-				if (arg_desc.base_type == Type::Enum && arg_desc.type_index.is_valid() &&
-					arg_desc.type_index.value < gTypeInfo.size()) {
-					if (const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo()) {
-						if (ei->is_scoped) {
-							// Check if any constructor accepts this exact scoped enum type
-							// at the current argument's position (arg_idx).
-							bool has_matching_ctor = false;
-							for (const auto& mf : struct_info.member_functions) {
-								if (!mf.is_constructor) continue;
-								if (!mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor.parameter_nodes();
-								if (params.size() < initializers.size()) continue;
-								// arg_idx < initializers.size() <= params.size() is guaranteed here
-								if (!params[arg_idx].is<DeclarationNode>()) continue;
-								const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
-								if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;
-								const CanonicalTypeId param_id = canonicalizeType(ptype.as<TypeSpecifierNode>());
-								if (canonical_types_match(arg_type_id, param_id)) {
-									has_matching_ctor = true;
-									break;
-								}
-							}
-							if (!has_matching_ctor) {
-								throw CompileError("cannot implicitly convert from scoped enum '" +
-									std::string(StringTable::getStringView(ei->name)) +
-									"' to constructor parameter; use static_cast");
-							}
-						}
-					}
-				}
-			}
-			return;
+			if (!arg_type_id) return;
+			arg_type_opt = materializeTypeSpecifier(type_context_.get(arg_type_id));
 		}
 		TypeSpecifierNode arg_type = *arg_type_opt;
 		adjust_argument_type_for_overload_resolution(arg, arg_type);

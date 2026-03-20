@@ -688,6 +688,33 @@ inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
 	return min_required;
 }
 
+inline bool isImplicitCopyOrMoveConstructorCandidate(
+	const StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode& ctor_decl)
+{
+	if (!ctor_decl.is_implicit() || !struct_info.own_type_index_.has_value()) {
+		return false;
+	}
+
+	const auto& parameters = ctor_decl.parameter_nodes();
+	if (parameters.size() != 1 || !parameters[0].is<DeclarationNode>()) {
+		return false;
+	}
+
+	const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
+	if (!param_type_node.is<TypeSpecifierNode>()) {
+		return false;
+	}
+
+	const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+	if (!(param_type.is_reference() || param_type.is_rvalue_reference()) ||
+		!is_struct_type(param_type.type())) {
+		return false;
+	}
+
+	return param_type.type_index() == *struct_info.own_type_index_;
+}
+
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	const StructTypeInfo& struct_info,
 	const std::vector<TypeSpecifierNode>& argument_types,
@@ -704,7 +731,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		}
 
 		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (skip_implicit && ctor_decl.is_implicit()) {
+		const bool is_implicit_copy_or_move =
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+		if (skip_implicit && is_implicit_copy_or_move) {
 			continue;
 		}
 
@@ -714,21 +743,13 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			continue;
 		}
 
-		if (ctor_decl.is_implicit() && parameters.size() == 1 && argument_types.size() == 1 &&
-			parameters[0].is<DeclarationNode>()) {
-			const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
-			if (param_type_node.is<TypeSpecifierNode>()) {
-				const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-				if ((param_type.is_reference() || param_type.is_rvalue_reference()) &&
-					is_struct_type(param_type.type()) && struct_info.own_type_index_.has_value()) {
-					const TypeSpecifierNode& arg_type = argument_types[0];
-					Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
-					bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
-						arg_type.type_index() == *struct_info.own_type_index_;
-					if (!is_same_struct_type) {
-						continue;
-					}
-				}
+		if (is_implicit_copy_or_move && argument_types.size() == 1) {
+			const TypeSpecifierNode& arg_type = argument_types[0];
+			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+				arg_type.type_index() == *struct_info.own_type_index_;
+			if (!is_same_struct_type) {
+				continue;
 			}
 		}
 
@@ -1739,4 +1760,3 @@ inline OverloadResolutionResult resolve_overload_cached(
 	
 	return result;
 }
-

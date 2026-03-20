@@ -137,11 +137,6 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 		return nullptr;
 	}
 
-	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
-	if (ctor_candidates.empty()) {
-		return nullptr;
-	}
-
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(arguments.size());
 	bool has_all_arg_types = true;
@@ -188,45 +183,49 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 		if (resolution.is_ambiguous) {
 			return nullptr;
 		}
-		if (ctor_candidates.size() == 1 && ctor_candidates[0] && ctor_candidates[0]->function_decl.is<ConstructorDeclarationNode>()) {
-			const auto& only_ctor = ctor_candidates[0]->function_decl.as<ConstructorDeclarationNode>();
-			const auto& params = only_ctor.parameter_nodes();
-			bool is_implicit_copy_or_move = false;
-			if (only_ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-				const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-				if (param_type_node.is<TypeSpecifierNode>()) {
-					const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-					is_implicit_copy_or_move = (param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type());
-				}
-			}
-			if (!is_implicit_copy_or_move) {
-				return &only_ctor;
-			}
-		}
 		return nullptr;
 	}
 
 	const ConstructorDeclarationNode* constexpr_match = nullptr;
 	const ConstructorDeclarationNode* non_constexpr_match = nullptr;
-	for (const StructMemberFunction* ctor_candidate : ctor_candidates) {
-		if (!ctor_candidate || !ctor_candidate->function_decl.is<ConstructorDeclarationNode>()) {
+	bool constexpr_ambiguous = false;
+	bool non_constexpr_ambiguous = false;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
 			continue;
 		}
-		const ConstructorDeclarationNode& ctor_decl = ctor_candidate->function_decl.as<ConstructorDeclarationNode>();
+
+		const ConstructorDeclarationNode& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		const auto& params = ctor_decl.parameter_nodes();
+		const size_t min_required_args = countMinRequiredArgs(ctor_decl);
+		if (arguments.size() < min_required_args || arguments.size() > params.size()) {
+			continue;
+		}
+
 		if (ctor_decl.is_constexpr()) {
 			if (constexpr_match) {
-				return nullptr;
+				constexpr_ambiguous = true;
+				continue;
 			}
 			constexpr_match = &ctor_decl;
 		} else {
 			if (non_constexpr_match) {
-				non_constexpr_match = nullptr; // ambiguous non-constexpr
+				non_constexpr_ambiguous = true;
 				continue;
 			}
 			non_constexpr_match = &ctor_decl;
 		}
 	}
-	return constexpr_match ? constexpr_match : non_constexpr_match;
+
+	if (constexpr_match) {
+		return constexpr_ambiguous ? nullptr : constexpr_match;
+	}
+
+	if (non_constexpr_match && !non_constexpr_ambiguous) {
+		return non_constexpr_match;
+	}
+
+	return nullptr;
 }
 
 std::optional<ASTNode> Evaluator::lookup_identifier_symbol(
@@ -2895,14 +2894,23 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return init_arg_result;
 	}
 
+	std::optional<TypeSpecifierNode> init_arg_type;
+	if (context.parser) {
+		init_arg_type = context.parser->get_expression_type(intermediate_init);
+	}
+	if (!init_arg_type.has_value()) {
+		init_arg_type = try_get_type_from_eval_result(init_arg_result);
+	}
+
 	const ConstructorDeclarationNode* inner_matching_ctor = nullptr;
-	for (const auto& member_func : inner_struct_info->member_functions) {
-		if (!member_func.is_constructor) continue;
-		if (!member_func.function_decl.is<ConstructorDeclarationNode>()) continue;
-		const ConstructorDeclarationNode& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor.parameter_nodes().size() == 1) {
-			inner_matching_ctor = &ctor;
-			break;
+	if (init_arg_type.has_value()) {
+		TypeSpecifierNode overload_arg_type = *init_arg_type;
+		adjust_argument_type_for_overload_resolution(intermediate_init, overload_arg_type);
+		std::vector<TypeSpecifierNode> overload_arg_types;
+		overload_arg_types.push_back(std::move(overload_arg_type));
+		auto resolution = resolve_constructor_overload(*inner_struct_info, overload_arg_types, false);
+		if (resolution.has_match) {
+			inner_matching_ctor = resolution.selected_overload;
 		}
 	}
 
