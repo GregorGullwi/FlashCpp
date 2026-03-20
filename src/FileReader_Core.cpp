@@ -164,6 +164,12 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
+		// Strip // single-line comments before checking for /* so that a /*
+		// occurring inside a // comment (e.g. "// reaching *p/*q.") does not
+		// falsely trigger block-comment mode.  The call at line 213 remains for
+		// directive lines whose continuation lines are spliced first.
+		stripLineComment(line);
+
 		size_t start_comment_pos = line.find("/*");
 		if (start_comment_pos != std::string::npos) {
 			size_t end_comment_pos = line.find("*/", start_comment_pos);
