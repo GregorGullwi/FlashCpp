@@ -504,15 +504,27 @@ struct StructTypeInfo {
 	// callers never need to propagate these properties manually.
 	static void propagateAstProperties(StructMemberFunction& mf);
 
-	// Find copy constructor (takes const Type& or Type& parameter)
+	// Shared core: find a single copy or move constructor.
+	// want_move=false  → lvalue-reference (copy ctor)
+	// want_move=true   → rvalue-reference (move ctor)
+	// include_implicit → whether compiler-generated ctors participate
+	// Handles default arguments: a ctor like Foo(const Foo&, int=0) qualifies.
+	const StructMemberFunction* findSameTypeConstructorCore(
+		bool want_move,
+		bool include_implicit) const;
+
+	// Find explicit copy constructor (takes const Type& or Type&).
+	// Delegates to findSameTypeConstructorCore(false, false).
 	const StructMemberFunction* findCopyConstructor() const;
 
-	// Find move constructor (takes Type&& parameter)
+	// Find explicit move constructor (takes Type&&).
+	// Delegates to findSameTypeConstructorCore(true, false).
 	const StructMemberFunction* findMoveConstructor() const;
 
 	// Find the preferred same-type constructor for initialization.
 	// For xvalue/prvalue sources, prefer move and fall back to copy.
-	// For lvalue sources, use copy only. Implicit constructors can participate.
+	// For lvalue sources, use copy only. Respects deleted-ctor flags.
+	// Implicit constructors participate when include_implicit=true.
 	const StructMemberFunction* findPreferredSameTypeConstructor(
 		bool prefer_move,
 		bool include_implicit = true) const;
