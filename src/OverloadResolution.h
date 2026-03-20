@@ -837,10 +837,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 // Arity-only constructor overload resolution — used as fallback when argument type
 // information is unavailable.  Selects the first constructor where
 // min_required_args <= num_args <= params.size().
-// Implicit copy/move constructors (implicit ctors whose sole parameter is T& or T&&)
-// are always skipped since without type information we cannot verify the argument is
-// of the same struct type.
 // When skip_implicit=true, ALL implicit constructors are skipped (same as resolve_constructor_overload).
+// When skip_implicit=false, implicit copy/move constructors (T&, T&&) are still included so that
+// copy-initialization like `Point p2(p1)` can select the compiler-generated copy ctor.
 inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 	const StructTypeInfo& struct_info,
 	size_t num_args,
@@ -863,18 +862,6 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 		size_t min_required = countMinRequiredArgs(ctor_decl);
 		if (num_args < min_required || num_args > parameters.size()) {
 			continue;
-		}
-
-		// Always skip implicit copy/move constructors in arity-only mode since we have
-		// no type information to verify the argument is of the same struct type.
-		if (ctor_decl.is_implicit() && parameters.size() == 1 && parameters[0].is<DeclarationNode>()) {
-			const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
-			if (param_type_node.is<TypeSpecifierNode>()) {
-				const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-				if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-					continue;
-				}
-			}
 		}
 
 		if (!best_match) {
