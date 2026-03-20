@@ -2497,25 +2497,10 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	for (const ASTNode& arg : initializers) {
 		auto arg_type_opt = parser_.get_expression_type(arg);
 		if (!arg_type_opt.has_value()) {
-			// Parser couldn't resolve the type. Try sema inference and diagnose
-			// scoped enum usage directly — we can't do overload resolution without
-			// the full TypeSpecifierNode, but we can still catch scoped enum misuse.
-			// This covers e.g. `Struct s(scoped_enum_var)` where the parser doesn't
-			// track scoped enum variable types through InitializerListNode.
-			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-			if (arg_type_id) {
-				const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
-				if (arg_desc.base_type == Type::Enum && arg_desc.type_index.is_valid() &&
-					arg_desc.type_index.value < gTypeInfo.size()) {
-					if (const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo()) {
-						if (ei->is_scoped) {
-							throw CompileError("cannot implicitly convert from scoped enum '" +
-								std::string(StringTable::getStringView(ei->name)) +
-								"' to constructor parameter; use static_cast");
-						}
-					}
-				}
-			}
+			// Parser couldn't resolve the type — we can't do overload resolution
+			// without the full TypeSpecifierNode. Scoped enum misuse will still be
+			// caught by diagnoseScopedEnumConversion() after overload resolution
+			// when the parser CAN resolve the argument type.
 			return;
 		}
 		TypeSpecifierNode arg_type = *arg_type_opt;

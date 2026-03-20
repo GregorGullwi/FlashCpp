@@ -985,7 +985,7 @@ The right split is:
 - `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - ~~Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).~~ (Resolved in Phase 17.)
 - ~~Template specialization callee resolution: `test_member_template_func_in_specialization_ret0.cpp` still triggers the `hasUnresolvedCallArgs` escape hatch because template specializations with both primary and specialized struct definitions create separate `DeclarationNode` copies that don't match by address. Improve template specialization callee resolution so `tryAnnotateCallArgConversions` can annotate these cases.~~ (Improved in Phase 17: 3-pass search with mangled-name matching and namespace-tolerant gTypesByName scan.)
-- `tryAnnotateInitListConstructorArgs` uses `parser_.get_expression_type()` for arg types, which may fail for some variable types (e.g., scoped enums). Fallback scoped enum detection added in Phase 17, but full overload resolution still depends on parser type resolution.
+- `tryAnnotateInitListConstructorArgs` uses `parser_.get_expression_type()` for arg types, which may fail for some variable types (e.g., scoped enums). When the parser returns `nullopt`, the method bails out without running overload resolution or scoped enum diagnostics for that call. The scoped enum diagnostic still fires via `diagnoseScopedEnumConversion()` after overload resolution when the parser CAN resolve the argument type, and via `tryAnnotateConstructorCallArgConversions` for expression-syntax constructor calls. The remaining gap is narrow: only direct-init syntax `Pixel p(scoped_enum_var)` where the parser fails to resolve the arg type. Long-term fix: either improve `parser_.get_expression_type()` for init-list contexts, or use `inferExpressionType()` + `materializeTypeSpecifier()` as a full replacement so overload resolution can proceed.
 
 ### Phase 17: compound assignment back-conversion sema ownership + template callee resolution + inferExpressionType expansion + scoped enum ctor diagnostics ✅
 - **Goal:** Address the highest-impact remaining known limitations from Phase 16.
@@ -1006,9 +1006,9 @@ The right split is:
 	- `ThrowExpressionNode`: returns `Type::Void` per C++20 `[expr.throw]`.
 - **Scoped enum constructor argument diagnostics:**
 	- Added `diagnoseScopedEnumConversion()` in `tryAnnotateConstructorCallArgConversions` (for `ConstructorCallNode` expression contexts).
-	- Added `diagnoseScopedEnumConversion()` in `tryAnnotateInitListConstructorArgs` (for direct-init syntax like `Struct s(scoped_enum_var)`).
-	- Added fallback scoped enum detection in `tryAnnotateInitListConstructorArgs`: when `parser_.get_expression_type()` returns `nullopt`, uses `inferExpressionType()` via the sema scope stack to detect and diagnose scoped enum misuse before early-returning from overload resolution.
-- Tests: `test_compound_assign_back_conv_sema_ret0`, `test_new_expr_type_inference_ret0`, `test_scoped_enum_ctor_arg_fail`. Suite: 1614 pass / 0 fail / 66 expected-fail.
+	- Added `diagnoseScopedEnumConversion()` in `tryAnnotateInitListConstructorArgs` (for direct-init syntax like `Struct s(scoped_enum_var)`) — fires after overload resolution when the parser can resolve the argument type.
+	- When `parser_.get_expression_type()` returns `nullopt` in the init-list path, the method bails out without diagnostics (cannot determine target parameter type). This is safe: the scoped enum diagnostic still fires in expression-syntax constructor calls via `tryAnnotateConstructorCallArgConversions`.
+- Tests: `test_compound_assign_back_conv_sema_ret0`, `test_new_expr_type_inference_ret0`, `test_scoped_enum_ctor_arg_fail`, `test_scoped_enum_ctor_same_type_ret0`. Suite: 1615 pass / 0 fail / 66 expected-fail.
 
 ### Parallel rollout guidance
 
