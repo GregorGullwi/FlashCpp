@@ -430,15 +430,41 @@ Array support is still incomplete in more complex cases.
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
 
-### ❌ Pointer Dereference in Constexpr
+### ✅ Basic Pointer Dereference in Constexpr (NEW)
 
-Pointer dereferencing still has limited/unsupported constexpr support:
+Basic constexpr pointer support is now implemented for named constexpr variables:
 
 ```cpp
 constexpr int value = 42;
 constexpr const int* ptr = &value;
-static_assert(*ptr == 42);  // ❌ Pointer constexpr support is still limited
+static_assert(*ptr == 42);  // ✅ Works
+
+// Pointer passed as constexpr function argument
+constexpr int deref(const int* p) { return *p; }
+static_assert(deref(&value) == 42);  // ✅ Works
+
+// Arrow member access through constexpr pointer
+struct Point { int x, y; constexpr Point(int a, int b) : x(a), y(b) {} };
+constexpr Point p{10, 20};
+constexpr const Point* pp = &p;
+static_assert(pp->x == 10);  // ✅ Works
+
+// Arrow access in constexpr function
+constexpr int sum(const Point* pt) { return pt->x + pt->y; }
+static_assert(sum(&p) == 30);  // ✅ Works
 ```
+
+**Supported pointer forms:**
+- `&named_var` (address-of a named constexpr variable)
+- `*ptr` (dereference to get the pointed-to value)
+- `ptr->member` (arrow member access through constexpr pointer)
+- Pointer parameters in constexpr functions (`const T* p`)
+
+**Still unsupported pointer forms:**
+- Pointer arithmetic (`ptr + n`, `ptr[i]`)
+- Pointers to array elements (`&arr[0]`)
+- Null pointer checks (`ptr == nullptr`)
+- Pointer-to-member (`obj.*pmf`)
 
 ### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
 
@@ -600,6 +626,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Member array brace-init in constructor initializer lists (e.g., `arr{a, b, c}` for `int arr[3]`) is correctly materialized as an array value in constexpr evaluation
 - ✅ C++ aggregate-init zero-fill for partially-specified and single-element array brace-init: `arr{val}` sets `arr[0]=val` and zero-fills the rest; `arr{1,2,3}` for `int arr[5]` zero-fills elements 3 and 4
 - ✅ Local variable as array subscript inside constexpr member functions (e.g., `int idx = 1; return arr[idx];`)
+- ✅ Basic constexpr pointer dereference: `&named_var` (address-of), `*ptr` (dereference), `ptr->member` (arrow member access), and pointer function parameters (e.g., `const T* p`) in supported shapes
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -633,7 +660,8 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Use straightforward lambda captures** - the following work best:
+5. **Basic pointer dereference is now supported** - `&named_var`, `*ptr`, and `ptr->member` work for named constexpr variables and pointer function parameters; pointer arithmetic and pointers to array elements are not yet supported
+6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures
    - straightforward identifier-based `&name = other` init-captures
@@ -644,7 +672,7 @@ Potential areas for enhancement (in order of complexity):
    - simple `this` / `*this` member reads/calls
    - straightforward nested lambdas over enclosing captured/member state
    - straightforward mutable `[this]` / `[*this]` updates
-6. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
+7. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
 
@@ -746,6 +774,17 @@ static_assert(t.vals[1] == 20);
 struct Data { int arr[3]; constexpr Data() : arr{1, 2, 3} {} };
 constexpr Data data{};
 static_assert(data.arr[1] == 2);
+
+// Good: Basic pointer dereference (now supported!)
+constexpr int val = 42;
+constexpr const int* ptr = &val;
+static_assert(*ptr == 42);
+
+// Good: Arrow member access through constexpr pointer (now supported!)
+struct Vec2 { int x, y; constexpr Vec2(int a, int b) : x(a), y(b) {} };
+constexpr Vec2 v{3, 4};
+constexpr const Vec2* vp = &v;
+static_assert(vp->x == 3);
 ```
 
 ### ❌ Patterns to Avoid
@@ -768,6 +807,12 @@ constexpr int f() {
     return 42;
 }
 static_assert(f() == 42);  // Dynamic allocation not supported
+
+// Unsupported pointer forms:
+// - Pointer arithmetic: ptr + n, ptr - n
+// - Pointers to array elements: &arr[0]
+// - Pointer comparisons with nullptr: ptr == nullptr
+// - Pointer-to-member: obj.*pmf
 
 // Still risky: richer captured-object aliasing/identity behavior in constexpr lambdas
 struct CaptureExample {

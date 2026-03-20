@@ -79,6 +79,11 @@ struct EvalResult {
 	std::optional<TypeSpecifierNode> exact_type;
 	TypeIndex object_type_index {};
 	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
+	// Constexpr pointer support: when valid, this result represents a pointer
+	// to a named constexpr variable (produced by the address-of operator &identifier).
+	// Uses StringHandle (lightweight 32-bit integer) instead of std::string to avoid
+	// heap allocation overhead on every EvalResult copy.
+	StringHandle pointer_to_var;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -87,31 +92,37 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+	}
+
+	// Create a pointer-to-variable result (for address-of operator on constexpr variables)
+	static EvalResult from_pointer(std::string_view var_name) {
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name)};
+		return r;
 	}
 
 	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
@@ -122,7 +133,12 @@ struct EvalResult {
 	// Convenience helpers for common operations
 	bool as_bool() const {
 		if (!success()) return false;
-		
+
+		// A valid non-null constexpr pointer is truthy (matches C++ semantics for if(ptr)).
+		// pointer_to_var.isValid() is true when the StringHandle holds an interned variable
+		// name (i.e., the pointer was produced by &identifier and points to a known variable).
+		if (pointer_to_var.isValid()) return true;
+
 		// Any non-zero value is true
 		if (const auto* b_val = std::get_if<bool>(&value)) {
 			return *b_val;
@@ -496,6 +512,14 @@ private:
 		std::string_view op, EvaluationContext& context);
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 		EvaluationContext& context);
+	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
+	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context);
+	// Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
+	// pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
+	// evaluates it.  If check_static is true, also handles access to static struct members.
+	static EvalResult evaluate_arrow_member_from_pointer_var(
+		std::string_view pointed_name, std::string_view member_name,
+		EvaluationContext& context, bool check_static = false);
 	// get_typespec_size_bytes: unified via getTypeSpecSizeBits (AstNodeTypes_DeclNodes.h)
 	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
 		return static_cast<size_t>(getTypeSpecSizeBits(type_spec)) / 8;

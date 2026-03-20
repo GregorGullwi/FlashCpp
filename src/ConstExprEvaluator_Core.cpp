@@ -271,6 +271,17 @@ EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const AS
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 	EvaluationContext& context) {
+	// Handle address-of (&) without evaluating the operand: the result is a pointer to the named variable.
+	if (op == "&") {
+		if (operand_node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = operand_node.as<ExpressionNode>();
+			if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
+				return EvalResult::from_pointer(id->name());
+			}
+		}
+		return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
+	}
+
 	// Recursively evaluate operand
 	auto operand_result = evaluate(operand_node, context);
 
@@ -278,7 +289,46 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		return operand_result;
 	}
 
+	// Handle dereference (*): if the operand is a constexpr pointer, look up and evaluate the target variable.
+	if (op == "*") {
+		if (operand_result.pointer_to_var.isValid()) {
+			return dereference_constexpr_pointer(StringTable::getStringView(operand_result.pointer_to_var), context);
+		}
+		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+	}
+
 	return apply_unary_op(operand_result, op);
+}
+
+// Look up the named constexpr variable and evaluate it (used to dereference constexpr pointers).
+EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context) {
+	if (!context.symbols) {
+		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
+	}
+	auto symbol = context.symbols->lookup(var_name);
+	if (!symbol.has_value() && context.global_symbols) {
+		symbol = context.global_symbols->lookup(var_name);
+	}
+	if (!symbol.has_value()) {
+		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
+	}
+	// The symbol should be a VariableDeclarationNode; evaluate its initializer.
+	if (!symbol->is<VariableDeclarationNode>()) {
+		return EvalResult::error("Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable");
+	}
+	const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+	if (!var_decl.is_constexpr()) {
+		return EvalResult::error("Cannot dereference pointer to non-constexpr variable: " + std::string(var_name));
+	}
+	const auto& initializer = var_decl.initializer();
+	if (!initializer.has_value()) {
+		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer");
+	}
+	EvalResult result = evaluate(initializer.value(), context);
+	if (result.success()) {
+		maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);
+	}
+	return result;
 }
 
 EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
