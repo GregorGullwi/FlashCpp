@@ -1105,21 +1105,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 								CanonicalTypeDesc lhs_base_desc;
 								lhs_base_desc.base_type = lhs_base;
 								const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
-								const ConversionPlan plan = buildConversionPlan(promoted, lhs_base);
-								if (plan.is_valid && plan.rank != ConversionRank::UserDefined) {
-									ImplicitCastInfo cast_info;
-									cast_info.source_type_id = promoted_id;
-									cast_info.target_type_id = lhs_base_id;
-									cast_info.cast_kind = plan.kind;
-									cast_info.value_category_after = ValueCategory::PRValue;
-									const CastInfoIndex idx = allocateCastInfo(cast_info);
-									SemanticSlot slot;
-									slot.type_id = lhs_base_id;
-									slot.cast_info_index = idx;
-									slot.value_category = ValueCategory::PRValue;
-									compound_assign_back_conv_[static_cast<const void*>(&e)] = slot;
-									stats_.slots_filled++;
-								}
+								storeCompoundAssignBackConvSlot(e, promoted_id, lhs_base_id);
 							}
 						}
 					}
@@ -1947,6 +1933,37 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 // converted back from common type to LHS type.  Annotate this on the
 // BinaryOperatorNode so that codegen hard enforcement can verify sema ownership.
 
+// Shared helper: build an ImplicitCastInfo for source_type → target_type and
+// store the resulting SemanticSlot in compound_assign_back_conv_ keyed on &bin_op.
+// Both shift and non-shift compound assignments use this same slot structure.
+void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
+	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
+	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
+	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
+	const ConversionPlan plan = buildConversionPlan(src_desc.base_type, tgt_desc.base_type);
+	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = source_type_id;
+	cast_info.target_type_id = target_type_id;
+	cast_info.cast_kind = plan.kind;
+	cast_info.value_category_after = ValueCategory::PRValue;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = target_type_id;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	compound_assign_back_conv_[static_cast<const void*>(&bin_op)] = slot;
+	stats_.slots_filled++;
+
+	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
+		static_cast<int>(src_desc.base_type), " → ", static_cast<int>(tgt_desc.base_type),
+		" (kind=", static_cast<int>(plan.kind), ")");
+}
+
 void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
 	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
 	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
@@ -1979,28 +1996,7 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	lhs_base_desc.base_type = lhs_base;
 	const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 
-	const ConversionPlan plan = buildConversionPlan(common, lhs_base);
-	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
-
-	ImplicitCastInfo cast_info;
-	cast_info.source_type_id = common_type_id;
-	cast_info.target_type_id = lhs_base_id;
-	cast_info.cast_kind = plan.kind;
-	cast_info.value_category_after = ValueCategory::PRValue;
-
-	const CastInfoIndex idx = allocateCastInfo(cast_info);
-
-	SemanticSlot slot;
-	slot.type_id = lhs_base_id;
-	slot.cast_info_index = idx;
-	slot.value_category = ValueCategory::PRValue;
-
-	compound_assign_back_conv_[static_cast<const void*>(&bin_op)] = slot;
-	stats_.slots_filled++;
-
-	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
-		static_cast<int>(common), " → ", static_cast<int>(lhs_base),
-		" (kind=", static_cast<int>(plan.kind), ")");
+	storeCompoundAssignBackConvSlot(bin_op, common_type_id, lhs_base_id);
 }
 
 // --- Shift operand independent promotion annotation ---
@@ -2345,10 +2341,21 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 							} else if (registered_name.size() > struct_name_sv.size() + 1) {
 								// Check suffix match: registered name ends with struct name
 								// preceded by '::' or '<' (namespace or template boundary).
+								// e.g., "Ns::MyStruct" matches struct_name "MyStruct".
 								const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 								if (registered_name.substr(prefix_end) == struct_name_sv &&
 									(registered_name[prefix_end - 1] == ':' ||
 									 registered_name[prefix_end - 1] == '<')) {
+									if (searchStructMembers(ti->getStructInfo()))
+										break;
+								}
+								// Check prefix match: registered name starts with struct name
+								// followed by '<' (handles template specializations like
+								// MyStruct<int> where caller uses undecorated name MyStruct).
+								// e.g., "MyStruct<int>" matches struct_name "MyStruct".
+								if (registered_name.size() > struct_name_sv.size() &&
+									registered_name[struct_name_sv.size()] == '<' &&
+									registered_name.starts_with(struct_name_sv)) {
 									if (searchStructMembers(ti->getStructInfo()))
 										break;
 								}
@@ -2494,13 +2501,15 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	// to avoid false ambiguity between explicit and implicit copy/move ctors.
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(initializers.size());
-	for (const ASTNode& arg : initializers) {
+	for (size_t arg_idx = 0; arg_idx < initializers.size(); ++arg_idx) {
+		const ASTNode& arg = initializers[arg_idx];
 		auto arg_type_opt = parser_.get_expression_type(arg);
 		if (!arg_type_opt.has_value()) {
 			// Parser couldn't resolve the type — we can't do full overload resolution.
 			// However, we can still diagnose obvious scoped enum misuse: if sema knows
 			// the argument is a scoped enum, check whether any constructor parameter
-			// accepts that exact enum type. If none do, it's an implicit conversion error.
+			// at this exact argument position accepts that scoped enum type.
+			// If none do, it's an implicit conversion error.
 			const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 			if (arg_type_id) {
 				const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
@@ -2508,7 +2517,8 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 					arg_desc.type_index.value < gTypeInfo.size()) {
 					if (const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo()) {
 						if (ei->is_scoped) {
-							// Check if any constructor accepts this exact scoped enum type.
+							// Check if any constructor accepts this exact scoped enum type
+							// at the current argument's position (arg_idx).
 							bool has_matching_ctor = false;
 							for (const auto& mf : struct_info.member_functions) {
 								if (!mf.is_constructor) continue;
@@ -2516,8 +2526,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
 								const auto& params = ctor.parameter_nodes();
 								if (params.size() != initializers.size()) continue;
-								if (!params[0].is<DeclarationNode>()) continue;
-								const ASTNode ptype = params[0].as<DeclarationNode>().type_node();
+								// arg_idx < initializers.size() == params.size() is guaranteed here
+								if (!params[arg_idx].is<DeclarationNode>()) continue;
+								const ASTNode ptype = params[arg_idx].as<DeclarationNode>().type_node();
 								if (!ptype.has_value() || !ptype.is<TypeSpecifierNode>()) continue;
 								const CanonicalTypeId param_id = canonicalizeType(ptype.as<TypeSpecifierNode>());
 								if (canonical_types_match(arg_type_id, param_id)) {
@@ -2578,6 +2589,9 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)
 	if (true_desc.base_type == Type::Struct || false_desc.base_type == Type::Struct) return;
 	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
+	// C++20 [expr.cond]/2: when one branch is a throw-expression (or delete-expression),
+	// its type is void. The result type is the other branch's type — no conversion needed.
+	if (true_desc.base_type == Type::Void || false_desc.base_type == Type::Void) return;
 
 	Type common = get_common_type(true_desc.base_type, false_desc.base_type);
 	CanonicalTypeDesc common_desc;

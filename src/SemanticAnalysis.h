@@ -162,11 +162,17 @@ private:
 	void tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
 		CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
 
+	// Shared helper: build a back-conversion SemanticSlot from source_type → target_type
+	// and store it in compound_assign_back_conv_ keyed on &bin_op.
+	void storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
+		CanonicalTypeId source_type_id, CanonicalTypeId target_type_id);
+
 	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 	// NOT the usual arithmetic conversions.  Each operand is promoted separately
 	// (bool/char/short → int); the result type is the promoted LHS type.
 	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
 		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+
 
 	// C++20 [expr.unary.op]: the operand of unary +, -, and ~ undergoes integral
 	// promotion.  Types with conversion rank less than int (bool, char, short, etc.)
