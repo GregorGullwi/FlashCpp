@@ -1215,7 +1215,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		
 		if (!cond_result.success()) return cond_result;
 		
-		if (cond_result.as_bool()) {
+		if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 			return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
 		} else {
 			return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
