@@ -2539,8 +2539,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		fprintf(stderr, "[SEMA_DEBUG] param_type=%u arg_type=%u match=%d\n",
-			param_type_id.value, arg_type_id.value, (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));
+		FLASH_LOG(General, Debug, "SemanticAnalysis: init-list arg param_type=", param_type_id.value, " arg_type=", arg_type_id.value, " match=", (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument");
