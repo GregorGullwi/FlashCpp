@@ -1020,9 +1020,17 @@ The right split is:
 - `tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.
 - Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.
 
-### Phase 18 (planned): unified `resolve_constructor` + remove codegen constructor matching
+### Phase 18 ✅: unified `resolve_constructor` + remove codegen constructor matching
 
 **Goal:** Extract a single `resolve_constructor_overload()` function in `OverloadResolution.h` and remove all hand-rolled constructor matching loops from codegen, constexpr evaluator, and sema.
+
+**Implementation (completed):**
+
+All hand-rolled constructor matching loops have been replaced with a single `resolve_constructor_overload()` function in `src/OverloadResolution.h`. The inline loops formerly in `CodeGen.h` (now `IrGenerator_Stmt_Decl.cpp`, `IrGenerator_Visitors_TypeInit.cpp`, `IrGenerator_Visitors_Decl.cpp`), `ConstExprEvaluator.h` (consolidated into `find_matching_constructor` in `ConstExprEvaluator_Members.cpp`), and `IRConverter.h` (now `IRConverter_ConvertMain.cpp`) all call the shared resolver.
+
+The type-inference gap in `tryAnnotateInitListConstructorArgs` was fixed: when `parser_.get_expression_type()` returns `nullopt` for an argument (e.g. scoped enum values like `Color::Red`), the code now falls back to `inferExpressionType()` + `materializeTypeSpecifier()` to produce the `TypeSpecifierNode`. This allows the normal `resolve_constructor_overload` path to run for all arguments, eliminating the need for the hand-rolled scoped-enum fallback block that was added in Phase 17.
+
+New test: `tests/test_ctor_default_arg_overload_ret0.cpp` — exercises constructor calls where the only viable constructor has default parameters (`Pixel(Color c, int alpha = 255)` called with 1 arg).
 
 **Problem statement:**
 
