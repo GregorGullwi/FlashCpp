@@ -255,6 +255,21 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 
 EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
 	std::string_view op, EvaluationContext& context) {
+	// Short-circuit && and || per C++ semantics: evaluate LHS first, skip RHS
+	// when the result is already determined.  This is critical for guard patterns
+	// like `p && *p` where the RHS must not be evaluated when LHS is falsy.
+	if (op == "&&" || op == "||") {
+		auto lhs_result = evaluate(lhs_node, context);
+		if (!lhs_result.success()) return lhs_result;
+		const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+		if (op == "&&" && !lhs_bool) return EvalResult::from_bool(false);
+		if (op == "||" && lhs_bool)  return EvalResult::from_bool(true);
+		auto rhs_result = evaluate(rhs_node, context);
+		if (!rhs_result.success()) return rhs_result;
+		const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+		return EvalResult::from_bool(rhs_bool);
+	}
+
 	// Recursively evaluate left and right operands
 	auto lhs_result = evaluate(lhs_node, context);
 	auto rhs_result = evaluate(rhs_node, context);
