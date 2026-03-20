@@ -1295,8 +1295,9 @@ EvalResult Evaluator::evaluate_ternary_operator(const TernaryOperatorNode& terna
 		return cond_result;
 	}
 
-	// Evaluate the appropriate branch based on the condition
-	if (cond_result.as_bool()) {
+	// Evaluate the appropriate branch based on the condition.
+	// A valid constexpr pointer (pointer_to_var.isValid()) is always non-null (truthy).
+	if (cond_result.pointer_to_var.isValid() ? true : cond_result.as_bool()) {
 		return evaluate(ternary.true_expr(), context);
 	} else {
 		return evaluate(ternary.false_expr(), context);
