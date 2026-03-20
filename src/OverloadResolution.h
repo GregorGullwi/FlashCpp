@@ -834,7 +834,67 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	return ConstructorOverloadResolutionResult(best_match);
 }
 
-// countMinRequiredArgs is defined in SymbolTable.h (included above)
+// Arity-only constructor overload resolution — used as fallback when argument type
+// information is unavailable.  Selects the first constructor where
+// min_required_args <= num_args <= params.size().
+// Implicit copy/move constructors (implicit ctors whose sole parameter is T& or T&&)
+// are always skipped since without type information we cannot verify the argument is
+// of the same struct type.
+// When skip_implicit=true, ALL implicit constructors are skipped (same as resolve_constructor_overload).
+inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
+	const StructTypeInfo& struct_info,
+	size_t num_args,
+	bool skip_implicit = false)
+{
+	const ConstructorDeclarationNode* best_match = nullptr;
+	int num_matches = 0;
+
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (skip_implicit && ctor_decl.is_implicit()) {
+			continue;
+		}
+
+		const auto& parameters = ctor_decl.parameter_nodes();
+		size_t min_required = countMinRequiredArgs(ctor_decl);
+		if (num_args < min_required || num_args > parameters.size()) {
+			continue;
+		}
+
+		// Always skip implicit copy/move constructors in arity-only mode since we have
+		// no type information to verify the argument is of the same struct type.
+		if (ctor_decl.is_implicit() && parameters.size() == 1 && parameters[0].is<DeclarationNode>()) {
+			const auto& param_type_node = parameters[0].as<DeclarationNode>().type_node();
+			if (param_type_node.is<TypeSpecifierNode>()) {
+				const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+				if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
+					continue;
+				}
+			}
+		}
+
+		if (!best_match) {
+			best_match = &ctor_decl;
+			num_matches = 1;
+		} else {
+			num_matches++;
+		}
+	}
+
+	if (!best_match) {
+		return ConstructorOverloadResolutionResult::no_match();
+	}
+
+	if (num_matches > 1) {
+		return ConstructorOverloadResolutionResult::ambiguous();
+	}
+
+	return ConstructorOverloadResolutionResult(best_match);
+}
 
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous

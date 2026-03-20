@@ -360,24 +360,8 @@
 						}
 
 						if (!matching_ctor) {
-							for (const auto& mf : si->member_functions) {
-								if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-								const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-								const auto& params = ctor.parameter_nodes();
-								if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-									const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-									if (param_type_node.is<TypeSpecifierNode>()) {
-										const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-										if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-											continue;
-										}
-									}
-								}
-								if (params.size() == ctor_call.arguments().size()) {
-									matching_ctor = &ctor;
-									break;
-								}
-							}
+							auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), false);
+							matching_ctor = arity_resolution.selected_overload;
 						}
 						if (matching_ctor) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
@@ -955,111 +939,11 @@
 								}
 								}
 								if (!has_matching_constructor) {
-								for (const auto& func : struct_info.member_functions) {
-									if (func.is_constructor) {
-										// Get parameter count from the function declaration
-										if (func.function_decl.is<FunctionDeclarationNode>()) {
-											const auto& func_decl = func.function_decl.as<FunctionDeclarationNode>();
-											size_t param_count = func_decl.parameter_nodes().size();
-											if (param_count == num_initializers) {
-												has_matching_constructor = true;
-												break;
-											}
-										} else if (func.function_decl.is<ConstructorDeclarationNode>()) {
-											const auto& ctor_decl = func.function_decl.as<ConstructorDeclarationNode>();
-											const auto& params = ctor_decl.parameter_nodes();
-											size_t param_count = params.size();
-
-											// Skip copy constructor and move constructor for brace initialization
-											// Copy/move constructors should only be used when the initializer is of the same struct type
-											if (param_count == 1 && params.size() == 1 && params[0].is<DeclarationNode>()) {
-												const auto& param_decl = params[0].as<DeclarationNode>();
-												const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-												// Skip if this is a copy constructor (reference to same struct type)
-												if (param_type.is_reference() && param_type.type() == Type::Struct) {
-													// Check if the initializer is actually of this struct type
-													bool init_is_struct_of_same_type = false;
-													if (num_initializers == 1) {
-														const ASTNode& init_expr = initializers[0];
-														if (init_expr.is<ExpressionNode>()) {
-															const auto& expr = init_expr.as<ExpressionNode>();
-															// Get the type of the initializer expression
-															if (std::holds_alternative<IdentifierNode>(expr)) {
-																const auto& ident = std::get<IdentifierNode>(expr);
-																std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-																if (init_symbol.has_value()) {
-																	if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-																		const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-																		if (init_type.type() == Type::Struct &&
-																			init_type.type_index() == param_type.type_index()) {
-																			init_is_struct_of_same_type = true;
-																		}
-																	}
-																}
-															}
-														}
-													}
-													if (!init_is_struct_of_same_type) {
-														// Skip copy constructor - initializer is not of the same struct type
-														continue;
-													}
-												}
-
-												// Skip if this is a move constructor (rvalue reference to same struct type)
-												if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
-													// Check if the initializer is actually of this struct type
-													bool init_is_struct_of_same_type = false;
-													if (num_initializers == 1) {
-														const ASTNode& init_expr = initializers[0];
-														if (init_expr.is<ExpressionNode>()) {
-															const auto& expr = init_expr.as<ExpressionNode>();
-															// For move constructor, we only use it for rvalue expressions of same type
-															// For now, skip it for brace initialization unless it's explicitly a move
-															if (std::holds_alternative<IdentifierNode>(expr)) {
-																// Simple identifier - not an rvalue, don't match move constructor
-																continue;
-															}
-														}
-													}
-													if (!init_is_struct_of_same_type) {
-														// Skip move constructor for non-matching types
-														continue;
-													}
-												}
-											}
-
-											// Exact match
-											if (param_count == num_initializers) {
-												has_matching_constructor = true;
-												matching_ctor = &ctor_decl;
-												break;
-											}
-
-											// Check if constructor has default arguments that cover the gap
-											if (param_count > num_initializers) {
-												// Check if parameters from num_initializers onwards all have defaults
-												bool all_have_defaults = true;
-												for (size_t i = num_initializers; i < param_count; ++i) {
-													if (params[i].is<DeclarationNode>()) {
-														if (!params[i].as<DeclarationNode>().has_default_value()) {
-															all_have_defaults = false;
-															break;
-														}
-													} else {
-														all_have_defaults = false;
-														break;
-													}
-												}
-												if (all_have_defaults) {
-													has_matching_constructor = true;
-													matching_ctor = &ctor_decl;
-													break;
-												}
-											}
-										}
+									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, false);
+									if (arity_resolution.has_match) {
+										has_matching_constructor = true;
+										matching_ctor = arity_resolution.selected_overload;
 									}
-								}
 								}
 							}
 
@@ -1823,37 +1707,8 @@
 										}
 
 										if (!matching_ctor) {
-											for (const auto& func : type_info.struct_info_->member_functions) {
-												if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-													const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-													const auto& params = ctor_node.parameter_nodes();
-												if (ctor_node.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-													const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-													if (param_type_node.is<TypeSpecifierNode>()) {
-														const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-														if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-															continue;
-														}
-													}
-												}
-												if (params.size() == num_args) {
-													matching_ctor = &ctor_node;
-													break;
-												} else if (params.size() > num_args) {
-													bool all_have_defaults = true;
-													for (size_t i = num_args; i < params.size(); ++i) {
-														if (!params[i].is<DeclarationNode>() || !params[i].as<DeclarationNode>().has_default_value()) {
-															all_have_defaults = false;
-															break;
-														}
-													}
-													if (all_have_defaults) {
-														matching_ctor = &ctor_node;
-														break;
-													}
-												}
-												}
-											}
+											auto arity_resolution = resolve_constructor_overload_arity(*type_info.struct_info_, num_args, false);
+											matching_ctor = arity_resolution.selected_overload;
 										}
 								}
 							}

@@ -651,24 +651,8 @@
 											}
 										}
 										if (!matching_ctor) {
-											for (const auto& mf : ctor_struct_info->member_functions) {
-												if (!mf.is_constructor || !mf.function_decl.is<ConstructorDeclarationNode>()) continue;
-												const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
-												const auto& params = ctor.parameter_nodes();
-												if (ctor.is_implicit() && params.size() == 1 && params[0].is<DeclarationNode>()) {
-													const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
-													if (param_type_node.is<TypeSpecifierNode>()) {
-														const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-														if ((param_type.is_reference() || param_type.is_rvalue_reference()) && is_struct_type(param_type.type())) {
-															continue;
-														}
-													}
-												}
-												if (params.size() == ctor_call.arguments().size()) {
-													matching_ctor = &ctor;
-													break;
-												}
-											}
+											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), false);
+											matching_ctor = arity_resolution.selected_overload;
 										}
 										if (matching_ctor) {
 											// Evaluate arguments
