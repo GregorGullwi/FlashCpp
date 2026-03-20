@@ -188,8 +188,12 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 
 	const ConstructorDeclarationNode* constexpr_match = nullptr;
 	const ConstructorDeclarationNode* non_constexpr_match = nullptr;
+	const ConstructorDeclarationNode* implicit_constexpr_match = nullptr;
+	const ConstructorDeclarationNode* implicit_non_constexpr_match = nullptr;
 	bool constexpr_ambiguous = false;
 	bool non_constexpr_ambiguous = false;
+	bool implicit_constexpr_ambiguous = false;
+	bool implicit_non_constexpr_ambiguous = false;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -202,7 +206,28 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 			continue;
 		}
 
-		if (ctor_decl.is_constexpr()) {
+		const bool is_implicit_copy_or_move =
+			isImplicitCopyOrMoveConstructorCandidate(*struct_info, ctor_decl);
+		const bool is_constexpr_ctor = ctor_decl.is_constexpr();
+
+		if (is_implicit_copy_or_move) {
+			if (is_constexpr_ctor) {
+				if (implicit_constexpr_match) {
+					implicit_constexpr_ambiguous = true;
+					continue;
+				}
+				implicit_constexpr_match = &ctor_decl;
+			} else {
+				if (implicit_non_constexpr_match) {
+					implicit_non_constexpr_ambiguous = true;
+					continue;
+				}
+				implicit_non_constexpr_match = &ctor_decl;
+			}
+			continue;
+		}
+
+		if (is_constexpr_ctor) {
 			if (constexpr_match) {
 				constexpr_ambiguous = true;
 				continue;
@@ -223,6 +248,14 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 
 	if (non_constexpr_match && !non_constexpr_ambiguous) {
 		return non_constexpr_match;
+	}
+
+	if (implicit_constexpr_match) {
+		return implicit_constexpr_ambiguous ? nullptr : implicit_constexpr_match;
+	}
+
+	if (implicit_non_constexpr_match && !implicit_non_constexpr_ambiguous) {
+		return implicit_non_constexpr_match;
 	}
 
 	return nullptr;

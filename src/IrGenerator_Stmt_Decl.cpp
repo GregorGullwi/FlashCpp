@@ -20,9 +20,6 @@
 				is_already_address = true;
 			}
 		}
-		if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
-			is_already_address = true;
-		}
 
 		TypedValue tv;
 		if (is_already_address) {
@@ -53,7 +50,7 @@
 		// Layer 2: identifier → symbol table lookup
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const auto& ident = std::get<IdentifierNode>(expr);
-			auto sym = symbol_table.lookup(ident.name());
+			auto sym = lookupSymbol(ident.name());
 			if (sym.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
 					if (decl->type_node().is<TypeSpecifierNode>())
@@ -1006,7 +1003,7 @@
 									// argument, fall back to matching by argument count (respects
 									// default arguments).
 									if (!has_matching_constructor && !all_arg_types_known) {
-										auto arity_resolution = resolve_constructor_overload(struct_info, num_initializers, false);
+										auto arity_resolution = resolve_constructor_overload(struct_info, num_initializers, true);
 										if (arity_resolution.has_match) {
 											has_matching_constructor = true;
 											matching_ctor = arity_resolution.selected_overload;
@@ -1779,7 +1776,7 @@
 									// default arguments are filled in and reference parameters
 									// are properly handled.
 									if (!matching_ctor && arg_types.size() != num_args) {
-										auto arity_resolution = resolve_constructor_overload(*type_info.struct_info_, num_args, false);
+										auto arity_resolution = resolve_constructor_overload(*type_info.struct_info_, num_args, true);
 										if (arity_resolution.has_match) {
 											matching_ctor = arity_resolution.selected_overload;
 										}

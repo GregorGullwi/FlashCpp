@@ -2593,7 +2593,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		// fall back to matching by argument count so that default arguments
 		// are filled in and reference parameters are properly handled.
 		if (!matching_ctor && arg_types.size() != num_args) {
-			auto arity_resolution = resolve_constructor_overload(*struct_info, num_args, false);
+			auto arity_resolution = resolve_constructor_overload(*struct_info, num_args, true);
 			if (arity_resolution.has_match) {
 				matching_ctor = arity_resolution.selected_overload;
 			}
