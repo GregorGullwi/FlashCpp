@@ -164,11 +164,39 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 		}
 
-		// Strip // single-line comments before checking for /* so that a /*
-		// occurring inside a // comment (e.g. "// reaching *p/*q.") does not
-		// falsely trigger block-comment mode.  The call at line 213 remains for
-		// directive lines whose continuation lines are spliced first.
-		stripLineComment(line);
+		// Strip // single-line comments before checking for /* — but only when
+		// the // appears before the first /* on the line.  This prevents a /*
+		// inside a // comment (e.g. "// *p/*q.") from falsely triggering
+		// block-comment mode, while preserving // that appears inside a /* */
+		// block comment (e.g. "/* http://example.com */").
+		{
+			size_t line_comment_pos = std::string::npos;
+			// Find the first // outside string/char literals
+			{
+				bool in_string = false;
+				bool in_char = false;
+				for (size_t i = 0; i < line.size(); ++i) {
+					char c = line[i];
+					if (c == '\\' && (in_string || in_char)) {
+						++i;
+						continue;
+					}
+					if (c == '"' && !in_char) {
+						in_string = !in_string;
+					} else if (c == '\'' && !in_string) {
+						in_char = !in_char;
+					} else if (c == '/' && !in_string && !in_char && i + 1 < line.size() && line[i + 1] == '/') {
+						line_comment_pos = i;
+						break;
+					}
+				}
+			}
+			size_t block_comment_pos = line.find("/*");
+			if (line_comment_pos != std::string::npos &&
+			    (block_comment_pos == std::string::npos || line_comment_pos < block_comment_pos)) {
+				line.resize(line_comment_pos);
+			}
+		}
 
 		size_t start_comment_pos = line.find("/*");
 		if (start_comment_pos != std::string::npos) {
