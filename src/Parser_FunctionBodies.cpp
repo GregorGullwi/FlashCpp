@@ -206,6 +206,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// --- RAII cleanup for member-function context stack and current_function_ ---
 	// Saves current_function_ on construction, restores it and (optionally) pops the
 	// member-function context stack on destruction — so every early return is safe.
+	// NOTE: This local guard is intentionally kept here rather than promoted to a
+	// shared class.  The Priority 2 plan (docs/2026-03-16_Parser_Code_Sharing_Plan.md)
+	// proposes a full FunctionParsingScopeGuard that will supersede this; extracting
+	// it prematurely would create a one-off abstraction that would immediately be
+	// replaced.
 	const bool has_member_ctx = !delayed.is_free_function;
 	struct MemberContextCleanup {
 		Parser& parser;

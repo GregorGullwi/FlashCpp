@@ -110,7 +110,7 @@ The codebase already contains unifying constructs:
 
 ## Proposed Refactoring
 
-### Priority 1: Unify Delayed Function Body Entry
+### Priority 1: Unify Delayed Function Body Entry ✅ IMPLEMENTED
 
 Refactor `parse_delayed_function_body()` so it reuses
 `parse_function_body_with_context()` (or a shared lower-level helper directly under
@@ -126,6 +126,46 @@ Why first:
 
 **Affected locations:** `Parser_FunctionBodies.cpp` primary, with follow-up call-site
 cleanup in declaration/template entry points.
+
+#### Implementation Notes (March 2026)
+
+**Shared helper: `setup_member_function_context()`**
+Enhanced to handle all member-function entry work in one place:
+1. Push `member_function_context_stack_`
+2. Register member functions in symbol table (`register_member_functions_in_scope()`)
+3. Inject `this` pointer into the symbol table (C++20 [class.this])
+
+Both `parse_function_body_with_context()` and `parse_delayed_function_body()` now
+call this single helper, so `this` injection, member-function registration, and
+context-stack management cannot drift between immediate and delayed paths.
+
+**`parse_function_body_with_context()` changes:**
+- Replaced inline `this` injection code with `setup_member_function_context()` call
+- Replaced inline parameter registration loop with `register_parameters_in_scope()`
+- Added `member_function_context_stack_` pop on cleanup
+
+**`parse_delayed_function_body()` changes:**
+- Replaced manual `gSymbolTable.enter_scope()`/`exit_scope()` with RAII
+  `FlashCpp::SymbolTableScope`
+- Added local RAII `MemberContextCleanup` guard that restores `current_function_`
+  and pops `member_function_context_stack_` on destruction
+- Removed 7 duplicated manual cleanup blocks (previously on every error return)
+- Gained `this` injection (was previously missing in the delayed path)
+
+**`Parser_Templates_Class.cpp` partial-specialization path:**
+- Replaced ~45 lines of manual scope/context/this/param setup with a single
+  `parse_delayed_function_body()` call, eliminating the last open-coded delayed
+  body parsing path.
+
+**Regression tests added:**
+- `test_delayed_ctor_init_list_ret0.cpp` — constructor with member initializer list
+- `test_delayed_member_func_this_ret0.cpp` — member function using `this` pointer
+- `test_delayed_out_of_line_member_ret0.cpp` — out-of-line member function definitions
+- `test_delayed_template_member_ret0.cpp` — template class member functions
+
+**Metrics after implementation:**
+- 1627 tests pass, 0 fail, 67 expected-fail
+- Net lines changed: −60 (93 added, 153 removed)
 
 ### Priority 2: Replace Standalone 'this' Setup with a Unified Function-Entry Helper
 
@@ -244,12 +284,12 @@ declarator infrastructure. Expression/postfix call parsing should stay separate.
 
 ## Metrics
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| Duplicate 'this' pointer blocks | 4 | 1 |
-| Duplicate constructor lookahead | 2 | 1 |
-| Duplicate parameter registration | 7 | 1 |
-| Shared infrastructure utilization | Partial | Consistent |
+| Metric | Before Priority 1 | After Priority 1 | Target |
+|--------|--------------------|-------------------|--------|
+| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 1 |
+| Duplicate constructor lookahead | 2 | 2 | 1 |
+| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 1 |
+| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent |
 
 ## Exit Criteria
 
