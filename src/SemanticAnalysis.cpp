@@ -2339,13 +2339,19 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 							const std::string_view registered_name = handle.view();
 							// Match if the registered name equals or ends with the struct name
 							// (handles namespace prefix differences).
-							if (registered_name == struct_name_sv ||
-								(registered_name.size() > struct_name_sv.size() &&
-								 registered_name.substr(registered_name.size() - struct_name_sv.size()) == struct_name_sv &&
-								 (registered_name[registered_name.size() - struct_name_sv.size() - 1] == ':' ||
-								  registered_name[registered_name.size() - struct_name_sv.size() - 1] == '<'))) {
+							if (registered_name == struct_name_sv) {
 								if (searchStructMembers(ti->getStructInfo()))
 									break;
+							} else if (registered_name.size() > struct_name_sv.size() + 1) {
+								// Check suffix match: registered name ends with struct name
+								// preceded by '::' or '<' (namespace or template boundary).
+								const size_t prefix_end = registered_name.size() - struct_name_sv.size();
+								if (registered_name.substr(prefix_end) == struct_name_sv &&
+									(registered_name[prefix_end - 1] == ':' ||
+									 registered_name[prefix_end - 1] == '<')) {
+									if (searchStructMembers(ti->getStructInfo()))
+										break;
+								}
 							}
 						}
 					}
