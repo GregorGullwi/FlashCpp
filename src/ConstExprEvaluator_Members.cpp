@@ -1155,10 +1155,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
-					return EvalResult::from_pointer(id->name());
+					EvalResult ptr_result = EvalResult::from_pointer(id->name());
+					// Snapshot the current value so the pointer can be dereferenced in a
+					// different scope (e.g., when passed as an argument to another function).
+					auto snapshot_it = bindings.find(id->name());
+					if (snapshot_it != bindings.end()) {
+						ptr_result.array_elements = {snapshot_it->second};
+					}
+					return ptr_result;
 				}
 			}
-			return EvalResult::error("Address-of operator (&) is only supported on named constexpr variables in constant expressions");
+			return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
 		}
 
 		// Regular unary operators
@@ -1173,9 +1180,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				if (it != bindings.end()) {
 					return it->second;
 				}
+				// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
+				if (!operand_result.array_elements.empty()) {
+					return operand_result.array_elements[0];
+				}
 				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
 			}
-			return EvalResult::error("Dereference operator (*) requires a pointer to a constexpr variable in constant expressions");
+			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
 
 		return apply_unary_op(operand_result, op);
@@ -1292,10 +1303,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
-					return EvalResult::from_pointer(id->name());
+					EvalResult ptr_result = EvalResult::from_pointer(id->name());
+					// Snapshot the current value so the pointer can be dereferenced in a
+					// different scope (e.g., when passed as an argument to another function).
+					auto snapshot_it = bindings.find(id->name());
+					if (snapshot_it != bindings.end()) {
+						ptr_result.array_elements = {snapshot_it->second};
+					}
+					return ptr_result;
 				}
 			}
-			return EvalResult::error("Address-of operator (&) is only supported on named constexpr variables in constant expressions");
+			return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
 		}
 
 		auto operand_result = recursive_eval(unary_op->get_operand(), bindings, context);
@@ -1309,9 +1327,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (it != bindings.end()) {
 					return it->second;
 				}
+				// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
+				if (!operand_result.array_elements.empty()) {
+					return operand_result.array_elements[0];
+				}
 				return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
 			}
-			return EvalResult::error("Dereference operator (*) requires a pointer to a constexpr variable in constant expressions");
+			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
 
 		return apply_unary_op(operand_result, op);

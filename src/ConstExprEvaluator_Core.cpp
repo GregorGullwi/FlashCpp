@@ -279,7 +279,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				return EvalResult::from_pointer(id->name());
 			}
 		}
-		return EvalResult::error("Address-of operator (&) is only supported on named constexpr variables in constant expressions");
+		return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
 	}
 
 	// Recursively evaluate operand
@@ -294,7 +294,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 		if (!operand_result.pointer_to_var.empty()) {
 			return dereference_constexpr_pointer(operand_result.pointer_to_var, context);
 		}
-		return EvalResult::error("Dereference operator (*) requires a pointer to a constexpr variable in constant expressions");
+		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}
 
 	return apply_unary_op(operand_result, op);
