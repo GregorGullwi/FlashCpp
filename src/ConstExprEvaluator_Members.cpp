@@ -109,7 +109,7 @@ std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 					return bound.array_values.size();
 				}
 			}
-			return size_t{0};
+			return size_t{1};
 		}
 	}
 
@@ -131,7 +131,7 @@ std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 	}
 
 	if (!var_decl.declaration().is_array()) {
-		return size_t{0};
+		return size_t{1};
 	}
 
 	if (const auto array_size = var_decl.declaration().array_size(); array_size.has_value()) {
