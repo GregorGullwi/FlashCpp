@@ -136,10 +136,13 @@ std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 
 	if (const auto array_size = var_decl.declaration().array_size(); array_size.has_value()) {
 		const ASTNode& size_node = array_size.value();
-		if (size_node.is<NumericLiteralNode>()) {
-			const auto literal_value = size_node.as<NumericLiteralNode>().value();
-			if (const auto* ull_value = std::get_if<unsigned long long>(&literal_value)) {
-				return static_cast<size_t>(*ull_value);
+		if (size_node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = size_node.as<ExpressionNode>();
+			if (const auto* num_lit = std::get_if<NumericLiteralNode>(&expr)) {
+				const auto literal_value = num_lit->value();
+				if (const auto* ull_value = std::get_if<unsigned long long>(&literal_value)) {
+					return static_cast<size_t>(*ull_value);
+				}
 			}
 		}
 	}
