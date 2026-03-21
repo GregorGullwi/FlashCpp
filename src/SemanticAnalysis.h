@@ -136,6 +136,7 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	std::optional<TypeSpecifierNode> getDocumentedParserTypeFallback(const ASTNode& node);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
 

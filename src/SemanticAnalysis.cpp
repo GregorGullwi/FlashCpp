@@ -159,6 +159,24 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 	}
 	return desc;
 }
+
+CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
+	CanonicalTypeDesc desc;
+	desc.base_type = arg.base_type;
+	desc.type_index = arg.type_index;
+	desc.base_cv = arg.cv_qualifier;
+	desc.ref_qualifier = arg.ref_qualifier;
+	for (size_t i = 0; i < arg.pointer_depth; ++i) {
+		CVQualifier level_cv = i < arg.pointer_cv_qualifiers.size()
+			? arg.pointer_cv_qualifiers[i]
+			: CVQualifier::None;
+		desc.pointer_levels.push_back(PointerLevel{level_cv});
+	}
+	if (arg.is_array && arg.array_size.has_value()) {
+		desc.array_dimensions.push_back(*arg.array_size);
+	}
+	return desc;
+}
 }
 
 // --- CanonicalTypeDesc::operator== ---
@@ -811,6 +829,29 @@ std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
 	return resolved_nodes;
 }
 
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func) {
+	if (!func.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = func.outer_template_param_names();
+	const auto& param_args = func.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
 	if (!lambda_info.is_generic || lambda_info.deduced_auto_types.empty()) {
 		return;
@@ -1311,6 +1352,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 
 	// Push a scope for this function's parameters
 	pushScope();
+	registerOuterTemplateBindingsInScope(func);
 	registerParametersInScope(func.parameter_nodes());
 
 	normalizeStatement(*def, ctx);
