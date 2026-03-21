@@ -1783,7 +1783,9 @@ Work:
 - add `TypeContext` / type interning support (done in Phase 1)
 - ✅ reuse existing rank rules (Phase 11 delegates `can_convert_type` to `buildConversionPlan`)
 - ✅ keep behavior matching existing overload ranking first (Phase 11 — all tests pass)
-- TODO: extend `buildConversionPlan` to `TypeSpecifierNode`-level conversions
+- TODO: extend `buildConversionPlan` to `TypeSpecifierNode`-level conversions.
+  _(Note: a `buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode)` overload was
+  prototyped and then reverted; any future implementation starts from scratch here.)_
 
 #### Step 3b: semantic constant-evaluation integration
 
