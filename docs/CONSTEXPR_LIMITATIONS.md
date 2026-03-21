@@ -264,6 +264,49 @@ static_assert(find_value(2) == 20);  // ✅ Works
 Range-based for loops over local arrays (both primitive and struct types) are supported.
 Range-based for over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) is not yet supported.
 
+### ✅ Constexpr Recursion
+
+Recursive constexpr functions are fully supported. Both the `if`/`return` style and the
+ternary-expression style work at any reasonable depth (the evaluator enforces a 512-level
+recursion limit, matching common compilers).
+
+```cpp
+// Classic Fibonacci — if/return style
+constexpr int fib(int n) {
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+static_assert(fib(0) == 0);   // ✅
+static_assert(fib(1) == 1);   // ✅
+static_assert(fib(10) == 55); // ✅
+static_assert(fib(15) == 610);// ✅
+
+// Fibonacci — ternary style
+constexpr long long fib_t(long long n) {
+    return n <= 1 ? n : fib_t(n - 1) + fib_t(n - 2);
+}
+
+static_assert(fib_t(10) == 55LL); // ✅
+
+// Factorial
+constexpr long long factorial(int n) {
+    return n <= 1 ? 1LL : (long long)n * factorial(n - 1);
+}
+
+static_assert(factorial(5)  == 120);     // ✅
+static_assert(factorial(10) == 3628800); // ✅
+
+// Integer power
+constexpr long long power(long long base, int exp) {
+    if (exp == 0) return 1LL;
+    return base * power(base, exp - 1);
+}
+
+static_assert(power(2, 8)  == 256);     // ✅
+static_assert(power(10, 6) == 1000000); // ✅
+```
+
 ## What Doesn't Work
 
 ### ⚠️ Constructor Body Statements Are Partially Supported
