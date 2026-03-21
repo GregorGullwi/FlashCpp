@@ -101,7 +101,7 @@ The codebase already contains unifying constructs:
 | FunctionParsingContext | ParserTypes.h:183-191 | Context for function parsing |
 | parse_parameter_list() | Parser_FunctionHeaders.cpp:14 | Unified parameter parsing |
 | parse_declaration_specifiers() | Parser_TypeSpecifiers.cpp | Unified specifier parsing |
-| parse_function_body_with_context() | Parser_FunctionBodies.cpp:17 | Unified body parsing |
+| ~~parse_function_body_with_context()~~ | *Removed in Priority 2* | Had zero callers; superseded by `FunctionParsingScopeGuard` |
 | register_parameters_in_scope() | Parser_FunctionBodies.cpp:171 | Parameter registration helper |
 | validate_signature_match() | Parser_FunctionBodies.cpp:544 | Signature validation helper |
 | skip_function_trailing_specifiers() | Parser_Expr_BinaryPrecedence.cpp:870 | Skip CV/noexcept/etc |
@@ -167,7 +167,7 @@ context-stack management cannot drift between immediate and delayed paths.
 - 1627 tests pass, 0 fail, 67 expected-fail
 - Net lines changed: −60 (93 added, 153 removed)
 
-### Priority 2: Replace Standalone 'this' Setup with a Unified Function-Entry Helper
+### Priority 2: Replace Standalone 'this' Setup with a Unified Function-Entry Helper ✅ IMPLEMENTED
 
 Instead of a narrow helper that only injects `this`, create one shared helper or
 RAII object that owns **all** per-function parser entry work:
@@ -178,24 +178,75 @@ RAII object that owns **all** per-function parser entry work:
 - push/pop member-function context
 - set/restore `current_function_`
 
-Suggested shape:
+Implemented shape (differs from suggested in that it takes direct struct info instead
+of `FunctionParsingContext`/`ParsedFunctionHeader`, which not all call sites have):
 ```cpp
 class FunctionParsingScopeGuard {
 public:
     FunctionParsingScopeGuard(Parser& parser,
-                             const FunctionParsingContext& ctx,
-                             const ParsedFunctionHeader& header,
-                             FunctionDeclarationNode* current_function);
+                             bool is_member,
+                             StructDeclarationNode* struct_node,
+                             StringHandle struct_name,
+                             TypeIndex struct_type_index,
+                             const std::vector<ASTNode>& params,
+                             const FunctionDeclarationNode* current_function);
     ~FunctionParsingScopeGuard();
 };
 ```
 
-If a full guard is too much for one PR, a helper function returning a small
-state/cleanup object is still preferable to a `setup_this_pointer(...)` helper,
-because the current duplication is about **entry protocol**, not just one symbol.
+**Implementation Notes (March 2026)**
 
-**Affected locations:** all current ad-hoc function scope setup blocks, including
-`Parser_Decl_FunctionOrVar.cpp` and `Parser_FunctionBodies.cpp`.
+**`FunctionParsingScopeGuard`:**
+- Declared in `ParserScopeGuards.h`; constructor/destructor implemented as inline functions
+  in `Parser.h` (after Parser class definition), same pattern as `FunctionScopeGuard::injectThisPointer()`.
+- Parser declares `friend class FlashCpp::FunctionParsingScopeGuard` for private-member access.
+- Constructor: enters scope, saves `current_function_`, sets it to the passed value, calls
+  `setup_member_function_context()` for member functions, registers parameters.
+- Destructor: pops member-function context if member, restores `current_function_`, exits scope.
+
+**`parse_function_body_with_context()` decision:**
+Removed (zero callers). `FunctionParsingScopeGuard` is the correct replacement abstraction.
+The pre-body checks (`= default`, `= delete`, `= 0`, `;`) belong in each call site's
+parsing flow, not in a unified body-entry function.
+
+**`parse_delayed_function_body()` changes:**
+- Replaced `FlashCpp::SymbolTableScope func_scope` + local `MemberContextCleanup` struct
+  (the Priority-1 placeholder) with a single `FlashCpp::FunctionParsingScopeGuard`.
+- Pre-determines `func_node` and `params_ptr` before constructing the guard so the
+  correct `current_function_` value can be passed at construction time.
+
+**`Parser_Decl_FunctionOrVar.cpp` changes:**
+- Inline-member delayed site (~line 495): removed ~30 lines of dead code (scope/context/this/params
+  setup that was entered and immediately discarded before `skip_function_body()`).
+- Out-of-line member function site (~line 550): converted to `FunctionParsingScopeGuard`;
+  also fixes `struct_info->total_size*8` → pointer-size 64-bit bug.
+- Out-of-line constructor/destructor site (~line 1245): converted to `FunctionParsingScopeGuard`;
+  removes 9 scattered `member_function_context_stack_.pop_back()` manual cleanup calls;
+  fixes `struct_info->total_size*8` → pointer-size 64-bit bug.
+- Free-function site (~line 783): converted to `FunctionParsingScopeGuard`;
+  removes manual `current_function_` save/restore pattern.
+
+**Dead code removed as part of Priority 2b:**
+- `FunctionScopeGuard` (Phase 3 predecessor, `ParserScopeGuards.h:163-209`): fully superseded
+  by `FunctionParsingScopeGuard`. Had zero callers; deleted along with its inline implementations
+  `addParameters()` and `injectThisPointer()` from `Parser.h`.
+- `CombinedTemplateAndFunctionScope` (`ParserScopeGuards.h:222-263`): composite of
+  `TemplateParameterScope` + `FunctionScopeGuard`. Zero callers; deleted.
+
+**`current_function_` correctness:**
+- Set via `FunctionParsingScopeGuard` for all main parser sites (free functions, member
+  functions, constructors/destructors, delayed bodies).
+- Template instantiation sites still manually save/restore it (not yet converted to
+  `FunctionParsingScopeGuard`), but each does so correctly.
+- Used for `__func__` / `__PRETTY_FUNCTION__` built-in identifiers
+  (`Parser_Expr_PrimaryExpr.cpp`). `__FUNCTION__` is pre-processed to `__func__`
+  by the preprocessor (`FileReader_Macros.cpp:1937`), so it is covered too.
+- Also used for braced initializer return-type resolution in expression context
+  (`Parser_Expr_PrimaryExpr.cpp:5638`).
+
+**Metrics after Priority 2 + 2b:**
+- 1630 tests pass, 0 fail, 67 expected-fail
+- Net effect: removed ~120 lines of dead code and open-coded duplicated function-entry boilerplate
 
 ### Priority 3: Extract Constructor Detection
 
@@ -284,12 +335,12 @@ declarator infrastructure. Expression/postfix call parsing should stay separate.
 
 ## Metrics
 
-| Metric | Before Priority 1 | After Priority 1 | Target |
-|--------|--------------------|-------------------|--------|
-| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 1 |
-| Duplicate constructor lookahead | 2 | 2 | 1 |
-| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 1 |
-| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent |
+| Metric | Before Priority 1 | After Priority 1 | After Priority 2 | Target |
+|--------|--------------------|-------------------|------------------|--------|
+| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 0 (FunctionParsingScopeGuard covers all) | 0 |
+| Duplicate constructor lookahead | 2 | 2 | 2 | 1 |
+| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 3 (remaining template paths) | 1 |
+| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent (all main paths unified) | Consistent |
 
 ## Exit Criteria
 
@@ -301,6 +352,7 @@ The refactor is complete when:
 - delayed and non-delayed function body parsing share the same core body setup flow
 - helper APIs are based on the data actually available in template/delayed paths
   (`TypeIndex` / `StructTypeInfo`), not only on convenient AST forms
+- no dead/superseded scope guard classes remain in `ParserScopeGuards.h`
 
 ## Notes
 

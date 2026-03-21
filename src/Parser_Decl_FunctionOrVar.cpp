@@ -492,41 +492,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
-			// Enter function scope with RAII guard (Phase 3)
-			FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-			
-			// Push member function context
-			member_function_context_stack_.push_back({
-				class_name,
-				type_info->type_index_,
-				nullptr,
-				nullptr
-			});
-			
-			// Add 'this' pointer to symbol table
-			auto [this_type_node2, this_type_ref2] = emplace_node_ref<TypeSpecifierNode>(
-				Type::Struct, type_info->type_index_, 
-				static_cast<int>(struct_info->total_size * 8), Token()
-			);
-			this_type_ref2.add_pointer_level();
-			
-			Token this_token2(Token::Type::Keyword, "this"sv, 0, 0, 0);
-			auto [this_decl_node2, this_decl_ref2] = emplace_node_ref<DeclarationNode>(this_type_node2, this_token2);
-			gSymbolTable.insert("this"sv, this_decl_node2);
-			
-			// Add function parameters to symbol table
-			for (const ASTNode& param_node : func_ref.parameter_nodes()) {
-				if (param_node.is<VariableDeclarationNode>()) {
-					const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-					const DeclarationNode& param_decl = var_decl.declaration();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-				} else if (param_node.is<DeclarationNode>()) {
-					const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-				}
-			}
-			
-			// Parse body using delayed parsing (skip_function_body handles try-blocks too)
+			// Parse body using delayed parsing (skip_function_body handles try-blocks too).
+			// No scope/context setup is needed here: the body is only skipped (token-level),
+			// not parsed, so inserting 'this'/params into the symbol table would be dead code
+			// (the symbols would be inserted and immediately discarded when the scope exits).
+			// The actual parsing with FunctionParsingScopeGuard happens later in
+			// parse_delayed_function_body().
 			SaveHandle body_start = save_token_position();
 			skip_function_body();
 			
@@ -544,8 +515,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				nullptr,                    // dtor_node
 				{}                          // template_param_names (empty for non-template)
 			});
-			
-			member_function_context_stack_.pop_back();
 			
 			ast_nodes_.push_back(func_node);
 			return saved_position.success(func_node);
@@ -580,48 +549,18 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 		}
 		
-		// Enter function scope with RAII guard (Phase 3)
-		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-		
-		// Push member function context so that member variables are resolved correctly
-		member_function_context_stack_.push_back({
-			class_name,
-			type_info->type_index_,
-			nullptr,  // struct_node - we don't have access to it here, but struct_type_index should be enough
-			nullptr   // local_struct_info - not needed here since TypeInfo is already populated
-		});
-		
-		// Add 'this' pointer to symbol table
-		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-			Type::Struct, type_info->type_index_, 
-			static_cast<int>(struct_info->total_size * 8), Token()
-		);
-		this_type_ref.add_pointer_level();  // Make it a pointer
-		
-		Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-		gSymbolTable.insert("this"sv, this_decl_node);
-		
-		// Add function parameters to symbol table using the DEFINITION's parameter names
-		// (not the declaration's names - C++ allows different names between declaration and definition)
-		// The types have already been validated to match via validate_signature_match()
-		for (const ASTNode& param_node : func_ref.parameter_nodes()) {
-			if (param_node.is<VariableDeclarationNode>()) {
-				const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-				const DeclarationNode& param_decl = var_decl.declaration();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-			} else if (param_node.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-			}
-		}
+		// FunctionParsingScopeGuard owns all per-function entry/exit work:
+		// scope enter/exit, member-context push/pop, 'this' injection (with correct
+		// pointer-size 64 bits), and parameter registration from the DEFINITION
+		// (C++ allows declaration and definition to use different parameter names).
+		FlashCpp::FunctionParsingScopeGuard func_guard(*this, true,
+			nullptr, class_name, type_info->type_index_,
+			func_ref.parameter_nodes(), nullptr);
 		
 		// Parse function body
 		ParseResult body_result = parse_function_body();
 		
 		if (body_result.is_error()) {
-			member_function_context_stack_.pop_back();
-			// func_scope automatically exits scope on return
 			return body_result;
 		}
 	
@@ -630,8 +569,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			if (!existing_func_ref.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(), 
 						  "' already has a definition");
-				member_function_context_stack_.pop_back();
-				// func_scope automatically exits scope on return
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
 			// Update parameter nodes to use definition's parameter names
@@ -640,9 +577,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			finalize_function_after_definition(existing_func_ref, true);
 		}
 
-		member_function_context_stack_.pop_back();
-		// func_scope automatically exits scope at end of block
-	
 		// Return success without a node - the existing declaration already has the definition attached
 		// Don't return the node because it's already in the AST from the struct declaration
 		return saved_position.success();
@@ -852,21 +786,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse function body. current_token={}, peek={}", 
 			std::string(current_token_.value()),
 			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-		FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
 
-		// Set current function pointer for __func__, __PRETTY_FUNCTION__
-		// The FunctionDeclarationNode persists in the AST, so the pointer is safe
+		// FunctionParsingScopeGuard owns scope, current_function_ save/restore, and parameter registration.
 		if (auto funcNode = function_definition_result.node()) {
 			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
-			current_function_ = &func_decl;
-
-			for (const auto& param : func_decl.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const auto& param_decl_node = param.as<DeclarationNode>();
-					const Token& param_token = param_decl_node.identifier_token();
-					gSymbolTable.insert(param_token.value(), param);
-				}
-			}
+			FlashCpp::FunctionParsingScopeGuard func_guard(*this, false,
+				nullptr, StringHandle{}, TypeIndex{0},
+				func_decl.parameter_nodes(), &func_decl);
 
 			// Note: trailing specifiers were already skipped after parse_function_declaration()
 
@@ -876,13 +802,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 			auto block_result = parse_function_body();
 			if (block_result.is_error()) {
-				current_function_ = nullptr;
-				// func_scope automatically exits scope
 				return block_result;
 			}
-
-			current_function_ = nullptr;
-			// func_scope automatically exits scope
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
@@ -1310,45 +1231,15 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		ctor_ref = &existing_member->function_decl.as<ConstructorDeclarationNode>();
 	}
 	
-	// Enter function scope with RAII guard - need to do this before parsing initializer list
-	// so that expressions in the initializer can reference parameters
-	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-	
-	// Push member function context so that member variables are resolved correctly
-	member_function_context_stack_.push_back({
-		class_name_handle,
-		type_info->type_index_,
-		nullptr,  // struct_node - we don't have access to it here
-		nullptr   // local_struct_info - not needed here
-	});
-	
-	// Add 'this' pointer to symbol table
-	auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-		Type::Struct, type_info->type_index_, 
-		static_cast<int>(struct_info->total_size * 8), Token()
-	);
-	this_type_ref.add_pointer_level();  // Make it a pointer
-	
-	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-	auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
-	gSymbolTable.insert("this"sv, this_decl_node);
-	
-	// Add function parameters to symbol table - use the DEFINITION's parameters (params.parameters)
-	// not the declaration's parameters, since they may have different names
-	for (const ASTNode& param_node : params.parameters) {
-		if (param_node.is<VariableDeclarationNode>()) {
-			const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-			const DeclarationNode& param_decl = var_decl.declaration();
-			if (!param_decl.identifier_token().value().empty()) {
-				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-			}
-		} else if (param_node.is<DeclarationNode>()) {
-			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-			if (!param_decl.identifier_token().value().empty()) {
-				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-			}
-		}
-	}
+	// FunctionParsingScopeGuard owns all per-function entry/exit work:
+	// scope enter/exit, member-context push/pop, 'this' injection (with correct
+	// pointer-size 64 bits), and parameter registration from the DEFINITION
+	// (C++ allows declaration and definition to use different parameter names).
+	// Constructed before the initializer list so that parameter names are in scope
+	// for expressions inside the initializer list.
+	FlashCpp::FunctionParsingScopeGuard func_guard(*this, true,
+		nullptr, class_name_handle, type_info->type_index_,
+		params.parameters, nullptr);
 	
 	// For constructors, parse member initializer list
 	// Handle function-try-block form: Foo() try : m(v) { ... } catch(...) { ... }
@@ -1365,7 +1256,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		       peek() != ";"_tok) {
 			auto init_name_token = advance();
 			if (!init_name_token.kind().is_identifier()) {
-				member_function_context_stack_.pop_back();
 				return ParseResult::error("Expected member name in initializer list", init_name_token);
 			}
 			
@@ -1380,7 +1270,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			bool is_brace = peek() == "{"_tok;
 			
 			if (!is_paren && !is_brace) {
-				member_function_context_stack_.pop_back();
 				return ParseResult::error("Expected '(' or '{' after initializer name", peek_info());
 			}
 			
@@ -1392,7 +1281,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				do {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
-						member_function_context_stack_.pop_back();
 						return arg_result;
 					}
 					if (auto arg_node = arg_result.node()) {
@@ -1402,7 +1290,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			}
 			
 			if (!consume(close_kind)) {
-				member_function_context_stack_.pop_back();
 				return ParseResult::error(is_paren ?
 				    "Expected ')' after initializer arguments" :
 				    "Expected '}' after initializer arguments", peek_info());
@@ -1417,7 +1304,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 					// Delegating constructor: ClassName() : ClassName(0, 0) {}
 					// In C++11, if a constructor delegates, it CANNOT have other initializers
 					if (!ctor_ref->member_initializers().empty() || !ctor_ref->base_initializers().empty()) {
-						member_function_context_stack_.pop_back();
 						return ParseResult::error("Delegating constructor cannot have other member or base initializers", init_name_token);
 					}
 					ctor_ref->set_delegating_initializer(std::move(init_args));
@@ -1463,7 +1349,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	
 	// Parse function body
 	if (peek() != "{"_tok && peek() != "try"_tok) {
-		member_function_context_stack_.pop_back();
 		return ParseResult::error("Expected '{' in constructor/destructor definition", current_token_);
 	}
 	
@@ -1486,12 +1371,10 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			while (peek() == "catch"_tok) {
 				auto clause_result = parse_one_catch_clause(catch_clauses);
 				if (clause_result.is_error()) {
-					member_function_context_stack_.pop_back();
 					return clause_result;
 				}
 			}
 			if (catch_clauses.empty()) {
-				member_function_context_stack_.pop_back();
 				return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 			}
 			ASTNode try_block = make_try_block_body(*body_result.node(), std::move(catch_clauses), Token(), true /* is_ctor_or_dtor */);
@@ -1503,7 +1386,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	if (body_result.is_error()) {
-		member_function_context_stack_.pop_back();
 		return body_result;
 	}
 	
@@ -1513,14 +1395,12 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			DestructorDeclarationNode& dtor = existing_member->function_decl.as<DestructorDeclarationNode>();
 			if (!dtor.set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Destructor '", class_name, "::~", class_name, "' already has a definition");
-				member_function_context_stack_.pop_back();
 				return ParseResult::error("Destructor already has definition", func_name_token);
 			}
 			// Note: Destructors have no parameters, so no need to update parameter nodes
 		} else if (ctor_ref) {
 			if (!ctor_ref->set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
-				member_function_context_stack_.pop_back();
 				return ParseResult::error("Constructor already has definition", func_name_token);
 			}
 			// Update parameter nodes to use definition's parameter names
@@ -1528,8 +1408,6 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 			ctor_ref->update_parameter_nodes_from_definition(params.parameters);
 		}
 	}
-	
-	member_function_context_stack_.pop_back();
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_out_of_line_constructor_or_destructor: Successfully parsed {}::{}{}()", 
 		std::string(class_name), is_destructor ? "~" : "", std::string(class_name));

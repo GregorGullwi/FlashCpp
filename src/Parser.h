@@ -269,6 +269,7 @@ class Parser {
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	friend class SemanticAnalysis;
+	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
@@ -743,7 +744,6 @@ private:
         ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
-        ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
         void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
         void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
@@ -1511,52 +1511,33 @@ struct TypedNumeric {
 };
 
 // =============================================================================
-// Phase 3: Inline implementations for scope guards that need Parser internals
+// FunctionParsingScopeGuard constructor/destructor inline implementations
+// (defined here because they need access to Parser internals)
 // =============================================================================
 
-// FunctionScopeGuard::addParameters implementation
-// Adds function parameters to the symbol table within the function scope
-inline void FlashCpp::FunctionScopeGuard::addParameters(const std::vector<ASTNode>& params) {
-	for (const auto& param : params) {
-		if (param.is<DeclarationNode>()) {
-			const auto& param_decl_node = param.as<DeclarationNode>();
-			const Token& param_token = param_decl_node.identifier_token();
-			gSymbolTable.insert(param_token.value(), param);
-		}
+inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
+	Parser& parser,
+	bool is_member,
+	StructDeclarationNode* struct_node,
+	StringHandle struct_name,
+	TypeIndex struct_type_index,
+	const std::vector<ASTNode>& params,
+	const FunctionDeclarationNode* current_function)
+	: parser_(parser)
+	, scope_(ScopeType::Function)
+	, pop_member_ctx_(is_member)
+	, saved_function_(parser.current_function_) {
+	parser_.current_function_ = current_function;
+	if (is_member) {
+		parser_.setup_member_function_context(struct_node, struct_name, struct_type_index);
 	}
+	parser_.register_parameters_in_scope(params);
 }
 
-// FunctionScopeGuard::injectThisPointer implementation
-// Creates and injects 'this' pointer for member functions
-inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
-	// Only inject 'this' for member functions, constructors, and destructors
-	if (ctx_.kind != FunctionKind::Member &&
-	    ctx_.kind != FunctionKind::Constructor &&
-	    ctx_.kind != FunctionKind::Destructor) {
-		return;
+inline FlashCpp::FunctionParsingScopeGuard::~FunctionParsingScopeGuard() {
+	if (pop_member_ctx_) {
+		parser_.member_function_context_stack_.pop_back();
 	}
-	
-	// Find the parent struct type
-	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(ctx_.parent_struct_name));
-	if (type_it == gTypesByName.end()) {
-		return;  // Can't inject 'this' without knowing the struct type
-	}
-	
-	// Create 'this' pointer type: StructName*
-	// Note: This creates a temporary node that will be cleaned up with the scope
-	TypeSpecifierNode this_type_node(
-		Type::Struct, 
-		type_it->second->type_index_,
-		64,  // Pointer size in bits
-		Token()
-	);
-	this_type_node.add_pointer_level();
-	
-	// Create a declaration node for 'this'
-	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
-	ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(this_type_node);
-	ASTNode this_decl = ASTNode::emplace_node<DeclarationNode>(type_node, this_token);
-	
-	// Insert 'this' into the symbol table
-	gSymbolTable.insert("this"sv, this_decl);
+	parser_.current_function_ = saved_function_;
+	// scope_ auto-exits the symbol table scope in its own destructor
 }

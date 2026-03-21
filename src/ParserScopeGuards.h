@@ -13,6 +13,8 @@
 // Forward declarations
 class Parser;
 struct TypeInfo;
+class StructDeclarationNode;
+class FunctionDeclarationNode;
 
 namespace FlashCpp {
 
@@ -144,125 +146,55 @@ private:
 
 
 // =============================================================================
-// FunctionScopeGuard
+// FunctionParsingScopeGuard
 // =============================================================================
-// RAII guard for function parsing scope management.
-// Combines symbol table scope with function-specific state management.
+// RAII guard that owns ALL per-function parser entry/exit work:
 //
-// Features:
-// - Enters a function scope in the symbol table
-// - Optionally tracks the current function being parsed
-// - Automatically cleans up on scope exit
+//  Construction:
+//   - Enters a function scope in the symbol table
+//   - Saves and overwrites current_function_
+//   - For member functions: calls setup_member_function_context() which handles
+//     context-stack push, member-function registration, and 'this' injection
+//   - Registers function parameters in the symbol table
+//
+//  Destruction (in reverse order):
+//   - For member functions: pops member_function_context_stack_
+//   - Restores current_function_
+//   - Exits the function scope (via SymbolTableScope)
 //
 // Usage:
-//   FunctionScopeGuard guard(parser, ctx);
-//   guard.addParameters(param_nodes);
+//   FunctionParsingScopeGuard guard(parser, is_member,
+//                                   struct_node, struct_name, struct_type_index,
+//                                   params, current_function);
 //   // ... parse function body ...
-//   // Everything cleaned up when guard destroyed
+//   // All cleanup happens automatically on scope exit, including on every early return
 
-class FunctionScopeGuard {
+class FunctionParsingScopeGuard {
 public:
-	FunctionScopeGuard(Parser& parser, const FunctionParsingContext& ctx)
-		: parser_(parser)
-		, ctx_(ctx)
-		, scope_(ScopeType::Function)
-		, previous_function_(nullptr)
-		, active_(true) {
-		// Store previous function pointer (will be restored in destructor)
-		// Note: The actual implementation of this depends on Parser internals
-		// and is deferred to when the Parser class definition is available
-	}
-	
-	~FunctionScopeGuard() {
-		// Note: The scope_ member will automatically call gSymbolTable.exit_scope()
-		// Additional cleanup handled here if needed
-	}
-	
-	// Prevent copying
-	FunctionScopeGuard(const FunctionScopeGuard&) = delete;
-	FunctionScopeGuard& operator=(const FunctionScopeGuard&) = delete;
-	
-	// Add function parameters to the symbol table
-	void addParameters(const std::vector<ASTNode>& params);
-	
-	// Inject 'this' pointer for member functions
-	// Implementation defined in Parser.h after Parser class (needs access to internals)
-	void injectThisPointer();
-	
-	// Dismiss the guard
-	void dismiss() {
-		scope_.dismiss();
-		active_ = false;
-	}
-	
-	// Check if guard is still active
-	bool isActive() const { return active_; }
+	FunctionParsingScopeGuard(
+		Parser& parser,
+		bool is_member,
+		StructDeclarationNode* struct_node,
+		StringHandle struct_name,
+		TypeIndex struct_type_index,
+		const std::vector<ASTNode>& params,
+		const FunctionDeclarationNode* current_function
+	);
+	~FunctionParsingScopeGuard();
+
+	// Non-copyable, non-movable
+	FunctionParsingScopeGuard(const FunctionParsingScopeGuard&) = delete;
+	FunctionParsingScopeGuard& operator=(const FunctionParsingScopeGuard&) = delete;
 
 private:
-	[[maybe_unused]] Parser& parser_;
-	FunctionParsingContext ctx_;
+	Parser& parser_;
 	SymbolTableScope scope_;
-	[[maybe_unused]] void* previous_function_;  // FunctionDeclarationNode* - forward declared
-	bool active_;
+	bool pop_member_ctx_;
+	const FunctionDeclarationNode* saved_function_;
 };
 
 
-// =============================================================================
-// CombinedTemplateAndFunctionScope
-// =============================================================================
-// RAII guard that combines template parameter scope with function scope.
-// Useful for template function parsing where both scopes need cleanup.
-//
-// Usage:
-//   CombinedTemplateAndFunctionScope scope(parser, ctx);
-//   scope.addTemplateParameter(type_info);
-//   scope.addFunctionParameters(param_nodes);
-//   // Both scopes cleaned up when guard destroyed
 
-class CombinedTemplateAndFunctionScope {
-public:
-	CombinedTemplateAndFunctionScope(Parser& parser, const FunctionParsingContext& ctx)
-		: template_scope_()
-		, function_scope_(parser, ctx) {
-	}
-	
-	// Prevent copying
-	CombinedTemplateAndFunctionScope(const CombinedTemplateAndFunctionScope&) = delete;
-	CombinedTemplateAndFunctionScope& operator=(const CombinedTemplateAndFunctionScope&) = delete;
-	
-	// Add a template parameter type for automatic cleanup
-	void addTemplateParameter(TypeInfo* type_info) {
-		template_scope_.addParameter(type_info);
-	}
-	
-	// Add function parameters to the symbol table
-	void addFunctionParameters(const std::vector<ASTNode>& params) {
-		function_scope_.addParameters(params);
-	}
-	
-	// Inject 'this' pointer for member functions
-	void injectThisPointer() {
-		function_scope_.injectThisPointer();
-	}
-	
-	// Get access to individual scopes if needed
-	TemplateParameterScope& templateScope() { return template_scope_; }
-	FunctionScopeGuard& functionScope() { return function_scope_; }
-	
-	// Dismiss both scopes
-	void dismiss() {
-		template_scope_.dismiss();
-		function_scope_.dismiss();
-	}
-
-private:
-	TemplateParameterScope template_scope_;
-	FunctionScopeGuard function_scope_;
-};
-
-
-// =============================================================================
-// ScopedState<T>
 // =============================================================================
 // Generic RAII guard that saves a value on construction and restores it on
 // destruction.  Intended for parser state fields that must be temporarily
