@@ -5,6 +5,60 @@
 #include "TypeTraitEvaluator.h"
 
 
+// Consumes the constructor/destructor prefix at the current position:
+//   ClassName [<...>] :: [~]                 (advances past these tokens)
+// and checks that the next token is ClassName followed by (.
+// Returns {detected=true, is_destructor} if the full pattern matches.
+// On success, the token position is left just before the second ClassName
+// (i.e., after :: or after ~), so the caller can consume it.
+// On failure (detected=false), the token position is UNSPECIFIED — the
+// caller must save/restore if it needs to backtrack.
+Parser::ConstructorLookaheadResult Parser::consume_constructor_or_destructor_prefix(std::string_view class_name) {
+	if (!peek().is_identifier() || peek_info().value() != class_name) {
+		return {};
+	}
+
+	advance();  // consume class name
+
+	// Skip template arguments if present: ClassName<...>::...
+	if (peek() == "<"_tok) {
+		skip_template_arguments();
+	}
+
+	ConstructorLookaheadResult result;
+
+	if (peek() == "::"_tok) {
+		advance();  // consume ::
+
+		if (peek() == "~"_tok) {
+			result.is_destructor = true;
+			advance();  // consume ~
+		}
+
+		// Check if next identifier matches the class name and is followed by (
+		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
+		    peek_info().value() == class_name) {
+			SaveHandle peek_ahead = save_token_position();
+			advance();  // tentatively consume second identifier
+			if (peek() == "("_tok) {
+				result.detected = true;
+			}
+			restore_token_position(peek_ahead);  // leave position before second ClassName
+		}
+	}
+
+	return result;
+}
+
+// Pure lookahead wrapper: checks for the constructor/destructor pattern
+// without side effects. Token position is always restored.
+Parser::ConstructorLookaheadResult Parser::lookahead_constructor_or_destructor(std::string_view class_name) {
+	SaveHandle saved = save_token_position();
+	auto result = consume_constructor_or_destructor_prefix(class_name);
+	restore_token_position(saved);
+	return result;
+}
+
 ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
@@ -61,33 +115,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-			// Save position to look ahead
-			SaveHandle lookahead_pos = save_token_position();
-			advance();  // consume first identifier
-			
-			// Check for :: followed by same identifier (constructor) or ~identifier (destructor)
-			if (peek() == "::"_tok) {
-				advance();  // consume ::
-				
-				bool is_destructor = false;
-				if (peek() == "~"_tok) {
-					is_destructor = true;
-					advance();  // consume ~
-				}
-				
-				// Check if next identifier matches the class name (constructor/destructor pattern)
-				if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-				    peek_info().value() == first_id) {
-					// This is an out-of-line constructor or destructor definition!
-					// Restore and parse it specially
-					restore_token_position(lookahead_pos);
-					// Pass the qualified name so the function can find the struct
-					// Use propagate() to avoid restoring position when ScopedTokenPosition destructor runs
-					return saved_position.propagate(parse_out_of_line_constructor_or_destructor(qualified_class_name, is_destructor, specs));
-				}
+			auto ctor_result = lookahead_constructor_or_destructor(first_id);
+			if (ctor_result.detected) {
+				return saved_position.propagate(parse_out_of_line_constructor_or_destructor(qualified_class_name, ctor_result.is_destructor, specs));
 			}
-			// Not a constructor/destructor pattern, restore and continue normal parsing
-			restore_token_position(lookahead_pos);
 		}
 	}
 
