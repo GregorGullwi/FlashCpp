@@ -363,11 +363,25 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Exact type match for pointers (after resolving aliases)
 		// Must also check const qualifiers to distinguish const T* from T*
 		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
+			// For struct/enum/UserDefined pointer types, "same resolved Type" is not
+			// sufficient — two different structs (e.g. Foo* vs Bar*) both resolve to
+			// Type::Struct.  We must also compare type_index to distinguish them.
+			if (from_resolved == Type::Struct &&
+				from.type_index().is_valid() && to.type_index().is_valid() &&
+				from.type_index() != to.type_index()) {
+				return ConversionPlan::no_match();
+			}
 			return ConversionPlan::exact_match();
 		}
 		
 		// If base types match but const qualifiers differ
 		if (from_resolved == to_resolved) {
+			// For struct pointer types, different type_index means different types — no match.
+			if (from_resolved == Type::Struct &&
+				from.type_index().is_valid() && to.type_index().is_valid() &&
+				from.type_index() != to.type_index()) {
+				return ConversionPlan::no_match();
+			}
 			// T* → const T* is allowed (qualification conversion - adding const)
 			if (!from_pointee_is_const && to_pointee_is_const) {
 				return {ConversionRank::Conversion, StandardConversionKind::QualificationAdjustment, true};

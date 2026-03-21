@@ -3,12 +3,10 @@
 // Two overloads:  process(Foo*)  and  process(Bar*)
 // Calling process(&bar) should unambiguously select process(Bar*) and return 1.
 //
-// BUG (pre-existing): buildConversionPlan's pointer-to-pointer path compares
-// only the resolved Type enum (both are Type::Struct) without checking
-// type_index, so Foo* and Bar* both score ExactMatch.  This causes overload
-// resolution to report ambiguity or select the wrong candidate.
-//
-// When the bug is fixed, this test should return 1.
+// Regression test for: buildConversionPlan's pointer-to-pointer path must
+// compare type_index for struct pointers, not just the resolved Type enum.
+// Without the type_index check, Foo* and Bar* both resolve to Type::Struct
+// and score ExactMatch, causing spurious ambiguity.
 
 struct Foo {
     int x;
