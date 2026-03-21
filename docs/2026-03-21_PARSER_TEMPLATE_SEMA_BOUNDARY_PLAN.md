@@ -184,6 +184,10 @@ Phase 3 has started with two low-risk local fallback removals:
   surviving template-parameter references is gone
 - focused out-of-line member coverage now includes mixed-order outer template
   parameter use inside a class-template member body
+- `inferExpressionType(IdentifierNode)` now types
+  `IdentifierBinding::NonStaticMember` sema-first via an explicit enclosing
+  member-context stack, leaving the direct parser fallback only for still
+  unresolved identifier forms
 
 ## Workstreams
 
@@ -269,7 +273,7 @@ Then migrate those buckets one at a time:
 | Site | Current purpose | Phase 1 classification |
 | --- | --- | --- |
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction | sema-owned now: function/lambda deduction seeds outer-template bindings before inference, so this site no longer uses parser fallback |
-| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators; parser fallback remains for implicit-member/unresolved identifiers |
+| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators/non-static members; parser fallback remains only for unresolved identifiers |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | sema-owned now: outer-template bindings carried on instantiated functions/ctors/dtors/lambdas/variables/structs now seed sema scope directly |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | sema-owned now: overload-resolution argument typing goes through `inferExpressionType(...)` only |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | sema-owned now: overload-resolution argument typing goes through `inferExpressionType(...)` only |

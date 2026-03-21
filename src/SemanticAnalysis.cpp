@@ -177,6 +177,43 @@ CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateA
 	}
 	return desc;
 }
+
+const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
+	if (struct_name.empty()) {
+		return nullptr;
+	}
+
+	const StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
+	auto exact_it = gTypesByName.find(struct_name_handle);
+	if (exact_it != gTypesByName.end() && exact_it->second && exact_it->second->getStructInfo()) {
+		return exact_it->second;
+	}
+
+	for (const auto& [handle, type_info] : gTypesByName) {
+		if (!type_info || !type_info->getStructInfo()) {
+			continue;
+		}
+
+		const std::string_view registered_name = handle.view();
+		if (registered_name == struct_name) {
+			return type_info;
+		}
+		if (registered_name.size() > struct_name.size() + 1) {
+			const size_t prefix_end = registered_name.size() - struct_name.size();
+			if (registered_name.substr(prefix_end) == struct_name &&
+				(registered_name[prefix_end - 1] == ':' || registered_name[prefix_end - 1] == '<')) {
+				return type_info;
+			}
+		}
+		if (registered_name.size() > struct_name.size() &&
+			registered_name[struct_name.size()] == '<' &&
+			registered_name.starts_with(struct_name)) {
+			return type_info;
+		}
+	}
+
+	return nullptr;
+}
 }
 
 // --- CanonicalTypeDesc::operator== ---
@@ -1489,6 +1526,20 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 		ctx.current_function_return_type_id = canonicalizeType(type_node.as<TypeSpecifierNode>());
 	}
 
+	std::optional<TypeIndex> member_context_type_index;
+	if (func.is_member_function()) {
+		if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(func.parent_struct_name());
+			type_info && type_info->getStructInfo()) {
+			member_context_type_index = type_info->type_index_;
+			member_context_stack_.push_back(*member_context_type_index);
+		}
+	}
+	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
+		if (member_context_type_index.has_value()) {
+			member_context_stack_.pop_back();
+		}
+	});
+
 	// Push a scope for this function's parameters
 	pushScope();
 	registerOuterTemplateBindingsInScope(func);
@@ -1507,6 +1558,18 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	}
 
 	SemanticContext ctx;
+
+	std::optional<TypeIndex> member_context_type_index;
+	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(ctor.struct_name().view());
+		type_info && type_info->getStructInfo()) {
+		member_context_type_index = type_info->type_index_;
+		member_context_stack_.push_back(*member_context_type_index);
+	}
+	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
+		if (member_context_type_index.has_value()) {
+			member_context_stack_.pop_back();
+		}
+	});
 
 	// Push a scope for this constructor's parameters.
 	pushScope();
@@ -1544,6 +1607,19 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 	}
 
 	SemanticContext ctx;
+
+	std::optional<TypeIndex> member_context_type_index;
+	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(dtor.struct_name().view());
+		type_info && type_info->getStructInfo()) {
+		member_context_type_index = type_info->type_index_;
+		member_context_stack_.push_back(*member_context_type_index);
+	}
+	auto member_context_cleanup = ScopeGuard([this, &member_context_type_index]() {
+		if (member_context_type_index.has_value()) {
+			member_context_stack_.pop_back();
+		}
+	});
+
 	// Destructors cannot have parameters; push/pop a scope for consistency
 	// with the function normalization pattern.
 	pushScope();
@@ -2244,11 +2320,31 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				// Classification: narrowed parser bridge for identifier forms that
-				// still depend on parser-owned member-context binding (implicit
-				// this->member) or otherwise remain unresolved in sema.
-				if (e.binding() == IdentifierBinding::NonStaticMember ||
-					e.binding() == IdentifierBinding::Unresolved) {
+				if (e.binding() == IdentifierBinding::NonStaticMember &&
+					!member_context_stack_.empty()) {
+					const TypeIndex current_struct_type = member_context_stack_.back();
+					if (current_struct_type.is_valid() &&
+						current_struct_type.value < gTypeInfo.size()) {
+						const StructTypeInfo* struct_info = gTypeInfo[current_struct_type.value].getStructInfo();
+						if (struct_info) {
+							if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, e.nameHandle())) {
+								return type_context_.intern(canonicalTypeDescFromStructMember(
+									*member_result.member, CVQualifier::None));
+							}
+							for (const auto& member : struct_info->members) {
+								if (member.getName() == e.nameHandle()) {
+									return type_context_.intern(canonicalTypeDescFromStructMember(
+										member, CVQualifier::None));
+								}
+							}
+						}
+					}
+				}
+
+				// Classification: narrowed parser bridge for identifiers the parser
+				// still leaves unresolved in dependent/implicit-member contexts that
+				// sema does not yet model fully.
+				if (e.binding() == IdentifierBinding::Unresolved) {
 					auto expr_type = parser_.get_expression_type(node);
 					if (expr_type.has_value()) {
 						return canonicalizeType(*expr_type);
