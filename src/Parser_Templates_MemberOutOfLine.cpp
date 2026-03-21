@@ -26,16 +26,16 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		bool past_scope_op = false;
 
 		// Quick check: simple ClassName[<...>]::[~]ClassName( pattern (no namespace prefix)
-		auto simple = lookahead_constructor_or_destructor(potential_class.value());
+		// consume_constructor_or_destructor_prefix advances past ClassName[<...>]::[~]
+		// and leaves the position just before the second ClassName on success.
+		auto simple = consume_constructor_or_destructor_prefix(potential_class.value());
 		if (simple.detected) {
-			// Simple case: consume tokens to reach position after ::
-			advance();  // consume ClassName
-			if (peek() == "<"_tok) skip_template_arguments();
-			advance();  // consume ::
 			is_dtor = simple.is_destructor;
-			if (is_dtor) advance();  // consume ~
 			past_scope_op = true;
 		} else {
+			// Consume failed — restore to before the prefix attempt
+			restore_token_position(ctor_check);
+			ctor_check = save_token_position();
 			// Complex case: namespace-qualified, nested class patterns
 			advance(); // consume first name (could be namespace or class name)
 

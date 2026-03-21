@@ -5,17 +5,19 @@
 #include "TypeTraitEvaluator.h"
 
 
-// Checks if tokens at current position form a constructor/destructor pattern:
-//   ClassName :: [~] ClassName (             (non-template)
-//   ClassName <...> :: [~] ClassName (       (template)
-// where ClassName matches the provided class_name.
-// Token position is always restored to where it was before this call.
-Parser::ConstructorLookaheadResult Parser::lookahead_constructor_or_destructor(std::string_view class_name) {
+// Consumes the constructor/destructor prefix at the current position:
+//   ClassName [<...>] :: [~]                 (advances past these tokens)
+// and checks that the next token is ClassName followed by (.
+// Returns {detected=true, is_destructor} if the full pattern matches.
+// On success, the token position is left just before the second ClassName
+// (i.e., after :: or after ~), so the caller can consume it.
+// On failure (detected=false), the token position is UNSPECIFIED — the
+// caller must save/restore if it needs to backtrack.
+Parser::ConstructorLookaheadResult Parser::consume_constructor_or_destructor_prefix(std::string_view class_name) {
 	if (!peek().is_identifier() || peek_info().value() != class_name) {
 		return {};
 	}
 
-	SaveHandle saved = save_token_position();
 	advance();  // consume class name
 
 	// Skip template arguments if present: ClassName<...>::...
@@ -36,13 +38,23 @@ Parser::ConstructorLookaheadResult Parser::lookahead_constructor_or_destructor(s
 		// Check if next identifier matches the class name and is followed by (
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
 		    peek_info().value() == class_name) {
-			advance();  // consume second identifier
+			SaveHandle peek_ahead = save_token_position();
+			advance();  // tentatively consume second identifier
 			if (peek() == "("_tok) {
 				result.detected = true;
 			}
+			restore_token_position(peek_ahead);  // leave position before second ClassName
 		}
 	}
 
+	return result;
+}
+
+// Pure lookahead wrapper: checks for the constructor/destructor pattern
+// without side effects. Token position is always restored.
+Parser::ConstructorLookaheadResult Parser::lookahead_constructor_or_destructor(std::string_view class_name) {
+	SaveHandle saved = save_token_position();
+	auto result = consume_constructor_or_destructor_prefix(class_name);
 	restore_token_position(saved);
 	return result;
 }

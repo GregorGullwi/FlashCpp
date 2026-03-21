@@ -263,12 +263,16 @@ ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view 
 
 #### Implementation Notes (March 2026)
 
-**`lookahead_constructor_or_destructor()`:**
-- Declared in `Parser.h` (struct + method); implemented in `Parser_Decl_FunctionOrVar.cpp`.
-- Detects `ClassName [<...>] :: [~] ClassName (` pattern from current token position.
-- Optionally skips template arguments between the class name and `::`, so it handles
-  both non-template (`Foo::Foo(`) and template (`Foo<T>::Foo(`) patterns.
-- Always saves and restores token position — pure lookahead with no side effects.
+**`consume_constructor_or_destructor_prefix()` and `lookahead_constructor_or_destructor()`:**
+- Declared in `Parser.h` (struct + two methods); implemented in `Parser_Decl_FunctionOrVar.cpp`.
+- `consume_constructor_or_destructor_prefix()` is the core: advances past
+  `ClassName [<...>] :: [~]` and checks that the next token is `ClassName (`.
+  On success, leaves the position just before the second `ClassName` so the caller
+  can consume it. On failure, position is unspecified (caller must save/restore).
+- `lookahead_constructor_or_destructor()` wraps the consume variant with
+  save/restore — pure lookahead with no side effects.
+- Both handle optional template arguments between the class name and `::`, so they
+  detect both non-template (`Foo::Foo(`) and template (`Foo<T>::Foo(`) patterns.
 
 **Site 1 (`Parser_Decl_FunctionOrVar.cpp`) changes:**
 - Replaced ~27 lines of manual save/advance/check/restore lookahead with a single
@@ -278,11 +282,10 @@ ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view 
   non-template declaration path.
 
 **Site 2 (`Parser_Templates_MemberOutOfLine.cpp`) changes:**
-- Added the helper as an early check for the simple `ClassName[<...>]::[~]ClassName(`
-  pattern before the complex namespace/nested-class navigation loop.
-- When the simple pattern matches, tokens are consumed directly and execution
-  converges with the existing handling code (parameter parsing, body skipping,
-  `OutOfLineMemberFunction` registration).
+- Uses `consume_constructor_or_destructor_prefix()` directly as an early check for
+  the simple `ClassName[<...>]::[~]ClassName(` pattern before the complex
+  namespace/nested-class navigation loop. On success, the prefix is already consumed
+  (no double scanning). On failure, position is restored and the complex path runs.
 - The complex namespace-qualified loop, template-argument skipping, and nested-class
   member handling remain unchanged — the helper is not forced into those paths.
 - Restructured using a `past_scope_op` flag so that both the simple and complex
