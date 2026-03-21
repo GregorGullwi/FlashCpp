@@ -20,7 +20,9 @@ namespace {
 			if (struct_info.isMoveConstructorDeleted()) {
 				throwDeletedSameTypeConstructorCompileError(struct_info, true);
 			}
-			return;
+			if (struct_info.findMoveConstructor(true)) {
+				return;
+			}
 		}
 
 		if (struct_info.isCopyConstructorDeleted()) {

@@ -787,14 +787,12 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 	return nullptr;
 }
 
-// Explicit copy constructor only (skips implicit).
-const StructMemberFunction* StructTypeInfo::findCopyConstructor() const {
-	return findSameTypeConstructorCore(/*want_move=*/false, /*include_implicit=*/false);
+const StructMemberFunction* StructTypeInfo::findCopyConstructor(bool include_implicit) const {
+	return findSameTypeConstructorCore(/*want_move=*/false, include_implicit);
 }
 
-// Explicit move constructor only (skips implicit).
-const StructMemberFunction* StructTypeInfo::findMoveConstructor() const {
-	return findSameTypeConstructorCore(/*want_move=*/true, /*include_implicit=*/false);
+const StructMemberFunction* StructTypeInfo::findMoveConstructor(bool include_implicit) const {
+	return findSameTypeConstructorCore(/*want_move=*/true, include_implicit);
 }
 
 // Preferred same-type constructor: try move (if not deleted) then copy (if not

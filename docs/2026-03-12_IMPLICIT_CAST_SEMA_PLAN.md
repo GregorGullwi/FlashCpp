@@ -1190,6 +1190,29 @@ to the copy assignment operator.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_fail.cpp test_deleted_copy_assignment_xvalue_fallback_fail.cpp test_deleted_move_assignment_fail.cpp`
 
+### Follow-up slice ✅: deleted copy-constructor fallback for xvalue same-type initialization
+
+**Goal:** Preserve deleted copy-constructor diagnostics when the initializer is
+an xvalue but the class has no move constructor, so same-type initialization
+falls back to the copy constructor.
+
+**Implementation:**
+- `src/AstNodeTypes.cpp`
+	- `findCopyConstructor(...)` and `findMoveConstructor(...)` now optionally
+	  include implicitly generated special members so callers can ask whether a
+	  move constructor really exists before short-circuiting xvalue diagnostics
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- `diagnoseDeletedSameTypeConstructorUsage(...)` now only returns early for
+	  xvalue same-type initialization when a move constructor really exists;
+	  otherwise it falls through to the deleted copy-constructor check
+
+**Regression tests added:**
+- `tests/test_deleted_copy_ctor_xvalue_fallback_fail.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_xvalue_fallback_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
