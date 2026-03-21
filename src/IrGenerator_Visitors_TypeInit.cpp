@@ -871,8 +871,9 @@
 						}
 					}
 				}
-				// static constexpr members are compile-time constants and should go to .rodata.
-				// A const static member with a constant initializer is considered read-only.
+				// static const/constexpr members with constant initializers go to .rodata (read-only).
+				// constexpr implies const, so this covers both 'static constexpr T val = x' and
+				// 'static const T val = x' (both are compile-time constants when initialized).
 				if (static_member.is_const() && op.is_initialized) {
 					op.is_rodata = true;
 				}

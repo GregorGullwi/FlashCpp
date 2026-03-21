@@ -755,6 +755,8 @@ namespace {
 				if (global_symbol_table_) {
 					ctx.global_symbols = global_symbol_table_;
 				}
+				// parser_ is always non-null when IR generation is active; EvaluationContext
+				// stores it as a pointer and guards all uses with nullptr checks.
 				ctx.parser = parser_;
 				auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 

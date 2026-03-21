@@ -10,7 +10,7 @@ constinit int g_init = g_base;
 // Struct with static constexpr member - should be stored in .rodata
 struct Constants {
     static constexpr int max_val = 100;
-    static constexpr float pi_approx = 3;  // simplified as int for easy testing
+    static constexpr float pi_approx = 3;  // simplified float value (3.0) for easy testing
     static constexpr long long big_val = 1000000LL;
 };
 
