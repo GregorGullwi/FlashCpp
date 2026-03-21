@@ -917,7 +917,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					store_operands.emplace_back(store_temp);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{store_temp});
+					return makeGlobalAssignmentResultLValue(gsi);
 				}
 			}
 		}

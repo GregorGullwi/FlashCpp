@@ -1213,6 +1213,26 @@ falls back to the copy constructor.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_xvalue_fallback_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
 
+### Follow-up slice ✅: global/static compound-assignment result lvalues
+
+**Goal:** Make global and static-local compound assignment expressions return an
+lvalue referring to the left operand, matching the simple-assignment fix and the
+required `E1 op= E2` result category.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- the global/static compound-assignment path now reuses
+	  `makeGlobalAssignmentResultLValue(...)` after `GlobalStore`, so the final
+	  expression result carries global lvalue metadata instead of exposing the
+	  transient store temp as a prvalue-ish result
+
+**Regression tests added:**
+- `tests/test_global_compound_assign_result_lvalue_ret0.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_global_assign_result_lvalue_ret0.cpp test_global_compound_assign_result_lvalue_ret0.cpp test_compound_assign_global_ret42.cpp`
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
