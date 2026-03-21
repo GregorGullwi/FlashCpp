@@ -280,8 +280,25 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 			if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
 				return EvalResult::from_pointer(id->name());
 			}
+			// &arr[i]: address of array element → pointer with offset
+			if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+				const ASTNode& array_expr = subscript->array_expr();
+				std::string_view arr_name;
+				if (array_expr.is<ExpressionNode>()) {
+					if (const auto* arr_id = std::get_if<IdentifierNode>(&array_expr.as<ExpressionNode>())) {
+						arr_name = arr_id->name();
+					}
+				} else if (array_expr.is<IdentifierNode>()) {
+					arr_name = array_expr.as<IdentifierNode>().name();
+				}
+				if (!arr_name.empty()) {
+					auto index_result = evaluate(subscript->index_expr(), context);
+					if (!index_result.success()) return index_result;
+					return EvalResult::from_pointer(arr_name, index_result.as_int());
+				}
+			}
 		}
-		return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
+		return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 	}
 
 	// Recursively evaluate operand
@@ -294,7 +311,9 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 	// Handle dereference (*): if the operand is a constexpr pointer, look up and evaluate the target variable.
 	if (op == "*") {
 		if (operand_result.pointer_to_var.isValid()) {
-			return dereference_constexpr_pointer(StringTable::getStringView(operand_result.pointer_to_var), context);
+			return dereference_constexpr_pointer(
+				StringTable::getStringView(operand_result.pointer_to_var),
+				context, operand_result.pointer_offset);
 		}
 		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}
@@ -303,7 +322,9 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 }
 
 // Look up the named constexpr variable and evaluate it (used to dereference constexpr pointers).
-EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context) {
+// When offset != 0, the variable must be an array and we dereference element [offset].
+// When offset == 0 and the variable is an array, element [0] is returned.
+EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset) {
 	if (!context.symbols) {
 		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
 	}
@@ -326,6 +347,54 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 	if (!initializer.has_value()) {
 		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer");
 	}
+
+	// Check if the target variable is an array — if so, always use array element access.
+	bool is_array_var = var_decl.declaration().is_array();
+
+	if (is_array_var) {
+		if (offset < 0) {
+			return EvalResult::error("Negative pointer offset " + std::to_string(offset) + " in constant expression");
+		}
+
+		// Handle InitializerListNode directly (arrays store their initializer as
+		// InitializerListNode, not ExpressionNode, so evaluate() would reject it).
+		if (initializer->is<InitializerListNode>()) {
+			const auto& init_list = initializer->as<InitializerListNode>();
+			const auto& elements = init_list.initializers();
+			if (static_cast<size_t>(offset) >= elements.size()) {
+				return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
+					" out of bounds (size " + std::to_string(elements.size()) + ")");
+			}
+			return evaluate(elements[static_cast<size_t>(offset)], context);
+		}
+
+		// For other array forms, materialize then index.
+		EvalResult arr_result = evaluate(initializer.value(), context);
+		if (!arr_result.success()) return arr_result;
+		if (arr_result.is_array) {
+			if (!arr_result.array_elements.empty()) {
+				if (static_cast<size_t>(offset) >= arr_result.array_elements.size()) {
+					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
+						" out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")");
+				}
+				return arr_result.array_elements[static_cast<size_t>(offset)];
+			}
+			if (!arr_result.array_values.empty()) {
+				if (static_cast<size_t>(offset) >= arr_result.array_values.size()) {
+					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
+						" out of bounds (array size " + std::to_string(arr_result.array_values.size()) + ")");
+				}
+				return EvalResult::from_int(arr_result.array_values[static_cast<size_t>(offset)]);
+			}
+		}
+		return EvalResult::error("Cannot dereference pointer with offset: variable '" + std::string(var_name) + "' is not evaluable as an array");
+	}
+
+	// Non-array variable: only offset 0 is valid (pointer to scalar)
+	if (offset != 0) {
+		return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
+	}
+
 	EvalResult result = evaluate(initializer.value(), context);
 	if (result.success()) {
 		maybe_set_binding_result_exact_type(result, var_decl.declaration(), &initializer.value(), context);

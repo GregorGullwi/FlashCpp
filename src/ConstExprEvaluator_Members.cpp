@@ -518,6 +518,13 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	if (!array_result) {
 		return std::nullopt;
 	}
+	// Handle pointer subscript: ptr[i] → *(ptr + i)
+	if (array_result->pointer_to_var.isValid()) {
+		int64_t effective_offset = array_result->pointer_offset + index;
+		return dereference_constexpr_pointer(
+			StringTable::getStringView(array_result->pointer_to_var),
+			context, effective_offset);
+	}
 	if (!array_result->is_array) {
 		return EvalResult::error("Subscript on non-array variable in constant expression");
 	}
@@ -1170,8 +1177,25 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					return ptr_result;
 				}
+				// &arr[i]: address of array element → pointer with offset
+				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
+					const ASTNode& arr_expr = subscript->array_expr();
+					std::string_view arr_name;
+					if (arr_expr.is<ExpressionNode>()) {
+						if (const auto* arr_id = std::get_if<IdentifierNode>(&arr_expr.as<ExpressionNode>())) {
+							arr_name = arr_id->name();
+						}
+					} else if (arr_expr.is<IdentifierNode>()) {
+						arr_name = arr_expr.as<IdentifierNode>().name();
+					}
+					if (!arr_name.empty()) {
+						auto idx_result = evaluate_expression_with_bindings(subscript->index_expr(), bindings, context);
+						if (!idx_result.success()) return idx_result;
+						return EvalResult::from_pointer(arr_name, idx_result.as_int());
+					}
+				}
 			}
-			return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
+			return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 		}
 
 		// Regular unary operators
@@ -1181,17 +1205,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
-				// Check local bindings first
+				// Check local bindings first (for zero-offset pointers to scalar variables)
 				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
-				auto it = bindings.find(ptr_var_name);
-				if (it != bindings.end()) {
-					return it->second;
+				if (operand_result.pointer_offset == 0) {
+					auto it = bindings.find(ptr_var_name);
+					if (it != bindings.end()) {
+						return it->second;
+					}
+					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
+					if (!operand_result.array_elements.empty()) {
+						return operand_result.array_elements[0];
+					}
 				}
-				// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
-				if (!operand_result.array_elements.empty()) {
-					return operand_result.array_elements[0];
-				}
-				return dereference_constexpr_pointer(ptr_var_name, context);
+				return dereference_constexpr_pointer(ptr_var_name, context, operand_result.pointer_offset);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -1334,8 +1360,25 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					}
 					return ptr_result;
 				}
+				// &arr[i]: address of array element → pointer with offset
+				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
+					const ASTNode& arr_expr = subscript->array_expr();
+					std::string_view arr_name;
+					if (arr_expr.is<ExpressionNode>()) {
+						if (const auto* arr_id = std::get_if<IdentifierNode>(&arr_expr.as<ExpressionNode>())) {
+							arr_name = arr_id->name();
+						}
+					} else if (arr_expr.is<IdentifierNode>()) {
+						arr_name = arr_expr.as<IdentifierNode>().name();
+					}
+					if (!arr_name.empty()) {
+						auto idx_result = recursive_eval(subscript->index_expr(), bindings, context);
+						if (!idx_result.success()) return idx_result;
+						return EvalResult::from_pointer(arr_name, idx_result.as_int());
+					}
+				}
 			}
-			return EvalResult::error("Address-of operator (&) is only supported on named variables in constant expressions");
+			return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 		}
 
 		auto operand_result = recursive_eval(unary_op->get_operand(), bindings, context);
@@ -1344,17 +1387,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
-				// Check local bindings first
+				// Check local bindings first (for zero-offset pointers to scalar variables)
 				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
-				auto it = bindings.find(ptr_var_name);
-				if (it != bindings.end()) {
-					return it->second;
+				if (operand_result.pointer_offset == 0) {
+					auto it = bindings.find(ptr_var_name);
+					if (it != bindings.end()) {
+						return it->second;
+					}
+					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
+					if (!operand_result.array_elements.empty()) {
+						return operand_result.array_elements[0];
+					}
 				}
-				// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
-				if (!operand_result.array_elements.empty()) {
-					return operand_result.array_elements[0];
-				}
-				return dereference_constexpr_pointer(ptr_var_name, context);
+				return dereference_constexpr_pointer(ptr_var_name, context, operand_result.pointer_offset);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -1591,8 +1636,9 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (op == "==" || op == "!=") {
 			bool are_equal;
 			if (lhs_is_ptr && rhs_is_ptr) {
-				// ptr1 == ptr2: equal iff they point to the same named variable
-				are_equal = (lhs.pointer_to_var == rhs.pointer_to_var);
+				// ptr1 == ptr2: equal iff they point to the same named variable AND offset
+				are_equal = (lhs.pointer_to_var == rhs.pointer_to_var)
+				         && (lhs.pointer_offset == rhs.pointer_offset);
 			} else if (lhs_is_ptr) {
 				// ptr == integer: nullptr (0) is the only null-pointer constant.
 				// Use raw unsigned comparison to avoid implementation-defined signed overflow.
@@ -1614,6 +1660,53 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 			return EvalResult::from_bool(op == "==" ? are_equal : !are_equal);
 		}
 
+		// Relational comparisons on pointers into the same array
+		if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+			if (lhs_is_ptr && rhs_is_ptr) {
+				if (lhs.pointer_to_var != rhs.pointer_to_var) {
+					return EvalResult::error("Relational comparison between pointers to different variables is undefined behavior in constant expressions");
+				}
+				if (op == "<")  return EvalResult::from_bool(lhs.pointer_offset <  rhs.pointer_offset);
+				if (op == "<=") return EvalResult::from_bool(lhs.pointer_offset <= rhs.pointer_offset);
+				if (op == ">")  return EvalResult::from_bool(lhs.pointer_offset >  rhs.pointer_offset);
+				return EvalResult::from_bool(lhs.pointer_offset >= rhs.pointer_offset);
+			}
+			return EvalResult::error("Relational comparison between pointer and integer is not supported in constant expressions");
+		}
+
+		// Pointer arithmetic: ptr + n, n + ptr, ptr - n, ptr - ptr
+		if (op == "+") {
+			if (lhs_is_ptr && !rhs_is_ptr) {
+				// ptr + n
+				return EvalResult::from_pointer(
+					StringTable::getStringView(lhs.pointer_to_var),
+					lhs.pointer_offset + rhs.as_int());
+			}
+			if (!lhs_is_ptr && rhs_is_ptr) {
+				// n + ptr
+				return EvalResult::from_pointer(
+					StringTable::getStringView(rhs.pointer_to_var),
+					rhs.pointer_offset + lhs.as_int());
+			}
+			return EvalResult::error("Addition of two pointers is not allowed in constant expressions");
+		}
+		if (op == "-") {
+			if (lhs_is_ptr && !rhs_is_ptr) {
+				// ptr - n
+				return EvalResult::from_pointer(
+					StringTable::getStringView(lhs.pointer_to_var),
+					lhs.pointer_offset - rhs.as_int());
+			}
+			if (lhs_is_ptr && rhs_is_ptr) {
+				// ptr - ptr: both must point into the same array
+				if (lhs.pointer_to_var != rhs.pointer_to_var) {
+					return EvalResult::error("Subtraction of pointers to different variables is undefined behavior in constant expressions");
+				}
+				return EvalResult::from_int(lhs.pointer_offset - rhs.pointer_offset);
+			}
+			return EvalResult::error("Subtraction of pointer from integer is not allowed in constant expressions");
+		}
+
 		// Logical operators: a valid constexpr pointer is always truthy
 		if (op == "&&") {
 			const bool lhs_bool = lhs_is_ptr ? true : lhs.as_bool();
@@ -1626,8 +1719,8 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 			return EvalResult::from_bool(lhs_bool || rhs_bool);
 		}
 
-		// All other pointer operations (arithmetic, relational, etc.) are unsupported
-		return EvalResult::error("Pointer arithmetic/comparison is not supported in constant expressions");
+		// All other pointer operations are unsupported
+		return EvalResult::error("Unsupported pointer operation '" + std::string(op) + "' in constant expressions");
 	}
 
 	// Determine the operand kinds so we can dispatch to the correct domain.
@@ -2374,6 +2467,21 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		if (!ptr_result.success()) return ptr_result;
 		if (!ptr_result.pointer_to_var.isValid()) {
 			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
+		}
+		// When the pointer has a non-zero offset (e.g. (ptr + 1)->member on a struct array),
+		// dereference the array element first, then access the member on the resulting object.
+		if (ptr_result.pointer_offset != 0) {
+			auto elem_result = dereference_constexpr_pointer(
+				StringTable::getStringView(ptr_result.pointer_to_var),
+				context, ptr_result.pointer_offset);
+			if (!elem_result.success()) return elem_result;
+			// The element should be an object with member bindings
+			auto it = elem_result.object_member_bindings.find(member_name);
+			if (it != elem_result.object_member_bindings.end()) {
+				return it->second;
+			}
+			return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
+				"' not found on array element at offset " + std::to_string(ptr_result.pointer_offset));
 		}
 		return evaluate_arrow_member_from_pointer_var(StringTable::getStringView(ptr_result.pointer_to_var), member_name, context, /*check_static=*/true);
 	}
@@ -4031,7 +4139,7 @@ EvalResult Evaluator::extract_object_members(
 	return EvalResult::from_bool(true);  // Success
 }
 
-// Evaluate array subscript (e.g., arr[0] or obj.data[1])
+// Evaluate array subscript (e.g., arr[0] or obj.data[1] or ptr[i])
 EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
 	// First, evaluate the index expression to get the constant index
 	auto index_result = evaluate(subscript.index_expr(), context);
@@ -4046,7 +4154,8 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 	
 	// Get the array expression - this could be:
 	// 1. A member access (e.g., obj.data)
-	// 2. An identifier (e.g., arr)
+	// 2. An identifier (e.g., arr or ptr)
+	// 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
 	const ASTNode& array_expr = subscript.array_expr();
 	
 	// Check if it's a member access (e.g., obj.data[0])
@@ -4056,13 +4165,26 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			return evaluate_member_array_subscript(*member_access_ptr, static_cast<size_t>(index), context);
 		}
 		if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
-			return evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
+			auto result = evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
+			if (result.success()) return result;
+			// Fall through to pointer path if array subscript failed (might be a pointer variable)
 		}
 	}
 	if (array_expr.is<IdentifierNode>()) {
-		return evaluate_variable_array_subscript(array_expr.as<IdentifierNode>(), static_cast<size_t>(index), context);
+		auto result = evaluate_variable_array_subscript(array_expr.as<IdentifierNode>(), static_cast<size_t>(index), context);
+		if (result.success()) return result;
+		// Fall through to pointer path if array subscript failed
 	}
 	
+	// Try evaluating the array expression — if it yields a pointer, treat ptr[i] as *(ptr + i).
+	auto arr_result = evaluate(array_expr, context);
+	if (arr_result.success() && arr_result.pointer_to_var.isValid()) {
+		int64_t effective_offset = arr_result.pointer_offset + index;
+		return dereference_constexpr_pointer(
+			StringTable::getStringView(arr_result.pointer_to_var),
+			context, effective_offset);
+	}
+
 	return EvalResult::error("Array subscript on unsupported expression type");
 }
 

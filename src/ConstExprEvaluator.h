@@ -84,6 +84,11 @@ struct EvalResult {
 	// Uses StringHandle (lightweight 32-bit integer) instead of std::string to avoid
 	// heap allocation overhead on every EvalResult copy.
 	StringHandle pointer_to_var;
+	// Element offset from the base variable for pointer arithmetic.
+	// When pointer_to_var is valid and pointer_offset != 0, this pointer refers to
+	// element [pointer_offset] of the array variable named by pointer_to_var
+	// (e.g. &arr[2] yields pointer_to_var="arr", pointer_offset=2).
+	int64_t pointer_offset = 0;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -92,36 +97,37 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
 	}
 
-	// Create a pointer-to-variable result (for address-of operator on constexpr variables)
-	static EvalResult from_pointer(std::string_view var_name) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name)};
+	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
+	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
+	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset};
 		return r;
 	}
 
@@ -513,7 +519,8 @@ private:
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 		EvaluationContext& context);
 	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
-	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context);
+	// When offset != 0, the variable must be an array and element [offset] is returned.
+	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset = 0);
 	// Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
 	// pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
 	// evaluates it.  If check_static is true, also handles access to static struct members.
