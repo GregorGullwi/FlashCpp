@@ -1017,10 +1017,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - All existing callers (`IRConverter_ConvertMain.cpp`, `IrGenerator_Stmt_Decl.cpp`, `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_MemberAccess.cpp`) are unchanged — they call the same public API which now routes through the shared core.
 - Declaration updated in `src/AstNodeTypes_DeclNodes.h`.
 
-**Regression tests added:**
-- `tests/test_copy_ctor_default_arg_ret0.cpp` — copy constructor with trailing default argument.
-- `tests/test_copy_move_ctor_select_ret0.cpp` — lvalue correctly selects copy constructor.
-- `tests/test_implicit_copy_ctor_ret0.cpp` — implicit (compiler-generated) copy on POD struct.
+**Regression coverage:** focused tests now cover default-argument copy constructors,
+lvalue copy-vs-move selection, and implicit copy construction on POD structs.
 
 ### Post-Phase-18 cleanup (continued): ad-hoc copy/move ctor detection audit
 
@@ -1041,9 +1039,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 12. `src/OverloadResolution.h:710` — `isImplicitCopyOrMoveConstructorCandidate`: replaced `is_reference() || is_rvalue_reference()` with `is_lvalue_reference() || is_rvalue_reference()`.
 13. `src/AstNodeTypes.cpp:848` — `findCopyAssignmentOperator` slow path: replaced `is_reference() && !is_rvalue_reference()` with `is_lvalue_reference()`.
 
-**Regression tests added:**
-- `tests/test_copy_move_brace_init_ret0.cpp` — struct with both copy and move ctors, copy from lvalue correctly selects copy ctor.
-- `tests/test_copy_ctor_default_arg_inherited_ret0.cpp` — copy ctor with default args works across copy-initialization path.
+**Regression coverage:** added targeted brace-init copy-vs-move selection coverage
+and inherited/default-argument copy-constructor coverage.
 
 ### Post-Phase-18 cleanup (continued): own-type check, computeMinRequiredArgs, throw/catch
 
@@ -1054,8 +1051,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 2. `Parser_Decl_StructEnum.cpp:2898-2902` — inherited ctor filtering: added `base_struct_info->isOwnTypeIndex(param_type.type_index())` check. Without this, a base-class converting ctor like `Base(const SomeConfig&, int=0)` was wrongly skipped during `using Base::Base;` constructor inheritance.
 3. `Parser_Decl_StructEnum.cpp:2155` — deleted assignment operator detection: changed `!params.empty()` to `!params.empty() && computeMinRequiredArgs(params) <= 1`, so multi-required-arg operators (like `operator=(const Foo&, const Bar&)`) are not falsely detected as copy/move assignments.
 
-**Regression test added:**
-- `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
+**Regression coverage:** added a throw/catch regression for trailing-default copy
+constructors through the `emitSameTypeCopyOrMoveConstructorCall` path.
 
 ### Phase 19 ✅: `buildConversionPlan` extended to `TypeSpecifierNode`-level conversions
 
@@ -1095,13 +1092,9 @@ and local to existing codegen-time validation points.
 	  assignment both on the raw-assignment fallback path and when the selected
 	  `operator=` overload corresponds to the deleted special member
 
-**Regression tests added:**
-- `tests/test_deleted_copy_ctor_direct_fail.cpp`
-- `tests/test_deleted_copy_ctor_copy_init_fail.cpp`
-- `tests/test_deleted_copy_ctor_brace_init_fail.cpp`
-- `tests/test_deleted_move_ctor_copy_init_fail.cpp`
-- `tests/test_deleted_copy_assignment_fail.cpp`
-- `tests/test_deleted_move_assignment_fail.cpp`
+**Regression coverage:** added focused `_fail` coverage for deleted same-type copy
+and move constructors and assignments across direct-init, brace-init, and copy-init
+entry points.
 
 ### Follow-up slice ✅: same-type xvalue direct-init / brace-init deleted move diagnostics
 
@@ -1119,9 +1112,8 @@ special-member work.
 	- `isSameTypeXValueSource(...)` now reuses the parser-derived preference
 	  before falling back to runtime metadata
 
-**Regression tests added:**
-- `tests/test_deleted_move_ctor_direct_init_xvalue_fail.cpp`
-- `tests/test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
+**Regression coverage:** added xvalue direct-init and brace-init `_fail` tests for
+deleted move constructors.
 
 ### Follow-up slice ✅: deleted assignment diagnostics in lvalue-metadata store paths
 
@@ -1138,13 +1130,8 @@ indirection stores.
 	  `diagnoseDeletedSameTypeAssignmentUsage(...)` before emitting metadata-path
 	  stores for `Member`, `ArrayElement`, and `Indirect` lvalues
 
-**Regression tests added:**
-- `tests/test_deleted_copy_assignment_member_fail.cpp`
-- `tests/test_deleted_copy_assignment_array_element_fail.cpp`
-- `tests/test_deleted_copy_assignment_indirect_fail.cpp`
-- `tests/test_deleted_move_assignment_member_fail.cpp`
-- `tests/test_deleted_move_assignment_array_element_fail.cpp`
-- `tests/test_deleted_move_assignment_indirect_fail.cpp`
+**Regression coverage:** added metadata-path `_fail` tests for deleted copy/move
+assignment through member, array-element, and indirection stores.
 
 ### Follow-up slice ✅: deleted copy-assignment fallback for xvalue same-type assignment
 
@@ -1163,8 +1150,8 @@ to the copy assignment operator.
 	  xvalue assignments when a move assignment operator really exists; otherwise
 	  it falls through to the deleted copy-assignment check
 
-**Regression tests added:**
-- `tests/test_deleted_copy_assignment_xvalue_fallback_fail.cpp`
+**Regression coverage:** added an xvalue fallback `_fail` test for deleted copy
+assignment when no move assignment operator exists.
 
 ### Follow-up slice ✅: deleted copy-constructor fallback for xvalue same-type initialization
 
@@ -1182,8 +1169,8 @@ falls back to the copy constructor.
 	  xvalue same-type initialization when a move constructor really exists;
 	  otherwise it falls through to the deleted copy-constructor check
 
-**Regression tests added:**
-- `tests/test_deleted_copy_ctor_xvalue_fallback_fail.cpp`
+**Regression coverage:** added an xvalue fallback `_fail` test for deleted copy
+construction when no move constructor exists.
 
 ### Follow-up slice ✅: global/static compound-assignment result lvalues
 
@@ -1198,8 +1185,8 @@ required `E1 op= E2` result category.
 	  expression result carries global lvalue metadata instead of exposing the
 	  transient store temp as a prvalue-ish result
 
-**Regression tests added:**
-- `tests/test_global_compound_assign_result_lvalue_ret0.cpp`
+**Regression coverage:** added a runtime regression test for global/static
+compound-assignment result lvalues.
 
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
