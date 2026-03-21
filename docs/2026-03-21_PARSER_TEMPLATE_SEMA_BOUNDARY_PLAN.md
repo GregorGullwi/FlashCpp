@@ -113,19 +113,19 @@ an undocumented accidental fallback.
 
 ## Phase 2 progress
 
-The fold-expression half of Phase 2 is now tightened:
+Phase 2 is now implemented for both boundary-helper node kinds:
 
 - surviving `FoldExpressionNode` on the sema-owned post-parse surface is no
   longer treated as a permissive sema typing fallback
-- the post-parse boundary check now fails compilation before semantic
-  normalization if such a fold survives
+- surviving `PackExpansionExprNode` on that same surface is now diagnosed
+  before semantic normalization instead of being left to late codegen
+  defensive handling
 - `SemanticAnalysis::normalizeExpression(...)` and
   `SemanticAnalysis::inferExpressionType(...)` now treat surviving folds as
   unreachable invariant violations instead of consulting
   `parser_.get_expression_type(...)`
-
-`PackExpansionExprNode` remains on the Phase 2 backlog as a logged-only
-boundary violation for the next slice.
+- `SemanticAnalysis::normalizeExpression(...)` now also treats surviving pack
+  expansions as unreachable once the boundary check has run
 
 ## Workstreams
 
@@ -170,16 +170,16 @@ Required next step:
 Current behavior:
 
 - expansion logic is context-specific
-- codegen hard-fails if a pack expansion survives
-- sema has no meaningful direct typing story for it
+- sema now rejects surviving pack expansions before normalization on the
+  sema-owned surface
+- codegen still hard-fails if a pack expansion survives outside that guarded
+  path
 
 Required next step:
 
-- treat this primarily as an invariant/enforcement problem, not an
-  `inferExpressionType(...)` feature gap
-- audit creation sites and expansion sites
-- add early diagnostics or invariant checks for surviving pack expansions in
-  unsupported contexts
+- audit creation sites and expansion sites for remaining parser-owned contexts
+- tighten parser/substitution-time diagnostics where a surviving pack expansion
+  can be diagnosed more locally than the sema boundary
 
 ### Workstream 3: reduce `parser_.get_expression_type(...)` inside sema
 
@@ -262,8 +262,9 @@ Implemented in this slice:
 ### Phase 2: seal template-only nodes
 
 - tighten fold-expression handling from permissive fallback toward explicit
-  invariant enforcement **(fold half implemented)**
+  invariant enforcement **(implemented)**
 - add earlier detection/diagnostics for surviving `PackExpansionExprNode`
+  **(implemented at the pre-sema boundary)**
 
 ### Phase 3: migrate sema off parser fallbacks
 
