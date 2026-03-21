@@ -371,7 +371,10 @@ public:
 	static EvalResult evaluate(const ASTNode& expr_node, EvaluationContext& context);
 
 	// Operator evaluation helpers (also used by TemplateInstantiationHelper)
-	static EvalResult apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op);
+	static EvalResult apply_binary_op(
+		const EvalResult& lhs, const EvalResult& rhs, std::string_view op,
+		EvaluationContext* context = nullptr,
+		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult apply_unary_op(const EvalResult& operand, std::string_view op);
 
 	// Qualified/member access evaluation

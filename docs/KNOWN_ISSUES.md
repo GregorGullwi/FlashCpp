@@ -111,17 +111,6 @@ of the same struct. The workaround is to use `int` flags instead of `bool`
 members, or avoid chaining `if (!obj.bool_field)` with subsequent member
 accesses. Observed during copy/move constructor regression testing.
 
-## Constexpr pointer arithmetic: out-of-bounds pointer creation not immediately rejected
-
-Per C++20 [expr.add]/4, forming a pointer outside the valid range `[0, n]` (where
-`n` is the array size) is undefined behavior and must be diagnosed in constant
-expressions. FlashCpp defers this check to dereference time in
-`dereference_constexpr_pointer` — meaning `constexpr const int* bad = &arr[0] - 1;`
-is accepted (pointer creation succeeds) and only fails if `*bad` is evaluated.
-Standard-conforming compilers reject the pointer creation itself.
-
-This is a C++20 compliance gap; it does not produce incorrect results for valid code.
-
 ## `constexpr`/`consteval` enforcement not yet implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;
