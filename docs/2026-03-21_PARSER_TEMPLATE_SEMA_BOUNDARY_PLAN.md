@@ -173,6 +173,12 @@ Phase 3 has started with two low-risk local fallback removals:
 - hidden friend bodies attached to struct AST are now normalized from the
   enclosing struct walk before their queued top-level hidden-friend copies,
   so sema can reuse the enclosing template-binding scope for those bodies
+- primary-template nested class AST now retains substituted member/static-member
+  expressions, and sema recursively walks retained nested classes so outer
+  template bindings remain visible to those nested expression surfaces too
+- focused nested-class regressions now cover mixed-order template-parameter use
+  across both retained default member initializers and retained nested
+  `static constexpr` initializers
 
 ## Workstreams
 
@@ -315,6 +321,13 @@ Implemented in this slice:
 - remove the easiest sema parser fallbacks first
 - convert parser-derived facts into AST annotations or sema-owned lookups
 - keep performance in mind for hot paths
+
+Current narrow follow-up after the nested-class slice:
+
+- re-audit the remaining direct `inferExpressionType(...)` parser fallback sites
+- confirm whether only the documented unresolved/implicit-member
+  `IdentifierNode` bridge and the remaining `TemplateParameterReferenceNode`
+  bridge are still live in practice
 
 ### Phase 4: tighten hard boundaries
 
