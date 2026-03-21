@@ -348,14 +348,15 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer");
 	}
 
+	// Reject negative pointer offsets regardless of variable type.
+	if (offset < 0) {
+		return EvalResult::error("Negative pointer offset " + std::to_string(offset) + " in constant expression");
+	}
+
 	// Check if the target variable is an array — if so, always use array element access.
 	bool is_array_var = var_decl.declaration().is_array();
 
 	if (is_array_var) {
-		if (offset < 0) {
-			return EvalResult::error("Negative pointer offset " + std::to_string(offset) + " in constant expression");
-		}
-
 		// Handle InitializerListNode directly (arrays store their initializer as
 		// InitializerListNode, not ExpressionNode, so evaluate() would reject it).
 		if (initializer->is<InitializerListNode>()) {

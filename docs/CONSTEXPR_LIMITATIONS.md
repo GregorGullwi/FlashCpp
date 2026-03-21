@@ -496,18 +496,66 @@ static_assert(deref_or(&val, 0) == 42);  // ✅ Works
 
 **Supported pointer forms:**
 - `&named_var` (address-of a named constexpr variable)
+- `&arr[i]` (address of array element — produces a pointer with offset)
 - `*ptr` (dereference to get the pointed-to value)
+- `*(ptr + n)` (dereference with pointer arithmetic)
+- `ptr[i]` (pointer subscript — equivalent to `*(ptr + i)`)
+- `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic)
+- `ptr1 - ptr2` (pointer difference — both must point into the same array)
 - `ptr->member` (arrow member access through constexpr pointer)
+- `(ptr + n)->member` (arrow member access with offset, for struct arrays with object_member_bindings)
 - Pointer parameters in constexpr functions (`const T* p`)
 - `ptr == nullptr`, `ptr != nullptr` (null pointer check — always false/true for valid pointers)
 - `nullptr == ptr`, `nullptr != ptr` (null pointer check, symmetric form)
-- `ptr1 == ptr2`, `ptr1 != ptr2` (pointer equality — compares which variable is pointed to)
+- `ptr1 == ptr2`, `ptr1 != ptr2` (pointer equality — compares variable name AND offset)
+- `ptr1 < ptr2`, `ptr1 <= ptr2`, `ptr1 > ptr2`, `ptr1 >= ptr2` (pointer relational — both must point into same array)
 - `if (ptr)` / `!ptr` / `ptr && x` / `ptr || x` (pointer truthiness — valid pointer is always truthy)
 
 **Still unsupported pointer forms:**
-- Pointer arithmetic (`ptr + n`, `ptr[i]`)
-- Pointers to array elements (`&arr[0]`)
 - Pointer-to-member (`obj.*pmf`)
+
+### ✅ Pointer Arithmetic in Constexpr (NEW)
+
+Pointer arithmetic, pointer subscript, address of array elements, pointer difference, and pointer relational comparisons are now supported in constexpr:
+
+```cpp
+constexpr int arr[] = {10, 20, 30, 40, 50};
+
+// &arr[i] — address of array element
+constexpr const int* p0 = &arr[0];
+static_assert(*p0 == 10);             // ✅ Works
+
+constexpr const int* p2 = &arr[2];
+static_assert(*p2 == 30);             // ✅ Works
+
+// ptr + n, n + ptr
+static_assert(*(p0 + 2) == 30);       // ✅ Works
+static_assert(*(2 + p0) == 30);       // ✅ Works
+
+// ptr - n
+static_assert(*(p2 - 1) == 20);       // ✅ Works
+
+// ptr[i] (pointer subscript)
+static_assert(p0[0] == 10);           // ✅ Works
+static_assert(p0[3] == 40);           // ✅ Works
+
+// ptr - ptr (pointer difference)
+static_assert(p2 - p0 == 2);          // ✅ Works
+
+// Pointer relational comparisons
+static_assert(p0 < p2);               // ✅ Works
+static_assert(p0 + 2 == p2);          // ✅ Works
+
+// Pointer arithmetic in constexpr functions
+constexpr int sum_via_ptr(const int* p, int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        total += p[i];
+    }
+    return total;
+}
+static_assert(sum_via_ptr(&arr[0], 5) == 15);  // ✅ Works
+```
 
 ### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
 
@@ -671,6 +719,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Local variable as array subscript inside constexpr member functions (e.g., `int idx = 1; return arr[idx];`)
 - ✅ Basic constexpr pointer dereference: `&named_var` (address-of), `*ptr` (dereference), `ptr->member` (arrow member access), and pointer function parameters (e.g., `const T* p`) in supported shapes
 - ✅ Constexpr null pointer checks and pointer comparisons: `ptr == nullptr`, `ptr != nullptr`, `ptr1 == ptr2`, `ptr1 != ptr2`, `!ptr`, `ptr && x`, `ptr || x` (valid constexpr pointer is always non-null/truthy)
+- ✅ Constexpr pointer arithmetic: `&arr[i]` (address of array element), `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic), `ptr1 - ptr2` (pointer difference), `ptr[i]` (pointer subscript), `ptr < ptr2` / `ptr <= ptr2` / `ptr > ptr2` / `ptr >= ptr2` (pointer relational comparisons); works in both top-level constexpr and inside constexpr function bodies
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -705,7 +754,7 @@ Potential areas for enhancement (in order of complexity):
 2. **Nested/member access is okay in supported shapes** - this includes straightforward local aggregate object reads like `obj.value` and `obj.inner.value`; prefer simple, directly initialized object graphs
 3. **Multi-statement member functions now work** - if/else, for/while, switch, and break/continue are all supported
 4. **Array access is partially supported** - prefer explicit sizes and straightforward direct/member array patterns, including simple local object member-array reads like `obj.data[1]`, straightforward local inferred-size arrays like `int arr[] = {1, 2}`, and straightforward loop-driven reads over supported local arrays
-5. **Basic pointer dereference is now supported** - `&named_var`, `*ptr`, and `ptr->member` work for named constexpr variables and pointer function parameters; null pointer checks (`ptr == nullptr`), pointer equality (`ptr1 == ptr2`), and pointer truthiness (`if (ptr)`, `!ptr`, `ptr && x`) are now also supported; pointer arithmetic and pointers to array elements are not yet supported
+5. **Pointer arithmetic is now supported** - `&arr[i]`, `ptr + n`, `ptr - n`, `ptr[i]`, `ptr1 - ptr2`, and pointer relational comparisons (`<`, `<=`, `>`, `>=`) all work for constexpr arrays of primitive types; pointer arithmetic in constexpr function bodies (with `&arr[i]` as argument) is also supported; pointer-to-member (`obj.*pmf`) is not yet supported
 6. **Use straightforward lambda captures** - the following work best:
    - explicit captures
    - straightforward local `&` captures

@@ -1664,7 +1664,7 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (op == "<" || op == "<=" || op == ">" || op == ">=") {
 			if (lhs_is_ptr && rhs_is_ptr) {
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
-					return EvalResult::error("Relational comparison between pointers to different variables is undefined behavior in constant expressions");
+					return EvalResult::error("Relational comparison between pointers to different variables is not allowed in constant expressions");
 				}
 				if (op == "<")  return EvalResult::from_bool(lhs.pointer_offset <  rhs.pointer_offset);
 				if (op == "<=") return EvalResult::from_bool(lhs.pointer_offset <= rhs.pointer_offset);
@@ -1700,7 +1700,7 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
-					return EvalResult::error("Subtraction of pointers to different variables is undefined behavior in constant expressions");
+					return EvalResult::error("Subtraction of pointers to different variables is not allowed in constant expressions");
 				}
 				return EvalResult::from_int(lhs.pointer_offset - rhs.pointer_offset);
 			}
