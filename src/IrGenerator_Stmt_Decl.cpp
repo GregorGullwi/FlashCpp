@@ -698,6 +698,11 @@ namespace {
 				}
 			}
 
+			// constexpr variables are compile-time constants and should go to .rodata (read-only data section).
+			// constinit variables may be modified at runtime, so they stay in .data.
+			if (node.is_constexpr() && op.is_initialized) {
+				op.is_rodata = true;
+			}
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
 			// (The parser already added it to the symbol table)
 			if (is_static_local) {
@@ -747,6 +752,12 @@ namespace {
 			if (is_function_call) {
 				// Try to evaluate the function call at compile time
 				ConstExpr::EvaluationContext ctx(symbol_table);
+				if (global_symbol_table_) {
+					ctx.global_symbols = global_symbol_table_;
+				}
+				// parser_ is always non-null when IR generation is active; EvaluationContext
+				// stores it as a pointer and guards all uses with nullptr checks.
+				ctx.parser = parser_;
 				auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 
 				if (eval_result.success()) {
@@ -762,7 +773,9 @@ namespace {
 					decl_op.is_array = false;
 
 					// Set the compile-time evaluated initializer
-					if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
+					if (const auto* b_val = std::get_if<bool>(&eval_result.value)) {
+						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(*b_val ? 1 : 0));
+					} else if (const auto* ll_val = std::get_if<long long>(&eval_result.value)) {
 						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, static_cast<unsigned long long>(*ll_val));
 					} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, *ull_val);

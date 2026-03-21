@@ -227,6 +227,45 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		                         EvalErrorType::TemplateDependentExpression);
 	}
 
+	// For StringLiteralNode: produce an array of char EvalResults so that pointer/subscript
+	// operations on constexpr const char* variables and string-literal arguments work correctly
+	// (e.g. constexpr const char* s = "Hi"; static_assert(s[0] == 'H');).
+	if (const auto* str_literal = std::get_if<StringLiteralNode>(&expr)) {
+		std::string_view raw = str_literal->value();
+		// Strip surrounding double-quotes that the lexer keeps in the token value.
+		std::string_view str_content = (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
+			? std::string_view(raw.data() + 1, raw.size() - 2) : raw;
+		// Build an is_array result whose elements are the individual characters.
+		// The null terminator is appended so that str[n] == '\0' comparisons work.
+		const TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8);
+		EvalResult result = EvalResult::from_int(0LL);
+		result.is_array = true;
+		for (size_t si = 0; si < str_content.size(); ++si) {
+			char c = str_content[si];
+			if (c == '\\' && si + 1 < str_content.size()) {
+				// Match the same escape-handling logic as IrGenerator_Stmt_Decl.cpp.
+				switch (str_content[si + 1]) {
+					case 'n':  c = '\n'; ++si; break;
+					case 't':  c = '\t'; ++si; break;
+					case 'r':  c = '\r'; ++si; break;
+					case '\\': c = '\\'; ++si; break;
+					case '"':  c = '"';  ++si; break;
+					case '\'': c = '\''; ++si; break;
+					case '0':  c = '\0'; ++si; break;
+					default:   /* keep the backslash character */  break;
+				}
+			}
+			EvalResult ch = EvalResult::from_int(static_cast<long long>(c));
+			ch.set_exact_type(char_type);
+			result.array_elements.push_back(std::move(ch));
+		}
+		// Null terminator
+		EvalResult nul = EvalResult::from_int(0LL);
+		nul.set_exact_type(char_type);
+		result.array_elements.push_back(std::move(nul));
+		return result;
+	}
+
 	// Other expression types are not supported as constant expressions yet
 	return EvalResult::error("Expression type not supported in constant expressions");
 }
@@ -2388,6 +2427,11 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
+
+	// If not found in local symbol table, try the global symbol table (for free functions declared at global scope)
+	if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+		symbol_opt = lookup_function_symbol(func_call, func_name, *context.global_symbols);
+	}
 	
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
