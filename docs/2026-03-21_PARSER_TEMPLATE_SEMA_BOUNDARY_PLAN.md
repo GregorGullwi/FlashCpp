@@ -199,6 +199,10 @@ Phase 3 has started with two low-risk local fallback removals:
   template-parameter-aligned binding vectors plus full body substitution, so
   copied `Foo<int, T>`-style bodies no longer see raw instantiation arguments
   where deduced specialization parameters are required
+- parser-side outer-template binding setup is now centralized through a shared
+  helper that filters names and args together from the template-parameter AST
+  list, so the positional invariant is explicit instead of being repeated by
+  hand at each callsite
 
 ## Workstreams
 
