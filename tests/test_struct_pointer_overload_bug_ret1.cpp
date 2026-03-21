@@ -9,23 +9,23 @@
 // and score ExactMatch, causing spurious ambiguity.
 
 struct Foo {
-    int x;
+	int x;
 };
 
 struct Bar {
-    int y;
+	int y;
 };
 
 int process(Foo* f) {
-    return 0;
+	return 0;
 }
 
 int process(Bar* b) {
-    return 1;
+	return 1;
 }
 
 int main() {
-    Bar bar;
-    bar.y = 42;
-    return process(&bar);  // Should select process(Bar*) → returns 1
+	Bar bar;
+	bar.y = 42;
+	return process(&bar);  // Should select process(Bar*) → returns 1
 }
