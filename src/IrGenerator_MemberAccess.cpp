@@ -858,13 +858,14 @@
 	}
 
 	bool AstToIr::setupBaseFromIdentifier(
-		std::string_view object_name,
+		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
+		std::string_view object_name = identifier.name();
 		if (object_name == "this") {
 			// First try [*this] capture - returns copy of the object
 			if (auto copy_this_temp = emitLoadCopyThis(member_token)) {
@@ -882,7 +883,15 @@
 				return true;
 			}
 		}
-		return validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
+		const bool setup_ok = validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
+		if (!setup_ok) {
+			return false;
+		}
+		const auto binding_info = resolveGlobalOrStaticBinding(identifier);
+		if (binding_info.is_global_or_static) {
+			base_object = binding_info.store_name;
+		}
+		return true;
 	}
 
 	ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
@@ -989,7 +998,7 @@
 		// Resolve the base object — single dispatch chain regardless of ExpressionNode wrapping
 		if (!base_setup_complete) {
 			if (const IdentifierNode* ident = get_identifier()) {
-				if (!setupBaseFromIdentifier(ident->name(), memberAccessNode.member_token(),
+				if (!setupBaseFromIdentifier(*ident, memberAccessNode.member_token(),
 				base_object, base_type, base_type_index, is_pointer_dereference)) {
 					throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
