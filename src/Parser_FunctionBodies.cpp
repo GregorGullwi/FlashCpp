@@ -724,3 +724,92 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 
 	return func_node;
 }
+
+// Priority 4: Find a regular (non-constructor, non-destructor) member function in struct_info
+// that matches the given name, cv-qualifiers, and parameter count.
+// Returns a mutable pointer to the matching StructMemberFunction, or nullptr if not found.
+StructMemberFunction* Parser::find_member_function_by_signature(
+	StructTypeInfo& struct_info,
+	StringHandle name,
+	const FlashCpp::MemberQualifiers& quals,
+	size_t param_count)
+{
+	for (auto& member : struct_info.member_functions) {
+		if (member.getName() != name ||
+			member.is_const()    != quals.is_const() ||
+			member.is_volatile() != quals.is_volatile()) {
+			continue;
+		}
+		if (member.function_decl.is<FunctionDeclarationNode>()) {
+			const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
+			if (decl_func.parameter_nodes().size() == param_count) {
+				return &member;
+			}
+		} else {
+			// Non-FunctionDeclarationNode entries (e.g. operator nodes): accept first match
+			return &member;
+		}
+	}
+	return nullptr;
+}
+
+// Priority 4: Helper to extract the TypeSpecifierNode from a parameter ASTNode.
+// Returns nullptr if the parameter is not a DeclarationNode or VariableDeclarationNode
+// with a TypeSpecifierNode.
+static const TypeSpecifierNode* get_param_type_specifier(const ASTNode& param) {
+	if (param.is<VariableDeclarationNode>()) {
+		const VariableDeclarationNode& var = param.as<VariableDeclarationNode>();
+		if (var.declaration().type_node().is<TypeSpecifierNode>())
+			return &var.declaration().type_node().as<TypeSpecifierNode>();
+	} else if (param.is<DeclarationNode>()) {
+		const DeclarationNode& decl = param.as<DeclarationNode>();
+		if (decl.type_node().is<TypeSpecifierNode>())
+			return &decl.type_node().as<TypeSpecifierNode>();
+	}
+	return nullptr;
+}
+
+// Priority 4: Find the constructor or destructor in struct_info that matches the given
+// parameter list.  Skips entries that already have a definition (avoids duplicate body).
+// For destructors, parameter matching is not performed (destructors have no parameters).
+// Returns a mutable pointer to the matching StructMemberFunction, or nullptr if not found.
+StructMemberFunction* Parser::find_ctor_dtor_for_definition(
+	StructTypeInfo& struct_info,
+	bool is_destructor,
+	const FlashCpp::ParsedParameterList& params)
+{
+	const size_t param_count = params.parameters.size();
+
+	for (auto& member : struct_info.member_functions) {
+		if (is_destructor) {
+			if (!member.is_destructor) continue;
+			if (member.function_decl.is<DestructorDeclarationNode>()) {
+				const DestructorDeclarationNode& dtor = member.function_decl.as<DestructorDeclarationNode>();
+				if (dtor.get_definition().has_value()) continue;  // already defined
+			}
+			return &member;
+		}
+
+		// Constructor lookup: match by parameter count and types
+		if (!member.is_constructor) continue;
+		if (!member.function_decl.is<ConstructorDeclarationNode>()) continue;
+		const ConstructorDeclarationNode& ctor = member.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor.get_definition().has_value()) continue;  // already defined
+		if (ctor.parameter_nodes().size() != param_count) continue;
+
+		bool params_match = true;
+		for (size_t i = 0; i < param_count && params_match; ++i) {
+			const TypeSpecifierNode* decl_type = get_param_type_specifier(ctor.parameter_nodes()[i]);
+			const TypeSpecifierNode* def_type  = get_param_type_specifier(params.parameters[i]);
+			if (!decl_type || !def_type) { params_match = false; break; }
+			if (decl_type->type()          != def_type->type()          ||
+				decl_type->pointer_depth() != def_type->pointer_depth() ||
+				decl_type->is_reference()  != def_type->is_reference()  ||
+				decl_type->type_index()    != def_type->type_index()) {
+				params_match = false;
+			}
+		}
+		if (params_match) return &member;
+	}
+	return nullptr;
+}

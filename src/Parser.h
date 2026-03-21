@@ -753,6 +753,8 @@ private:
         void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
         void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
+        StructMemberFunction* find_member_function_by_signature(StructTypeInfo& struct_info, StringHandle name, const FlashCpp::MemberQualifiers& quals, size_t param_count);  // Priority 4: Lookup regular member function by name, cv-qualifiers, and parameter count
+        StructMemberFunction* find_ctor_dtor_for_definition(StructTypeInfo& struct_info, bool is_destructor, const FlashCpp::ParsedParameterList& params);  // Priority 4: Lookup constructor/destructor matching the given parameter list
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
         FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
         void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src);  // Copy semantic properties needed before signature finalization/mangling

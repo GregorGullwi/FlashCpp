@@ -356,47 +356,45 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_function_template: Detected template constructor {}()", 
 				                 StringTable::getStringView(struct_name_handle));
 				
-				// Create constructor declaration
-				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					struct_name_handle, ctor_name_token.handle());
+				// Collect constructor header data in ParsedFunctionHeader (Priority 5)
+				FlashCpp::ParsedFunctionHeader header;
+				header.name_token = ctor_name_token;
+				header.storage.constexpr_spec = specs.constexpr_spec;
 				
-				// Apply specifiers to constructor
-				ctor_ref.set_explicit(is_explicit);
-				ctor_ref.set_constexpr(specs.is_constexpr());
-				
-				// Parse parameters
-				FlashCpp::ParsedParameterList params;
-				auto param_result = parse_parameter_list(params);
+				// Parse parameters into the unified header struct
+				auto param_result = parse_parameter_list(header.params);
 				if (param_result.is_error()) {
 					return param_result;
 				}
 				
+				// Parse noexcept specifier; store in header.specifiers
+				header.specifiers.is_noexcept = parse_constructor_exception_specifier();
+				
+				// Parse trailing requires clause; store in header.requires_clause
+				header.requires_clause = parse_trailing_requires_clause();
+				
+				// Create constructor declaration and apply collected header data
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+					struct_name_handle, header.name_token.handle());
+				
+				// Apply specifiers to constructor
+				ctor_ref.set_explicit(is_explicit);
+				ctor_ref.set_constexpr(header.storage.is_constexpr());
+				ctor_ref.set_noexcept(header.specifiers.is_noexcept);
+				if (header.requires_clause.has_value()) {
+					ctor_ref.set_requires_clause(*header.requires_clause);
+				}
+				
 				// Apply parsed parameters to the constructor
-				for (const auto& param : params.parameters) {
+				for (const auto& param : header.params.parameters) {
 					ctor_ref.add_parameter_node(param);
 				}
 				
 				// Enter scope for initializer list parsing
 				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
 				
-				// Add parameters to symbol table
-				for (const auto& param : ctor_ref.parameter_nodes()) {
-					if (param.is<DeclarationNode>()) {
-						const auto& param_decl_node = param.as<DeclarationNode>();
-						const Token& param_token = param_decl_node.identifier_token();
-						gSymbolTable.insert(param_token.value(), param);
-					}
-				}
-				
-				// Parse noexcept specifier if present
-				if (parse_constructor_exception_specifier()) {
-					ctor_ref.set_noexcept(true);
-				}
-				
-				// Parse trailing requires clause if present and store on constructor
-				if (auto req = parse_trailing_requires_clause()) {
-					ctor_ref.set_requires_clause(*req);
-				}
+				// Register parameters in symbol table using shared helper
+				register_parameters_in_scope(ctor_ref.parameter_nodes());
 				
 				// Skip GCC __attribute__ between specifiers and initializer list
 				skip_gcc_attributes();

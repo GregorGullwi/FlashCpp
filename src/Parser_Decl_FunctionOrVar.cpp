@@ -442,26 +442,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		func_ref.set_is_consteval(is_consteval);
 		
 		// Search for existing member function declaration with the same name, const qualification, and matching signature
-		StructMemberFunction* existing_member = nullptr;
-		size_t def_param_count = func_ref.parameter_nodes().size();
-		for (auto& member : struct_info->member_functions) {
-			if (member.getName() == function_name_token.handle() &&
-				member.is_const() == member_quals.is_const() &&
-				member.is_volatile() == member_quals.is_volatile()) {
-				// Also check parameter count for overload resolution
-				if (member.function_decl.is<FunctionDeclarationNode>()) {
-					const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
-					if (decl_func.parameter_nodes().size() == def_param_count) {
-						existing_member = &member;
-						break;
-					}
-				} else {
-					// If not a FunctionDeclarationNode, accept the first match
-					existing_member = &member;
-					break;
-				}
-			}
-		}
+		StructMemberFunction* existing_member = find_member_function_by_signature(
+			*struct_info, function_name_token.handle(), member_quals,
+			func_ref.parameter_nodes().size());
 		
 		if (!existing_member) {
 			// Check if there's a declaration with the same name but different signature
@@ -1160,95 +1143,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	skip_trailing_requires_clause();
 	
 	// Find the matching constructor/destructor declaration in the struct
-	StructMemberFunction* existing_member = nullptr;
-	size_t param_count = params.parameters.size();
-	
-	for (auto& member : struct_info->member_functions) {
-		if (is_destructor && member.is_destructor) {
-			// Destructors have no parameters to match
-			if (member.function_decl.is<DestructorDeclarationNode>()) {
-				const DestructorDeclarationNode& dtor = member.function_decl.as<DestructorDeclarationNode>();
-				// Skip if already has definition
-				if (dtor.get_definition().has_value()) {
-					continue;
-				}
-			}
-			existing_member = &member;
-			break;
-		} else if (!is_destructor && member.is_constructor) {
-			// For constructors, match by parameter count and types
-			if (member.function_decl.is<ConstructorDeclarationNode>()) {
-				const ConstructorDeclarationNode& ctor = member.function_decl.as<ConstructorDeclarationNode>();
-				
-				// Skip if already has definition
-				if (ctor.get_definition().has_value()) {
-					continue;
-				}
-				
-				// Check parameter count first
-				if (ctor.parameter_nodes().size() != param_count) {
-					continue;
-				}
-				
-				// Match parameter types
-				bool params_match = true;
-				for (size_t i = 0; i < param_count && params_match; ++i) {
-					const ASTNode& decl_param = ctor.parameter_nodes()[i];
-					const ASTNode& def_param = params.parameters[i];
-					
-					// Get type info from both parameters
-					const TypeSpecifierNode* decl_type = nullptr;
-					const TypeSpecifierNode* def_type = nullptr;
-					
-					if (decl_param.is<VariableDeclarationNode>()) {
-						const VariableDeclarationNode& var = decl_param.as<VariableDeclarationNode>();
-						if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-							decl_type = &var.declaration().type_node().as<TypeSpecifierNode>();
-						}
-					} else if (decl_param.is<DeclarationNode>()) {
-						const DeclarationNode& decl = decl_param.as<DeclarationNode>();
-						if (decl.type_node().is<TypeSpecifierNode>()) {
-							decl_type = &decl.type_node().as<TypeSpecifierNode>();
-						}
-					}
-					
-					if (def_param.is<VariableDeclarationNode>()) {
-						const VariableDeclarationNode& var = def_param.as<VariableDeclarationNode>();
-						if (var.declaration().type_node().is<TypeSpecifierNode>()) {
-							def_type = &var.declaration().type_node().as<TypeSpecifierNode>();
-						}
-					} else if (def_param.is<DeclarationNode>()) {
-						const DeclarationNode& decl = def_param.as<DeclarationNode>();
-						if (decl.type_node().is<TypeSpecifierNode>()) {
-							def_type = &decl.type_node().as<TypeSpecifierNode>();
-						}
-					}
-					
-					if (!decl_type || !def_type) {
-						params_match = false;
-						continue;
-					}
-					
-					// Compare types
-					if (decl_type->type() != def_type->type()) {
-						params_match = false;
-					} else if (decl_type->pointer_depth() != def_type->pointer_depth()) {
-						params_match = false;
-					} else if (decl_type->is_reference() != def_type->is_reference()) {
-						params_match = false;
-					} else if (decl_type->type_index() != def_type->type_index()) {
-						// For user-defined types, check type_index
-						params_match = false;
-					}
-				}
-				
-				if (params_match) {
-					existing_member = &member;
-					break;
-				}
-			}
-		}
-	}
+	StructMemberFunction* existing_member = find_ctor_dtor_for_definition(*struct_info, is_destructor, params);
 	
 	if (!existing_member) {
 		FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, is_destructor ? "::~" : "::", class_name, 

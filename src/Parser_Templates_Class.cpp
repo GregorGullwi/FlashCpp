@@ -1637,31 +1637,35 @@ ParseResult Parser::parse_template_declaration() {
 						ctor_ref.set_constexpr(ctor_is_constexpr);
 						ctor_ref.set_explicit(ctor_is_explicit);
 						
-						// Parse parameters using unified parse_parameter_list (Phase 1)
-						FlashCpp::ParsedParameterList params;
-						auto param_result = parse_parameter_list(params);
+						// Collect constructor header data into ParsedFunctionHeader (Priority 5)
+						FlashCpp::ParsedFunctionHeader header;
+						header.name_token = name_token;
+						
+						// Parse parameters into the unified header struct
+						auto param_result = parse_parameter_list(header.params);
 						if (param_result.is_error()) {
 							return param_result;
 						}
-						for (const auto& param : params.parameters) {
+						
+						// Parse noexcept / trailing requires into header
+						header.specifiers.is_noexcept = parse_constructor_exception_specifier();
+						header.requires_clause = parse_trailing_requires_clause();
+						
+						// Apply collected header to the constructor node
+						ctor_ref.set_noexcept(header.specifiers.is_noexcept);
+						if (header.requires_clause.has_value()) {
+							ctor_ref.set_requires_clause(*header.requires_clause);
+						}
+						for (const auto& param : header.params.parameters) {
 							ctor_ref.add_parameter_node(param);
 						}
 						
-						// Enter a temporary scope for parsing the initializer list
-						gSymbolTable.enter_scope(ScopeType::Function);
+						// Enter scope with RAII guard; all paths exit through the guard (Priority 5)
+						FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
 						
-						// Register parameters in symbol table using helper (Phase 5)
+						// Register parameters in symbol table using shared helper
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
-						// Parse exception specifier (noexcept or throw()) before initializer list
-						if (parse_constructor_exception_specifier()) {
-							ctor_ref.set_noexcept(true);
-						}
-						
-						// Parse trailing requires clause if present and store on constructor
-						if (auto req = parse_trailing_requires_clause()) {
-							ctor_ref.set_requires_clause(*req);
-						}
 						// Skip GCC __attribute__ between specifiers and initializer list
 						skip_gcc_attributes();
 						
@@ -1791,20 +1795,17 @@ ParseResult Parser::parse_template_declaration() {
 									is_defaulted = true;
 									
 									if (!consume(";"_tok)) {
-										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= default'", peek_info());
 									}
 									
 									ctor_ref.set_is_implicit(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
-									gSymbolTable.exit_scope();
 								} else if (peek() == "delete"_tok) {
 									advance();
 									is_deleted = true;
 
 									if (!consume(";"_tok)) {
-										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= delete'", peek_info());
 									}
 
@@ -1848,14 +1849,11 @@ ParseResult Parser::parse_template_declaration() {
 										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
 									}
 
-									gSymbolTable.exit_scope();
 									continue;
 								} else {
-									gSymbolTable.exit_scope();
 									return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
 								}
 							} else {
-								gSymbolTable.exit_scope();
 								return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
 							}
 						}
@@ -1876,12 +1874,10 @@ ParseResult Parser::parse_template_declaration() {
 									while (peek() == "catch"_tok) {
 										auto clause_result = parse_one_catch_clause(catch_clauses);
 										if (clause_result.is_error()) {
-											gSymbolTable.exit_scope();
 											return clause_result;
 										}
 									}
 									if (catch_clauses.empty()) {
-										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected at least one 'catch' clause after function-try-block", current_token_);
 									}
 									ASTNode try_node = make_try_block_body(*block_result.node(), std::move(catch_clauses), Token(), true /* is_ctor_or_dtor */);
@@ -1890,7 +1886,6 @@ ParseResult Parser::parse_template_declaration() {
 							} else {
 								block_result = parse_function_body(true /* is_ctor_or_dtor */);
 							}
-							gSymbolTable.exit_scope();
 							
 							if (block_result.is_error()) {
 								return block_result;
@@ -1900,10 +1895,8 @@ ParseResult Parser::parse_template_declaration() {
 								ctor_ref.set_definition(*block);
 							}
 						} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
-							gSymbolTable.exit_scope();
 							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", peek_info());
 						} else if (!is_defaulted && !is_deleted) {
-							gSymbolTable.exit_scope();
 						}
 						
 						struct_ref.add_constructor(ctor_node, current_access);
@@ -2447,7 +2440,7 @@ ParseResult Parser::parse_template_declaration() {
 				restore_token_position(delayed.body_start);
 
 				// Set up function context
-				gSymbolTable.enter_scope(ScopeType::Function);
+				FlashCpp::SymbolTableScope delayed_scope(ScopeType::Function);
 				member_function_context_stack_.push_back({
 					delayed.struct_name,
 					delayed.struct_type_index,
@@ -2464,21 +2457,11 @@ ParseResult Parser::parse_template_declaration() {
 					guard_delay_ptb.emplace(parsing_template_depth_);
 				}
 
-				// Add function parameters to scope (handling constructors, destructors, and regular functions)
+				// Register function parameters using shared helper
 				if (delayed.is_constructor && delayed.ctor_node) {
-					for (const auto& param : delayed.ctor_node->parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& param_decl = param.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param);
-						}
-					}
+					register_parameters_in_scope(delayed.ctor_node->parameter_nodes());
 				} else if (!delayed.is_destructor && delayed.func_node) {
-					for (const auto& param : delayed.func_node->parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& param_decl = param.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param);
-						}
-					}
+					register_parameters_in_scope(delayed.func_node->parameter_nodes());
 				}
 				// Destructors have no parameters
 
@@ -2486,9 +2469,9 @@ ParseResult Parser::parse_template_declaration() {
 				const bool is_ctor_or_dtor = delayed.is_constructor || delayed.is_destructor;
 				auto block_result = parse_function_body(is_ctor_or_dtor);
 
+				member_function_context_stack_.pop_back();
+
 				if (block_result.is_error()) {
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
 					return block_result;
 				}
 
@@ -2505,9 +2488,6 @@ ParseResult Parser::parse_template_declaration() {
 						finalize_function_after_definition(*delayed.func_node);
 					}
 				}
-
-				member_function_context_stack_.pop_back();
-				gSymbolTable.exit_scope();
 			}
 
 			// Clear delayed function bodies
@@ -3111,31 +3091,35 @@ ParseResult Parser::parse_template_declaration() {
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						
-						// Parse parameters using unified parse_parameter_list (Phase 1)
-						FlashCpp::ParsedParameterList params;
-						auto param_result = parse_parameter_list(params);
+						// Collect constructor header data into ParsedFunctionHeader (Priority 5)
+						FlashCpp::ParsedFunctionHeader header;
+						header.name_token = name_token;
+						
+						// Parse parameters into the unified header struct
+						auto param_result = parse_parameter_list(header.params);
 						if (param_result.is_error()) {
 							return param_result;
 						}
-						for (const auto& param : params.parameters) {
+						
+						// Parse noexcept / trailing requires into header
+						header.specifiers.is_noexcept = parse_constructor_exception_specifier();
+						header.requires_clause = parse_trailing_requires_clause();
+						
+						// Apply collected header to the constructor node
+						ctor_ref.set_noexcept(header.specifiers.is_noexcept);
+						if (header.requires_clause.has_value()) {
+							ctor_ref.set_requires_clause(*header.requires_clause);
+						}
+						for (const auto& param : header.params.parameters) {
 							ctor_ref.add_parameter_node(param);
 						}
 						
-						// Enter a temporary scope for parsing the initializer list
-						gSymbolTable.enter_scope(ScopeType::Function);
+						// Enter scope with RAII guard; all paths exit through the guard (Priority 5)
+						FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
 						
-						// Register parameters in symbol table using helper (Phase 5)
+						// Register parameters in symbol table using shared helper
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
-						// Parse exception specifier (noexcept or throw()) before initializer list
-						if (parse_constructor_exception_specifier()) {
-							ctor_ref.set_noexcept(true);
-						}
-						
-						// Parse trailing requires clause if present and store on constructor
-						if (auto req = parse_trailing_requires_clause()) {
-							ctor_ref.set_requires_clause(*req);
-						}
 						// Skip GCC __attribute__ between specifiers and initializer list
 						skip_gcc_attributes();
 						
@@ -3257,20 +3241,17 @@ ParseResult Parser::parse_template_declaration() {
 									is_defaulted = true;
 									
 									if (!consume(";"_tok)) {
-										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= default'", peek_info());
 									}
 									
 									ctor_ref.set_is_implicit(true);
 									auto [block_node, block_ref] = create_node_ref(BlockNode());
 									ctor_ref.set_definition(block_node);
-									gSymbolTable.exit_scope();
 								} else if (peek() == "delete"_tok) {
 									advance();
 									is_deleted = true;
 
 									if (!consume(";"_tok)) {
-										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= delete'", peek_info());
 									}
 
@@ -3314,14 +3295,11 @@ ParseResult Parser::parse_template_declaration() {
 										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
 									}
 
-									gSymbolTable.exit_scope();
 									continue;
 								} else {
-									gSymbolTable.exit_scope();
 									return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
 								}
 							} else {
-								gSymbolTable.exit_scope();
 								return ParseResult::error("Expected 'default' or 'delete' after '='", peek_info());
 							}
 						}
@@ -3337,7 +3315,6 @@ ParseResult Parser::parse_template_declaration() {
 							}
 							
 							skip_balanced_braces();
-							gSymbolTable.exit_scope();
 							
 							delayed_function_bodies_.push_back({
 								nullptr,
@@ -3354,10 +3331,8 @@ ParseResult Parser::parse_template_declaration() {
 								{}  // template_param_names
 							});
 						} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
-							gSymbolTable.exit_scope();
 							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", peek_info());
 						} else if (!is_defaulted && !is_deleted) {
-							gSymbolTable.exit_scope();
 						}
 						
 						struct_ref.add_constructor(ctor_node, current_access);
@@ -4275,20 +4250,14 @@ if (struct_type_info.getStructInfo()) {
 				return ParseResult::error(error_msg, current_token_);
 			}
 			
-			// Enter function scope for parsing the body
-			gSymbolTable.enter_scope(ScopeType::Function);
+			// Enter function scope with RAII guard for parsing the body
+			FlashCpp::SymbolTableScope func_body_scope(ScopeType::Function);
 			
-			// Add parameters to symbol table
-			for (const auto& param : func_node.parameter_nodes()) {
-				if (param.is<DeclarationNode>()) {
-					const DeclarationNode& param_decl = param.as<DeclarationNode>();
-					gSymbolTable.insert(param_decl.identifier_token().value(), param);
-				}
-			}
+			// Register parameters in symbol table using shared helper
+			register_parameters_in_scope(func_node.parameter_nodes());
 			
 			// Parse the function body
 			auto body_result = parse_function_body();  // handles function-try-blocks too
-			gSymbolTable.exit_scope();
 			
 			if (body_result.is_error()) {
 				return body_result;
