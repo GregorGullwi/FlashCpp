@@ -2553,7 +2553,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		for (const auto& overload : all_overloads) {
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
-				if (candidate.is_constexpr() && 
+				if ((candidate.is_constexpr() || candidate.is_consteval()) && 
 				    candidate.parameter_nodes().size() == arguments.size()) {
 					// Found a potential match - try to evaluate it
 					std::unordered_map<std::string_view, EvalResult> empty_bindings;
