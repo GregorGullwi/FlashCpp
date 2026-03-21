@@ -718,9 +718,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			return true;
 		};
 
-		auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
-			TempVar result_temp = var_counter.next();
-			GlobalLoadOp load_op;
+	auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
+		TempVar result_temp = var_counter.next();
+		GlobalLoadOp load_op;
 			load_op.result.type = binding.type;
 			load_op.result.ir_type = toIrType(binding.type);
 			load_op.result.size_in_bits = binding.size_in_bits;
@@ -732,8 +732,22 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
 				binding.type, binding.size_in_bits.value));
 
-			return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp});
-		};
+		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp});
+	};
+
+	auto tryGetGlobalLValueName = [&](const ExprResult& expr_result) -> std::optional<StringHandle> {
+		const auto* temp_var = std::get_if<TempVar>(&expr_result.value);
+		if (!temp_var) {
+			return std::nullopt;
+		}
+		if (auto lvalue_info = getTempVarLValueInfo(*temp_var);
+			lvalue_info.has_value() &&
+			lvalue_info->kind == LValueInfo::Kind::Global &&
+			std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			return std::get<StringHandle>(lvalue_info->base);
+		}
+		return std::nullopt;
+	};
 
 		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
@@ -742,7 +756,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static) {
+				if (gsi.is_global_or_static && !isIrStructType(toIrType(gsi.type))) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -1040,6 +1054,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			if (std::holds_alternative<TempVar>(operand_result.value)) {
 				TempVar temp_var = std::get<TempVar>(operand_result.value);
+				if (auto global_name = tryGetGlobalLValueName(operand_result); global_name.has_value()) {
+					arg.value = emitAddressOf(operand_type, operand_size, IrValue(*global_name));
+					return arg;
+				}
 				bool is_already_address = false;
 
 				auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
@@ -1087,7 +1105,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for struct assignment with user-defined operator=(non-struct)
 		// This handles patterns like: struct_var = primitive_value
 		// where struct has operator=(int), operator=(double), etc.
-		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsExprResult.type_index.is_valid()) {
+		if (op == "=" && lhsType == Type::Struct &&
+			rhsType != Type::Struct &&
+			!rhsExprResult.type_index.is_valid() &&
+			lhsExprResult.type_index.is_valid()) {
 			// Get the type index of the struct
 			TypeIndex lhs_type_index = lhsExprResult.type_index;
 			TypeIndex rhs_type_index = carriesSemanticTypeIndex(rhsType)
@@ -1167,7 +1188,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
 								lhs_value = *string;
 							} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
-								lhs_value = *temp_var;
+								if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+									lhs_value = *global_name;
+								} else {
+									lhs_value = *temp_var;
+								}
 							} else {
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return ExprResult{};
@@ -1642,7 +1667,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (const auto* string_val = std::get_if<StringHandle>(&lhsExprResult.value)) {
 					lhs_value = *string_val;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
-					lhs_value = *temp_var;
+					if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+						lhs_value = *global_name;
+					} else {
+						lhs_value = *temp_var;
+					}
 				} else {
 					// Can't take address of non-lvalue
 					FLASH_LOG(Codegen, Error, "Cannot take address of binary operator LHS - not an lvalue");
@@ -2281,6 +2310,26 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.rhs = toTypedValue(rhsExprResult);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			// Assignment expression returns the LHS (the assigned-to value)
+			if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+				TempVar store_temp = var_counter.next();
+				AssignmentOp materialize_store;
+				materialize_store.result = store_temp;
+				materialize_store.lhs = { lhsType, SizeInBits{lhsSize}, store_temp };
+				materialize_store.rhs = toTypedValue(rhsExprResult);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_store), binaryOperatorNode.get_token()));
+
+				std::vector<IrOperand> store_operands;
+				store_operands.emplace_back(*global_name);
+				store_operands.emplace_back(store_temp);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+				GlobalStaticBindingInfo binding;
+				binding.is_global_or_static = true;
+				binding.store_name = *global_name;
+				binding.type = lhsType;
+				binding.size_in_bits = SizeInBits{lhsSize};
+				return makeGlobalAssignmentResultLValue(binding);
+			}
 			return lhsExprResult;
 		}
 

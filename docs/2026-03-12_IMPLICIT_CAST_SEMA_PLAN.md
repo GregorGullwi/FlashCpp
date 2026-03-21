@@ -1188,6 +1188,27 @@ required `E1 op= E2` result category.
 **Regression coverage:** added a runtime regression test for global/static
 compound-assignment result lvalues.
 
+### Follow-up slice ✅: global/static struct assignment operator dispatch
+
+**Goal:** Ensure global and static-local struct assignments reuse the normal
+`operator=` / deleted-special-member logic instead of bypassing it with a raw
+bitwise store.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- simple global/static assignment now keeps the old fast path only for
+	  non-struct types; struct globals fall through to the ordinary assignment
+	  machinery
+	- address-taking for member operator calls and reference arguments now unwraps
+	  global lvalue metadata back to the underlying global binding, so `this`
+	  points at the real global/static object rather than the loaded temp
+	- the generic assignment fallback now recognizes global lvalue metadata and
+	  emits `GlobalStore` + lvalue result reconstruction instead of assigning back
+	  into the transient load temp
+
+**Regression coverage:** added a runtime regression test showing that user-defined
+same-type `operator=` now runs for both global and static-local struct targets.
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had

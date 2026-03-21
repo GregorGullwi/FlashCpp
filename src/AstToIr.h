@@ -663,6 +663,7 @@ private:
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
 		Type type;
 		SizeInBits size_in_bits;
+		TypeIndex type_index {};
 	};
 
 	// Map from local static variable name to info
