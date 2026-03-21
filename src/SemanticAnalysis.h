@@ -137,6 +137,8 @@ private:
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
+	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
+	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
 	std::optional<TypeSpecifierNode> getDocumentedParserTypeFallback(const ASTNode& node);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
 

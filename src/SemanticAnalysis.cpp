@@ -852,6 +852,52 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const FunctionDeclar
 	}
 }
 
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor) {
+	if (!ctor.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = ctor.outer_template_param_names();
+	const auto& param_args = ctor.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor) {
+	if (!dtor.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = dtor.outer_template_param_names();
+	const auto& param_args = dtor.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
 void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) {
 	if (!lambda_info.is_generic || lambda_info.deduced_auto_types.empty()) {
 		return;
@@ -1370,6 +1416,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 	// Push a scope for this constructor's parameters.
 	pushScope();
+	registerOuterTemplateBindingsInScope(ctor);
 	registerParametersInScope(ctor.parameter_nodes());
 
 	// C++20 [class.base.init]: normalize member initializer expressions so
@@ -1405,6 +1452,7 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 	// Destructors cannot have parameters; push/pop a scope for consistency
 	// with the function normalization pattern.
 	pushScope();
+	registerOuterTemplateBindingsInScope(dtor);
 	normalizeStatement(*def, ctx);
 	popScope();
 }

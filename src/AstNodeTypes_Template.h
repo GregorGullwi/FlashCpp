@@ -427,6 +427,38 @@ public:
 	bool has_template_body_position() const { return has_template_body_; }
 	SaveHandle template_body_position() const { return template_body_position_handle_; }
 
+	template<typename NameContainer, typename ArgContainer>
+	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		outer_template_param_names_.clear();
+		outer_template_args_.clear();
+		outer_template_param_names_.reserve(template_param_names.size());
+		outer_template_args_.reserve(template_args.size());
+
+		for (StringHandle param_name : template_param_names) {
+			outer_template_param_names_.push_back(param_name);
+		}
+
+		for (const auto& arg : template_args) {
+			TypeInfo::TemplateArgInfo info;
+			info.base_type = arg.base_type;
+			info.type_index = arg.type_index;
+			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+			info.pointer_depth = arg.pointer_depth;
+			info.cv_qualifier = arg.cv_qualifier;
+			info.ref_qualifier = arg.ref_qualifier;
+			info.value = arg.value;
+			info.is_value = arg.is_value;
+			info.is_array = arg.is_array;
+			info.array_size = arg.array_size;
+			info.dependent_name = arg.dependent_name;
+			outer_template_args_.push_back(std::move(info));
+		}
+	}
+
+	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+
 private:
 	StringHandle struct_name_;
 	StringHandle name_;
@@ -443,6 +475,8 @@ private:
 	std::optional<ASTNode> requires_clause_;  // C++20 trailing requires clause
 	bool has_template_body_ = false;
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
+	InlineVector<StringHandle, 4> outer_template_param_names_;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
 
 // Destructor declaration node
@@ -490,6 +524,38 @@ public:
 	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
 	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
 
+	template<typename NameContainer, typename ArgContainer>
+	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		outer_template_param_names_.clear();
+		outer_template_args_.clear();
+		outer_template_param_names_.reserve(template_param_names.size());
+		outer_template_args_.reserve(template_args.size());
+
+		for (StringHandle param_name : template_param_names) {
+			outer_template_param_names_.push_back(param_name);
+		}
+
+		for (const auto& arg : template_args) {
+			TypeInfo::TemplateArgInfo info;
+			info.base_type = arg.base_type;
+			info.type_index = arg.type_index;
+			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+			info.pointer_depth = arg.pointer_depth;
+			info.cv_qualifier = arg.cv_qualifier;
+			info.ref_qualifier = arg.ref_qualifier;
+			info.value = arg.value;
+			info.is_value = arg.is_value;
+			info.is_array = arg.is_array;
+			info.array_size = arg.array_size;
+			info.dependent_name = arg.dependent_name;
+			outer_template_args_.push_back(std::move(info));
+		}
+	}
+
+	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+
 private:
 	StringHandle struct_name_;  // Points directly into source text from lexer token
 	StringHandle name_;         // Points directly into source text from lexer token
@@ -498,6 +564,8 @@ private:
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
 	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
 	std::optional<ASTNode> noexcept_expression_;  // For explicit noexcept(expr)
+	InlineVector<StringHandle, 4> outer_template_param_names_;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
 
 // Anonymous union member information - stored during parsing, processed during layout
