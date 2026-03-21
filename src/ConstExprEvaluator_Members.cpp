@@ -1179,15 +1179,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 				// &arr[i]: address of array element → pointer with offset
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
-					const ASTNode& arr_expr = subscript->array_expr();
-					std::string_view arr_name;
-					if (arr_expr.is<ExpressionNode>()) {
-						if (const auto* arr_id = std::get_if<IdentifierNode>(&arr_expr.as<ExpressionNode>())) {
-							arr_name = arr_id->name();
-						}
-					} else if (arr_expr.is<IdentifierNode>()) {
-						arr_name = arr_expr.as<IdentifierNode>().name();
-					}
+					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
 					if (!arr_name.empty()) {
 						auto idx_result = evaluate_expression_with_bindings(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
@@ -1210,7 +1202,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				if (operand_result.pointer_offset == 0) {
 					auto it = bindings.find(ptr_var_name);
 					if (it != bindings.end()) {
-						return it->second;
+						const EvalResult& bound = it->second;
+						// If the bound value is an array, return element [0] rather than the whole array.
+						if (bound.is_array) {
+							if (!bound.array_elements.empty()) return bound.array_elements[0];
+							if (!bound.array_values.empty()) return EvalResult::from_int(bound.array_values[0]);
+						}
+						return bound;
 					}
 					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
 					if (!operand_result.array_elements.empty()) {
@@ -1362,15 +1360,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				}
 				// &arr[i]: address of array element → pointer with offset
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
-					const ASTNode& arr_expr = subscript->array_expr();
-					std::string_view arr_name;
-					if (arr_expr.is<ExpressionNode>()) {
-						if (const auto* arr_id = std::get_if<IdentifierNode>(&arr_expr.as<ExpressionNode>())) {
-							arr_name = arr_id->name();
-						}
-					} else if (arr_expr.is<IdentifierNode>()) {
-						arr_name = arr_expr.as<IdentifierNode>().name();
-					}
+					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
 					if (!arr_name.empty()) {
 						auto idx_result = recursive_eval(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
@@ -1392,7 +1382,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (operand_result.pointer_offset == 0) {
 					auto it = bindings.find(ptr_var_name);
 					if (it != bindings.end()) {
-						return it->second;
+						const EvalResult& bound = it->second;
+						// If the bound value is an array, return element [0] rather than the whole array.
+						if (bound.is_array) {
+							if (!bound.array_elements.empty()) return bound.array_elements[0];
+							if (!bound.array_values.empty()) return EvalResult::from_int(bound.array_values[0]);
+						}
+						return bound;
 					}
 					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
 					if (!operand_result.array_elements.empty()) {
@@ -1459,18 +1455,32 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (member_access.is_arrow()) {
 					auto binding_it = bindings.find(obj_id.name());
 					if (binding_it != bindings.end() && binding_it->second.pointer_to_var.isValid()) {
+						const EvalResult& ptr_eval = binding_it->second;
+						std::string_view ptr_var_name = StringTable::getStringView(ptr_eval.pointer_to_var);
+						// When the pointer has a non-zero offset, dereference the array element first.
+						if (ptr_eval.pointer_offset != 0) {
+							auto elem_result = dereference_constexpr_pointer(ptr_var_name, context, ptr_eval.pointer_offset);
+							if (elem_result.success()) {
+								auto member_it = elem_result.object_member_bindings.find(member_name);
+								if (member_it != elem_result.object_member_bindings.end()) {
+									return member_it->second;
+								}
+							}
+							return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
+								"' not found at offset " + std::to_string(ptr_eval.pointer_offset));
+						}
 						// Check snapshot first (covers pointers to local / outer-scope variables).
 						// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
 						// "array_elements field reused for pointer value snapshot").
-						if (!binding_it->second.array_elements.empty()) {
-							const EvalResult& snapshot = binding_it->second.array_elements[0];
+						if (!ptr_eval.array_elements.empty()) {
+							const EvalResult& snapshot = ptr_eval.array_elements[0];
 							auto member_it = snapshot.object_member_bindings.find(member_name);
 							if (member_it != snapshot.object_member_bindings.end()) {
 								return member_it->second;
 							}
 						}
 						return evaluate_arrow_member_from_pointer_var(
-							StringTable::getStringView(binding_it->second.pointer_to_var), member_name, context, /*check_static=*/true);
+							ptr_var_name, member_name, context, /*check_static=*/true);
 					}
 				}
 			}
@@ -2468,22 +2478,24 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		if (!ptr_result.pointer_to_var.isValid()) {
 			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
 		}
-		// When the pointer has a non-zero offset (e.g. (ptr + 1)->member on a struct array),
-		// dereference the array element first, then access the member on the resulting object.
-		if (ptr_result.pointer_offset != 0) {
-			auto elem_result = dereference_constexpr_pointer(
-				StringTable::getStringView(ptr_result.pointer_to_var),
-				context, ptr_result.pointer_offset);
-			if (!elem_result.success()) return elem_result;
-			// The element should be an object with member bindings
+		std::string_view pointed_name = StringTable::getStringView(ptr_result.pointer_to_var);
+		// Try to dereference the element (handles both offset==0 for array pointers like &arr[0]
+		// and non-zero offsets like (ptr + 1)->member).  This path is tried first so that a
+		// pointer into a struct array is resolved to the correct element regardless of offset.
+		auto elem_result = dereference_constexpr_pointer(pointed_name, context, ptr_result.pointer_offset);
+		if (elem_result.success()) {
 			auto it = elem_result.object_member_bindings.find(member_name);
 			if (it != elem_result.object_member_bindings.end()) {
 				return it->second;
 			}
-			return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
-				"' not found on array element at offset " + std::to_string(ptr_result.pointer_offset));
 		}
-		return evaluate_arrow_member_from_pointer_var(StringTable::getStringView(ptr_result.pointer_to_var), member_name, context, /*check_static=*/true);
+		// For a plain (non-array) struct pointer at offset 0, fall back to the standard resolver
+		// which handles constructor-initializer-list member extraction.
+		if (ptr_result.pointer_offset == 0) {
+			return evaluate_arrow_member_from_pointer_var(pointed_name, member_name, context, /*check_static=*/true);
+		}
+		return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
+			"' not found on array element at offset " + std::to_string(ptr_result.pointer_offset));
 	}
 
 	// Check if this is a nested member access (e.g., obj.inner.value)

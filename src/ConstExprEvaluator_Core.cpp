@@ -282,15 +282,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 			}
 			// &arr[i]: address of array element → pointer with offset
 			if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
-				const ASTNode& array_expr = subscript->array_expr();
-				std::string_view arr_name;
-				if (array_expr.is<ExpressionNode>()) {
-					if (const auto* arr_id = std::get_if<IdentifierNode>(&array_expr.as<ExpressionNode>())) {
-						arr_name = arr_id->name();
-					}
-				} else if (array_expr.is<IdentifierNode>()) {
-					arr_name = array_expr.as<IdentifierNode>().name();
-				}
+				std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
 				if (!arr_name.empty()) {
 					auto index_result = evaluate(subscript->index_expr(), context);
 					if (!index_result.success()) return index_result;
