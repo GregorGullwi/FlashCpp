@@ -297,7 +297,7 @@ ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view 
 - Net effect: constructor detection lookahead extracted into shared helper; site 1
   reduced by ~24 lines; site 2 restructured to use helper for simple case
 
-### Priority 4: Member Function Lookup Helper
+### Priority 4: Member Function Lookup Helper ✅ IMPLEMENTED
 
 Create helper function:
 ```cpp
@@ -321,11 +321,61 @@ the already-parsed header or a small comparison struct instead of only `param_co
 
 **Affected locations:** 3 primary call sites, with likely follow-up reuse elsewhere.
 
-### Priority 5: Consistent Function Header Parsing
+#### Implementation Notes (March 2026)
+
+**Two helpers added, both declared in `Parser.h` and implemented in `Parser_FunctionBodies.cpp`:**
+
+- `find_member_function_by_signature(StructTypeInfo&, StringHandle, MemberQualifiers, size_t)`
+  — For regular member functions. Searches by name, cv-qualifiers, and parameter count.
+  Returns `StructMemberFunction*` (mutable for attaching the definition).
+
+- `find_ctor_dtor_for_definition(StructTypeInfo&, bool is_destructor, ParsedParameterList&)`
+  — For constructors/destructors. For destructors, skips already-defined entries.
+  For constructors, matches by parameter count and type (using a shared
+  `get_param_type_specifier()` file-local helper to extract `TypeSpecifierNode*`
+  from both `DeclarationNode` and `VariableDeclarationNode` params).
+
+**Site 1 (`Parser_Decl_FunctionOrVar.cpp` out-of-line member function lookup):**
+- 14-line iteration loop replaced by single `find_member_function_by_signature()` call.
+
+**Site 2 (`Parser_Decl_FunctionOrVar.cpp` out-of-line ctor/dtor lookup):**
+- 85-line iteration loop (including inline type-matching logic and `get_param_type_specifier` duplication)
+  replaced by single `find_ctor_dtor_for_definition()` call.
+
+**Site 3 (`Parser_Templates_MemberOutOfLine.cpp` template member validation):**
+- Uses `StructDeclarationNode::member_functions()` for validation only — not a definition
+  attachment. Kept as-is; the TypeIndex-based helpers are not needed here.
+
+**Net effect:** ~90 lines of open-coded iteration removed from the two primary call sites.
+
+### Priority 5: Consistent Function Header Parsing ✅ IMPLEMENTED
 
 Refactor template and constructor parsing paths to use `ParsedFunctionHeader` structure consistently.
 
 **Affected locations:** Multiple paths in Parser_Templates_Function.cpp, Parser_Templates_Class.cpp
+
+#### Implementation Notes (March 2026)
+
+**`Parser_Templates_Function.cpp` template constructor sub-path (Priority 5a):**
+- Open-coded `ParsedParameterList params` + manual param loop + individual `parse_constructor_exception_specifier()` / `parse_trailing_requires_clause()` calls replaced with a single `FlashCpp::ParsedFunctionHeader header` that collects all header data before constructing the `ConstructorDeclarationNode`.
+- Open-coded parameter registration loop (`for...gSymbolTable.insert`) replaced by `register_parameters_in_scope()`.
+
+**`Parser_Templates_Class.cpp` constructor parsing (Priority 5b) — two occurrences:**
+- Full-specialization constructor path (former `gSymbolTable.enter_scope` at ~line 1651): converted to `ParsedFunctionHeader` + `FlashCpp::SymbolTableScope ctor_scope`. All 11 previously scattered `gSymbolTable.exit_scope()` calls removed; RAII guard ensures scope exit on every path.
+- Partial-specialization constructor path (former `gSymbolTable.enter_scope` at ~line 3125): same transformation; 8 explicit `exit_scope()` calls removed.
+- Requires clause parsed into `header.requires_clause` before constructing the node; the post-scope duplicate `parse_trailing_requires_clause()` call removed.
+
+**`Parser_Templates_Class.cpp` delayed body loop (Priority 5c):**
+- Manual `gSymbolTable.enter_scope` + open-coded per-field parameter registration loop converted to `FlashCpp::SymbolTableScope delayed_scope` + `register_parameters_in_scope()`. The `member_function_context_stack_` management (template-specific context) kept as manual push/pop since it carries template parameter info not present in `FunctionParsingScopeGuard`.
+- The error-path manual `member_function_context_stack_.pop_back()` + `exit_scope()` combo replaced by RAII scope + single unconditional `pop_back()` after `parse_function_body()` returns.
+
+**`Parser_Templates_Class.cpp` template function specialization body (Priority 5d):**
+- `gSymbolTable.enter_scope` + open-coded param loop + `exit_scope` converted to `FlashCpp::SymbolTableScope func_body_scope` + `register_parameters_in_scope()`.
+
+**Metrics after Priority 4 + 5:**
+- 1633 tests pass, 0 fail, 67 expected-fail
+- Duplicate parameter registration (previously 3 remaining): reduced to 0 in main non-template paths; template delayed body now uses `register_parameters_in_scope()`
+- `ParsedFunctionHeader` now used in all template constructor parsing paths
 
 ## Out of Scope
 
@@ -373,12 +423,12 @@ declarator infrastructure. Expression/postfix call parsing should stay separate.
 
 ## Metrics
 
-| Metric | Before Priority 1 | After Priority 1 | After Priority 2 | After Priority 3 | Target |
-|--------|--------------------|-------------------|------------------|------------------|--------|
-| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 0 (FunctionParsingScopeGuard covers all) | 0 | 0 |
-| Duplicate constructor lookahead | 2 | 2 | 2 | 0 (lookahead_constructor_or_destructor shared) | 0 |
-| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 3 (remaining template paths) | 3 | 1 |
-| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent (all main paths unified) | Consistent | Consistent |
+| Metric | Before Priority 1 | After Priority 1 | After Priority 2 | After Priority 3 | After Priority 4+5 | Target |
+|--------|--------------------|-------------------|------------------|------------------|--------------------|--------|
+| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 0 (FunctionParsingScopeGuard covers all) | 0 | 0 | 0 |
+| Duplicate constructor lookahead | 2 | 2 | 2 | 0 (lookahead_constructor_or_destructor shared) | 0 | 0 |
+| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 3 (remaining template paths) | 3 | 0 (all paths use register_parameters_in_scope) | 1 |
+| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent (all main paths unified) | Consistent | Consistent (ParsedFunctionHeader in all template ctor paths) | Consistent |
 
 ## Exit Criteria
 

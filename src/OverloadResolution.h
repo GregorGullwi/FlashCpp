@@ -11,13 +11,21 @@
 #include <unordered_map>
 
 // Conversion rank for overload resolution
-// Lower rank = better match
+// Lower rank = better match.
+// QualificationAdjustment sits between ExactMatch and Promotion: per C++20
+// [over.best.ics.general] Table 12, qualification conversions (e.g. T*→const T*)
+// are in the "exact match" category, but by [over.ics.rank]/3.2.1 a sequence
+// without a qualification step is a proper subsequence of one with it, so it is
+// strictly preferred.  Modelling this as a separate rank between ExactMatch and
+// Promotion achieves the same observable tie-breaking without any changes to the
+// rank-comparison logic throughout overload resolution.
 enum class ConversionRank {
-	ExactMatch = 0,          // No conversion needed
-	Promotion = 1,           // Integral or floating-point promotion
-	Conversion = 2,          // Standard conversion (int to double, etc.)
-	UserDefined = 3,         // User-defined conversion via conversion operator
-	NoMatch = 4              // No valid conversion
+	ExactMatch            = 0,  // Identity — no conversion needed
+	QualificationAdjustment = 1,  // T*→const T*, ExactMatch category per standard but weaker than identity
+	Promotion             = 2,  // Integral or floating-point promotion
+	Conversion            = 3,  // Standard conversion (int to double, etc.)
+	UserDefined           = 4,  // User-defined conversion via conversion operator
+	NoMatch               = 5   // No valid conversion
 };
 
 // Result of checking if one type can convert to another
@@ -27,10 +35,11 @@ struct TypeConversionResult {
 	
 	TypeConversionResult(ConversionRank r, bool valid) : rank(r), is_valid(valid) {}
 	
-	static TypeConversionResult exact_match() { return {ConversionRank::ExactMatch, true}; }
-	static TypeConversionResult promotion() { return {ConversionRank::Promotion, true}; }
-	static TypeConversionResult conversion() { return {ConversionRank::Conversion, true}; }
-	static TypeConversionResult no_match() { return {ConversionRank::NoMatch, false}; }
+	static TypeConversionResult exact_match()             { return {ConversionRank::ExactMatch, true}; }
+	static TypeConversionResult qualification_adjustment(){ return {ConversionRank::QualificationAdjustment, true}; }
+	static TypeConversionResult promotion()               { return {ConversionRank::Promotion, true}; }
+	static TypeConversionResult conversion()              { return {ConversionRank::Conversion, true}; }
+	static TypeConversionResult no_match()                { return {ConversionRank::NoMatch, false}; }
 };
 
 // Check if a type is an integral type (includes bool, unlike is_integer_type)
@@ -313,14 +322,17 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 }
 
 // Build a unified conversion plan for full TypeSpecifierNode-level conversions.
-// Handles pointers, references, struct type-index matching, derived-to-base,
-// user-defined conversions, and type aliases. Returns ConversionPlan (rank +
-// StandardConversionKind + validity) covering all cases.
-// 
-// IMPORTANT: For proper overload resolution with lvalue vs rvalue references, the caller must:
-// - Set is_lvalue_reference(true) on 'from' TypeSpecifierNode for lvalue expressions (named variables, etc.)
-// - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
-// This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
+// Handles the full gamut of TypeSpecifierNode cases:
+//   • pointer-to-pointer (depth matching, const qualification, void* conversions)
+//   • lvalue / rvalue references (binding rules, ref-qualification compatibility)
+//   • user-defined conversions (conversion operators and single-argument constructors)
+//   • struct-type matching (by TypeIndex, not just Type::Struct equality)
+//   • primitive types — delegates to buildConversionPlan(Type,Type)
+// Returns ConversionPlan (rank + StandardConversionKind + validity) covering all cases.
+//
+// IMPORTANT: For correct lvalue-vs-rvalue-reference matching the caller must:
+//   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
+//   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
@@ -360,12 +372,12 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		bool from_pointee_is_const = pointee_is_const(from);
 		bool to_pointee_is_const = pointee_is_const(to);
 		
-		// Exact type match for pointers (after resolving aliases)
-		// Must also check const qualifiers to distinguish const T* from T*
+		// Exact type match for pointers (after resolving aliases).
+		// For struct types we must additionally compare type_index so that Foo*
+		// and Bar* (both Type::Struct) are not treated as the same type.
 		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
-			// For struct/enum/UserDefined pointer types, "same resolved Type" is not
-			// sufficient — two different structs (e.g. Foo* vs Bar*) both resolve to
-			// Type::Struct.  We must also compare type_index to distinguish them.
+			// For struct pointer types, "same resolved Type" is not sufficient —
+			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
 			if (from_resolved == Type::Struct &&
 				from.type_index().is_valid() && to.type_index().is_valid() &&
 				from.type_index() != to.type_index()) {
@@ -374,17 +386,21 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			return ConversionPlan::exact_match();
 		}
 		
-		// If base types match but const qualifiers differ
+		// If base types match but const qualifiers differ.
+		// For struct pointer types, different type_index means different types — no match.
 		if (from_resolved == to_resolved) {
-			// For struct pointer types, different type_index means different types — no match.
 			if (from_resolved == Type::Struct &&
 				from.type_index().is_valid() && to.type_index().is_valid() &&
 				from.type_index() != to.type_index()) {
 				return ConversionPlan::no_match();
 			}
-			// T* → const T* is allowed (qualification conversion - adding const)
+			// T* → const T* is a qualification conversion (C++20 [conv.qual]).
+			// Per [over.best.ics.general] Table 12 this is an exact-match-category
+			// conversion; we use QualificationAdjustment rank so that a pure-identity
+			// match (f(T*)) is still preferred over the adjusted one (f(const T*))
+			// via [over.ics.rank]/3.2.1 (proper-subsequence rule).
 			if (!from_pointee_is_const && to_pointee_is_const) {
-				return {ConversionRank::Conversion, StandardConversionKind::QualificationAdjustment, true};
+				return {ConversionRank::QualificationAdjustment, StandardConversionKind::QualificationAdjustment, true};
 			}
 			// const T* → T* is NOT allowed (would remove const)
 			if (from_pointee_is_const && !to_pointee_is_const) {
@@ -1110,10 +1126,11 @@ inline OverloadResolutionResult resolve_overload(
 	}
 	
 	if (num_best_matches > 1) {
-		// Check if all tied candidates differ only in cv-qualification (const/volatile)
-		// on their parameters. FlashCpp doesn't fully track volatile qualifiers, so
-		// overloads like f(T*) vs f(volatile T*) score identically. In that case,
-		// prefer the first declared overload rather than reporting ambiguity.
+		// FlashCpp doesn't track volatile qualifiers, so overloads differing only in
+		// volatile (e.g. f(T*) vs f(volatile T*)) score identically. Prefer the first
+		// declared overload in that case rather than reporting spurious ambiguity.
+		// Note: const sub-ranking is now handled by ConversionRank::QualificationAdjustment,
+		// so this tiebreaker only fires for genuine volatile-only differences.
 		bool differs_only_in_cv = true;
 		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
 		for (const auto* candidate : tied_candidates) {
@@ -1128,7 +1145,6 @@ inline OverloadResolutionResult resolve_overload(
 			for (size_t i = 0; i < best_params.size(); ++i) {
 				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				// If base types and pointer depths match, they differ only in cv-qualification
 				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
 				    bp.pointer_depth() != cp.pointer_depth() ||
 				    bp.is_reference() != cp.is_reference() ||
@@ -1141,7 +1157,6 @@ inline OverloadResolutionResult resolve_overload(
 		}
 		
 		if (differs_only_in_cv) {
-			// Candidates differ only in cv-qualification — prefer the first match
 			return OverloadResolutionResult(best_match);
 		}
 		return OverloadResolutionResult::ambiguous();
