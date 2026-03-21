@@ -1220,7 +1220,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		std::string_view op = bin_op.op();
 		
 		// Handle assignment operators specially (they modify bindings)
-		if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=") {
+		if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
+		    op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") {
 			// Get the left-hand side variable name
 			const ASTNode& lhs = bin_op.get_lhs();
 			if (lhs.is<ExpressionNode>()) {
@@ -1289,6 +1290,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							new_value = apply_binary_op(current, rhs_result, "/", &context, &bindings);
 						} else if (op == "%=") {
 							new_value = apply_binary_op(current, rhs_result, "%", &context, &bindings);
+						} else if (op == "&=") {
+							new_value = apply_binary_op(current, rhs_result, "&", &context, &bindings);
+						} else if (op == "|=") {
+							new_value = apply_binary_op(current, rhs_result, "|", &context, &bindings);
+						} else if (op == "^=") {
+							new_value = apply_binary_op(current, rhs_result, "^", &context, &bindings);
+						} else if (op == "<<=") {
+							new_value = apply_binary_op(current, rhs_result, "<<", &context, &bindings);
+						} else if (op == ">>=") {
+							new_value = apply_binary_op(current, rhs_result, ">>", &context, &bindings);
 						}
 						
 						if (!new_value.success()) return new_value;
@@ -1498,6 +1509,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	// For member access on 'this' (e.g., this->x in a member function)
 	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
 	// Writing (this->x = ...) is handled above in the assignment operator branch.
+
+	// For new-expressions (C++20 constexpr dynamic allocation)
+	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
+		return evaluate_new_expression(*new_expr, context, &bindings);
+	}
+
+	// For delete-expressions (C++20 constexpr dynamic deallocation)
+	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
+		return evaluate_delete_expression(*del_expr, context, &bindings);
+	}
 
 	// For other expression types, use the const version (cast bindings to const)
 	const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;

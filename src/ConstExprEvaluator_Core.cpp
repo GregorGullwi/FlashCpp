@@ -266,6 +266,16 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return result;
 	}
 
+	// For NewExpressionNode (C++20 constexpr new)
+	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
+		return evaluate_new_expression(*new_expr, context);
+	}
+
+	// For DeleteExpressionNode (C++20 constexpr delete)
+	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
+		return evaluate_delete_expression(*del_expr, context);
+	}
+
 	// Other expression types are not supported as constant expressions yet
 	return EvalResult::error("Expression type not supported in constant expressions");
 }
@@ -294,9 +304,23 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 
 EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
 	std::string_view op, EvaluationContext& context) {
-	// TODO: short-circuit && / || — see docs/CONSTEXPR_LIMITATIONS.md
+	// Short-circuit && and || per C++ semantics when not in speculative mode.
+	// In speculative mode (template-argument disambiguation), both sides are evaluated
+	// eagerly so that a truthy LHS of `||` does not give a false-positive constant-
+	// expression result that would confuse the `<` disambiguation heuristic.
+	if (!context.is_speculative && (op == "&&" || op == "||")) {
+		auto lhs_result = evaluate(lhs_node, context);
+		if (!lhs_result.success()) return lhs_result;
+		const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+		if (op == "&&" && !lhs_bool) return EvalResult::from_bool(false);
+		if (op == "||" && lhs_bool)  return EvalResult::from_bool(true);
+		auto rhs_result = evaluate(rhs_node, context);
+		if (!rhs_result.success()) return rhs_result;
+		const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+		return EvalResult::from_bool(rhs_bool);
+	}
 
-	// Recursively evaluate left and right operands
+	// Eagerly evaluate both sides (required in speculative mode, or for non-logical ops)
 	auto lhs_result = evaluate(lhs_node, context);
 	auto rhs_result = evaluate(rhs_node, context);
 
@@ -356,6 +380,32 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 // When offset != 0, the variable must be an array and we dereference element [offset].
 // When offset == 0 and the variable is an array, element [0] is returned.
 EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset) {
+	// Check the constexpr heap first (for new-expressions inside constexpr functions).
+	{
+		std::string heap_key(var_name);
+		auto heap_it = context.constexpr_heap.find(heap_key);
+		if (heap_it != context.constexpr_heap.end()) {
+			if (heap_it->second.freed) {
+				return EvalResult::error("Use after free in constant expression: pointer '" +
+					std::string(var_name) + "' has already been deleted");
+			}
+			const EvalResult& heap_val = heap_it->second.value;
+			if (offset == 0 && !heap_val.is_array) {
+				return heap_val;
+			}
+			if (heap_val.is_array) {
+				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
+					return EvalResult::error("Array access out of bounds in constant expression (heap)");
+				}
+				return heap_val.array_elements[static_cast<size_t>(offset)];
+			}
+			if (offset != 0) {
+				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
+			}
+			return heap_val;
+		}
+	}
+
 	if (!context.symbols) {
 		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
 	}
@@ -443,6 +493,32 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	EvaluationContext& context) {
 	std::string_view var_name = StringTable::getStringView(ptr.pointer_to_var);
 	int64_t offset = ptr.pointer_offset;
+
+	// Check the constexpr heap first (for new-expressions inside constexpr functions).
+	{
+		std::string heap_key(var_name);
+		auto heap_it = context.constexpr_heap.find(heap_key);
+		if (heap_it != context.constexpr_heap.end()) {
+			if (heap_it->second.freed) {
+				return EvalResult::error("Use after free in constant expression: pointer '" +
+					heap_key + "' has already been deleted");
+			}
+			const EvalResult& heap_val = heap_it->second.value;
+			if (offset == 0 && !heap_val.is_array) {
+				return heap_val;
+			}
+			if (heap_val.is_array) {
+				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
+					return EvalResult::error("Array access out of bounds in constant expression (heap)");
+				}
+				return heap_val.array_elements[static_cast<size_t>(offset)];
+			}
+			if (offset != 0) {
+				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
+			}
+			return heap_val;
+		}
+	}
 
 	// Check local bindings first (handles local scalars and arrays at any offset).
 	auto it = bindings.find(var_name);
@@ -1250,6 +1326,206 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	
 	// Evaluate the expression being cast
 	return evaluate_expr_node(type_spec, cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+}
+
+// Helper: default-initialize a value of the given type (used by new-expression evaluation).
+static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
+	if (type_spec.type() == Type::Bool) {
+		EvalResult r = EvalResult::from_bool(false);
+		r.set_exact_type(type_spec);
+		return r;
+	}
+	if (is_unsigned_integer_type(type_spec.type())) {
+		EvalResult r = EvalResult::from_uint(0);
+		r.set_exact_type(type_spec);
+		return r;
+	}
+	if (type_spec.type() == Type::Float || type_spec.type() == Type::Double ||
+	    type_spec.type() == Type::LongDouble) {
+		EvalResult r = EvalResult::from_double(0.0);
+		r.set_exact_type(type_spec);
+		return r;
+	}
+	EvalResult r = EvalResult::from_int(0);
+	r.set_exact_type(type_spec);
+	return r;
+}
+
+// C++20 constexpr new: allocate an object on the constexpr heap and return a pointer to it.
+// `bindings` may be non-null when evaluating inside a constexpr function body (for
+// evaluating constructor arguments that reference local variables).
+EvalResult Evaluator::evaluate_new_expression(
+	const NewExpressionNode& new_expr,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+
+	if (!new_expr.type_node().is<TypeSpecifierNode>()) {
+		return EvalResult::error("new-expression: expected TypeSpecifierNode for allocated type");
+	}
+	const TypeSpecifierNode& type_spec = new_expr.type_node().as<TypeSpecifierNode>();
+
+	auto eval_arg = [&](const ASTNode& arg_node) -> EvalResult {
+		if (bindings) return evaluate_expression_with_bindings_const(arg_node, *bindings, context);
+		return evaluate(arg_node, context);
+	};
+
+	if (new_expr.is_array()) {
+		// new T[n]: allocate an array of n default-initialized elements
+		if (!new_expr.size_expr().has_value()) {
+			return EvalResult::error("new[]: missing array size expression");
+		}
+		auto size_result = eval_arg(*new_expr.size_expr());
+		if (!size_result.success()) return size_result;
+		int64_t n = size_result.as_int();
+		if (n < 0) {
+			return EvalResult::error("new[]: negative array size in constant expression");
+		}
+		EvalResult array_result = EvalResult::from_int(0LL);
+		array_result.is_array = true;
+		for (int64_t i = 0; i < n; ++i) {
+			array_result.array_elements.push_back(make_default_init(type_spec));
+		}
+		std::string heap_key = context.alloc_heap_slot();
+		context.constexpr_heap[heap_key] = { std::move(array_result), false, true };
+		return EvalResult::from_pointer(heap_key);
+	}
+
+	// Non-array new: new T or new T(args)
+	const auto& ctor_args = new_expr.constructor_args();
+
+	// Handle struct/class types via the constructor materialization path.
+	if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+		TypeIndex type_index = type_spec.type_index();
+		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
+			return EvalResult::error("new-expression: invalid struct type index");
+		}
+		const StructTypeInfo* struct_info = gTypeInfo[type_index.value].getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("new-expression: type is not a struct/class");
+		}
+
+		// Copy args into a ChunkedVector<ASTNode> (default template params) to satisfy
+		// the existing API (NewExpressionNode uses different ChunkedVector template params).
+		ChunkedVector<ASTNode> args_copy;
+		for (const auto& arg : ctor_args) {
+			args_copy.push_back(arg);
+		}
+
+		EvalResult object_result = EvalResult::from_int(0LL);
+		object_result.object_type_index = type_index;
+
+		if (!ctor_args.empty()) {
+			const ConstructorDeclarationNode* matching_ctor =
+				find_matching_constructor(struct_info, args_copy, context, bindings);
+			if (!matching_ctor) {
+				return EvalResult::error("new-expression: no matching constructor found for struct type");
+			}
+			std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+			auto bind_result = bind_evaluated_arguments(
+				matching_ctor->parameter_nodes(),
+				args_copy,
+				ctor_param_bindings,
+				context,
+				"Invalid parameter in constexpr new-expression",
+				bindings,
+				true);
+			if (!bind_result.success()) return bind_result;
+			auto materialize_result = materialize_members_from_constructor(
+				struct_info, *matching_ctor, ctor_param_bindings,
+				object_result.object_member_bindings, context, false);
+			if (!materialize_result.success()) return materialize_result;
+		} else {
+			// Default/aggregate initialization: apply default member initializers.
+			for (const auto& member : struct_info->members) {
+				std::string_view mname = StringTable::getStringView(member.getName());
+				if (member.default_initializer.has_value()) {
+					auto def_result = evaluate(*member.default_initializer, context);
+					object_result.object_member_bindings[mname] =
+						def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+				} else {
+					object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+				}
+			}
+		}
+
+		std::string heap_key = context.alloc_heap_slot();
+		context.constexpr_heap[heap_key] = { std::move(object_result), false, false };
+		return EvalResult::from_pointer(heap_key);
+	}
+
+	// Fundamental-type new: new T or new T(single_arg)
+	EvalResult init_val;
+	if (ctor_args.empty()) {
+		init_val = make_default_init(type_spec);
+	} else if (ctor_args.size() == 1) {
+		auto arg_result = eval_arg(ctor_args[0]);
+		if (!arg_result.success()) return arg_result;
+		// Apply the type conversion to the evaluated value.
+		switch (type_spec.type()) {
+			case Type::Bool:
+				init_val = EvalResult::from_bool(arg_result.as_bool());
+				break;
+			case Type::Char: case Type::Short: case Type::Int: case Type::Long: case Type::LongLong:
+				init_val = EvalResult::from_int(arg_result.as_int());
+				break;
+			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
+			case Type::UnsignedLong: case Type::UnsignedLongLong:
+				init_val = EvalResult::from_uint(arg_result.as_uint_raw());
+				break;
+			case Type::Float: case Type::Double: case Type::LongDouble:
+				init_val = EvalResult::from_double(arg_result.as_double());
+				break;
+			default:
+				return EvalResult::error("new-expression: unsupported fundamental type");
+		}
+		init_val.set_exact_type(type_spec);
+	} else {
+		return EvalResult::error("new-expression: fundamental types can only be constructed with 0 or 1 argument");
+	}
+
+	std::string heap_key = context.alloc_heap_slot();
+	context.constexpr_heap[heap_key] = { std::move(init_val), false, false };
+	return EvalResult::from_pointer(heap_key);
+}
+
+// C++20 constexpr delete: mark a heap allocation as freed.
+// Evaluates the pointer expression (with local bindings when available) and removes
+// the corresponding entry from the constexpr heap.
+EvalResult Evaluator::evaluate_delete_expression(
+	const DeleteExpressionNode& del_expr,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+
+	// Evaluate the pointer expression.
+	EvalResult ptr_result;
+	if (bindings) {
+		ptr_result = evaluate_expression_with_bindings_const(del_expr.expr(), *bindings, context);
+	} else {
+		ptr_result = evaluate(del_expr.expr(), context);
+	}
+	if (!ptr_result.success()) return ptr_result;
+
+	if (!ptr_result.pointer_to_var.isValid()) {
+		return EvalResult::error("delete-expression: operand is not a pointer in constant expression");
+	}
+
+	std::string heap_key(StringTable::getStringView(ptr_result.pointer_to_var));
+	auto heap_it = context.constexpr_heap.find(heap_key);
+	if (heap_it == context.constexpr_heap.end()) {
+		return EvalResult::error("delete-expression: pointer does not refer to a constexpr heap allocation "
+			"(only memory allocated with `new` in a constexpr context can be deleted at compile time)");
+	}
+	if (heap_it->second.freed) {
+		return EvalResult::error("delete-expression: double-free in constant expression: '" + heap_key + "'");
+	}
+	if (del_expr.is_array() != heap_it->second.is_array) {
+		return EvalResult::error(del_expr.is_array()
+			? "delete[]: non-array pointer (use plain `delete`)"
+			: "delete: array pointer (use `delete[]`)");
+	}
+	heap_it->second.freed = true;
+	// delete-expression yields void; return a sentinel success value.
+	return EvalResult::from_int(0LL);
 }
 
 EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {

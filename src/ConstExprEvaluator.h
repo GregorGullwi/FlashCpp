@@ -370,6 +370,31 @@ struct EvaluationContext {
 	// can be mapped to the correct struct member names.
 	const TypeInfo* return_type_info = nullptr;
 
+	// When true, short-circuit evaluation for && and || is disabled.
+	// Set by try_evaluate_constant_expression to prevent false positive results
+	// during template-argument disambiguation (where a truthy LHS of `||` would
+	// cause the speculative parse to succeed, incorrectly treating `<` as a
+	// template-argument-list opener).
+	bool is_speculative = false;
+
+	// Constexpr heap: tracks objects dynamically allocated with `new` inside a
+	// constant expression (C++20 [expr.const]/p5).  Each entry maps a synthetic
+	// key (e.g. "@new_0") to the allocated value and a freed flag.
+	// `delete ptr` marks the corresponding entry freed; at the end of a
+	// well-formed constant expression all allocations must have been freed.
+	struct ConstexprHeapEntry {
+		EvalResult value;
+		bool freed = false;
+		bool is_array = false;
+	};
+	std::unordered_map<std::string, ConstexprHeapEntry> constexpr_heap;
+	size_t next_heap_id = 0;
+
+	// Allocate a fresh synthetic heap key and return it.
+	std::string alloc_heap_slot() {
+		return "@new_" + std::to_string(next_heap_id++);
+	}
+
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}
@@ -555,6 +580,10 @@ private:
 	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
+	static EvalResult evaluate_new_expression(const NewExpressionNode& new_expr, EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+	static EvalResult evaluate_delete_expression(const DeleteExpressionNode& del_expr, EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);

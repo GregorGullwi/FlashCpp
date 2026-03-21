@@ -1082,7 +1082,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
-	// Helper: create a constexpr evaluation context with struct context and parser
+	// Helper: create a constexpr evaluation context with struct context and parser.
+	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
+	// does not give a false-positive result during template-argument disambiguation.
 	auto makeConstExprContext = [&]() {
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		if (!struct_parsing_context_stack_.empty()) {
@@ -1091,6 +1093,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		ctx.parser = this;
+		ctx.is_speculative = true;
 		return ctx;
 	};
 
