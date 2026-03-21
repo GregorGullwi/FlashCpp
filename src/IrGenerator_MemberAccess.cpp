@@ -886,7 +886,9 @@
 			return false;
 		}
 		const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-		if (binding_info.is_global_or_static) {
+		// Member-access validation resolves the declaration/type using the source-level identifier,
+		// but codegen must use the actual storage symbol for globals/static locals.
+		if (binding_info.is_global_or_static && std::holds_alternative<StringHandle>(base_object)) {
 			base_object = binding_info.store_name;
 		}
 		return true;
