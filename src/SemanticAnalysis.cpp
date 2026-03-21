@@ -894,6 +894,29 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& la
 	}
 }
 
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl) {
+	if (!decl.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = decl.outer_template_param_names();
+	const auto& param_args = decl.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const VariableDeclarationNode& var) {
 	if (!var.has_outer_template_bindings()) {
 		return;
@@ -1528,6 +1551,36 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 }
 
 void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& decl) {
+	SemanticContext ctx;
+	pushScope();
+	auto cleanup = ScopeGuard([this]() { popScope(); });
+	registerOuterTemplateBindingsInScope(decl);
+
+	for (const auto& member : decl.members()) {
+		if (member.declaration.is<DeclarationNode>()) {
+			const auto& member_decl = member.declaration.as<DeclarationNode>();
+			for (const auto& dim : member_decl.array_dimensions()) {
+				normalizeExpression(dim, ctx);
+			}
+			if (member_decl.has_default_value()) {
+				normalizeExpression(member_decl.default_value(), ctx);
+			}
+		}
+
+		if (member.default_initializer.has_value()) {
+			normalizeExpression(*member.default_initializer, ctx);
+		}
+		if (member.bitfield_width_expr.has_value()) {
+			normalizeExpression(*member.bitfield_width_expr, ctx);
+		}
+	}
+
+	for (const auto& static_member : decl.static_members()) {
+		if (static_member.initializer.has_value()) {
+			normalizeExpression(*static_member.initializer, ctx);
+		}
+	}
+
 	// Walk member function bodies (includes constructors and destructors)
 	for (const auto& member_func : decl.member_functions()) {
 		const auto& func_node = member_func.function_declaration;
