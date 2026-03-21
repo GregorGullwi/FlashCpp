@@ -400,6 +400,24 @@ namespace {
 		auto it = bindings.find(name);
 		return it == bindings.end() ? nullptr : &it->second;
 	}
+
+	// Extract the variable/member name for the address-of + array-subscript pattern.
+	// Handles:  &data[i]       → "data" (plain identifier)
+	//           &this->data[i] → "data" (member access via this)
+	// Returns empty string_view when the pattern is not recognised.
+	std::string_view getArrayNameForAddressOf(const ASTNode& array_expr) {
+		std::string_view name = getIdentifierNameFromAstNode(array_expr);
+		if (!name.empty())
+			return name;
+		// Tolerate the `this->member` representation used inside member function bodies.
+		if (const auto* ma = tryGetNode<MemberAccessNode>(array_expr)) {
+			if (const IdentifierNode* obj_id = tryGetIdentifier(ma->object())) {
+				if (obj_id->name() == "this")
+					return ma->member_name();
+			}
+		}
+		return {};
+	}
 }
 
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
@@ -815,6 +833,110 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	return result;
 }
 
+EvalResult Evaluator::call_constexpr_member_fn_on_object(
+	const EvalResult& object,
+	std::string_view func_name,
+	EvaluationContext& context) {
+	if (!object.object_type_index.is_valid() || object.object_type_index.value >= gTypeInfo.size())
+		return EvalResult::error("Object has no valid type info for member function '" + std::string(func_name) + "'");
+
+	const TypeInfo& type_info = gTypeInfo[object.object_type_index.value];
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	if (!struct_info)
+		return EvalResult::error("Object is not a struct type for member function '" + std::string(func_name) + "'");
+
+	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+
+	// Try instantiation's own member functions first, then fall back to the
+	// base template (same logic as find_current_struct_member_function_candidate).
+	auto match = find_member_function_candidate(
+		struct_info,
+		func_name_handle,
+		0,
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false,
+		true);
+
+	if ((!match.function && !match.ambiguous) ||
+		(match.function && !match.function->get_definition().has_value())) {
+		// Try the base template's struct info for template instantiations.
+		auto struct_type_it = gTypesByName.find(struct_info->name);
+		if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+			const TypeInfo* struct_type = struct_type_it->second;
+			auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
+			if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+				match = find_member_function_candidate(
+					template_type_it->second->getStructInfo(),
+					func_name_handle,
+					0,
+					context,
+					MemberFunctionLookupMode::LookupOnly,
+					false,
+					false);
+			}
+		}
+	}
+
+	if (match.ambiguous)
+		return EvalResult::error("Ambiguous member function '" + std::string(func_name) + "' in constexpr range-based for");
+	if (!match.function)
+		return EvalResult::error("Member function '" + std::string(func_name) + "' not found");
+	if (!match.function->is_constexpr() && !match.function->is_consteval())
+		return EvalResult::error("Member function '" + std::string(func_name) + "' is not constexpr");
+
+	const auto& def = match.function->get_definition();
+	if (!def.has_value())
+		return EvalResult::error("Member function '" + std::string(func_name) + "' has no body");
+
+	if (context.current_depth >= context.max_recursion_depth)
+		return EvalResult::error("Constexpr recursion depth limit exceeded in call to '" + std::string(func_name) + "'");
+
+	auto member_bindings = object.object_member_bindings;
+
+	// Load template type bindings, preferring function-level outer bindings when present.
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	if (match.function->has_outer_template_bindings()) {
+		context.template_param_names.clear();
+		context.template_args.clear();
+		context.template_param_names.reserve(match.function->outer_template_param_names().size());
+		context.template_args.reserve(match.function->outer_template_args().size());
+		for (StringHandle param_name : match.function->outer_template_param_names())
+			context.template_param_names.push_back(StringTable::getStringView(param_name));
+		for (const auto& arg : match.function->outer_template_args())
+			context.template_args.push_back(toTemplateTypeArg(arg));
+	} else {
+		load_template_bindings_from_type(&type_info, context);
+	}
+
+	auto saved_struct_info = context.struct_info;
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.struct_info = struct_info;
+	context.return_type_info = nullptr;
+	if (match.function->decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
+	context.current_depth++;
+
+	auto result = evaluate_block_with_bindings(
+		def.value(),
+		member_bindings,
+		context,
+		"Member function body is not a block",
+		"Constexpr member function did not return a value");
+
+	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
+	context.struct_info = saved_struct_info;
+	context.template_param_names = std::move(saved_template_param_names);
+	context.template_args = std::move(saved_template_args);
+	return result;
+}
+
 Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_call_operator_candidate(
 	const StructTypeInfo* struct_info,
 	size_t argument_count,
@@ -1056,6 +1178,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				// Tag array results with their binding key so `array + N` can decay to a pointer.
+				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
+					EvalResult tagged = *bound_value;
+					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
+					return tagged;
+				}
 				return *bound_value;
 			}
 			// fall through to existing logic as safety net
@@ -1065,6 +1193,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			// Tag array results with their binding key so `array + N` can decay to a pointer.
+			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
+				EvalResult tagged = *bound_value;
+				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
+				return tagged;
+			}
 			return *bound_value;  // Return the bound value
 		}
 		
@@ -1276,31 +1410,40 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			const ASTNode& operand = unary_op.get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				// &identifier  or  &this->member
+				std::string_view simple_name;
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
-					EvalResult ptr_result = EvalResult::from_pointer(id->name());
+					simple_name = id->name();
+				} else if (const auto* ma = std::get_if<MemberAccessNode>(&operand_expr)) {
+					if (const IdentifierNode* obj_id = tryGetIdentifier(ma->object())) {
+						if (obj_id->name() == "this")
+							simple_name = ma->member_name();
+					}
+				}
+				if (!simple_name.empty()) {
+					EvalResult ptr_result = EvalResult::from_pointer(simple_name);
 					// Snapshot the current value so the pointer can be dereferenced in a
 					// different scope (e.g., when passed as an argument to another function).
-					auto snapshot_it = bindings.find(id->name());
-					if (snapshot_it != bindings.end()) {
-						ptr_result.array_elements = {snapshot_it->second};
-					}
+					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
+					if (snap)
+						ptr_result.array_elements = {*snap};
 					return ptr_result;
 				}
-				// &arr[i]: address of array element → pointer with offset
+				// &arr[i]: address of array element → pointer with offset.
+				// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
-					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
+					std::string_view arr_name = getArrayNameForAddressOf(subscript->array_expr());
 					if (!arr_name.empty()) {
 						auto idx_result = evaluate_expression_with_bindings(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
 						// Snapshot the element so the pointer can be dereferenced in a different scope.
-						auto arr_it = bindings.find(arr_name);
-						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
-							const EvalResult& arr = arr_it->second;
+						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
+						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
-								ptr_result.array_elements = {arr.array_elements[idx]};
+							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
+								ptr_result.array_elements = {arr_eval->array_elements[idx]};
 						}
 						return ptr_result;
 					}
@@ -1393,6 +1536,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
+				// Tag array results with their binding key so `array + N` can decay to a pointer.
+				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
+					EvalResult tagged = *bound_value;
+					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
+					return tagged;
+				}
 				return *bound_value;
 			}
 			// fall through to existing logic as safety net
@@ -1402,6 +1551,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 
 		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
+			// Tag array results with their binding key so `array + N` can decay to a pointer.
+			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
+				EvalResult tagged = *bound_value;
+				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
+				return tagged;
+			}
 			return *bound_value;  // Return the bound value
 		}
 		
@@ -1409,11 +1564,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return evaluate_identifier(id, context);
 	}
 
-		if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
-			return *member_result;
-		}
-	
-	// For binary operators, recursively evaluate with bindings
+	if (auto member_result = try_evaluate_bound_member_access(expr, bindings, context)) {
+		return *member_result;
+	}
+
+	if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
+		return *array_result;
+	}
+
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
 		std::string_view op = bin_op.op();
@@ -1449,31 +1607,40 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			const ASTNode& operand = unary_op->get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				// &identifier  or  &this->member
+				std::string_view simple_name;
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
-					EvalResult ptr_result = EvalResult::from_pointer(id->name());
+					simple_name = id->name();
+				} else if (const auto* ma = std::get_if<MemberAccessNode>(&operand_expr)) {
+					if (const IdentifierNode* obj_id = tryGetIdentifier(ma->object())) {
+						if (obj_id->name() == "this")
+							simple_name = ma->member_name();
+					}
+				}
+				if (!simple_name.empty()) {
+					EvalResult ptr_result = EvalResult::from_pointer(simple_name);
 					// Snapshot the current value so the pointer can be dereferenced in a
 					// different scope (e.g., when passed as an argument to another function).
-					auto snapshot_it = bindings.find(id->name());
-					if (snapshot_it != bindings.end()) {
-						ptr_result.array_elements = {snapshot_it->second};
-					}
+					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
+					if (snap)
+						ptr_result.array_elements = {*snap};
 					return ptr_result;
 				}
-				// &arr[i]: address of array element → pointer with offset
+				// &arr[i]: address of array element → pointer with offset.
+				// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
-					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
+					std::string_view arr_name = getArrayNameForAddressOf(subscript->array_expr());
 					if (!arr_name.empty()) {
 						auto idx_result = recursive_eval(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
 						// Snapshot the element so the pointer can be dereferenced in a different scope.
-						auto arr_it = bindings.find(arr_name);
-						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
-							const EvalResult& arr = arr_it->second;
+						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
+						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
-								ptr_result.array_elements = {arr.array_elements[idx]};
+							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
+								ptr_result.array_elements = {arr_eval->array_elements[idx]};
 						}
 						return ptr_result;
 					}
@@ -1845,6 +2012,27 @@ EvalResult Evaluator::apply_binary_op(
 
 		// All other pointer operations are unsupported
 		return EvalResult::error("Unsupported pointer operation '" + std::string(op) + "' in constant expressions");
+	}
+
+	// Array decay: `array + n` or `n + array` produces a pointer to element n of the array.
+	// This enables `return data + size;` style begin()/end() member functions in constexpr
+	// range-based for loops, where `data` is a member array that has been tagged with its
+	// origin variable name via array_origin_var.
+	if (lhs.is_array && lhs.array_origin_var.isValid() && !rhs.is_array && !rhs.pointer_to_var.isValid() && op == "+") {
+		int64_t offset = rhs.as_int();
+		return make_checked_constexpr_pointer_result(
+			StringTable::getStringView(lhs.array_origin_var),
+			offset,
+			context,
+			bindings);
+	}
+	if (rhs.is_array && rhs.array_origin_var.isValid() && !lhs.is_array && !lhs.pointer_to_var.isValid() && op == "+") {
+		int64_t offset = lhs.as_int();
+		return make_checked_constexpr_pointer_result(
+			StringTable::getStringView(rhs.array_origin_var),
+			offset,
+			context,
+			bindings);
 	}
 
 	// Determine the operand kinds so we can dispatch to the correct domain.

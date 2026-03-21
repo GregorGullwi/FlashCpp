@@ -3256,7 +3256,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		return EvalResult::error(std::string(kContinueExecuted));
 	}
 	
-	// Handle range-based for loops over arrays (C++11/C++14 constexpr)
+	// Handle range-based for loops over arrays and objects with begin()/end() (C++11/C++14 constexpr)
 	if (stmt_node.is<RangedForStatementNode>()) {
 		const RangedForStatementNode& ranged_for = stmt_node.as<RangedForStatementNode>();
 		
@@ -3274,15 +3274,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 		}
 		
-		// Evaluate the range expression to get the array
+		// Evaluate the range expression
 		auto range_result = evaluate_expression_with_bindings(ranged_for.get_range_expression(), bindings, context);
 		if (!range_result.success()) {
 			return range_result;
-		}
-		
-		// Only support array iteration for now
-		if (!range_result.is_array || range_result.array_elements.empty()) {
-			return EvalResult::error("Range-based for: range is not an array or has no elements in constexpr context");
 		}
 		
 		// Get the loop variable name from the declaration
@@ -3302,34 +3297,104 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// when the loop ends (also handles the shadowing case if the outer scope
 		// already has a variable with the same name).
 		loop_guard.scope.on_declare(loop_var_name, range_decl_bindings);
-		
-		// Iterate over array elements
-		for (const EvalResult& element : range_result.array_elements) {
-			// Check complexity limit
-			if (++context.step_count > context.max_steps) {
-				return EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop");
-			}
-			
-			// Bind the loop variable to the current element (overwrites on each iteration)
+
+		// Helper lambda: execute the loop body with loop_var bound to element, handle break/continue.
+		auto run_body = [&](const EvalResult& element) -> std::pair<bool, EvalResult> {
+			// Returns {should_stop, result}: should_stop=true means exit the loop.
+			if (++context.step_count > context.max_steps)
+				return {true, EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop")};
 			range_decl_bindings[loop_var_name] = element;
-			
-			// Execute the body
 			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
-			if (body_result.success()) {
-				return body_result;
+			if (body_result.success()) return {true, body_result};   // return statement
+			if (isBreakExecuted(body_result)) return {true, EvalResult::error(std::string(kStatementExecutedWithoutReturn))};
+			if (isContinueExecuted(body_result)) return {false, {}};  // continue: advance to next
+			if (!isStatementExecutedWithoutReturn(body_result)) return {true, body_result}; // error
+			return {false, {}};  // normal body execution — continue loop
+		};
+
+		// --- Case 1: range is a plain array (existing behaviour) ---
+		if (range_result.is_array) {
+			for (const EvalResult& element : range_result.array_elements) {
+				auto [stop, result] = run_body(element);
+				if (stop) return result;
 			}
-			if (isBreakExecuted(body_result)) {
-				break;  // break exits the loop
-			}
-			if (isContinueExecuted(body_result)) {
-				continue;  // continue goes to next element
-			}
-			if (!isStatementExecutedWithoutReturn(body_result)) {
-				return body_result;
-			}
+			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
 		}
-		
-		return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+
+		// --- Case 2: range is an object — try begin()/end() member functions ---
+		if (range_result.object_type_index.is_valid()) {
+			// Call begin() on the range object.
+			auto begin_result = call_constexpr_member_fn_on_object(range_result, "begin", context);
+			if (!begin_result.success()) {
+				return EvalResult::error("Range-based for: failed to call begin() on range object: " + begin_result.error_message);
+			}
+
+			// Sub-case A: begin() returned an array — iterate over all its elements.
+			if (begin_result.is_array) {
+				// Always call end() to get a tighter bound (pointer form).
+				// If end() returns a pointer with a known offset, use that as the element count.
+				size_t end_count = begin_result.array_elements.size();
+				auto end_result = call_constexpr_member_fn_on_object(range_result, "end", context);
+				if (end_result.success() && end_result.pointer_to_var.isValid() &&
+					end_result.pointer_offset >= 0 &&
+					static_cast<size_t>(end_result.pointer_offset) <= begin_result.array_elements.size()) {
+					// end() returned a pointer into the same array — honour its offset as count.
+					// (begin() returned the whole array starting from element 0, so the count is end_offset.)
+					end_count = static_cast<size_t>(end_result.pointer_offset);
+				}
+				for (size_t i = 0; i < end_count; i++) {
+					auto [stop, result] = run_body(begin_result.array_elements[i]);
+					if (stop) return result;
+				}
+				return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+			}
+
+			// Sub-case B: begin() returned a pointer — call end() and iterate by pointer offsets.
+			if (begin_result.pointer_to_var.isValid()) {
+				auto end_result = call_constexpr_member_fn_on_object(range_result, "end", context);
+				if (!end_result.success() || !end_result.pointer_to_var.isValid()) {
+					return EvalResult::error("Range-based for: begin() returned a pointer but end() did not return a valid pointer");
+				}
+				if (begin_result.pointer_to_var != end_result.pointer_to_var) {
+					return EvalResult::error("Range-based for: begin() and end() point to different variables");
+				}
+				int64_t begin_off = begin_result.pointer_offset;
+				int64_t end_off   = end_result.pointer_offset;
+				if (begin_off < 0 || end_off < begin_off) {
+					return EvalResult::error("Range-based for: invalid begin/end pointer offsets");
+				}
+				// Resolve the backing array from the object's member bindings or outer bindings.
+				std::string_view arr_name = StringTable::getStringView(begin_result.pointer_to_var);
+				const EvalResult* arr_ptr = nullptr;
+				{
+					auto it = range_result.object_member_bindings.find(arr_name);
+					if (it != range_result.object_member_bindings.end() && it->second.is_array) {
+						arr_ptr = &it->second;
+					}
+				}
+				if (!arr_ptr) {
+					auto it = bindings.find(arr_name);
+					if (it != bindings.end() && it->second.is_array) {
+						arr_ptr = &it->second;
+					}
+				}
+				if (!arr_ptr) {
+					return EvalResult::error("Range-based for: could not find backing array '" + std::string(arr_name) + "' for begin()/end() iteration");
+				}
+				if (end_off > static_cast<int64_t>(arr_ptr->array_elements.size())) {
+					return EvalResult::error("Range-based for: end() offset exceeds array size");
+				}
+				for (int64_t i = begin_off; i < end_off; i++) {
+					auto [stop, result] = run_body(arr_ptr->array_elements[static_cast<size_t>(i)]);
+					if (stop) return result;
+				}
+				return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+			}
+
+			return EvalResult::error("Range-based for: begin() returned neither array nor pointer; begin()/end() iteration requires constexpr begin() to return a member array or pointer");
+		}
+
+		return EvalResult::error("Range-based for: range expression is not an array or iterable object in constexpr context");
 	}
 	
 	// Handle switch statements (C++14 constexpr)

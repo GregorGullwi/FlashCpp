@@ -262,7 +262,7 @@ static_assert(find_value(2) == 20);  // ✅ Works
 ```
 
 Range-based for loops over local arrays (both primitive and struct types) are supported.
-Range-based for over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) is not yet supported.
+Range-based for over objects with `begin()`/`end()` member functions is now supported when the methods are `constexpr` and return a member array or pointer. This covers user-defined iterable structs with integral element types. See also the [begin()/end() section](#constexpr-range-based-for-over-beginend-objects-new).
 
 ### ✅ Constexpr Recursion
 
@@ -469,9 +469,74 @@ Array support is still incomplete in more complex cases.
 **Known remaining limitations include:**
 
 1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, including simple local scalar arrays and simple local aggregate-array member reads, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
-2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, but over objects with `begin()`/`end()` methods are not yet supported
+2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, and over objects with `constexpr begin()`/`end()` methods returning a member array or pointer are now also supported (see dedicated section)
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
+
+### ✅ Constexpr Range-Based For over `begin()`/`end()` Objects (NEW)
+
+Range-based for loops over user-defined iterable types with `constexpr begin()` and `constexpr end()` member functions are now supported in the constexpr evaluator. The member functions must be `constexpr` and return either:
+
+1. The member array directly (`return data;`) — the evaluator detects the full array and iterates it, using the `end()` return value as a count constraint when it involves array decay.
+2. A pointer via `&data[0]` or `&data[size]` syntax — the evaluator resolves the backing member array and uses the pointer offsets to bound the iteration.
+
+```cpp
+// Case A: begin() returns member array directly
+struct IntVec3 {
+    int data[3];
+    constexpr IntVec3() : data{10, 20, 30} {}
+    constexpr int* begin() { return data; }
+    constexpr int* end()   { return data + 3; }
+};
+
+constexpr int sum_vec3() {
+    IntVec3 v{};
+    int s = 0;
+    for (int x : v) s += x;
+    return s;
+}
+static_assert(sum_vec3() == 60);  // ✅ Works
+
+// Case B: begin()/end() with pointer syntax
+struct BoundedVec {
+    int data[5];
+    int size;
+    constexpr BoundedVec() : data{2, 4, 6, 8, 10}, size(3) {}
+    constexpr int* begin() { return &data[0]; }
+    constexpr int* end()   { return &data[size]; }
+};
+
+constexpr int sum_bounded() {
+    BoundedVec v{};
+    int s = 0;
+    for (int x : v) s += x;
+    return s;
+}
+static_assert(sum_bounded() == 12);  // ✅ Works (only first 3 elements)
+
+// Template structs with begin()/end() are also supported
+template<int N>
+struct StaticVec {
+    int data[N];
+    constexpr int* begin() { return data; }
+    constexpr int* end()   { return data + N; }
+};
+
+constexpr int sum_static() {
+    StaticVec<4> v{{1, 2, 3, 4}};
+    int s = 0;
+    for (int x : v) s += x;
+    return s;
+}
+static_assert(sum_static() == 10);  // ✅ Works
+```
+
+`break`, `continue`, and early `return` inside these loops work correctly.
+Nested range-for loops over two objects also work.
+
+**Current limitations:**
+- Element type must be an integer scalar (struct elements in the iteration variable are not yet supported due to a pre-existing member-access limitation in the evaluator)
+- `data + N` style in member functions (array decay) relies on `origin_var_name` tagging; this works when `begin()` returns the member array directly
 
 ### ✅ Basic Pointer Dereference in Constexpr (NEW)
 
@@ -843,7 +908,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
-- ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
+- ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
