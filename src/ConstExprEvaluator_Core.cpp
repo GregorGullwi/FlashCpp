@@ -2510,7 +2510,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		
 		// For static storage duration, also try non-constexpr functions with simple bodies
 		// (static initializers can call any function whose body is available)
-		if (!func_decl.is_constexpr() && context.storage_duration != ConstExpr::StorageDuration::Static) {
+		if (!func_decl.is_constexpr() && !func_decl.is_consteval() && context.storage_duration != ConstExpr::StorageDuration::Static) {
 			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
 		}
 
@@ -2576,7 +2576,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 				
 				if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
-					if (instantiated_func.is_constexpr()) {
+					if (instantiated_func.is_constexpr() || instantiated_func.is_consteval()) {
 						// Successfully instantiated - evaluate it
 						std::unordered_map<std::string_view, EvalResult> empty_bindings;
 						return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
@@ -2750,6 +2750,18 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 
 	// Increase recursion depth
 	context.current_depth++;
+
+	// Record the function's return type so that aggregate-initializer returns
+	// (e.g., return {0, 0} in a struct-returning function) can resolve member names.
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.return_type_info = nullptr;
+	if (func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec =
+			func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
 	
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
 	auto result = evaluate_block_with_bindings(
@@ -2760,6 +2772,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		"Constexpr function did not return a value");
 
 	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
 	restore_template_bindings();
 	return result;
 }
@@ -2868,7 +2881,27 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		if (!return_expr.has_value()) {
 			return EvalResult::error("Constexpr function return statement has no expression");
 		}
-		
+
+		// Handle aggregate-initializer return: return {x, y, ...} in a struct-returning function.
+		// evaluate_expression_with_bindings only accepts ExpressionNode; bypass it here.
+		if (return_expr.value().is<InitializerListNode>() && context.return_type_info) {
+			const StructTypeInfo* si = context.return_type_info->getStructInfo();
+			if (si) {
+				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
+				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
+				size_t positional_idx = 0;
+				for (size_t i = 0; i < init_list.size() && positional_idx < si->members.size(); ++i) {
+					const auto& member = si->members[positional_idx++];
+					auto element_result = evaluate_expression_with_bindings(
+						init_list.initializers()[i], bindings, context);
+					if (!element_result.success()) return element_result;
+					result.object_member_bindings[StringTable::getStringView(member.getName())] =
+						std::move(element_result);
+				}
+				return result;
+			}
+		}
+
 		return evaluate_expression_with_bindings(return_expr.value(), bindings, context);
 	}
 	

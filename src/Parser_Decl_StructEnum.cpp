@@ -2099,8 +2099,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				member_func_ref.add_parameter_node(param);
 			}
 
-			// Mark as constexpr if the constexpr keyword was present
+			// Mark as constexpr/consteval if those keywords were present
 			member_func_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
+			member_func_ref.set_is_consteval(member_specs & FlashCpp::MLS_Consteval);
 
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete

@@ -816,6 +816,113 @@
 			}
 		}
 
+		// consteval enforcement: every call to a consteval function is an immediate invocation and
+		// must be a constant expression (C++20 [dcl.consteval]).  generateFunctionCallIr is only
+		// reached when emitting runtime IR, so we first try to fold the call at compile time.
+		// If the fold succeeds we return the constant directly (no runtime call emitted).
+		// If it fails the call is genuinely ill-formed — throw a CompileError.
+		if (matched_func_decl && matched_func_decl->is_consteval()) {
+			// Use the global symbol table so free functions declared at namespace scope can be found.
+			extern SymbolTable gSymbolTable;
+			ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+			ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
+			ctx.parser = parser_;
+			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(functionCallNode);
+			auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+			if (!eval_result.success()) {
+				throw CompileError("call to consteval function '" + std::string(func_name_view) +
+					"' cannot be used in a non-constant context: " + eval_result.error_message);
+			}
+			// Materialise the constant result into an ExprResult without emitting a call instruction.
+			const TypeSpecifierNode& ret_spec =
+				matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+			const Type ret_type = ret_spec.type();
+			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
+			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
+
+			// Float / double
+			if (ret_type == Type::Float) {
+				float fval = static_cast<float>(eval_result.as_double());
+				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)});
+			}
+			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+				double dval = eval_result.as_double();
+				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits});
+			}
+
+			// Aggregate / struct: emit VariableDecl + MemberStore sequence
+			if (!eval_result.object_member_bindings.empty()) {
+				// Allocate a fresh temp variable to hold the materialised struct.
+				TempVar struct_tmp = var_counter.next();
+				StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
+
+				VariableDeclOp vdecl;
+				vdecl.type = ret_type;
+				vdecl.size_in_bits = ret_size;
+				vdecl.var_name = struct_tmp_handle;
+				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl),
+					functionCallNode.called_from()));
+
+				// Resolve the struct layout to emit properly-offset member stores.
+				const TypeInfo* struct_type_info = nullptr;
+				if (ret_spec.type_index().value < gTypeInfo.size()) {
+					struct_type_info = &gTypeInfo[ret_spec.type_index().value];
+					// Chase aliases to find the concrete struct TypeInfo.
+					for (int depth = 0; depth < 64 && struct_type_info && !struct_type_info->getStructInfo(); ++depth) {
+						if (!struct_type_info->type_index_.is_valid() ||
+							struct_type_info->type_index_.value >= gTypeInfo.size()) break;
+						struct_type_info = &gTypeInfo[struct_type_info->type_index_.value];
+					}
+				}
+
+				if (struct_type_info) {
+					const StructTypeInfo* si = struct_type_info->getStructInfo();
+					if (si) {
+						for (const auto& member : si->members) {
+							const std::string_view member_sv = StringTable::getStringView(member.getName());
+							auto it = eval_result.object_member_bindings.find(member_sv);
+							if (it == eval_result.object_member_bindings.end()) continue;
+							const ConstExpr::EvalResult& mval = it->second;
+							unsigned long long mraw = 0;
+							if (const auto* ll = std::get_if<long long>(&mval.value))
+								mraw = static_cast<unsigned long long>(*ll);
+							else if (const auto* ull = std::get_if<unsigned long long>(&mval.value))
+								mraw = *ull;
+							else if (const auto* b = std::get_if<bool>(&mval.value))
+								mraw = *b ? 1ULL : 0ULL;
+							else
+								mraw = static_cast<unsigned long long>(mval.as_int());
+							MemberStoreOp ms;
+							ms.value.type = member.type;
+							ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+							ms.value.value = IrValue{mraw};
+							ms.object = struct_tmp_handle;
+							ms.member_name = member.getName();
+							ms.offset = static_cast<int>(member.offset);
+							ms.struct_type_info = struct_type_info;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms),
+								functionCallNode.called_from()));
+						}
+					}
+				}
+				return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+			}
+
+			// Scalar integer / bool / enum
+			unsigned long long raw = 0;
+			if (const auto* ll = std::get_if<long long>(&eval_result.value))
+				raw = static_cast<unsigned long long>(*ll);
+			else if (const auto* ull = std::get_if<unsigned long long>(&eval_result.value))
+				raw = *ull;
+			else if (const auto* b = std::get_if<bool>(&eval_result.value))
+				raw = *b ? 1ULL : 0ULL;
+			else
+				raw = static_cast<unsigned long long>(eval_result.as_int());
+			return makeExprResult(ret_type, ret_size, IrOperand{raw});
+		}
+
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
