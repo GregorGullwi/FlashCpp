@@ -248,16 +248,51 @@ parsing flow, not in a unified body-entry function.
 - 1630 tests pass, 0 fail, 67 expected-fail
 - Net effect: removed ~120 lines of dead code and open-coded duplicated function-entry boilerplate
 
-### Priority 3: Extract Constructor Detection
+### Priority 3: Extract Constructor Detection ✅ IMPLEMENTED
 
 Create helper function:
 ```cpp
-std::optional<ConstructorInfo> detect_constructor_or_destructor_pattern(
-    std::string_view struct_name, 
-    bool is_template_context);
+struct ConstructorLookaheadResult {
+    bool detected = false;
+    bool is_destructor = false;
+};
+ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);
 ```
 
-**Affected locations:** 2 (estimated 80 lines total)
+**Affected locations:** 2 call sites
+
+#### Implementation Notes (March 2026)
+
+**`lookahead_constructor_or_destructor()`:**
+- Declared in `Parser.h` (struct + method); implemented in `Parser_Decl_FunctionOrVar.cpp`.
+- Detects `ClassName [<...>] :: [~] ClassName (` pattern from current token position.
+- Optionally skips template arguments between the class name and `::`, so it handles
+  both non-template (`Foo::Foo(`) and template (`Foo<T>::Foo(`) patterns.
+- Always saves and restores token position — pure lookahead with no side effects.
+
+**Site 1 (`Parser_Decl_FunctionOrVar.cpp`) changes:**
+- Replaced ~27 lines of manual save/advance/check/restore lookahead with a single
+  `lookahead_constructor_or_destructor()` call (3 lines).
+- The namespace-qualified type lookup (building `qualified_class_name` from
+  `current_namespace_handle`) stays in the call site since it is specific to the
+  non-template declaration path.
+
+**Site 2 (`Parser_Templates_MemberOutOfLine.cpp`) changes:**
+- Added the helper as an early check for the simple `ClassName[<...>]::[~]ClassName(`
+  pattern before the complex namespace/nested-class navigation loop.
+- When the simple pattern matches, tokens are consumed directly and execution
+  converges with the existing handling code (parameter parsing, body skipping,
+  `OutOfLineMemberFunction` registration).
+- The complex namespace-qualified loop, template-argument skipping, and nested-class
+  member handling remain unchanged — the helper is not forced into those paths.
+- Restructured using a `past_scope_op` flag so that both the simple and complex
+  paths share a single copy of the nested-class and constructor/destructor handling
+  code, avoiding any duplication of the ~90-line handling block.
+
+**Metrics after Priority 3:**
+- 1633 tests pass, 0 fail, 67 expected-fail
+- Net effect: constructor detection lookahead extracted into shared helper; site 1
+  reduced by ~24 lines; site 2 restructured to use helper for simple case
 
 ### Priority 4: Member Function Lookup Helper
 
@@ -335,12 +370,12 @@ declarator infrastructure. Expression/postfix call parsing should stay separate.
 
 ## Metrics
 
-| Metric | Before Priority 1 | After Priority 1 | After Priority 2 | Target |
-|--------|--------------------|-------------------|------------------|--------|
-| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 0 (FunctionParsingScopeGuard covers all) | 0 |
-| Duplicate constructor lookahead | 2 | 2 | 2 | 1 |
-| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 3 (remaining template paths) | 1 |
-| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent (all main paths unified) | Consistent |
+| Metric | Before Priority 1 | After Priority 1 | After Priority 2 | After Priority 3 | Target |
+|--------|--------------------|-------------------|------------------|------------------|--------|
+| Duplicate 'this' pointer blocks | 4 | 3 (setup_member_function_context covers 2 paths) | 0 (FunctionParsingScopeGuard covers all) | 0 | 0 |
+| Duplicate constructor lookahead | 2 | 2 | 2 | 0 (lookahead_constructor_or_destructor shared) | 0 |
+| Duplicate parameter registration | 7 | 5 (delayed + immediate + partial-spec now share) | 3 (remaining template paths) | 3 | 1 |
+| Shared infrastructure utilization | Partial | Improved (delayed path unified) | Consistent (all main paths unified) | Consistent | Consistent |
 
 ## Exit Criteria
 

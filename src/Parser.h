@@ -366,6 +366,12 @@ private:
         // This is used to communicate calling convention from type parsing to function declaration
         CallingConvention last_calling_convention_ = CallingConvention::Default;
 
+        // Result of constructor/destructor lookahead detection
+        struct ConstructorLookaheadResult {
+                bool detected = false;
+                bool is_destructor = false;
+        };
+
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
                 StringHandle struct_name;  // Points directly into source text from lexer token
@@ -792,6 +798,7 @@ private:
         ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
         std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
         bool could_be_template_arguments();  // NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
+        ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);  // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
         
         // Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
         std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts

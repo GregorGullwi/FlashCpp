@@ -20,57 +20,76 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// ns::ClassName<Args>::ClassName(...)  (namespace-qualified constructor)
 	// parse_type_specifier would consume the full qualified name as a type, so detect this early
 	if (peek().is_identifier()) {
-		SaveHandle ctor_check = save_token_position();
 		Token potential_class = peek_info();
-		advance(); // consume first name (could be namespace or class name)
+		SaveHandle ctor_check = save_token_position();
+		bool is_dtor = false;
+		bool past_scope_op = false;
 
-		// Skip namespace qualifiers: ns1::ns2::ClassName<Args>::ClassName(...)
-		// Keep advancing past identifier::identifier until we find identifier< or identifier::~
-		while (peek() == "::"_tok && !peek().is_eof()) {
-			// Look ahead to see if this is namespace::name or class::ctor pattern
-			SaveHandle ns_check = save_token_position();
-			advance(); // consume '::'
-			bool is_dtor_check = false;
-			if (peek_info().value() == "~") {
-				is_dtor_check = true;
-			}
-			if (!is_dtor_check && peek().is_identifier()) {
-				Token next_name = peek_info();
-				advance(); // consume name
-				if (peek() == "<"_tok || peek() == "::"_tok) {
-					// This name is either a class (followed by <Args>) or another namespace (followed by ::)
-					// Update potential_class and continue
-					potential_class = next_name;
-					if (peek() == "<"_tok) {
-						skip_template_arguments();
+		// Quick check: simple ClassName[<...>]::[~]ClassName( pattern (no namespace prefix)
+		auto simple = lookahead_constructor_or_destructor(potential_class.value());
+		if (simple.detected) {
+			// Simple case: consume tokens to reach position after ::
+			advance();  // consume ClassName
+			if (peek() == "<"_tok) skip_template_arguments();
+			advance();  // consume ::
+			is_dtor = simple.is_destructor;
+			if (is_dtor) advance();  // consume ~
+			past_scope_op = true;
+		} else {
+			// Complex case: namespace-qualified, nested class patterns
+			advance(); // consume first name (could be namespace or class name)
+
+			// Skip namespace qualifiers: ns1::ns2::ClassName<Args>::ClassName(...)
+			// Keep advancing past identifier::identifier until we find identifier< or identifier::~
+			while (peek() == "::"_tok && !peek().is_eof()) {
+				// Look ahead to see if this is namespace::name or class::ctor pattern
+				SaveHandle ns_check = save_token_position();
+				advance(); // consume '::'
+				bool is_dtor_check = false;
+				if (peek_info().value() == "~") {
+					is_dtor_check = true;
+				}
+				if (!is_dtor_check && peek().is_identifier()) {
+					Token next_name = peek_info();
+					advance(); // consume name
+					if (peek() == "<"_tok || peek() == "::"_tok) {
+						// This name is either a class (followed by <Args>) or another namespace (followed by ::)
+						// Update potential_class and continue
+						potential_class = next_name;
+						if (peek() == "<"_tok) {
+							skip_template_arguments();
+						}
+						discard_saved_token(ns_check);
+						continue;
+					} else if (peek() == "("_tok && next_name.value() == potential_class.value()) {
+						// Found ClassName::ClassName( pattern without template args
+						restore_token_position(ns_check);
+						break;
 					}
-					discard_saved_token(ns_check);
-					continue;
-				} else if (peek() == "("_tok && next_name.value() == potential_class.value()) {
-					// Found ClassName::ClassName( pattern without template args
+					// Unexpected pattern - restore and break
 					restore_token_position(ns_check);
 					break;
 				}
-				// Unexpected pattern - restore and break
+				// Found :: followed by ~ or non-identifier - restore and let main logic handle it
 				restore_token_position(ns_check);
 				break;
 			}
-			// Found :: followed by ~ or non-identifier - restore and let main logic handle it
-			restore_token_position(ns_check);
-			break;
+
+			// Handle both ClassName<Args>::ClassName(...) and ClassName::ClassName(...)
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			}
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek_info().value() == "~") {
+					advance(); // consume '~'
+					is_dtor = true;
+				}
+				past_scope_op = true;
+			}
 		}
 
-		// Handle both ClassName<Args>::ClassName(...) and ClassName::ClassName(...)
-		if (peek() == "<"_tok) {
-			skip_template_arguments();
-		}
-		if (peek() == "::"_tok) {
-			advance(); // consume '::'
-			bool is_dtor = false;
-			if (peek_info().value() == "~") {
-				advance(); // consume '~'
-				is_dtor = true;
-			}
+		if (past_scope_op) {
 			// Handle nested class member function: ClassName<Args>::NestedClass::ctor/dtor/func(...)
 			// E.g., basic_ostream<_CharT, _Traits>::sentry::sentry(...)
 			//        basic_ostream<_CharT, _Traits>::sentry::~sentry()
@@ -226,7 +245,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						return true;
 					}
 				}
-			}
+		}
 		restore_token_position(ctor_check);
 	}
 
