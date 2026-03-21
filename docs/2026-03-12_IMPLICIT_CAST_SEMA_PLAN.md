@@ -1115,9 +1115,31 @@ and local to existing codegen-time validation points.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_copy_move_ctor_select_ret0.cpp test_deleted_special_members_ret0.cpp test_deleted_copy_ctor_brace_init_fail.cpp test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_direct_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
 
-**Remaining gap after this slice:**
-- same-type direct-init / brace-init from xvalue expressions still need a more
-  central semantic check
+### Follow-up slice ✅: same-type xvalue direct-init / brace-init deleted move diagnostics
+
+**Goal:** Close the remaining deleted move-constructor gap for same-type xvalue
+sources in direct-init and brace-init without broadening the earlier IR-side
+special-member work.
+
+**Implementation:**
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- added `getSameTypeConstructorPreference(...)` to ask the parser whether an
+	  initializer expression is same-type and whether it prefers copy vs move
+	- direct-init, brace-init, and the constructor-call path now reuse that
+	  preference so expressions like `static_cast<T&&>(x)` diagnose deleted move
+	  constructors instead of falling back to identifier-only copy checks
+	- `isSameTypeXValueSource(...)` now reuses the parser-derived preference
+	  before falling back to runtime metadata
+
+**Regression tests added:**
+- `tests/test_deleted_move_ctor_direct_init_xvalue_fail.cpp`
+- `tests/test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_deleted_move_ctor_copy_init_fail.cpp test_deleted_move_ctor_direct_init_xvalue_fail.cpp test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
+
+**Remaining gap after this follow-up:**
 - lvalue-metadata store paths (`handleLValueAssignment`) still bypass deleted
   assignment diagnostics for member/array/indirect assignments
 
@@ -1128,8 +1150,8 @@ and local to existing codegen-time validation points.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- Deleted special member diagnostics are still incomplete in some xvalue-init
-  and lvalue-metadata assignment paths (tracked in `docs/KNOWN_ISSUES.md`).
+- Deleted special member diagnostics are still incomplete in some
+  lvalue-metadata assignment paths (tracked in `docs/KNOWN_ISSUES.md`).
 
 ### Parallel rollout guidance
 

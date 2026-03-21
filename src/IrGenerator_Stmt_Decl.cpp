@@ -41,6 +41,31 @@ namespace {
 		}
 		return false;
 	}
+
+	std::optional<bool> getSameTypeConstructorPreference(Parser* parser, const ASTNode& init_node, const TypeSpecifierNode& target_type) {
+		if (!parser || target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+			return std::nullopt;
+		}
+
+		if (auto init_type_opt = parser->get_expression_type(init_node); init_type_opt.has_value()) {
+			if (init_type_opt->type() == Type::Struct && init_type_opt->type_index() == target_type.type_index()) {
+				return init_type_opt->is_rvalue_reference();
+			}
+		}
+
+		return std::nullopt;
+	}
+
+	bool isSameTypeXValueSource(Parser* parser, const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) {
+		if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser, init_node, target_type); same_type_ctor_preference.has_value()) {
+			return *same_type_ctor_preference;
+		}
+
+		return init_operands.type == Type::Struct
+			&& init_operands.type_index.is_valid()
+			&& init_operands.type_index == target_type.type_index()
+			&& isExprResultXValue(init_operands);
+	}
 }
 
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
@@ -912,26 +937,37 @@ namespace {
 								if (num_initializers == 1) {
 									const ASTNode& init_expr = initializers[0];
 									if (init_expr.is<ExpressionNode>()) {
-										const auto& expr = init_expr.as<ExpressionNode>();
-										if (std::holds_alternative<IdentifierNode>(expr)) {
-											const auto& ident = std::get<IdentifierNode>(expr);
-											std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-											if (init_symbol.has_value()) {
-												if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-													const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-													// Check if initializer is of the same struct type
-													if (init_type.type() == Type::Struct &&
-														init_type.type_index() == type_index) {
-														diagnoseDeletedSameTypeConstructorUsage(struct_info, false);
-														// Try to find copy constructor
-														const StructMemberFunction* copy_ctor = struct_info.findPreferredSameTypeConstructor(false, true);
-														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-															has_matching_constructor = true;
-															matching_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
-															FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", struct_info.name);
+										bool init_is_same_struct_type = false;
+										bool prefer_move_ctor = false;
+										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser_, init_expr, type_node); same_type_ctor_preference.has_value()) {
+											init_is_same_struct_type = true;
+											prefer_move_ctor = *same_type_ctor_preference;
+										} else {
+											const auto& expr = init_expr.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(expr)) {
+												const auto& ident = std::get<IdentifierNode>(expr);
+												std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+												if (init_symbol.has_value()) {
+													if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+														const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+														// Check if initializer is of the same struct type
+														if (init_type.type() == Type::Struct &&
+															init_type.type_index() == type_index) {
+															init_is_same_struct_type = true;
 														}
 													}
 												}
+											}
+										}
+
+										if (init_is_same_struct_type) {
+											diagnoseDeletedSameTypeConstructorUsage(struct_info, prefer_move_ctor);
+											const StructMemberFunction* same_type_ctor =
+												struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
+											if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+												has_matching_constructor = true;
+												matching_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+												FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", struct_info.name);
 											}
 										}
 									}
@@ -1503,22 +1539,8 @@ namespace {
 								(type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size())
 									? gTypeInfo[type_node.type_index().value].getStructInfo()
 									: nullptr;
-							bool is_same_type_xvalue_init = false;
-							if (parser_) {
-								if (auto init_type_opt = parser_->get_expression_type(init_node); init_type_opt.has_value()) {
-									is_same_type_xvalue_init =
-										init_type_opt->type() == Type::Struct
-										&& init_type_opt->type_index() == type_node.type_index()
-										&& init_type_opt->is_rvalue_reference();
-								}
-							}
-							if (!is_same_type_xvalue_init) {
-								is_same_type_xvalue_init =
-									init_operands.type == Type::Struct
-									&& init_operands.type_index.is_valid()
-									&& init_operands.type_index == type_node.type_index()
-									&& isExprResultXValue(init_operands);
-							}
+							const bool is_same_type_xvalue_init =
+								isSameTypeXValueSource(parser_, init_node, init_operands, type_node);
 							if (target_struct_info
 								&& is_same_type_xvalue_init) {
 								diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
@@ -1730,31 +1752,38 @@ namespace {
 									});
 
 									bool arg_is_same_struct_type = false;
+									bool prefer_move_ctor = false;
 									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
-										const auto& expr = first_arg.as<ExpressionNode>();
-										if (std::holds_alternative<IdentifierNode>(expr)) {
-											const auto& ident = std::get<IdentifierNode>(expr);
-											std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
-											if (arg_symbol.has_value()) {
-												if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
-													const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-													// Check if argument is of the same struct type
-													if (arg_type.type() == Type::Struct &&
-														arg_type.type_index() == type_node.type_index()) {
-														arg_is_same_struct_type = true;
+										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser_, first_arg, type_node); same_type_ctor_preference.has_value()) {
+											arg_is_same_struct_type = true;
+											prefer_move_ctor = *same_type_ctor_preference;
+										} else {
+											const auto& expr = first_arg.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(expr)) {
+												const auto& ident = std::get<IdentifierNode>(expr);
+												std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
+												if (arg_symbol.has_value()) {
+													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
+														const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+														// Check if argument is of the same struct type
+														if (arg_type.type() == Type::Struct &&
+															arg_type.type_index() == type_node.type_index()) {
+															arg_is_same_struct_type = true;
+														}
 													}
 												}
 											}
 										}
 									}
 
-									// Only select copy constructor if argument is of the same struct type
+									// Only select same-type special members if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, false);
-										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findPreferredSameTypeConstructor(false, true);
-										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
-											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
-											FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
+										diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);
+										const StructMemberFunction* same_type_ctor_func =
+											type_info.struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+										if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
+											matching_ctor = &same_type_ctor_func->function_decl.as<ConstructorDeclarationNode>();
+											FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info.name());
 										}
 									}
 								}
@@ -2105,7 +2134,8 @@ namespace {
 							// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
 							// fill in the default arguments so the backend sees the full parameter list.
 							if (type_info.struct_info_ && !is_converting_ctor) {
-								const bool prefer_move_ctor = isExprResultXValue(init_operands);
+								const bool prefer_move_ctor =
+									isSameTypeXValueSource(parser_, init_node, init_operands, type_node);
 								const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
 								if (!is_prvalue_same_type_source) {
 									diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);

@@ -73,8 +73,6 @@ compile time:
 Remaining gaps are narrower and currently centered on paths that still bypass
 the explicit same-type special-member checks:
 
-- same-type direct-init / brace-init from xvalue expressions can still miss the
-  deleted move-constructor diagnostic
 - member / array / indirection assignments that lower through
   `handleLValueAssignment` still store directly and can bypass deleted
   assignment diagnostics
