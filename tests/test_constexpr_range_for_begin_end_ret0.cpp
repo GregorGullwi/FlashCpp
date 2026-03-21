@@ -9,6 +9,13 @@ struct Holder {
 	ConstRange range;
 };
 
+struct MutableRange {
+	int values[3];
+
+	constexpr int* begin() { return &values[0]; }
+	constexpr int* end() { return &values[3]; }
+};
+
 constexpr int sum_local_object() {
 	ConstRange range{{1, 2, 3, 4}};
 	int sum = 0;
@@ -39,9 +46,19 @@ constexpr int sum_returned_range() {
 	return sum;
 }
 
+constexpr int sum_mutable_range() {
+	MutableRange range{{5, 6, 7}};
+	int sum = 0;
+	for (int value : range) {
+		sum += value;
+	}
+	return sum;
+}
+
 static_assert(sum_local_object() == 10);
 static_assert(sum_member_range() == 9);
 static_assert(sum_returned_range() == 18);
+static_assert(sum_mutable_range() == 18);
 
 int main() {
 	return 0;

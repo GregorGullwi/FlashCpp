@@ -3297,10 +3297,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// Get the loop variable name from the declaration
 		const ASTNode& loop_var_decl_node = ranged_for.get_loop_variable_decl();
 		std::string_view loop_var_name;
+		Token loop_var_token;
 		if (loop_var_decl_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = loop_var_decl_node.as<VariableDeclarationNode>();
 			if (var_decl.declaration_node().is<DeclarationNode>()) {
-				loop_var_name = var_decl.declaration_node().as<DeclarationNode>().identifier_token().value();
+				const DeclarationNode& loop_decl = var_decl.declaration_node().as<DeclarationNode>();
+				loop_var_name = loop_decl.identifier_token().value();
+				loop_var_token = loop_decl.identifier_token();
 			}
 		}
 		if (loop_var_name.empty()) {
@@ -3379,9 +3382,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return EvalResult::error("Range-based for: constexpr begin()/end() currently require pointer-returning iterators");
 		}
 
-		static size_t constexpr_range_object_counter = 0;
 		StringBuilder range_name_builder;
-		range_name_builder.append("__constexpr_range_").append(constexpr_range_object_counter++);
+		range_name_builder.append("__constexpr_range_")
+			.append(static_cast<uint64_t>(loop_var_token.line()))
+			.append("_")
+			.append(static_cast<uint64_t>(loop_var_token.column()))
+			.append("_")
+			.append(static_cast<uint64_t>(context.current_depth));
 		std::string_view materialized_range_name = range_name_builder.commit();
 		loop_guard.scope.on_declare(materialized_range_name, range_decl_bindings);
 		range_decl_bindings[materialized_range_name] = range_result;
@@ -3432,8 +3439,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (isBreakExecuted(body_result)) {
 				break;
 			}
-			if (!isContinueExecuted(body_result) &&
-				!isStatementExecutedWithoutReturn(body_result)) {
+			if (isContinueExecuted(body_result)) {
+				begin_iter = apply_binary_op(begin_iter, EvalResult::from_int(1), "+", &context, &bindings);
+				if (!begin_iter.success()) {
+					return begin_iter;
+				}
+				continue;
+			}
+			if (!isStatementExecutedWithoutReturn(body_result)) {
 				return body_result;
 			}
 
