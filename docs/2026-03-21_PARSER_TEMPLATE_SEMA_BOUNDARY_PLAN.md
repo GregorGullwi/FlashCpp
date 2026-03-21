@@ -188,6 +188,9 @@ Phase 3 has started with two low-risk local fallback removals:
   `IdentifierBinding::NonStaticMember` sema-first via an explicit enclosing
   member-context stack, leaving the direct parser fallback only for still
   unresolved identifier forms
+- the final direct `IdentifierBinding::Unresolved` parser type fallback inside
+  `SemanticAnalysis::inferExpressionType(...)` is now gone as well, so
+  `SemanticAnalysis.cpp` no longer calls `parser_.get_expression_type(...)`
 
 ## Workstreams
 
@@ -273,7 +276,7 @@ Then migrate those buckets one at a time:
 | Site | Current purpose | Phase 1 classification |
 | --- | --- | --- |
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction | sema-owned now: function/lambda deduction seeds outer-template bindings before inference, so this site no longer uses parser fallback |
-| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators/non-static members; parser fallback remains only for unresolved identifiers |
+| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | sema-owned now: globals/functions/static members/enumerators/non-static members resolve without direct parser type queries |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | sema-owned now: outer-template bindings carried on instantiated functions/ctors/dtors/lambdas/variables/structs now seed sema scope directly |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | sema-owned now: overload-resolution argument typing goes through `inferExpressionType(...)` only |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | sema-owned now: overload-resolution argument typing goes through `inferExpressionType(...)` only |

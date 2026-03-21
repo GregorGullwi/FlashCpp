@@ -2256,7 +2256,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 	if (node.is<ExpressionNode>()) {
 		const auto& expr = node.as<ExpressionNode>();
-		return std::visit([this, &node](const auto& e) -> CanonicalTypeId {
+		return std::visit([this](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -2341,15 +2341,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
-				// Classification: narrowed parser bridge for identifiers the parser
-				// still leaves unresolved in dependent/implicit-member contexts that
-				// sema does not yet model fully.
-				if (e.binding() == IdentifierBinding::Unresolved) {
-					auto expr_type = parser_.get_expression_type(node);
-					if (expr_type.has_value()) {
-						return canonicalizeType(*expr_type);
-					}
-				}
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
