@@ -469,10 +469,25 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
 	// For scalar pointers: array_elements = {pointed_value}, offset = 0.
-	// For array-element pointers: array_elements = {element_at_offset}, any offset.
-	// In both cases, array_elements[0] is exactly what this pointer dereferences to.
+	// For array pointers/materialized member-array pointers, array_elements may
+	// contain the full array snapshot so the current offset can still be applied
+	// after the original binding has gone out of scope.
 	if (!ptr.array_elements.empty()) {
-		return ptr.array_elements[0];
+		if (offset < 0) {
+			return EvalResult::error("Negative pointer offset in dereference");
+		}
+		size_t idx = static_cast<size_t>(offset);
+		if (ptr.array_elements.size() == 1) {
+			// Single-element snapshot (e.g., &arr[i] stored only element i).
+			if (idx != 0) {
+				return EvalResult::error("Array index out of bounds in constant expression");
+			}
+			return ptr.array_elements[0];
+		}
+		if (idx >= ptr.array_elements.size()) {
+			return EvalResult::error("Array index out of bounds in constant expression");
+		}
+		return ptr.array_elements[idx];
 	}
 	return dereference_constexpr_pointer(var_name, context, offset);
 }
@@ -2940,14 +2955,16 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						break;
 					}
 				}
-				size_t positional_idx = 0;
-				for (size_t i = 0; i < init_list.size() && positional_idx < si->members.size(); ++i) {
-					const auto& member = si->members[positional_idx++];
-					auto element_result = evaluate_expression_with_bindings(
-						init_list.initializers()[i], bindings, context);
-					if (!element_result.success()) return element_result;
-					result.object_member_bindings[StringTable::getStringView(member.getName())] =
-						std::move(element_result);
+				// Use bind_members_from_initializer_list so that nested InitializerListNodes
+				// (e.g., return {{1,2,3,4}} for an array member) are handled correctly.
+				auto bind_result = bind_members_from_initializer_list(
+					si,
+					init_list,
+					result.object_member_bindings,
+					context,
+					&bindings);
+				if (!bind_result.success()) {
+					return bind_result;
 				}
 				return result;
 			}
@@ -3300,7 +3317,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 		// Helper lambda: execute the loop body with loop_var bound to element, handle break/continue.
 		auto run_body = [&](const EvalResult& element) -> std::pair<bool, EvalResult> {
-			// Returns {should_stop, result}: should_stop=true means exit the loop.
+			// Returns {should_stop, result}: should_stop=true means exit the loop (return/break).
 			if (++context.step_count > context.max_steps)
 				return {true, EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop")};
 			range_decl_bindings[loop_var_name] = element;
@@ -3331,8 +3348,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 			// Sub-case A: begin() returned an array — iterate over all its elements.
 			if (begin_result.is_array) {
-				// Always call end() to get a tighter bound (pointer form).
-				// If end() returns a pointer with a known offset, use that as the element count.
+				// Default count is the full array size; end() may narrow it with a pointer offset.
 				size_t end_count = begin_result.array_elements.size();
 				auto end_result = call_constexpr_member_fn_on_object(range_result, "end", context);
 				if (end_result.success() && end_result.pointer_to_var.isValid() &&

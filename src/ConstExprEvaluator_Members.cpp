@@ -4120,7 +4120,8 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	const StructTypeInfo* struct_info,
 	const InitializerListNode& init_list,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings) {
 	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
 		std::string_view mname;
@@ -4136,14 +4137,33 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		}
 
 		const ASTNode& initializer = init_list.initializers()[mi];
-			if (member_info) {
-				auto val = materialize_member_initializer_value(*member_info, initializer, context);
-				if (!val.success()) return val;
-				bindings[mname] = std::move(val);
-				continue;
+		if (member_info) {
+			EvalResult val;
+			if (member_info->is_array && initializer.is<InitializerListNode>()) {
+				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
+				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
+				val = Evaluator::materialize_array_value(
+					member_info->type,
+					member_info->type_index,
+					member_init_list,
+					context,
+					evaluation_bindings);
+			} else if (evaluation_bindings) {
+				val = Evaluator::evaluate_expression_with_bindings_const(
+					initializer,
+					*evaluation_bindings,
+					context);
+			} else {
+				val = materialize_member_initializer_value(*member_info, initializer, context);
+			}
+			if (!val.success()) return val;
+			bindings[mname] = std::move(val);
+			continue;
 		}
 
-		auto val = evaluate(initializer, context);
+		auto val = evaluation_bindings
+			? Evaluator::evaluate_expression_with_bindings_const(initializer, *evaluation_bindings, context)
+			: evaluate(initializer, context);
 		if (!val.success()) return val;
 		bindings[mname] = val;
 	}

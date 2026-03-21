@@ -538,6 +538,10 @@ Nested range-for loops over two objects also work.
 - Element type must be an integer scalar (struct elements in the iteration variable are not yet supported due to a pre-existing member-access limitation in the evaluator)
 - `data + N` style in member functions (array decay) relies on `origin_var_name` tagging; this works when `begin()` returns the member array directly
 
+Also supported:
+- Iterating over a struct member's range: `for (int v : holder.range)`
+- Iterating over a function-returned range: `for (int v : make_range())`
+
 ### ✅ Basic Pointer Dereference in Constexpr (NEW)
 
 Basic constexpr pointer support is now implemented for named constexpr variables:
