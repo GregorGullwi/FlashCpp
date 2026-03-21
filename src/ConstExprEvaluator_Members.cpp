@@ -101,15 +101,15 @@ std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 		auto binding_it = bindings->find(var_name);
 		if (binding_it != bindings->end()) {
 			const EvalResult& bound = binding_it->second;
-			if (bound.is_array) {
-				if (!bound.array_elements.empty()) {
-					return bound.array_elements.size();
-				}
-				if (!bound.array_values.empty()) {
-					return bound.array_values.size();
-				}
+		if (bound.is_array) {
+			if (!bound.array_elements.empty()) {
+				return bound.array_elements.size();
 			}
-			return size_t{1};
+			if (!bound.array_values.empty()) {
+				return bound.array_values.size();
+			}
+			// Array with unknown size — cannot determine upper bound.
+			return std::nullopt;
 		}
 	}
 
