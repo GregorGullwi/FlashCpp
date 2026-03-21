@@ -60,14 +60,24 @@ uses a different code path.
 
 **Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.
 
-## Deleted special member functions not fully diagnosed
+## Deleted special member diagnostics still incomplete in some paths
 
-FlashCpp tracks `= delete` on copy/move constructors and assignment operators
-(`has_deleted_copy_constructor`, etc.) and the unified constructor lookup
-(`findPreferredSameTypeConstructor`) respects these flags.  However, semantic
-analysis does not yet emit a diagnostic when user code **calls** a deleted
-constructor (e.g. `NoCopy b(a);` where `NoCopy(const NoCopy&) = delete`).
-The code currently compiles silently and may produce incorrect object code.
+FlashCpp now rejects several previously-silent deleted special-member uses at
+compile time:
+
+- same-type deleted copy constructor use in direct-init, copy-init, and
+  brace-init from lvalue sources
+- same-type deleted move constructor use in xvalue copy-initialization
+- same-type deleted copy/move assignment in direct variable assignments
+
+Remaining gaps are narrower and currently centered on paths that still bypass
+the explicit same-type special-member checks:
+
+- same-type direct-init / brace-init from xvalue expressions can still miss the
+  deleted move-constructor diagnostic
+- member / array / indirection assignments that lower through
+  `handleLValueAssignment` still store directly and can bypass deleted
+  assignment diagnostics
 
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 

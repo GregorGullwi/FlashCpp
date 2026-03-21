@@ -2,6 +2,59 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+namespace {
+	[[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
+		const char* assignment_kind = prefer_move ? "move" : "copy";
+		std::string_view error_msg = StringBuilder()
+			.append("Call to deleted ")
+			.append(assignment_kind)
+			.append(" assignment operator of '")
+			.append(StringTable::getStringView(struct_info.name))
+			.append("'")
+			.commit();
+		throw CompileError(std::string(error_msg));
+	}
+
+	void diagnoseDeletedSameTypeAssignmentUsage(const StructTypeInfo& struct_info, bool prefer_move) {
+		if (prefer_move) {
+			if (struct_info.isMoveAssignmentDeleted()) {
+				throwDeletedSameTypeAssignmentCompileError(struct_info, true);
+			}
+			return;
+		}
+
+		if (struct_info.isCopyAssignmentDeleted()) {
+			throwDeletedSameTypeAssignmentCompileError(struct_info, false);
+		}
+	}
+
+	bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
+		if (const auto* temp_var = std::get_if<TempVar>(&rhs_expr_result.value)) {
+			return getTempVarMetadata(*temp_var).category != ValueCategory::LValue;
+		}
+		return false;
+	}
+
+	std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info, const FunctionDeclarationNode& func_decl) {
+		if (func_decl.parameter_nodes().empty() || !func_decl.parameter_nodes()[0].is<DeclarationNode>()) {
+			return std::nullopt;
+		}
+
+		const auto& param_type = func_decl.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		if (param_type.type() != Type::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
+			return std::nullopt;
+		}
+
+		if (param_type.is_rvalue_reference()) {
+			return true;
+		}
+		if (param_type.is_lvalue_reference()) {
+			return false;
+		}
+		return std::nullopt;
+	}
+}
+
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
 	GlobalStaticBindingInfo info;
@@ -1063,6 +1116,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					if (lhs_type_index.is_valid() && lhs_type_index.value < gTypeInfo.size()) {
+						if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
+								same_type_assignment_kind.has_value()) {
+								diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							}
+						}
+					}
+					if (func_decl.is_deleted()) {
+						throw CompileError("Call to deleted function 'operator='");
+					}
 
 					// Check if the parameter type matches RHS type
 					const auto& param_nodes = func_decl.parameter_nodes();
@@ -1520,6 +1584,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (op == "=") {
+					if (lhs_type_index.is_valid() && lhs_type_index.value < gTypeInfo.size()) {
+						if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
+								same_type_assignment_kind.has_value()) {
+								diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							}
+						}
+					}
+				}
+				if (op == "=" && func_decl.is_deleted()) {
+					throw CompileError("Call to deleted function 'operator='");
+				}
 
 				// Get struct name for mangling
 				std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index.value].name());
@@ -2166,6 +2243,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for assignment: convert RHS to LHS type instead of finding common type
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
+			if (lhsType == Type::Struct
+				&& rhsType == Type::Struct
+				&& lhsExprResult.type_index.is_valid()
+				&& rhsExprResult.type_index.is_valid()
+				&& lhsExprResult.type_index == rhsExprResult.type_index
+				&& lhsExprResult.type_index.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[lhsExprResult.type_index.value].getStructInfo()) {
+					diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhsExprResult));
+				}
+			}
+
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
 			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {

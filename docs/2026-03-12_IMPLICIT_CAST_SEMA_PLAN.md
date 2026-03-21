@@ -1083,6 +1083,44 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 
 **Suite:** 1633 pass / 0 fail / 67 expected-fail.
 
+### Follow-up slice ✅: deleted special-member diagnostics in current IR-side paths
+
+**Goal:** Reduce the deleted copy/move special-member gap without waiting for the
+full semantic-normalization architecture. This slice keeps the fix behavior-safe
+and local to existing codegen-time validation points.
+
+**Implementation:**
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- same-type direct-init / brace-init lvalue paths now reject deleted copy
+	  constructor use before constructor lookup can silently fall through
+	- same-type xvalue copy-initialization now rejects deleted move constructor
+	  use before the current rvalue fast path can bit-copy the object
+	- same-type copy-initialization default-argument fill-in now prefers the move
+	  constructor for xvalue sources, but still skips prvalue-elision-sensitive
+	  diagnostics
+- `src/IrGenerator_Expr_Operators.cpp`
+	- same-type direct variable assignment now rejects deleted copy/move
+	  assignment both on the raw-assignment fallback path and when the selected
+	  `operator=` overload corresponds to the deleted special member
+
+**Regression tests added:**
+- `tests/test_deleted_copy_ctor_direct_fail.cpp`
+- `tests/test_deleted_copy_ctor_copy_init_fail.cpp`
+- `tests/test_deleted_copy_ctor_brace_init_fail.cpp`
+- `tests/test_deleted_move_ctor_copy_init_fail.cpp`
+- `tests/test_deleted_copy_assignment_fail.cpp`
+- `tests/test_deleted_move_assignment_fail.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_copy_move_ctor_select_ret0.cpp test_deleted_special_members_ret0.cpp test_deleted_copy_ctor_brace_init_fail.cpp test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_direct_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
+
+**Remaining gap after this slice:**
+- same-type direct-init / brace-init from xvalue expressions still need a more
+  central semantic check
+- lvalue-metadata store paths (`handleLValueAssignment`) still bypass deleted
+  assignment diagnostics for member/array/indirect assignments
+
 ### Known limitations (current, as of Phase 19)
 
 - User-defined `operator bool()` / converting constructors remain in codegen.
@@ -1090,7 +1128,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- Deleted special member function usage is not yet diagnosed at compile time (tracked in `docs/KNOWN_ISSUES.md`).
+- Deleted special member diagnostics are still incomplete in some xvalue-init
+  and lvalue-metadata assignment paths (tracked in `docs/KNOWN_ISSUES.md`).
 
 ### Parallel rollout guidance
 

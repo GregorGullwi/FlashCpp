@@ -2,6 +2,47 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+namespace {
+	[[noreturn]] void throwDeletedSameTypeConstructorCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
+		const char* ctor_kind = prefer_move ? "move" : "copy";
+		std::string_view error_msg = StringBuilder()
+			.append("Call to deleted ")
+			.append(ctor_kind)
+			.append(" constructor of '")
+			.append(StringTable::getStringView(struct_info.name))
+			.append("'")
+			.commit();
+		throw CompileError(std::string(error_msg));
+	}
+
+	void diagnoseDeletedSameTypeConstructorUsage(const StructTypeInfo& struct_info, bool prefer_move) {
+		if (prefer_move) {
+			if (struct_info.isMoveConstructorDeleted()) {
+				throwDeletedSameTypeConstructorCompileError(struct_info, true);
+			}
+			return;
+		}
+
+		if (struct_info.isCopyConstructorDeleted()) {
+			throwDeletedSameTypeConstructorCompileError(struct_info, false);
+		}
+	}
+
+	bool isExprResultXValue(const ExprResult& expr_result) {
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+			return getTempVarMetadata(*temp_var).category == ValueCategory::XValue;
+		}
+		return false;
+	}
+
+	bool isExprResultPRValue(const ExprResult& expr_result) {
+		if (const auto* temp_var = std::get_if<TempVar>(&expr_result.value)) {
+			return getTempVarMetadata(*temp_var).category == ValueCategory::PRValue;
+		}
+		return false;
+	}
+}
+
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
@@ -881,6 +922,7 @@
 													// Check if initializer is of the same struct type
 													if (init_type.type() == Type::Struct &&
 														init_type.type_index() == type_index) {
+														diagnoseDeletedSameTypeConstructorUsage(struct_info, false);
 														// Try to find copy constructor
 														const StructMemberFunction* copy_ctor = struct_info.findPreferredSameTypeConstructor(false, true);
 														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -1457,6 +1499,30 @@
 						// Check if this is an rvalue (TempVar) - function return value
 						bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 						if (is_rvalue) {
+							const StructTypeInfo* target_struct_info =
+								(type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size())
+									? gTypeInfo[type_node.type_index().value].getStructInfo()
+									: nullptr;
+							bool is_same_type_xvalue_init = false;
+							if (parser_) {
+								if (auto init_type_opt = parser_->get_expression_type(init_node); init_type_opt.has_value()) {
+									is_same_type_xvalue_init =
+										init_type_opt->type() == Type::Struct
+										&& init_type_opt->type_index() == type_node.type_index()
+										&& init_type_opt->is_rvalue_reference();
+								}
+							}
+							if (!is_same_type_xvalue_init) {
+								is_same_type_xvalue_init =
+									init_operands.type == Type::Struct
+									&& init_operands.type_index.is_valid()
+									&& init_operands.type_index == type_node.type_index()
+									&& isExprResultXValue(init_operands);
+							}
+							if (target_struct_info
+								&& is_same_type_xvalue_init) {
+								diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
+							}
 							// For rvalues, use direct initialization (no constructor call)
 							appendExprResultToOperands(init_operands);
 						}
@@ -1684,6 +1750,7 @@
 
 									// Only select copy constructor if argument is of the same struct type
 									if (arg_is_same_struct_type) {
+										diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, false);
 										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findPreferredSameTypeConstructor(false, true);
 										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
 											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
@@ -2038,8 +2105,13 @@
 							// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
 							// fill in the default arguments so the backend sees the full parameter list.
 							if (type_info.struct_info_ && !is_converting_ctor) {
+								const bool prefer_move_ctor = isExprResultXValue(init_operands);
+								const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
+								if (!is_prvalue_same_type_source) {
+									diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);
+								}
 								const StructMemberFunction* same_type_ctor =
-									type_info.struct_info_->findPreferredSameTypeConstructor(false, true);
+									type_info.struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 								if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 									if (matched_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
