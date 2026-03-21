@@ -4346,6 +4346,14 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			StringTable::getStringView(arr_result.pointer_to_var),
 			context, effective_offset);
 	}
+	// Handle inline array results (e.g., string literal evaluated directly, or
+	// constexpr const char* whose initializer evaluates to a string-char array).
+	if (arr_result.success() && arr_result.is_array && !arr_result.array_elements.empty()) {
+		if (static_cast<size_t>(index) >= arr_result.array_elements.size()) {
+			return EvalResult::error("Array index out of bounds in constant expression");
+		}
+		return arr_result.array_elements[static_cast<size_t>(index)];
+	}
 
 	return EvalResult::error("Array subscript on unsupported expression type");
 }

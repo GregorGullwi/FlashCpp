@@ -2462,8 +2462,22 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 			}
 		} else if (dest.size_in_bits == SizeInBits{16}) {
 			opcodes = generateMovToFrame16(source.reg, dest.offset);
-		} else { // 8-bit
+		} else if (dest.size_in_bits == SizeInBits{8}) {
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
+		} else {
+			// Non-standard size (e.g. 24-bit 3-byte struct returned in a register).
+			// All temp-vars are 8-byte aligned on the stack, so rounding the write up
+			// to the next power-of-2 size is safe and ensures all bytes are present
+			// before the struct-copy code reads them back in chunks.
+			if (dest.size_in_bits.value <= 8) {
+				opcodes = generateMovToFrame8(source.reg, dest.offset);
+			} else if (dest.size_in_bits.value <= 16) {
+				opcodes = generateMovToFrame16(source.reg, dest.offset);
+			} else if (dest.size_in_bits.value <= 32) {
+				opcodes = generateMovToFrame32(source.reg, dest.offset);
+			} else {
+				opcodes = generatePtrMovToFrame(source.reg, dest.offset);
+			}
 		}
 
 		// Insert opcodes into text section

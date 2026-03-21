@@ -600,6 +600,79 @@ constexpr int sum_via_ptr(const int* p, int n) {
 static_assert(sum_via_ptr(&arr[0], 5) == 150);  // ✅ Works
 ```
 
+### ✅ `const char*` and String Literals in Constexpr (NEW)
+
+`const char*` pointers to string literals are supported in constexpr evaluation.
+This includes compile-time array subscript, compile-time string-length computation
+via `while`/pointer loops, and runtime string usage obtained from constexpr functions.
+
+```cpp
+constexpr const char* get_hello() { return "Hello"; }
+
+// Compile-time subscript on constexpr const char*
+constexpr const char* hello = get_hello();
+static_assert(hello[0] == 'H');   // ✅ Works
+static_assert(hello[4] == 'o');   // ✅ Works
+
+// Compile-time string length via constexpr function
+constexpr int str_len(const char* s) {
+    int len = 0;
+    while (s[len] != '\0') ++len;
+    return len;
+}
+static_assert(str_len("Hello") == 5);  // ✅ Works — string literal argument
+static_assert(str_len("")      == 0);  // ✅ Works — empty string
+
+// Runtime usage from constexpr function
+const char* s = get_hello();  // runtime call
+if (s[0] == 'H') { /* ✅ runtime subscript works */ }
+int len = str_len(s);         // ✅ runtime call with runtime pointer
+```
+
+**How it works:** String literal expressions (e.g., `"Hello"`) are materialised by the
+constexpr evaluator as an array of `char` elements (including the null terminator) with
+`is_array = true`.  Subscript, pointer-parameter passing, and `while`/`for` loops over
+such char arrays all use the existing array/pointer evaluation paths.
+
+**Standard escape sequences** (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`) are decoded
+correctly when materialising string-literal arrays at compile time.
+
+**Still unsupported in compile-time evaluation:**
+- String concatenation at compile-time across different pointer variables (e.g., two
+  `const char*` joined with `+`)
+- `std::string` / `std::string_view` manipulation at compile time
+
+### ✅ Struct Values Returned from Constexpr Functions (NEW)
+
+Constexpr functions may return aggregate/struct values.  Both compile-time
+(`static_assert`) and runtime call sites are supported, including structs whose size
+is not a power-of-two machine word (e.g., a 3-byte `Color` struct with three
+`unsigned char` fields):
+
+```cpp
+struct Point { int x; int y; };
+struct Color { unsigned char r; unsigned char g; unsigned char b; };  // 3 bytes
+
+constexpr Point make_point(int x, int y) { return {x, y}; }
+constexpr Color make_color(unsigned char r, unsigned char g, unsigned char b) {
+    return {r, g, b};
+}
+
+// Compile-time
+constexpr Point cp = make_point(10, 20);
+static_assert(cp.x == 10 && cp.y == 20);  // ✅
+
+// Runtime
+Point p  = make_point(3, 4);   // ✅ all members correct
+Color c  = make_color(255, 128, 0);  // ✅ all 3 bytes correct (sub-word struct)
+```
+
+**Note:** Prior to this fix, sub-word struct returns (e.g., 3-byte structs returned
+in a single register) would only propagate the first byte correctly to the caller.
+The code-generator now rounds the register store up to the next power-of-two
+granularity so every byte of the struct is present before the struct-copy code
+reads it field by field.
+
 ### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
 
 `new`, `new[]`, `delete`, and `delete[]` should currently be treated as unsupported in constexpr evaluation.
@@ -763,6 +836,8 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Basic constexpr pointer dereference: `&named_var` (address-of), `*ptr` (dereference), `ptr->member` (arrow member access), and pointer function parameters (e.g., `const T* p`) in supported shapes
 - ✅ Constexpr null pointer checks and pointer comparisons: `ptr == nullptr`, `ptr != nullptr`, `ptr1 == ptr2`, `ptr1 != ptr2`, `!ptr`, `ptr && x`, `ptr || x` (valid constexpr pointer is always non-null/truthy)
 - ✅ Constexpr pointer arithmetic: `&arr[i]` (address of array element), `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic), `ptr1 - ptr2` (pointer difference), `ptr[i]` (pointer subscript), `ptr < ptr2` / `ptr <= ptr2` / `ptr > ptr2` / `ptr >= ptr2` (pointer relational comparisons); works in both top-level constexpr and inside constexpr function bodies
+- ✅ `const char*` and string literals in constexpr: `constexpr const char* s = get_fn();`, `static_assert(s[0] == 'H')`, `str_len("Hello")` using `while (s[n] != '\0')` loop, string literal as function argument; standard escape sequences decoded at compile time
+- ✅ Sub-word struct returns from constexpr functions: structs smaller than a machine word (e.g., 3-byte `Color{r,g,b}`) are now correctly propagated in all bytes to both compile-time and runtime call sites
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -809,7 +884,14 @@ Potential areas for enhancement (in order of complexity):
    - simple `this` / `*this` member reads/calls
    - straightforward nested lambdas over enclosing captured/member state
    - straightforward mutable `[this]` / `[*this]` updates
-7. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
+7. **`const char*` works in constexpr** - constexpr functions can return string literals,
+   and subscript/loop operations on `const char*` in both `static_assert` and constexpr
+   function bodies work.  `std::string` / `std::string_view` manipulation is not yet
+   supported at compile time.
+8. **Small structs are safe** - structs smaller than a machine word (e.g., a 3-byte
+   `{unsigned char r, g, b}`) can be returned from constexpr functions to both
+   compile-time and runtime variables correctly.
+9. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
 
 ### For Contributors
 
@@ -953,12 +1035,11 @@ constexpr int f() {
 }
 static_assert(f() == 42);  // Dynamic allocation not supported
 
-// Unsupported pointer forms:
-// - Pointer arithmetic: ptr + n, ptr - n
-// - Pointers to array elements: &arr[0]
-// - Pointer-to-member: obj.*pmf
-// Note: null pointer checks (ptr == nullptr), pointer equality (ptr1 == ptr2),
-//       and pointer truthiness (if (ptr), !ptr, ptr && x) are now supported
+// Unsupported pointer forms — only pointer-to-member remains unsupported:
+// - Pointer-to-member: obj.*pmf  ❌
+// Note: pointer arithmetic (ptr + n, ptr - n, ptr[i]), address of array elements
+//       (&arr[0]), null pointer checks (ptr == nullptr), pointer equality (ptr1 == ptr2),
+//       and pointer truthiness (if (ptr), !ptr, ptr && x) are all now supported.
 
 // Still risky: richer captured-object aliasing/identity behavior in constexpr lambdas
 struct CaptureExample {
@@ -992,3 +1073,5 @@ struct CaptureExample {
 - `tests/test_constexpr_structs.cpp` - Test cases showing limitations
 - `tests/test_constexpr_improved.cpp` - Test cases for improved features
 - `tests/test_constexpr_member_func.cpp` - Member function constexpr tests
+- `tests/test_constexpr_struct_runtime_assign_ret0.cpp` - Struct return from constexpr functions (incl. sub-word structs)
+- `tests/test_constexpr_const_char_ptr_ret0.cpp` - `const char*` / string-literal support in constexpr
