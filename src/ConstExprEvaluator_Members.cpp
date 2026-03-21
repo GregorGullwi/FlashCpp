@@ -1193,7 +1193,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					if (!arr_name.empty()) {
 						auto idx_result = evaluate_expression_with_bindings(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
-						return EvalResult::from_pointer(arr_name, idx_result.as_int());
+						int64_t elem_offset = idx_result.as_int();
+						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
+						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						auto arr_it = bindings.find(arr_name);
+						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
+							const EvalResult& arr = arr_it->second;
+							size_t idx = static_cast<size_t>(elem_offset);
+							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
+								ptr_result.array_elements = {arr.array_elements[idx]};
+						}
+						return ptr_result;
 					}
 				}
 			}
@@ -1356,7 +1366,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					if (!arr_name.empty()) {
 						auto idx_result = recursive_eval(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
-						return EvalResult::from_pointer(arr_name, idx_result.as_int());
+						int64_t elem_offset = idx_result.as_int();
+						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
+						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						auto arr_it = bindings.find(arr_name);
+						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
+							const EvalResult& arr = arr_it->second;
+							size_t idx = static_cast<size_t>(elem_offset);
+							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
+								ptr_result.array_elements = {arr.array_elements[idx]};
+						}
+						return ptr_result;
 					}
 				}
 			}
@@ -1433,7 +1453,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 						std::string_view ptr_var_name = StringTable::getStringView(ptr_eval.pointer_to_var);
 						// When the pointer has a non-zero offset, dereference the array element first.
 						if (ptr_eval.pointer_offset != 0) {
-							auto elem_result = dereference_constexpr_pointer(ptr_var_name, context, ptr_eval.pointer_offset);
+							auto elem_result = deref_pointer_with_bindings(ptr_eval, bindings, context);
 							if (elem_result.success()) {
 								auto member_it = elem_result.object_member_bindings.find(member_name);
 								if (member_it != elem_result.object_member_bindings.end()) {

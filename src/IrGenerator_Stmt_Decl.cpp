@@ -148,6 +148,11 @@
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 
 				if (!eval_result.success()) {
+					// TODO: when node.is_constexpr() this should be a hard CompileError per
+					// C++20 [dcl.constexpr]. Currently a warning because the evaluator cannot
+					// distinguish "genuinely not a constant expression" from a FlashCpp
+					// evaluator limitation (throwing unconditionally causes false positives).
+					// See docs/KNOWN_ISSUES.md: constexpr/consteval enforcement not yet implemented.
 					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
 					decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
 					return 0;

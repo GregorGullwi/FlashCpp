@@ -424,10 +424,15 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			}
 		} else if (offset == 0) {
 			return bound;
+		} else {
+			return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
 		}
 	}
-	// Check for a value snapshot stored in the pointer EvalResult (outer-scope scalar pointer).
-	if (offset == 0 && !ptr.array_elements.empty()) {
+	// Check for a value snapshot stored in the pointer EvalResult.
+	// For scalar pointers: array_elements = {pointed_value}, offset = 0.
+	// For array-element pointers: array_elements = {element_at_offset}, any offset.
+	// In both cases, array_elements[0] is exactly what this pointer dereferences to.
+	if (!ptr.array_elements.empty()) {
 		return ptr.array_elements[0];
 	}
 	return dereference_constexpr_pointer(var_name, context, offset);
