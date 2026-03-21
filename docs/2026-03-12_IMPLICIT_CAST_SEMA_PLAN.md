@@ -1022,8 +1022,6 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - `tests/test_copy_move_ctor_select_ret0.cpp` — lvalue correctly selects copy constructor.
 - `tests/test_implicit_copy_ctor_ret0.cpp` — implicit (compiler-generated) copy on POD struct.
 
-**Suite:** 1626 pass / 0 fail / 67 expected-fail.
-
 ### Post-Phase-18 cleanup (continued): ad-hoc copy/move ctor detection audit
 
 **Goal:** Fix the same two bugs (is_reference() matching rvalue refs, params.size()==1 rejecting default-arg ctors) in ad-hoc inline detection loops outside `StructTypeInfo`, and fix downstream assumptions about single-param constructors.
@@ -1047,8 +1045,6 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - `tests/test_copy_move_brace_init_ret0.cpp` — struct with both copy and move ctors, copy from lvalue correctly selects copy ctor.
 - `tests/test_copy_ctor_default_arg_inherited_ret0.cpp` — copy ctor with default args works across copy-initialization path.
 
-**Suite:** 1628 pass / 0 fail / 67 expected-fail.
-
 ### Post-Phase-18 cleanup (continued): own-type check, computeMinRequiredArgs, throw/catch
 
 **Goal:** Fix two correctness bugs introduced by the earlier `min_required <= 1` relaxation, and tighten the deleted assignment operator detection.
@@ -1060,8 +1056,6 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 
 **Regression test added:**
 - `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
-
-**Suite:** 1629 pass / 0 fail / 67 expected-fail.
 
 ### Phase 19 ✅: `buildConversionPlan` extended to `TypeSpecifierNode`-level conversions
 
@@ -1080,8 +1074,6 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - Internal calls from `can_convert_type(Type, Type)` replaced with `buildConversionPlan(Type, Type)` to return full plans instead of discarding the `StandardConversionKind`.
 - No new `StandardConversionKind` values needed — all existing enum values in `src/SemanticTypes.h` are sufficient.
 - `ConversionRank` values remain identical — no overload resolution behavior change.
-
-**Suite:** 1633 pass / 0 fail / 67 expected-fail.
 
 ### Follow-up slice ✅: deleted special-member diagnostics in current IR-side paths
 
@@ -1111,10 +1103,6 @@ and local to existing codegen-time validation points.
 - `tests/test_deleted_copy_assignment_fail.cpp`
 - `tests/test_deleted_move_assignment_fail.cpp`
 
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_copy_move_ctor_select_ret0.cpp test_deleted_special_members_ret0.cpp test_deleted_copy_ctor_brace_init_fail.cpp test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_direct_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
-
 ### Follow-up slice ✅: same-type xvalue direct-init / brace-init deleted move diagnostics
 
 **Goal:** Close the remaining deleted move-constructor gap for same-type xvalue
@@ -1134,10 +1122,6 @@ special-member work.
 **Regression tests added:**
 - `tests/test_deleted_move_ctor_direct_init_xvalue_fail.cpp`
 - `tests/test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
-
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_deleted_move_ctor_copy_init_fail.cpp test_deleted_move_ctor_direct_init_xvalue_fail.cpp test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
 
 ### Follow-up slice ✅: deleted assignment diagnostics in lvalue-metadata store paths
 
@@ -1162,10 +1146,6 @@ indirection stores.
 - `tests/test_deleted_move_assignment_array_element_fail.cpp`
 - `tests/test_deleted_move_assignment_indirect_fail.cpp`
 
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_member_fail.cpp test_deleted_copy_assignment_array_element_fail.cpp test_deleted_copy_assignment_indirect_fail.cpp test_deleted_move_assignment_member_fail.cpp test_deleted_move_assignment_array_element_fail.cpp test_deleted_move_assignment_indirect_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp`
-
 ### Follow-up slice ✅: deleted copy-assignment fallback for xvalue same-type assignment
 
 **Goal:** Preserve deleted copy-assignment diagnostics when the RHS is an xvalue
@@ -1186,10 +1166,6 @@ to the copy assignment operator.
 **Regression tests added:**
 - `tests/test_deleted_copy_assignment_xvalue_fallback_fail.cpp`
 
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_fail.cpp test_deleted_copy_assignment_xvalue_fallback_fail.cpp test_deleted_move_assignment_fail.cpp`
-
 ### Follow-up slice ✅: deleted copy-constructor fallback for xvalue same-type initialization
 
 **Goal:** Preserve deleted copy-constructor diagnostics when the initializer is
@@ -1209,10 +1185,6 @@ falls back to the copy constructor.
 **Regression tests added:**
 - `tests/test_deleted_copy_ctor_xvalue_fallback_fail.cpp`
 
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_deleted_copy_ctor_copy_init_fail.cpp test_deleted_copy_ctor_xvalue_fallback_fail.cpp test_deleted_move_ctor_copy_init_fail.cpp`
-
 ### Follow-up slice ✅: global/static compound-assignment result lvalues
 
 **Goal:** Make global and static-local compound assignment expressions return an
@@ -1229,10 +1201,6 @@ required `E1 op= E2` result category.
 **Regression tests added:**
 - `tests/test_global_compound_assign_result_lvalue_ret0.cpp`
 
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 test_global_assign_result_lvalue_ret0.cpp test_global_compound_assign_result_lvalue_ret0.cpp test_compound_assign_global_ret42.cpp`
-
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
@@ -1245,10 +1213,6 @@ clear local sources of truth.
 	  parameter is not present in the sema scope stack
 	- `PointerToMemberAccessNode` now forwards the inferred type of its
 	  `member_pointer()` operand, matching the existing IR-generation expectation
-
-**Windows validation:**
-- `.\build_flashcpp.bat`
-- `.\tests\run_all_tests.ps1 template_nontype_ret10.cpp test_template_type_param_functional_cast_ret0.cpp test_pointer_to_member_comprehensive_ret0.cpp test_ptr_to_member_type_alias_ret42.cpp`
 
 ### Known limitations (current, as of Phase 19)
 
