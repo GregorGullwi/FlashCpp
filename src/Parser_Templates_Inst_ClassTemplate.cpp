@@ -2063,13 +2063,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name,  // Set correct parent struct name
 					orig_ctor.name()    // Constructor name (same as template name)
 				);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args);
 				
 				// Copy parameters
@@ -5041,13 +5034,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5186,13 +5172,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 
 				// Substitute and copy parameters
@@ -5545,13 +5524,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						instantiated_name
 					);
-					InlineVector<StringHandle, 4> outer_template_param_names;
-					outer_template_param_names.reserve(template_params.size());
-					for (const auto& template_param : template_params) {
-						if (template_param.is<TemplateParameterNode>()) {
-							outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-						}
-					}
 					new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 					
 					// Substitute and copy parameters
@@ -5676,13 +5648,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						specialized_dtor_name
 					);
-					InlineVector<StringHandle, 4> outer_template_param_names;
-					outer_template_param_names.reserve(template_params.size());
-					for (const auto& template_param : template_params) {
-						if (template_param.is<TemplateParameterNode>()) {
-							outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-						}
-					}
 					new_dtor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 					
 					// Copy noexcept properties from the original destructor declaration.
@@ -5780,13 +5745,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				
 				// Copy parameter nodes with outer template parameter substitution

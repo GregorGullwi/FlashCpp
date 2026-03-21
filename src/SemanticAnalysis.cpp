@@ -1685,7 +1685,7 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 			continue;
 		}
 
-		const ASTNode& friend_function = *friend_decl.function_declaration();
+		ASTNode friend_function = *friend_decl.function_declaration();
 		if (friend_function.is<FunctionDeclarationNode>()) {
 			normalizeFunctionDeclaration(friend_function.as<FunctionDeclarationNode>());
 		}
