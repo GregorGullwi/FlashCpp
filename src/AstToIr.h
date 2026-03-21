@@ -414,6 +414,24 @@ private:
 	// Used when a member function call syntax is used but the object is not a struct
 	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode);
 
+	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
+	// Returns nullptr if the type is not a struct.
+	const TypeInfo* resolveToConcreteStructTypeInfo(TypeIndex type_idx) const;
+
+	// Convert a scalar ConstExpr::EvalResult value to a raw unsigned long long.
+	static unsigned long long evalResultScalarToRaw(const ConstExpr::EvalResult& r);
+
+	// Materialise a successful consteval aggregate/struct EvalResult into IR:
+	// emits VariableDecl + MemberStore instructions and returns the ExprResult
+	// pointing at the fresh temp variable.  Returns an empty ExprResult if the
+	// type is not a recognised struct (caller should fall through to the scalar path).
+	ExprResult materializeConstevalAggregateResult(
+		const ConstExpr::EvalResult& eval_result,
+		const TypeSpecifierNode& ret_spec,
+		Type ret_type,
+		SizeInBits ret_size,
+		const Token& call_token);
+
 	// Helper function to check if access to a member is allowed
 	// Returns true if access is allowed, false otherwise
 	bool checkMemberAccess(const StructMember* member,

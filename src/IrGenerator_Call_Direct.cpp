@@ -2,6 +2,68 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+// ── Shared consteval-materialization helpers ────────────────────────────────
+
+const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
+	if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) return nullptr;
+	const TypeInfo* ti = &gTypeInfo[type_idx.value];
+	// Chase aliases up to 64 levels deep.
+	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
+		if (!ti->type_index_.is_valid() || ti->type_index_.value >= gTypeInfo.size()) break;
+		ti = &gTypeInfo[ti->type_index_.value];
+	}
+	return ti;
+}
+
+unsigned long long AstToIr::evalResultScalarToRaw(const ConstExpr::EvalResult& r) {
+	if (const auto* ll = std::get_if<long long>(&r.value))
+		return static_cast<unsigned long long>(*ll);
+	if (const auto* ull = std::get_if<unsigned long long>(&r.value))
+		return *ull;
+	if (const auto* b = std::get_if<bool>(&r.value))
+		return *b ? 1ULL : 0ULL;
+	return static_cast<unsigned long long>(r.as_int());
+}
+
+ExprResult AstToIr::materializeConstevalAggregateResult(
+	const ConstExpr::EvalResult& eval_result,
+	const TypeSpecifierNode& ret_spec,
+	Type ret_type,
+	SizeInBits ret_size,
+	const Token& call_token) {
+	if (eval_result.object_member_bindings.empty()) return {};
+
+	const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(ret_spec.type_index());
+	if (!struct_type_info) return {};
+	const StructTypeInfo* si = struct_type_info->getStructInfo();
+	if (!si) return {};
+
+	TempVar struct_tmp = var_counter.next();
+	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
+
+	VariableDeclOp vdecl;
+	vdecl.type = ret_type;
+	vdecl.size_in_bits = ret_size;
+	vdecl.var_name = struct_tmp_handle;
+	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));
+
+	for (const auto& member : si->members) {
+		const std::string_view member_sv = StringTable::getStringView(member.getName());
+		auto it = eval_result.object_member_bindings.find(member_sv);
+		if (it == eval_result.object_member_bindings.end()) continue;
+		MemberStoreOp ms;
+		ms.value.type = member.type;
+		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+		ms.value.value = IrValue{evalResultScalarToRaw(it->second)};
+		ms.object = struct_tmp_handle;
+		ms.member_name = member.getName();
+		ms.offset = static_cast<int>(member.offset);
+		ms.struct_type_info = struct_type_info;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
+	}
+	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+}
+
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
@@ -833,7 +895,7 @@
 				throw CompileError("call to consteval function '" + std::string(func_name_view) +
 					"' cannot be used in a non-constant context: " + eval_result.error_message);
 			}
-			// Materialise the constant result into an ExprResult without emitting a call instruction.
+			// Materialize the constant result into an ExprResult without emitting a call instruction.
 			const TypeSpecifierNode& ret_spec =
 				matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
 			const Type ret_type = ret_spec.type();
@@ -854,73 +916,13 @@
 
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
 			if (!eval_result.object_member_bindings.empty()) {
-				// Allocate a fresh temp variable to hold the materialised struct.
-				TempVar struct_tmp = var_counter.next();
-				StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
-
-				VariableDeclOp vdecl;
-				vdecl.type = ret_type;
-				vdecl.size_in_bits = ret_size;
-				vdecl.var_name = struct_tmp_handle;
-				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl),
-					functionCallNode.called_from()));
-
-				// Resolve the struct layout to emit properly-offset member stores.
-				const TypeInfo* struct_type_info = nullptr;
-				if (ret_spec.type_index().value < gTypeInfo.size()) {
-					struct_type_info = &gTypeInfo[ret_spec.type_index().value];
-					// Chase aliases to find the concrete struct TypeInfo.
-					for (int depth = 0; depth < 64 && struct_type_info && !struct_type_info->getStructInfo(); ++depth) {
-						if (!struct_type_info->type_index_.is_valid() ||
-							struct_type_info->type_index_.value >= gTypeInfo.size()) break;
-						struct_type_info = &gTypeInfo[struct_type_info->type_index_.value];
-					}
-				}
-
-				if (struct_type_info) {
-					const StructTypeInfo* si = struct_type_info->getStructInfo();
-					if (si) {
-						for (const auto& member : si->members) {
-							const std::string_view member_sv = StringTable::getStringView(member.getName());
-							auto it = eval_result.object_member_bindings.find(member_sv);
-							if (it == eval_result.object_member_bindings.end()) continue;
-							const ConstExpr::EvalResult& mval = it->second;
-							unsigned long long mraw = 0;
-							if (const auto* ll = std::get_if<long long>(&mval.value))
-								mraw = static_cast<unsigned long long>(*ll);
-							else if (const auto* ull = std::get_if<unsigned long long>(&mval.value))
-								mraw = *ull;
-							else if (const auto* b = std::get_if<bool>(&mval.value))
-								mraw = *b ? 1ULL : 0ULL;
-							else
-								mraw = static_cast<unsigned long long>(mval.as_int());
-							MemberStoreOp ms;
-							ms.value.type = member.type;
-							ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-							ms.value.value = IrValue{mraw};
-							ms.object = struct_tmp_handle;
-							ms.member_name = member.getName();
-							ms.offset = static_cast<int>(member.offset);
-							ms.struct_type_info = struct_type_info;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms),
-								functionCallNode.called_from()));
-						}
-					}
-				}
-				return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+				auto agg = materializeConstevalAggregateResult(
+					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
+				if (agg.type != Type::Void) return agg;
 			}
 
 			// Scalar integer / bool / enum
-			unsigned long long raw = 0;
-			if (const auto* ll = std::get_if<long long>(&eval_result.value))
-				raw = static_cast<unsigned long long>(*ll);
-			else if (const auto* ull = std::get_if<unsigned long long>(&eval_result.value))
-				raw = *ull;
-			else if (const auto* b = std::get_if<bool>(&eval_result.value))
-				raw = *b ? 1ULL : 0ULL;
-			else
-				raw = static_cast<unsigned long long>(eval_result.as_int());
-			return makeExprResult(ret_type, ret_size, IrOperand{raw});
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)});
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)
