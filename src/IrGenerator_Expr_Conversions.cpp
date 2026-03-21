@@ -1422,7 +1422,14 @@
 			if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 				op.operand.value = *string;
 			} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
-				op.operand.value = *temp_var;
+				if (auto lvalue_info = getTempVarLValueInfo(*temp_var);
+					lvalue_info.has_value() &&
+					lvalue_info->kind == LValueInfo::Kind::Global &&
+					std::holds_alternative<StringHandle>(lvalue_info->base)) {
+					op.operand.value = std::get<StringHandle>(lvalue_info->base);
+				} else {
+					op.operand.value = *temp_var;
+				}
 			} else {
 				throw InternalError("AddressOf operand must be StringHandle or TempVar");
 			}

@@ -513,13 +513,15 @@ struct StructTypeInfo {
 		bool want_move,
 		bool include_implicit) const;
 
-	// Find explicit copy constructor (takes const Type& or Type&).
-	// Delegates to findSameTypeConstructorCore(false, false).
-	const StructMemberFunction* findCopyConstructor() const;
+	// Find copy constructor (takes const Type& or Type&).
+	// By default this only returns user-declared constructors; pass
+	// include_implicit=true to also consider implicitly generated special members.
+	const StructMemberFunction* findCopyConstructor(bool include_implicit = false) const;
 
-	// Find explicit move constructor (takes Type&&).
-	// Delegates to findSameTypeConstructorCore(true, false).
-	const StructMemberFunction* findMoveConstructor() const;
+	// Find move constructor (takes Type&&).
+	// By default this only returns user-declared constructors; pass
+	// include_implicit=true to also consider implicitly generated special members.
+	const StructMemberFunction* findMoveConstructor(bool include_implicit = false) const;
 
 	// Find the preferred same-type constructor for initialization.
 	// For xvalue/prvalue sources, prefer move and fall back to copy.
@@ -567,11 +569,15 @@ struct StructTypeInfo {
 		return findMoveConstructor() != nullptr;
 	}
 
-	// Find copy assignment operator (operator= taking const Type& or Type& parameter)
-	const StructMemberFunction* findCopyAssignmentOperator() const;
+	// Find copy assignment operator (operator= taking const Type& or Type& parameter).
+	// By default this only returns user-declared operators; pass include_implicit=true
+	// to also consider implicitly generated special members.
+	const StructMemberFunction* findCopyAssignmentOperator(bool include_implicit = false) const;
 
-	// Find move assignment operator (operator= taking Type&& parameter)
-	const StructMemberFunction* findMoveAssignmentOperator() const;
+	// Find move assignment operator (operator= taking Type&& parameter).
+	// By default this only returns user-declared operators; pass include_implicit=true
+	// to also consider implicitly generated special members.
+	const StructMemberFunction* findMoveAssignmentOperator(bool include_implicit = false) const;
 
 	bool hasCopyAssignmentOperator() const {
 		return findCopyAssignmentOperator() != nullptr;

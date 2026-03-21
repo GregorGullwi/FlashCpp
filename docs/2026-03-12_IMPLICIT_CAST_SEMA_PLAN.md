@@ -786,7 +786,7 @@ The right split is:
 - Tests: `test_ctor_call_arg_implicit_cast_ret0`, `test_contextual_bool_enum_ret0`, `test_contextual_bool_pointer_ret0`. Suite: 1548 pass / 0 fail / 52 expected-fail.
 
 ### Phase 9: global/static assignment conversion, contextual-bool consumption ✅
-- Global/static simple `=` assignment: RHS now converted to LHS type via `generateTypeConversion` (e.g., `double g; g = 42;` correctly emits `IntToFloat`).
+- Global/static simple `=` assignment: RHS now converted to LHS type via `generateTypeConversion` (e.g., `double g; g = 42;` correctly emits `IntToFloat`), and the expression result is an lvalue referring to the global/static LHS per C++20 `[expr.ass]/3`.
 - Global/static compound assignment (`+=`, `-=`, `*=`, `/=`, etc.): uses `get_common_type()` for usual arithmetic conversions, selects correct float/unsigned opcodes, converts result back to LHS type per C++20 `[expr.ass]/7`. Materializes conversion result via explicit `Assignment` before `GlobalStore` to avoid backend register-tracking gap.
 - `applyConditionBoolConversion` now consumes enum/pointer contextual-bool sema annotations: recognizes `BooleanConversion` and `PointerConversion` kinds and returns early (backend TEST already handles zero/null → false, non-zero/non-null → true correctly).
 - Tests: `test_global_assign_implicit_cast_ret0`, `test_static_assign_implicit_cast_ret0`, `test_global_compound_assign_cross_type_ret0`. Suite: 1555 pass / 0 fail / 54 expected-fail.
@@ -1017,12 +1017,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - All existing callers (`IRConverter_ConvertMain.cpp`, `IrGenerator_Stmt_Decl.cpp`, `IrGenerator_Visitors_Decl.cpp`, `IrGenerator_MemberAccess.cpp`) are unchanged — they call the same public API which now routes through the shared core.
 - Declaration updated in `src/AstNodeTypes_DeclNodes.h`.
 
-**Regression tests added:**
-- `tests/test_copy_ctor_default_arg_ret0.cpp` — copy constructor with trailing default argument.
-- `tests/test_copy_move_ctor_select_ret0.cpp` — lvalue correctly selects copy constructor.
-- `tests/test_implicit_copy_ctor_ret0.cpp` — implicit (compiler-generated) copy on POD struct.
-
-**Suite:** 1626 pass / 0 fail / 67 expected-fail.
+**Regression coverage:** focused tests now cover default-argument copy constructors,
+lvalue copy-vs-move selection, and implicit copy construction on POD structs.
 
 ### Post-Phase-18 cleanup (continued): ad-hoc copy/move ctor detection audit
 
@@ -1043,11 +1039,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 12. `src/OverloadResolution.h:710` — `isImplicitCopyOrMoveConstructorCandidate`: replaced `is_reference() || is_rvalue_reference()` with `is_lvalue_reference() || is_rvalue_reference()`.
 13. `src/AstNodeTypes.cpp:848` — `findCopyAssignmentOperator` slow path: replaced `is_reference() && !is_rvalue_reference()` with `is_lvalue_reference()`.
 
-**Regression tests added:**
-- `tests/test_copy_move_brace_init_ret0.cpp` — struct with both copy and move ctors, copy from lvalue correctly selects copy ctor.
-- `tests/test_copy_ctor_default_arg_inherited_ret0.cpp` — copy ctor with default args works across copy-initialization path.
-
-**Suite:** 1628 pass / 0 fail / 67 expected-fail.
+**Regression coverage:** added targeted brace-init copy-vs-move selection coverage
+and inherited/default-argument copy-constructor coverage.
 
 ### Post-Phase-18 cleanup (continued): own-type check, computeMinRequiredArgs, throw/catch
 
@@ -1058,10 +1051,8 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 2. `Parser_Decl_StructEnum.cpp:2898-2902` — inherited ctor filtering: added `base_struct_info->isOwnTypeIndex(param_type.type_index())` check. Without this, a base-class converting ctor like `Base(const SomeConfig&, int=0)` was wrongly skipped during `using Base::Base;` constructor inheritance.
 3. `Parser_Decl_StructEnum.cpp:2155` — deleted assignment operator detection: changed `!params.empty()` to `!params.empty() && computeMinRequiredArgs(params) <= 1`, so multi-required-arg operators (like `operator=(const Foo&, const Bar&)`) are not falsely detected as copy/move assignments.
 
-**Regression test added:**
-- `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
-
-**Suite:** 1629 pass / 0 fail / 67 expected-fail.
+**Regression coverage:** added a throw/catch regression for trailing-default copy
+constructors through the `emitSameTypeCopyOrMoveConstructorCall` path.
 
 ### Phase 19 ✅: `buildConversionPlan` extended to `TypeSpecifierNode`-level conversions
 
@@ -1081,17 +1072,200 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - No new `StandardConversionKind` values needed — all existing enum values in `src/SemanticTypes.h` are sufficient.
 - `ConversionRank` values remain identical — no overload resolution behavior change.
 
-**Suite:** 1633 pass / 0 fail / 67 expected-fail.
+### Follow-up slice ✅: deleted special-member diagnostics in current IR-side paths
+
+**Goal:** Reduce the deleted copy/move special-member gap without waiting for the
+full semantic-normalization architecture. This slice keeps the fix behavior-safe
+and local to existing codegen-time validation points.
+
+**Implementation:**
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- same-type direct-init / brace-init lvalue paths now reject deleted copy
+	  constructor use before constructor lookup can silently fall through
+	- same-type xvalue copy-initialization now rejects deleted move constructor
+	  use before the current rvalue fast path can bit-copy the object
+	- same-type copy-initialization default-argument fill-in now prefers the move
+	  constructor for xvalue sources, but still skips prvalue-elision-sensitive
+	  diagnostics
+- `src/IrGenerator_Expr_Operators.cpp`
+	- same-type direct variable assignment now rejects deleted copy/move
+	  assignment both on the raw-assignment fallback path and when the selected
+	  `operator=` overload corresponds to the deleted special member
+
+**Regression coverage:** added focused `_fail` coverage for deleted same-type copy
+and move constructors and assignments across direct-init, brace-init, and copy-init
+entry points.
+
+### Follow-up slice ✅: same-type xvalue direct-init / brace-init deleted move diagnostics
+
+**Goal:** Close the remaining deleted move-constructor gap for same-type xvalue
+sources in direct-init and brace-init without broadening the earlier IR-side
+special-member work.
+
+**Implementation:**
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- added `getSameTypeConstructorPreference(...)` to ask the parser whether an
+	  initializer expression is same-type and whether it prefers copy vs move
+	- direct-init, brace-init, and the constructor-call path now reuse that
+	  preference so expressions like `static_cast<T&&>(x)` diagnose deleted move
+	  constructors instead of falling back to identifier-only copy checks
+	- `isSameTypeXValueSource(...)` now reuses the parser-derived preference
+	  before falling back to runtime metadata
+
+**Regression coverage:** added xvalue direct-init and brace-init `_fail` tests for
+deleted move constructors.
+
+### Follow-up slice ✅: deleted assignment diagnostics in lvalue-metadata store paths
+
+**Goal:** Preserve deleted same-type copy/move assignment diagnostics when
+`handleLValueAssignment` takes the fast path for member, array-element, and
+indirection stores.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- added `tryResolveExprTypeIndex(...)` so metadata-driven lvalue stores can
+	  recover struct `TypeIndex` information from expression results or lvalue
+	  metadata when the direct `ExprResult` no longer carries it
+	- `handleLValueAssignment(...)` now calls
+	  `diagnoseDeletedSameTypeAssignmentUsage(...)` before emitting metadata-path
+	  stores for `Member`, `ArrayElement`, and `Indirect` lvalues
+
+**Regression coverage:** added metadata-path `_fail` tests for deleted copy/move
+assignment through member, array-element, and indirection stores.
+
+### Follow-up slice ✅: deleted copy-assignment fallback for xvalue same-type assignment
+
+**Goal:** Preserve deleted copy-assignment diagnostics when the RHS is an xvalue
+but the class has no move assignment operator, so overload resolution falls back
+to the copy assignment operator.
+
+**Implementation:**
+- `src/AstNodeTypes.cpp`
+	- `findCopyAssignmentOperator(...)` and `findMoveAssignmentOperator(...)`
+	  now optionally include implicitly generated special members so callers can
+	  ask the same “does a move assignment actually exist?” question that the
+	  assignment selection path answers
+- `src/IrGenerator_Expr_Operators.cpp`
+	- `diagnoseDeletedSameTypeAssignmentUsage(...)` now only returns early for
+	  xvalue assignments when a move assignment operator really exists; otherwise
+	  it falls through to the deleted copy-assignment check
+
+**Regression coverage:** added an xvalue fallback `_fail` test for deleted copy
+assignment when no move assignment operator exists.
+
+### Follow-up slice ✅: deleted copy-constructor fallback for xvalue same-type initialization
+
+**Goal:** Preserve deleted copy-constructor diagnostics when the initializer is
+an xvalue but the class has no move constructor, so same-type initialization
+falls back to the copy constructor.
+
+**Implementation:**
+- `src/AstNodeTypes.cpp`
+	- `findCopyConstructor(...)` and `findMoveConstructor(...)` now optionally
+	  include implicitly generated special members so callers can ask whether a
+	  move constructor really exists before short-circuiting xvalue diagnostics
+- `src/IrGenerator_Stmt_Decl.cpp`
+	- `diagnoseDeletedSameTypeConstructorUsage(...)` now only returns early for
+	  xvalue same-type initialization when a move constructor really exists;
+	  otherwise it falls through to the deleted copy-constructor check
+
+**Regression coverage:** added an xvalue fallback `_fail` test for deleted copy
+construction when no move constructor exists.
+
+### Follow-up slice ✅: global/static compound-assignment result lvalues
+
+**Goal:** Make global and static-local compound assignment expressions return an
+lvalue referring to the left operand, matching the simple-assignment fix and the
+required `E1 op= E2` result category.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- the global/static compound-assignment path now reuses
+	  `makeGlobalAssignmentResultLValue(...)` after `GlobalStore`, so the final
+	  expression result carries global lvalue metadata instead of exposing the
+	  transient store temp as a prvalue-ish result
+
+**Regression coverage:** added a runtime regression test for global/static
+compound-assignment result lvalues.
+
+### Follow-up slice ✅: global/static struct assignment operator dispatch
+
+**Goal:** Ensure global and static-local struct assignments reuse the normal
+`operator=` / deleted-special-member logic instead of bypassing it with a raw
+bitwise store.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- simple global/static assignment now keeps the old fast path only for
+	  non-struct types; struct globals fall through to the ordinary assignment
+	  machinery
+	- address-taking for member operator calls and reference arguments now unwraps
+	  global lvalue metadata back to the underlying global binding, so `this`
+	  points at the real global/static object rather than the loaded temp
+	- the generic assignment fallback now recognizes global lvalue metadata and
+	  emits `GlobalStore` + lvalue result reconstruction instead of assigning back
+	  into the transient load temp
+
+**Regression coverage:** added a runtime regression test showing that user-defined
+same-type `operator=` now runs for both global and static-local struct targets.
+
+### Follow-up slice ✅: pointer-to-member access init-conversion typing
+
+**Goal:** Make `PointerToMemberAccessNode` expose the accessed member value type
+to semantic conversion annotation, so initializations like `double d = obj.*pm;`
+receive the expected arithmetic conversion slot.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `inferExpressionType(PointerToMemberAccessNode)` now strips the single
+	  pointer-like layer from the member-pointer operand’s inferred type before
+	  interning the result, matching the value produced by codegen
+
+**Regression coverage:** added a runtime regression test for `int` member access
+feeding a `double` initialization through `obj.*pm`.
+
+### Follow-up slice ✅: explicit FoldExpressionNode sema fallback
+
+**Goal:** Remove the remaining low-risk `inferExpressionType` gap for
+`FoldExpressionNode` without duplicating template-substitution fold expansion in
+sema.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `inferExpressionType(FoldExpressionNode)` now has an explicit case that logs
+	  when an unexpanded fold reaches sema and falls back to
+	  `parser_.get_expression_type(...)`
+	- this keeps fold expressions on the same documented fallback path while
+	  making the behavior intentional and easier to debug
+
+**Regression coverage:** revalidated the existing fold-expression tests rather
+than adding a new runtime case, because fold expressions are still expected to
+be expanded during template instantiation before codegen.
+
+### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
+
+**Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
+clear local sources of truth.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `TemplateParameterReferenceNode` now resolves through `lookupLocalType(...)`
+	  first and falls back to `parser_.get_expression_type(...)` if the template
+	  parameter is not present in the sema scope stack
+	- `PointerToMemberAccessNode` now forwards the inferred type of its
+	  `member_pointer()` operand, matching the existing IR-generation expectation
 
 ### Known limitations (current, as of Phase 19)
 
 - User-defined `operator bool()` / converting constructors remain in codegen.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
-- Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- Deleted special member function usage is not yet diagnosed at compile time (tracked in `docs/KNOWN_ISSUES.md`).
+- `inferExpressionType` still does not handle: `PackExpansionExprNode`. This
+  should normally be expanded during template substitution; surviving nodes
+  still fall back to parser type resolution or no annotation.
+- Broader parser/template-substitution/sema boundary cleanup is tracked
+  separately in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
 
 ### Parallel rollout guidance
 

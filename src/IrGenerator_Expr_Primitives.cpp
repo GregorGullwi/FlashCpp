@@ -457,7 +457,7 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name});
+				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name}, info.type_index);
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
@@ -469,9 +469,13 @@
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+				LValueInfo(LValueInfo::Kind::Global, info.mangled_name),
+				info.type,
+				info.size_in_bits.value));
 
 			// Return the temp variable that will hold the loaded value
-			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp});
+			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp}, info.type_index);
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the

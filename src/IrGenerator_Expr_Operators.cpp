@@ -2,6 +2,61 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+namespace {
+	[[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
+		const char* assignment_kind = prefer_move ? "move" : "copy";
+		std::string_view error_msg = StringBuilder()
+			.append("Call to deleted ")
+			.append(assignment_kind)
+			.append(" assignment operator of '")
+			.append(StringTable::getStringView(struct_info.name))
+			.append("'")
+			.commit();
+		throw CompileError(std::string(error_msg));
+	}
+
+	void diagnoseDeletedSameTypeAssignmentUsage(const StructTypeInfo& struct_info, bool prefer_move) {
+		if (prefer_move) {
+			if (struct_info.isMoveAssignmentDeleted()) {
+				throwDeletedSameTypeAssignmentCompileError(struct_info, true);
+			}
+			if (struct_info.findMoveAssignmentOperator(true)) {
+				return;
+			}
+		}
+
+		if (struct_info.isCopyAssignmentDeleted()) {
+			throwDeletedSameTypeAssignmentCompileError(struct_info, false);
+		}
+	}
+
+	bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
+		if (const auto* temp_var = std::get_if<TempVar>(&rhs_expr_result.value)) {
+			return getTempVarMetadata(*temp_var).category != ValueCategory::LValue;
+		}
+		return false;
+	}
+
+	std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info, const FunctionDeclarationNode& func_decl) {
+		if (func_decl.parameter_nodes().empty() || !func_decl.parameter_nodes()[0].is<DeclarationNode>()) {
+			return std::nullopt;
+		}
+
+		const auto& param_type = func_decl.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		if (param_type.type() != Type::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
+			return std::nullopt;
+		}
+
+		if (param_type.is_rvalue_reference()) {
+			return true;
+		}
+		if (param_type.is_lvalue_reference()) {
+			return false;
+		}
+		return std::nullopt;
+	}
+}
+
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
 	GlobalStaticBindingInfo info;
@@ -663,6 +718,37 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			return true;
 		};
 
+	auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
+		TempVar result_temp = var_counter.next();
+		GlobalLoadOp load_op;
+			load_op.result.type = binding.type;
+			load_op.result.ir_type = toIrType(binding.type);
+			load_op.result.size_in_bits = binding.size_in_bits;
+			load_op.result.value = result_temp;
+			load_op.global_name = binding.store_name;
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
+
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
+				binding.type, binding.size_in_bits.value));
+
+		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp});
+	};
+
+	auto tryGetGlobalLValueName = [&](const ExprResult& expr_result) -> std::optional<StringHandle> {
+		const auto* temp_var = std::get_if<TempVar>(&expr_result.value);
+		if (!temp_var) {
+			return std::nullopt;
+		}
+		if (auto lvalue_info = getTempVarLValueInfo(*temp_var);
+			lvalue_info.has_value() &&
+			lvalue_info->kind == LValueInfo::Kind::Global &&
+			std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			return std::get<StringHandle>(lvalue_info->base);
+		}
+		return std::nullopt;
+	};
+
 		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -670,7 +756,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static) {
+				if (gsi.is_global_or_static && !isIrStructType(toIrType(gsi.type))) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -684,35 +770,26 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
-					// Generate GlobalStore IR: global_store @global_name, %value
+					// Materialize the final assigned value into a stack temp before GlobalStore.
+					// This mirrors the compound-assignment path and avoids backend register-tracking
+					// gaps when the RHS comes from a conversion result that only lives in a register.
+					TempVar store_temp = var_counter.next();
+					AssignmentOp assign_op;
+					assign_op.result = store_temp;
+					assign_op.lhs.type = gsi.type;
+					assign_op.lhs.size_in_bits = gsi.size_in_bits;
+					assign_op.lhs.value = store_temp;
+					assign_op.rhs = toTypedValue(rhsExprResult);
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
-
-					// Extract the value from RHS
-					if (const auto* temp_var = std::get_if<TempVar>(&rhsExprResult.value)) {
-						store_operands.emplace_back(*temp_var);
-					} else if (std::holds_alternative<StringHandle>(rhsExprResult.value)
-					|| std::holds_alternative<unsigned long long>(rhsExprResult.value)
-					|| std::holds_alternative<double>(rhsExprResult.value)) {
-						// Local variable (StringHandle) or constant: load into a temp first
-						TempVar temp = var_counter.next();
-						AssignmentOp assign_op;
-						assign_op.result = temp;
-						assign_op.lhs.type = rhsExprResult.type;
-						assign_op.lhs.size_in_bits = rhsExprResult.size_in_bits;
-						assign_op.lhs.value = temp;
-						assign_op.rhs = toTypedValue(rhsExprResult);
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-						store_operands.emplace_back(temp);
-					} else {
-						FLASH_LOG(Codegen, Error, "GlobalStore: unsupported RHS IrOperand type");
-						return ExprResult{};
-					}
+					store_operands.emplace_back(store_temp);
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					// Return the converted RHS with the global's declared type/size.
-					return makeExprResult(gsi.type, gsi.size_in_bits, rhsExprResult.value);
+					// C++20 [expr.ass]/3: the result is an lvalue referring to the left operand.
+					return makeGlobalAssignmentResultLValue(gsi);
 				}
 			}
 		}
@@ -854,7 +931,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					store_operands.emplace_back(store_temp);
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					return makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{store_temp});
+					return makeGlobalAssignmentResultLValue(gsi);
 				}
 			}
 		}
@@ -977,6 +1054,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			if (std::holds_alternative<TempVar>(operand_result.value)) {
 				TempVar temp_var = std::get<TempVar>(operand_result.value);
+				if (auto global_name = tryGetGlobalLValueName(operand_result); global_name.has_value()) {
+					arg.value = emitAddressOf(operand_type, operand_size, IrValue(*global_name));
+					return arg;
+				}
 				bool is_already_address = false;
 
 				auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
@@ -1024,7 +1105,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for struct assignment with user-defined operator=(non-struct)
 		// This handles patterns like: struct_var = primitive_value
 		// where struct has operator=(int), operator=(double), etc.
-		if (op == "=" && lhsType == Type::Struct && rhsType != Type::Struct && lhsExprResult.type_index.is_valid()) {
+		if (op == "=" && lhsType == Type::Struct &&
+			rhsType != Type::Struct &&
+			!rhsExprResult.type_index.is_valid() &&
+			lhsExprResult.type_index.is_valid()) {
 			// Get the type index of the struct
 			TypeIndex lhs_type_index = lhsExprResult.type_index;
 			TypeIndex rhs_type_index = carriesSemanticTypeIndex(rhsType)
@@ -1055,6 +1139,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					if (lhs_type_index.is_valid() && lhs_type_index.value < gTypeInfo.size()) {
+						if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
+								same_type_assignment_kind.has_value()) {
+								diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							}
+						}
+					}
+					if (func_decl.is_deleted()) {
+						throw CompileError("Call to deleted function 'operator='");
+					}
 
 					// Check if the parameter type matches RHS type
 					const auto& param_nodes = func_decl.parameter_nodes();
@@ -1093,7 +1188,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							if (const auto* string = std::get_if<StringHandle>(&lhsExprResult.value)) {
 								lhs_value = *string;
 							} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
-								lhs_value = *temp_var;
+								if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+									lhs_value = *global_name;
+								} else {
+									lhs_value = *temp_var;
+								}
 							} else {
 								FLASH_LOG(Codegen, Error, "Cannot take address of operator= LHS - not an lvalue");
 								return ExprResult{};
@@ -1512,6 +1611,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (op == "=") {
+					if (lhs_type_index.is_valid() && lhs_type_index.value < gTypeInfo.size()) {
+						if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
+								same_type_assignment_kind.has_value()) {
+								diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
+							}
+						}
+					}
+				}
+				if (op == "=" && func_decl.is_deleted()) {
+					throw CompileError("Call to deleted function 'operator='");
+				}
 
 				// Get struct name for mangling
 				std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index.value].name());
@@ -1555,7 +1667,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (const auto* string_val = std::get_if<StringHandle>(&lhsExprResult.value)) {
 					lhs_value = *string_val;
 				} else if (const auto* temp_var = std::get_if<TempVar>(&lhsExprResult.value)) {
-					lhs_value = *temp_var;
+					if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+						lhs_value = *global_name;
+					} else {
+						lhs_value = *temp_var;
+					}
 				} else {
 					// Can't take address of non-lvalue
 					FLASH_LOG(Codegen, Error, "Cannot take address of binary operator LHS - not an lvalue");
@@ -2158,6 +2274,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for assignment: convert RHS to LHS type instead of finding common type
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
+			if (lhsType == Type::Struct
+				&& rhsType == Type::Struct
+				&& lhsExprResult.type_index.is_valid()
+				&& rhsExprResult.type_index.is_valid()
+				&& lhsExprResult.type_index == rhsExprResult.type_index
+				&& lhsExprResult.type_index.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[lhsExprResult.type_index.value].getStructInfo()) {
+					diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhsExprResult));
+				}
+			}
+
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
 			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {
@@ -2183,6 +2310,26 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.rhs = toTypedValue(rhsExprResult);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			// Assignment expression returns the LHS (the assigned-to value)
+			if (auto global_name = tryGetGlobalLValueName(lhsExprResult); global_name.has_value()) {
+				TempVar store_temp = var_counter.next();
+				AssignmentOp materialize_store;
+				materialize_store.result = store_temp;
+				materialize_store.lhs = { lhsType, SizeInBits{lhsSize}, store_temp };
+				materialize_store.rhs = toTypedValue(rhsExprResult);
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_store), binaryOperatorNode.get_token()));
+
+				std::vector<IrOperand> store_operands;
+				store_operands.emplace_back(*global_name);
+				store_operands.emplace_back(store_temp);
+				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
+
+				GlobalStaticBindingInfo binding;
+				binding.is_global_or_static = true;
+				binding.store_name = *global_name;
+				binding.type = lhsType;
+				binding.size_in_bits = SizeInBits{lhsSize};
+				return makeGlobalAssignmentResultLValue(binding);
+			}
 			return lhsExprResult;
 		}
 
@@ -3921,6 +4068,75 @@ const Token& token) {
 	};
 
 	FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
+
+	auto tryResolveExprTypeIndex = [&](const ExprResult& expr_result) -> TypeIndex {
+		if (expr_result.type_index.is_valid()) {
+			return expr_result.type_index;
+		}
+
+		auto resolveBaseTypeIndex = [&](const auto& self, const std::variant<StringHandle, TempVar>& base) -> TypeIndex {
+			if (const auto* base_name = std::get_if<StringHandle>(&base)) {
+				if (auto symbol = lookupSymbol(*base_name)) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+						decl && decl->type_node().is<TypeSpecifierNode>()) {
+						return decl->type_node().as<TypeSpecifierNode>().type_index();
+					}
+				}
+				return {};
+			}
+
+			const TempVar& base_temp = std::get<TempVar>(base);
+			TempVarMetadata base_meta = getTempVarMetadata(base_temp);
+			if (!base_meta.lvalue_info.has_value()) {
+				return {};
+			}
+			return self(self, base_meta.lvalue_info->base);
+		};
+
+		if (const auto* base_name = std::get_if<StringHandle>(&expr_result.value)) {
+			return resolveBaseTypeIndex(resolveBaseTypeIndex, *base_name);
+		}
+
+		const auto* temp_var = std::get_if<TempVar>(&expr_result.value);
+		if (!temp_var) {
+			return {};
+		}
+
+		TempVarMetadata expr_meta = getTempVarMetadata(*temp_var);
+		if (!expr_meta.lvalue_info.has_value()) {
+			return {};
+		}
+		return resolveBaseTypeIndex(resolveBaseTypeIndex, expr_meta.lvalue_info->base);
+	};
+
+	auto diagnoseDeletedMetadataAssignment = [&]() {
+		if (lv_info.kind != LValueInfo::Kind::ArrayElement
+			&& lv_info.kind != LValueInfo::Kind::Member
+			&& lv_info.kind != LValueInfo::Kind::Indirect) {
+			return;
+		}
+
+		if (lhs_operands.type != Type::Struct || rhs_operands.type != Type::Struct) {
+			return;
+		}
+
+		TypeIndex lhs_type_index = tryResolveExprTypeIndex(lhs_operands);
+		TypeIndex rhs_type_index = tryResolveExprTypeIndex(rhs_operands);
+		if (!lhs_type_index.is_valid()
+			|| !rhs_type_index.is_valid()
+			|| lhs_type_index != rhs_type_index
+			|| lhs_type_index.value >= gTypeInfo.size()) {
+			return;
+		}
+
+		if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+			diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhs_operands));
+		}
+	};
+
+	// The metadata path can emit stores directly and skip the regular assignment logic,
+	// so preserve deleted special-member diagnostics here for handled lvalue forms.
+	diagnoseDeletedMetadataAssignment();
 
 	// Route to appropriate store instruction based on LValueInfo::Kind
 	switch (lv_info.kind) {
