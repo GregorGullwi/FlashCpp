@@ -542,6 +542,10 @@
 				// Step 2: Fall back to a synthetic FunctionCallNode (no object-constexpr
 				// requirement).  Works for consteval members that don't read 'this' state
 				// (e.g., `Calc c; c.triple(14)` where triple doesn't use any member).
+				// Preserve the first error so that if the fallback also fails we report
+				// the more specific member-path diagnostic (not a "can't see member
+				// variables" error from the fallback).
+				auto first_error = eval_result;
 				ChunkedVector<ASTNode> args_copy;
 				memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
 					args_copy.push_back(arg);
@@ -549,6 +553,9 @@
 				FunctionCallNode synth_call(func_decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
 				auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
 				eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+				if (!eval_result.success()) {
+					eval_result = first_error;
+				}
 			}
 			if (!eval_result.success()) {
 				throw CompileError("call to consteval function '" + std::string(func_name_sv) +
