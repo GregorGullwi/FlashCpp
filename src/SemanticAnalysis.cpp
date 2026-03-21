@@ -1956,12 +1956,64 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
 				if (local_id) return local_id;
-				// Classification: parser-owned identifier lookup fact for non-local
-				// names that sema does not yet mirror in scope_stack_ (e.g. globals,
-				// enumerators, namespace-scope bindings).
-				auto expr_type = parser_.get_expression_type(node);
-				if (expr_type.has_value()) {
-					return canonicalizeType(*expr_type);
+
+				auto infer_symbol_type = [&](const ASTNode& symbol) -> CanonicalTypeId {
+					const DeclarationNode* decl = nullptr;
+					if (symbol.is<DeclarationNode>()) {
+						decl = &symbol.as<DeclarationNode>();
+					} else if (symbol.is<VariableDeclarationNode>()) {
+						decl = &symbol.as<VariableDeclarationNode>().declaration();
+					}
+
+					if (decl) {
+						const ASTNode type_node = decl->type_node();
+						if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) {
+							return {};
+						}
+
+						TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
+						if (decl->is_array()) {
+							type.add_pointer_level();
+						}
+						return canonicalizeType(type);
+					}
+
+					if (symbol.is<FunctionDeclarationNode>()) {
+						const auto& func = symbol.as<FunctionDeclarationNode>();
+						const ASTNode ret_type_node = func.decl_node().type_node();
+						if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+							return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+						}
+					}
+
+					return {};
+				};
+
+				auto lookup_bound_symbol = [&]() -> std::optional<ASTNode> {
+					if (e.resolved_name().isValid()) {
+						auto resolved_symbol = symbols_.lookup(e.resolved_name());
+						if (resolved_symbol.has_value()) {
+							return resolved_symbol;
+						}
+					}
+					return symbols_.lookup(e.nameHandle());
+				};
+
+				if (auto symbol = lookup_bound_symbol(); symbol.has_value()) {
+					if (const CanonicalTypeId symbol_type_id = infer_symbol_type(*symbol)) {
+						return symbol_type_id;
+					}
+				}
+
+				// Classification: narrowed parser bridge for identifier forms that
+				// still depend on parser-owned member-context binding (implicit
+				// this->member) or otherwise remain unresolved in sema.
+				if (e.binding() == IdentifierBinding::NonStaticMember ||
+					e.binding() == IdentifierBinding::Unresolved) {
+					auto expr_type = parser_.get_expression_type(node);
+					if (expr_type.has_value()) {
+						return canonicalizeType(*expr_type);
+					}
 				}
 				return {};
 			}

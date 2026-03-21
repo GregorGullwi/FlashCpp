@@ -141,6 +141,9 @@ Phase 3 has started with two low-risk local fallback removals:
 - `inferExpressionType(QualifiedIdentifierNode)` now mirrors the parser's
   namespace/static-member/enum lookup directly in sema, including lazy static
   member instantiation for struct-qualified names
+- `inferExpressionType(IdentifierNode)` now recovers globals/functions/static
+  members/enumerator declarations from sema's `symbols_` plus AST binding
+  metadata; parser fallback remains only for implicit-member/unresolved cases
 
 ## Workstreams
 
@@ -226,7 +229,7 @@ Then migrate those buckets one at a time:
 | Site | Current purpose | Phase 1 classification |
 | --- | --- | --- |
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | temporary auto-return bridge |
-| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
+| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators; parser fallback remains for implicit-member/unresolved identifiers |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge (now sema-first) |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge (now sema-first) |
