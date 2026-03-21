@@ -101,7 +101,7 @@ The codebase already contains unifying constructs:
 | FunctionParsingContext | ParserTypes.h:183-191 | Context for function parsing |
 | parse_parameter_list() | Parser_FunctionHeaders.cpp:14 | Unified parameter parsing |
 | parse_declaration_specifiers() | Parser_TypeSpecifiers.cpp | Unified specifier parsing |
-| parse_function_body_with_context() | Parser_FunctionBodies.cpp:17 | Unified body parsing |
+| ~~parse_function_body_with_context()~~ | *Removed in Priority 2* | Had zero callers; superseded by `FunctionParsingScopeGuard` |
 | register_parameters_in_scope() | Parser_FunctionBodies.cpp:171 | Parameter registration helper |
 | validate_signature_match() | Parser_FunctionBodies.cpp:544 | Signature validation helper |
 | skip_function_trailing_specifiers() | Parser_Expr_BinaryPrecedence.cpp:870 | Skip CV/noexcept/etc |
@@ -226,9 +226,27 @@ parsing flow, not in a unified body-entry function.
 - Free-function site (~line 783): converted to `FunctionParsingScopeGuard`;
   removes manual `current_function_` save/restore pattern.
 
-**Metrics after implementation:**
+**Dead code removed as part of Priority 2b:**
+- `FunctionScopeGuard` (Phase 3 predecessor, `ParserScopeGuards.h:163-209`): fully superseded
+  by `FunctionParsingScopeGuard`. Had zero callers; deleted along with its inline implementations
+  `addParameters()` and `injectThisPointer()` from `Parser.h`.
+- `CombinedTemplateAndFunctionScope` (`ParserScopeGuards.h:222-263`): composite of
+  `TemplateParameterScope` + `FunctionScopeGuard`. Zero callers; deleted.
+
+**`current_function_` correctness:**
+- Set via `FunctionParsingScopeGuard` for all main parser sites (free functions, member
+  functions, constructors/destructors, delayed bodies).
+- Template instantiation sites still manually save/restore it (not yet converted to
+  `FunctionParsingScopeGuard`), but each does so correctly.
+- Used for `__func__` / `__PRETTY_FUNCTION__` built-in identifiers
+  (`Parser_Expr_PrimaryExpr.cpp`). `__FUNCTION__` is pre-processed to `__func__`
+  by the preprocessor (`FileReader_Macros.cpp:1937`), so it is covered too.
+- Also used for braced initializer return-type resolution in expression context
+  (`Parser_Expr_PrimaryExpr.cpp:5638`).
+
+**Metrics after Priority 2 + 2b:**
 - 1630 tests pass, 0 fail, 67 expected-fail
-- Net effect: removed ~60 lines of open-coded duplicated function-entry boilerplate
+- Net effect: removed ~120 lines of dead code and open-coded duplicated function-entry boilerplate
 
 ### Priority 3: Extract Constructor Detection
 
@@ -334,6 +352,7 @@ The refactor is complete when:
 - delayed and non-delayed function body parsing share the same core body setup flow
 - helper APIs are based on the data actually available in template/delayed paths
   (`TypeIndex` / `StructTypeInfo`), not only on convenient AST forms
+- no dead/superseded scope guard classes remain in `ParserScopeGuards.h`
 
 ## Notes
 
