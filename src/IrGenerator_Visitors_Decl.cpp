@@ -1346,9 +1346,11 @@
 				// For copy/move constructors (first parameter is a reference to same struct type),
 				// use "other" as the conventional name. This must match the body generation code
 				// that references "other" for memberwise copy operations.
+				// Accept ctors with trailing default args (min-required-args <= 1).
+				size_t min_required = computeMinRequiredArgs(node.parameter_nodes());
 				bool is_copy_or_move_param = ctor_unnamed_param_counter == 0 &&
-					(param_type.is_reference() || param_type.is_rvalue_reference()) &&
-					node.parameter_nodes().size() == 1;
+					(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
+					min_required <= 1;
 
 				if (is_copy_or_move_param) {
 					func_param.name = StringTable::getOrInternStringHandle("other");
@@ -1554,13 +1556,15 @@
 					// Check if this is a copy or move constructor (has one parameter that is a reference)
 					bool is_copy_constructor = false;
 					bool is_move_constructor = false;
+					// Implicit constructors always have exactly 1 parameter, but use
+					// is_lvalue_reference()/is_rvalue_reference() for correct distinction.
 					if (node.parameter_nodes().size() == 1) {
 						const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						if (param_type.is_reference() && param_type.type() == Type::Struct) {
+						if (param_type.type() == Type::Struct) {
 							if (param_type.is_rvalue_reference()) {
 								is_move_constructor = true;
-							} else {
+							} else if (param_type.is_lvalue_reference()) {
 								is_copy_constructor = true;
 							}
 						}

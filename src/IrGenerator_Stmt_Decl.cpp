@@ -2035,6 +2035,19 @@
 								ctor_op.arguments.push_back(std::move(init_arg));
 							}
 
+							// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
+							// fill in the default arguments so the backend sees the full parameter list.
+							if (type_info.struct_info_ && !is_converting_ctor) {
+								const StructMemberFunction* same_type_ctor =
+									type_info.struct_info_->findPreferredSameTypeConstructor(false, true);
+								if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+									const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+									if (matched_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
+										fillInConstructorDefaultArguments(ctor_op, matched_ctor, ctor_op.arguments.size());
+									}
+								}
+							}
+
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed

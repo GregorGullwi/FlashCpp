@@ -1113,6 +1113,45 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 
 **Suite:** 1626 pass / 0 fail / 67 expected-fail.
 
+### Post-Phase-18 cleanup (continued): ad-hoc copy/move ctor detection audit
+
+**Goal:** Fix the same two bugs (is_reference() matching rvalue refs, params.size()==1 rejecting default-arg ctors) in ad-hoc inline detection loops outside `StructTypeInfo`, and fix downstream assumptions about single-param constructors.
+
+**Additional sites fixed:**
+1. `src/Parser_Decl_StructEnum.cpp:2758-2766` — copy/move ctor classification during struct parsing: replaced `is_reference()` with `is_lvalue_reference()` and relaxed `params.size()==1` to compute min-required-args.
+2. `src/Parser_Decl_StructEnum.cpp:2884-2891` — inherited ctor filtering (skip copy/move ctors): same fixes, now handles default-arg ctors.
+3. `src/Parser_Decl_StructEnum.cpp:1727-1748` — deleted ctor detection: replaced `is_reference()` with `is_lvalue_reference()`, relaxed `num_params==1`.
+4. `src/Parser_Decl_StructEnum.cpp:2153-2182` — deleted assignment operator detection: relaxed `params.size()==1` to `!params.empty()`.
+5. `src/Parser_Decl_StructEnum.cpp:2795-2802` — assignment operator refinement (CopyAssign/MoveAssign): replaced `is_reference() && !is_rvalue_reference()` with `is_lvalue_reference()`.
+6. `src/IrGenerator_Visitors_Decl.cpp:1349-1351` — unnamed param "other" naming: relaxed `parameter_nodes().size()==1` to min-required-args, replaced `is_reference()` with `is_lvalue_reference()`.
+7. `src/IrGenerator_Visitors_Decl.cpp:1557-1567` — implicit copy/move ctor detection: replaced `is_reference()` + nested `is_rvalue_reference()` with separate `is_lvalue_reference()`/`is_rvalue_reference()` checks.
+8. `src/IRConverter_ConvertMain.cpp:4503` — `emitSameTypeCopyOrMoveConstructorCall`: added early return false for multi-param ctors so they fall through to handleConstructorCall.
+9. `src/IRConverter_ConvertMain.cpp:4859` — CV qualifier extraction: relaxed `params.size()==1` to `!params.empty()` since findCopyConstructor can return multi-param ctors.
+10. `src/IRConverter_ConvertMain.cpp:4739` — handleConstructorCall `num_params==1` guard: added explanatory comment that fillInConstructorDefaultArguments expands defaults before this point.
+11. `src/IrGenerator_Stmt_Decl.cpp:2038` — copy-initialization path: added `fillInConstructorDefaultArguments` call for multi-param copy ctors (was missing, causing linker errors for `Foo(const Foo&, int=0)`).
+12. `src/OverloadResolution.h:710` — `isImplicitCopyOrMoveConstructorCandidate`: replaced `is_reference() || is_rvalue_reference()` with `is_lvalue_reference() || is_rvalue_reference()`.
+13. `src/AstNodeTypes.cpp:848` — `findCopyAssignmentOperator` slow path: replaced `is_reference() && !is_rvalue_reference()` with `is_lvalue_reference()`.
+
+**Regression tests added:**
+- `tests/test_copy_move_brace_init_ret0.cpp` — struct with both copy and move ctors, copy from lvalue correctly selects copy ctor.
+- `tests/test_copy_ctor_default_arg_inherited_ret0.cpp` — copy ctor with default args works across copy-initialization path.
+
+**Suite:** 1628 pass / 0 fail / 67 expected-fail.
+
+### Post-Phase-18 cleanup (continued): own-type check, computeMinRequiredArgs, throw/catch
+
+**Goal:** Fix two correctness bugs introduced by the earlier `min_required <= 1` relaxation, and tighten the deleted assignment operator detection.
+
+**Bugs fixed:**
+1. `Parser_Decl_StructEnum.cpp:2768-2771` — copy/move ctor classification: added `param_type.type_index() == struct_type_info.type_index_` own-type check. Without this, a constructor like `Foo(const Bar&, int=0)` with `min_required==1` was incorrectly classified as a copy constructor (suppressing implicit copy ctor generation).
+2. `Parser_Decl_StructEnum.cpp:2898-2902` — inherited ctor filtering: added `base_struct_info->isOwnTypeIndex(param_type.type_index())` check. Without this, a base-class converting ctor like `Base(const SomeConfig&, int=0)` was wrongly skipped during `using Base::Base;` constructor inheritance.
+3. `Parser_Decl_StructEnum.cpp:2155` — deleted assignment operator detection: changed `!params.empty()` to `!params.empty() && computeMinRequiredArgs(params) <= 1`, so multi-required-arg operators (like `operator=(const Foo&, const Bar&)`) are not falsely detected as copy/move assignments.
+
+**Regression test added:**
+- `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
+
+**Suite:** 1629 pass / 0 fail / 67 expected-fail.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.

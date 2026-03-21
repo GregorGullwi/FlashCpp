@@ -707,7 +707,9 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 	}
 
 	const auto& param_type = param_type_node.as<TypeSpecifierNode>();
-	if (!(param_type.is_reference() || param_type.is_rvalue_reference()) ||
+	// Implicit copy/move ctors always have exactly 1 param that is a reference
+	// (lvalue for copy, rvalue for move) to the struct's own type.
+	if (!(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) ||
 		!is_struct_type(param_type.type())) {
 		return false;
 	}

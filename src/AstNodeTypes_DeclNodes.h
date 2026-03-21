@@ -1292,6 +1292,23 @@ private:
 	StringHandle resolved_name_; // mangled/qualified name for static locals, static members, globals
 };
 
+// Compute the minimum number of required arguments for a parameter list.
+// Parameters with default values at the end reduce the minimum.
+// Used to detect copy/move constructors with trailing defaults
+// (e.g. Foo(const Foo&, int = 0) has min-required == 1).
+template<typename ParamContainer>
+inline size_t computeMinRequiredArgs(const ParamContainer& params) {
+	size_t min_required = params.size();
+	for (size_t i = params.size(); i > 0; --i) {
+		if (!params[i - 1].template is<DeclarationNode>() ||
+			!params[i - 1].template as<DeclarationNode>().has_default_value()) {
+			break;
+		}
+		--min_required;
+	}
+	return min_required;
+}
+
 // Qualified identifier node for namespace::identifier chains
 class QualifiedIdentifierNode {
 public:

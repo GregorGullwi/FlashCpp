@@ -4505,6 +4505,13 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 			return false;
 		}
 
+		// If the constructor has more than 1 parameter (e.g. Foo(const Foo&, int=0)),
+		// fall through to the handleConstructorCall path which supports
+		// fillInConstructorDefaultArguments for multi-param ctors.
+		if (ctor_node.parameter_nodes().size() > 1) {
+			return false;
+		}
+
 		flushAllDirtyRegisters();
 
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
@@ -4727,8 +4734,16 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		if (struct_type_it != gTypesByName.end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
-				// FIRST: If we have exactly one parameter that's a reference to the same struct type,
-				// prefer the corresponding same-type copy/move constructor over other single-parameter constructors.
+				// FIRST: If we have exactly one IR-level argument that's a reference to the same
+				// struct type, prefer the corresponding same-type copy/move constructor.
+				// Note: num_params == 1 is correct here because:
+				//   (a) For direct-init `Foo b(a)` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       calls fillInConstructorDefaultArguments before emitting ConstructorCallOp,
+				//       producing num_params==2 which skips this branch and falls through to
+				//       resolve_constructor_overload below.
+				//   (b) For copy-init `Foo b = a` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       also fills in defaults (IrGenerator_Stmt_Decl.cpp copy-init path),
+				//       again producing num_params==2.
 				if (num_params == 1 && !ctor_op.arguments.empty()) {
 					const TypedValue& arg = ctor_op.arguments[0];
 					bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
@@ -4849,7 +4864,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
 								const auto& params = ctor_node.parameter_nodes();
-								if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+								// findCopyConstructor() can return ctors with trailing defaults
+								// (e.g. Foo(const Foo&, int=0)), so use !params.empty().
+								if (!params.empty() && params[0].is<DeclarationNode>()) {
 									const auto& param_decl = params[0].as<DeclarationNode>();
 									if (param_decl.type_node().is<TypeSpecifierNode>()) {
 										auto ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
