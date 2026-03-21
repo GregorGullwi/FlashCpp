@@ -2259,12 +2259,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				const CanonicalTypeId param_id = lookupLocalType(e.param_name());
 				if (param_id) return param_id;
-				// Classification: temporary template-parameter bridge. This covers
-				// surviving references whose instantiated binding is not yet visible
-				// through sema's local scope model alone.
-				if (auto expr_type = parser_.get_expression_type(node); expr_type.has_value()) {
-					return canonicalizeType(*expr_type);
-				}
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
