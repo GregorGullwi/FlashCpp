@@ -776,6 +776,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 
 	auto saved_struct_info = context.struct_info;
 	context.struct_info = bound_struct_info;
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.return_type_info = nullptr;
+	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
 	context.current_depth++;
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
@@ -784,6 +793,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	if (result.success() && mutable_bindings) {
 		if (write_back_to_object_binding) {
@@ -3729,6 +3739,15 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 		auto saved_struct_info = context.struct_info;
 		context.struct_info = struct_info;
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.return_type_info = nullptr;
+	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
 	
 	// Increase recursion depth
 	context.current_depth++;
@@ -3741,6 +3760,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
 		context.struct_info = saved_struct_info;
 	restore_template_bindings();
 	return result;

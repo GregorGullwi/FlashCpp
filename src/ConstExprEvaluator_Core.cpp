@@ -2889,6 +2889,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (si) {
 				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
 				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
+				// Set the struct type index so downstream member-function chains can identify the type.
+				for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
+					if (&gTypeInfo[ti] == context.return_type_info) {
+						result.object_type_index = TypeIndex{ti};
+						break;
+					}
+				}
 				size_t positional_idx = 0;
 				for (size_t i = 0; i < init_list.size() && positional_idx < si->members.size(); ++i) {
 					const auto& member = si->members[positional_idx++];

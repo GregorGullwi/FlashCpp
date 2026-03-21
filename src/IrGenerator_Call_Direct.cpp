@@ -25,6 +25,30 @@ unsigned long long AstToIr::evalResultScalarToRaw(const ConstExpr::EvalResult& r
 	return static_cast<unsigned long long>(r.as_int());
 }
 
+// Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
+static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
+	if (member_type == Type::Float) {
+		float fval = static_cast<float>(r.as_double());
+		uint32_t fbits = 0;
+		std::memcpy(&fbits, &fval, sizeof(float));
+		return static_cast<unsigned long long>(fbits);
+	}
+	if (member_type == Type::Double || member_type == Type::LongDouble) {
+		double dval = r.as_double();
+		unsigned long long dbits = 0;
+		std::memcpy(&dbits, &dval, sizeof(double));
+		return dbits;
+	}
+	// Integer / bool / enum: extract as raw integer bits.
+	if (const auto* ll = std::get_if<long long>(&r.value))
+		return static_cast<unsigned long long>(*ll);
+	if (const auto* ull = std::get_if<unsigned long long>(&r.value))
+		return *ull;
+	if (const auto* b = std::get_if<bool>(&r.value))
+		return *b ? 1ULL : 0ULL;
+	return static_cast<unsigned long long>(r.as_int());
+}
+
 ExprResult AstToIr::materializeConstevalAggregateResult(
 	const ConstExpr::EvalResult& eval_result,
 	const TypeSpecifierNode& ret_spec,
@@ -54,7 +78,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		MemberStoreOp ms;
 		ms.value.type = member.type;
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-		ms.value.value = IrValue{evalResultScalarToRaw(it->second)};
+		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.type)};
 		ms.object = struct_tmp_handle;
 		ms.member_name = member.getName();
 		ms.offset = static_cast<int>(member.offset);
@@ -883,6 +907,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		// reached when emitting runtime IR, so we first try to fold the call at compile time.
 		// If the fold succeeds we return the constant directly (no runtime call emitted).
 		// If it fails the call is genuinely ill-formed — throw a CompileError.
+		// Note: when has_precomputed_mangled is true, matched_func_decl may be null if all
+		// symbol-table lookups failed.  In that case the call will be emitted as a runtime call,
+		// which is safe for constexpr functions; consteval functions are checked below.
 		if (matched_func_decl && matched_func_decl->is_consteval()) {
 			// Use the global symbol table so free functions declared at namespace scope can be found.
 			extern SymbolTable gSymbolTable;
