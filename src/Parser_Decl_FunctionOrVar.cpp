@@ -330,30 +330,26 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
 		}
 		
+		TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+		auto push_static_member_parse_context = [&]() {
+			member_function_context_stack_.push_back({class_name, type_info->type_index_, nullptr, struct_info});
+		};
+		auto pop_static_member_parse_context = [&]() {
+			member_function_context_stack_.pop_back();
+		};
+
 		// Check if this is an out-of-line static member variable definition with brace initializer
 		// Pattern: inline Type ClassName::member_name{};  or  ClassName::member_name{value};
 		if (static_member != nullptr && peek() == "{"_tok) {
 			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with brace init: ", 
 			          class_name.view(), "::", function_name_token.value());
-			
-			advance();  // consume '{'
-			
-			// Parse the initializer expression if present (empty braces = default init)
-			std::optional<ASTNode> init_expr;
-			if (peek() != "}"_tok) {
-				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (init_result.is_error() || !init_result.node().has_value()) {
-					FLASH_LOG(Parser, Error, "Failed to parse brace initializer for static member variable '",
-					          class_name.view(), "::", function_name_token.value(), "'");
-					return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
-				}
-				init_expr = *init_result.node();
-			}
-			
-			// Expect closing brace
-			if (!consume("}"_tok)) {
-				FLASH_LOG(Parser, Error, "Expected '}' after static member variable brace initializer");
-				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
+			push_static_member_parse_context();
+			ParseResult init_result = parse_brace_initializer(type_spec);
+			pop_static_member_parse_context();
+			if (init_result.is_error()) {
+				FLASH_LOG(Parser, Error, "Failed to parse brace initializer for static member variable '",
+				          class_name.view(), "::", function_name_token.value(), "'");
+				return init_result;
 			}
 			
 			// Expect semicolon
@@ -363,7 +359,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			// Finalize the static member initializer (handling empty brace-init) and return the variable node
-			return finalize_static_member_init(static_member, init_expr, decl_node, function_name_token, saved_position);
+			return finalize_static_member_init(static_member, init_result.node(), decl_node, function_name_token, saved_position);
 		}
 		
 		// Check if this is an out-of-line static member variable definition with copy initializer
@@ -371,12 +367,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (static_member != nullptr && peek() == "="_tok) {
 			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition with = init: ", 
 			          class_name.view(), "::", function_name_token.value());
-			
-			advance();  // consume '='
-			
-			// Parse the initializer expression
-			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (init_result.is_error() || !init_result.node().has_value()) {
+			push_static_member_parse_context();
+			auto init_result = parse_copy_initialization(decl_node, type_spec);
+			pop_static_member_parse_context();
+			if (!init_result.has_value()) {
 				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
 				          class_name.view(), "::", function_name_token.value(), "'");
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
@@ -388,7 +382,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 			
-			return finalize_static_member_init(static_member, *init_result.node(), decl_node, function_name_token, saved_position);
+			return finalize_static_member_init(static_member, *init_result, decl_node, function_name_token, saved_position);
 		}
 		
 		// Create a new declaration node with the function name

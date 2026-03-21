@@ -609,7 +609,30 @@
 							FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
 							zero_initialize();
 						} else if (op.is_initialized) {
-							if (!static_member.initializer->is<ExpressionNode>()) {
+							if (static_member.initializer->is<InitializerListNode>()) {
+								if (static_member.type == Type::Struct &&
+									static_member.type_index.is_valid() &&
+									static_member.type_index.value < gTypeInfo.size()) {
+									if (const StructTypeInfo* static_struct_info = gTypeInfo[static_member.type_index.value].getStructInfo()) {
+										op.init_data.resize(static_struct_info->total_size, 0);
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type) -> unsigned long long {
+											unsigned long long leaf_value = 0;
+											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
+												return leaf_value;
+											}
+											return 0;
+										};
+										fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
+										FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "'");
+									} else {
+										FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									}
+								} else {
+									FLASH_LOG(Codegen, Debug, "Static member initializer list for non-struct member '", qualified_name, "', zero-initializing");
+									zero_initialize();
+								}
+							} else if (!static_member.initializer->is<ExpressionNode>()) {
 								FLASH_LOG(Codegen, Debug, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
 								zero_initialize();
 							} else {

@@ -386,6 +386,78 @@ private:
 	// Returns true if the expression is guaranteed not to throw, false otherwise
 	bool isExpressionNoexcept(const ExpressionNode& expr) const;
 
+	// Pack a struct aggregate initializer into raw bytes for static/global storage.
+	// Callers provide the scalar evaluator so the same member walk can be reused for
+	// globals, inline static members, and template-instantiated static members.
+	template<typename EvalFn>
+	void fillAggregateInitData(
+		std::vector<char>& init_data,
+		const StructTypeInfo& struct_info,
+		const InitializerListNode& init_list,
+		EvalFn& eval_to_value,
+		size_t base_offset = 0,
+		size_t depth = 0)
+	{
+		constexpr size_t kFillStructMaxDepth = 64;
+		if (depth >= kFillStructMaxDepth) {
+			FLASH_LOG(Codegen, Warning, "fillAggregateInitData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
+			return;
+		}
+
+		size_t positional_index = 0;
+		for (size_t i = 0; i < init_list.size(); ++i) {
+			StringHandle member_name;
+			if (init_list.is_designated(i)) {
+				member_name = init_list.member_name(i);
+			} else if (positional_index < struct_info.members.size()) {
+				member_name = struct_info.members[positional_index].getName();
+				++positional_index;
+			} else {
+				break;
+			}
+
+			for (const auto& member : struct_info.members) {
+				if (member.getName() != member_name) {
+					continue;
+				}
+
+				size_t abs_offset = base_offset + member.offset;
+				const ASTNode& member_init = init_list.initializers()[i];
+				if (member_init.is<InitializerListNode>() &&
+					isIrStructType(toIrType(member.type)) &&
+					member.type_index.is_valid() &&
+					member.type_index.value < gTypeInfo.size()) {
+					const StructTypeInfo* nested_struct = gTypeInfo[member.type_index.value].getStructInfo();
+					if (nested_struct) {
+						fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);
+						break;
+					}
+				}
+
+				unsigned long long value = eval_to_value(member_init, member.type);
+				if (member.bitfield_width.has_value()) {
+					size_t width = *member.bitfield_width;
+					size_t bit_offset = member.bitfield_bit_offset;
+					unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+					value &= mask;
+					unsigned long long existing = 0;
+					for (size_t byte_index = 0; byte_index < member.size && (abs_offset + byte_index) < init_data.size(); ++byte_index) {
+						existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(init_data[abs_offset + byte_index])) << (byte_index * 8));
+					}
+					existing |= (value << bit_offset);
+					for (size_t byte_index = 0; byte_index < member.size && (abs_offset + byte_index) < init_data.size(); ++byte_index) {
+						init_data[abs_offset + byte_index] = static_cast<char>((existing >> (byte_index * 8)) & 0xFF);
+					}
+				} else {
+					for (size_t byte_index = 0; byte_index < member.size && (abs_offset + byte_index) < init_data.size(); ++byte_index) {
+						init_data[abs_offset + byte_index] = static_cast<char>((value >> (byte_index * 8)) & 0xFF);
+					}
+				}
+				break;
+			}
+		}
+	}
+
 	// Recursively zero-initialize all scalar leaf members of a struct.
 	// For sub-members that are themselves structs (> 64 bits), recurse instead of
 	// emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
