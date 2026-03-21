@@ -2388,6 +2388,11 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
+
+	// If not found in local symbol table, try the global symbol table (for free functions declared at global scope)
+	if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+		symbol_opt = lookup_function_symbol(func_call, func_name, *context.global_symbols);
+	}
 	
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated

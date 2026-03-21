@@ -871,6 +871,11 @@
 						}
 					}
 				}
+				// static constexpr members are compile-time constants and should go to .rodata.
+				// A const static member with a constant initializer is considered read-only.
+				if (static_member.is_const() && op.is_initialized) {
+					op.is_rodata = true;
+				}
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
 			}
 		}
