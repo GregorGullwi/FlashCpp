@@ -13,11 +13,12 @@
 // Conversion rank for overload resolution
 // Lower rank = better match
 enum class ConversionRank {
-	ExactMatch = 0,          // No conversion needed
-	Promotion = 1,           // Integral or floating-point promotion
-	Conversion = 2,          // Standard conversion (int to double, etc.)
-	UserDefined = 3,         // User-defined conversion via conversion operator
-	NoMatch = 4              // No valid conversion
+	ExactMatch = 0,               // Identity / lvalue-to-rvalue (no conversion)
+	QualificationAdjustment = 1,  // T* → const T* (C++20 [over.ics.rank]/3.2.6, ExactMatch category)
+	Promotion = 2,                // Integral or floating-point promotion
+	Conversion = 3,               // Standard conversion (int to double, etc.)
+	UserDefined = 4,              // User-defined conversion via conversion operator
+	NoMatch = 5                   // No valid conversion
 };
 
 // Result of checking if one type can convert to another
@@ -383,9 +384,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is allowed (qualification conversion - adding const)
-			// Per C++20 [over.ics.rank]/3.2.5, this belongs to the ExactMatch category.
+			// Per C++20 [over.ics.rank]/3.2.6, this is weaker than identity within ExactMatch.
 			if (!from_pointee_is_const && to_pointee_is_const) {
-				return {ConversionRank::ExactMatch, StandardConversionKind::QualificationAdjustment, true};
+				return {ConversionRank::QualificationAdjustment, StandardConversionKind::QualificationAdjustment, true};
 			}
 			// const T* → T* is NOT allowed (would remove const)
 			if (from_pointee_is_const && !to_pointee_is_const) {
@@ -1111,10 +1112,11 @@ inline OverloadResolutionResult resolve_overload(
 	}
 	
 	if (num_best_matches > 1) {
-		// Check if all tied candidates differ only in cv-qualification (const/volatile)
-		// on their parameters. FlashCpp doesn't fully track volatile qualifiers, so
-		// overloads like f(T*) vs f(volatile T*) score identically. In that case,
-		// prefer the first declared overload rather than reporting ambiguity.
+		// FlashCpp doesn't track volatile qualifiers, so overloads differing only in
+		// volatile (e.g. f(T*) vs f(volatile T*)) score identically. Prefer the first
+		// declared overload in that case rather than reporting spurious ambiguity.
+		// Note: const sub-ranking is now handled by ConversionRank::QualificationAdjustment,
+		// so this tiebreaker only fires for genuine volatile-only differences.
 		bool differs_only_in_cv = true;
 		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
 		for (const auto* candidate : tied_candidates) {
@@ -1129,7 +1131,6 @@ inline OverloadResolutionResult resolve_overload(
 			for (size_t i = 0; i < best_params.size(); ++i) {
 				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				// If base types and pointer depths match, they differ only in cv-qualification
 				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
 				    bp.pointer_depth() != cp.pointer_depth() ||
 				    bp.is_reference() != cp.is_reference() ||
@@ -1142,7 +1143,6 @@ inline OverloadResolutionResult resolve_overload(
 		}
 		
 		if (differs_only_in_cv) {
-			// Candidates differ only in cv-qualification — prefer the first match
 			return OverloadResolutionResult(best_match);
 		}
 		return OverloadResolutionResult::ambiguous();
