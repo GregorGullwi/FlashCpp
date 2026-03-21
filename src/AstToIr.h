@@ -244,7 +244,7 @@ private:
 		std::string_view error_context);
 	static ExprResult makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{});
 	bool setupBaseFromIdentifier(
-		std::string_view object_name,
+		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
 		Type& base_type,
