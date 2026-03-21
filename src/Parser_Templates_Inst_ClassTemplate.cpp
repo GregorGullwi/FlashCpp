@@ -1902,6 +1902,49 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 		}
+
+		// Partial specializations receive raw concrete instantiation args
+		// (e.g. [int, double] for Box<int, double>) while template_params describe
+		// only the specialization's deduced parameters (e.g. [T] for Box<int, T>).
+		// Build one arg vector aligned with template_params and reuse it across the
+		// sema-owned AST copy path so bindings stay positional.
+		std::vector<TemplateTypeArg> template_args_for_pattern_storage;
+		if (!pattern_args.empty()) {
+			size_t template_param_slot = 0;
+			template_args_for_pattern_storage.reserve(template_params.size());
+			for (const auto& template_param : template_params) {
+				if (!template_param.is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				std::optional<TemplateTypeArg> deduced_arg;
+				for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
+					const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
+					if (pattern_arg.is_value || !pattern_arg.is_dependent) {
+						continue;
+					}
+
+					size_t dependent_param_index = 0;
+					for (size_t i = 0; i < pattern_idx; ++i) {
+						if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
+							dependent_param_index++;
+						}
+					}
+
+					if (dependent_param_index == template_param_slot) {
+						deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
+						break;
+					}
+				}
+
+				if (deduced_arg.has_value()) {
+					template_args_for_pattern_storage.push_back(*deduced_arg);
+				}
+				template_param_slot++;
+			}
+		}
+		const std::vector<TemplateTypeArg>& template_args_for_pattern =
+			template_args_for_pattern_storage.empty() ? template_args : template_args_for_pattern_storage;
 		
 		for (const auto& type_alias : pattern_struct.type_aliases()) {
 			// Build the qualified name: enable_if_true_int::type
@@ -2021,19 +2064,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
 			}
 		}
-		instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args);
+		instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 		
 		// Copy data members
 		for (const auto& member_decl : pattern_struct.members()) {
 			ASTNode substituted_member_decl = substituteTemplateParameters(
-				member_decl.declaration, template_params, template_args);
+				member_decl.declaration, template_params, template_args_for_pattern);
 			std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
-					*member_decl.default_initializer, template_params, template_args))
+					*member_decl.default_initializer, template_params, template_args_for_pattern))
 				: std::nullopt;
 			std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
-					*member_decl.bitfield_width_expr, template_params, template_args))
+					*member_decl.bitfield_width_expr, template_params, template_args_for_pattern))
 				: std::nullopt;
 			instantiated_struct_ref.add_member(
 				substituted_member_decl,
@@ -2047,11 +2090,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
 			original_type_spec.set_type_index(static_member.type_index);
 			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
-				original_type_spec, template_params, template_args);
+				original_type_spec, template_params, template_args_for_pattern);
 			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
-					*static_member.initializer, template_params, template_args))
+					*static_member.initializer, template_params, template_args_for_pattern))
 				: std::nullopt;
 			instantiated_struct_ref.add_static_member(
 				static_member.name,
@@ -2078,7 +2121,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name,  // Set correct parent struct name
 					orig_ctor.name()    // Constructor name (same as template name)
 				);
-				new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args);
+				new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 				
 				// Copy parameters
 				for (const auto& param : orig_ctor.parameter_nodes()) {
@@ -2118,50 +2161,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy all parameters and definition
 				FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+				new_func.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 				for (const auto& param : orig_func.parameter_nodes()) {
 					new_func.add_parameter_node(param);
 				}
+				std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
+				for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) {
+						continue;
+					}
+					std::string_view pname = template_params[i].as<TemplateParameterNode>().name();
+					deduced_args[pname] = template_args_for_pattern[i];
+				}
 				if (orig_func.get_definition().has_value()) {
 					FLASH_LOG(Templates, Debug, "Copying function definition to new function");
-					new_func.set_definition(*orig_func.get_definition());
+					ASTNode substituted_body = *orig_func.get_definition();
+					if (!template_args_for_pattern.empty()) {
+						substituted_body = substituteTemplateParameters(
+							*orig_func.get_definition(),
+							template_params,
+							template_args_for_pattern
+						);
+					}
+					new_func.set_definition(substituted_body);
 				} else if (orig_func.has_template_body_position()) {
 					// Member struct template partial specializations store function bodies
 					// as deferred template body positions — re-parse the body now with
 					// concrete template arguments so the definition is available at codegen.
 					FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
 					
-					// Build deduced param → arg mapping using pattern_args-based deduction.
-					// For partial specializations, template_args are the raw concrete arguments
-					// (e.g., [int*] for Container<int*>), not the deduced parameter values.
-					// pattern_args describe the pattern (e.g., [T*]) and we match dependent
-					// entries to find the correct template_args position for each param.
-					std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
-					if (!pattern_args.empty()) {
-						for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
-							if (!template_params[param_idx].is<TemplateParameterNode>()) continue;
-							std::string_view pname = template_params[param_idx].as<TemplateParameterNode>().name();
-							for (size_t pi = 0; pi < pattern_args.size() && pi < template_args.size(); ++pi) {
-								if (!pattern_args[pi].is_value && pattern_args[pi].is_dependent) {
-									size_t dep_count = 0;
-									for (size_t j = 0; j < pi; ++j) {
-										if (!pattern_args[j].is_value && pattern_args[j].is_dependent)
-											dep_count++;
-									}
-									if (dep_count == param_idx) {
-										deduced_args[pname] = deduceArgFromPattern(template_args[pi], pattern_args[pi]);
-										break;
-									}
-								}
-							}
-						}
-					} else {
-						// Fallback: direct 1:1 mapping (primary template path)
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (!template_params[i].is<TemplateParameterNode>()) continue;
-							deduced_args[template_params[i].as<TemplateParameterNode>().name()] = template_args[i];
-						}
-					}
-					
+					// Reuse the already-aligned template args so deferred body re-parsing
+					// sees the deduced specialization parameters, not the raw concrete
+					// instantiation arguments.
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
 						Type concrete_type = deduced_arg.base_type;
@@ -2191,17 +2222,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						// Substitute template parameters in the parsed body
-						// Build param order from template_params (not unordered_map) to preserve declaration order
-						std::vector<std::string_view> template_param_order;
-						for (const auto& tp : template_params) {
-							if (tp.is<TemplateParameterNode>()) {
-								std::string_view pname = tp.as<TemplateParameterNode>().name();
-								if (deduced_args.count(pname))
-									template_param_order.push_back(pname);
-							}
-						}
-						ExpressionSubstitutor substitutor(deduced_args, *this, template_param_order);
-						ASTNode substituted_body = substitutor.substitute(*block_result.node());
+						ASTNode substituted_body = substituteTemplateParameters(
+							*block_result.node(),
+							template_params,
+							template_args_for_pattern
+						);
 						new_func.set_definition(substituted_body);
 					}
 					
@@ -2238,10 +2263,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 // Build template parameter name to type mapping for substitution
 			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 			std::vector<std::string_view> template_param_order;
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
 				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 				// param.name() already returns string_view
-				param_map[param.name()] = template_args[i];
+				param_map[param.name()] = template_args_for_pattern[i];
 				template_param_order.push_back(param.name());
 			}
 			

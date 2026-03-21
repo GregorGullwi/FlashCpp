@@ -195,6 +195,10 @@ Phase 3 has started with two low-risk local fallback removals:
 - the final direct `IdentifierBinding::Unresolved` parser type fallback inside
   `SemanticAnalysis::inferExpressionType(...)` is now gone as well, so
   `SemanticAnalysis.cpp` no longer calls `parser_.get_expression_type(...)`
+- partial-specialization retained member-function bodies now also use
+  template-parameter-aligned binding vectors plus full body substitution, so
+  copied `Foo<int, T>`-style bodies no longer see raw instantiation arguments
+  where deduced specialization parameters are required
 
 ## Workstreams
 
