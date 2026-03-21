@@ -554,7 +554,7 @@ constexpr int sum_via_ptr(const int* p, int n) {
     }
     return total;
 }
-static_assert(sum_via_ptr(&arr[0], 5) == 15);  // ✅ Works
+static_assert(sum_via_ptr(&arr[0], 5) == 150);  // ✅ Works
 ```
 
 ### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
