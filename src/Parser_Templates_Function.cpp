@@ -367,12 +367,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					return param_result;
 				}
 				
-				// Parse noexcept specifier; store in header.specifiers
-				header.specifiers.is_noexcept = parse_constructor_exception_specifier();
-				
-				// Parse trailing requires clause; store in header.requires_clause
-				header.requires_clause = parse_trailing_requires_clause();
-				
 				// Create constructor declaration and apply collected header data
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 					struct_name_handle, header.name_token.handle());
@@ -380,10 +374,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
 				ctor_ref.set_constexpr(header.storage.is_constexpr());
-				ctor_ref.set_noexcept(header.specifiers.is_noexcept);
-				if (header.requires_clause.has_value()) {
-					ctor_ref.set_requires_clause(*header.requires_clause);
-				}
 				
 				// Apply parsed parameters to the constructor
 				for (const auto& param : header.params.parameters) {
@@ -394,7 +384,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
 				
 				// Register parameters in symbol table using shared helper
+				// Per C++20 [basic.scope.param], parameters must be in scope before parsing
+				// noexcept and trailing requires clause (which may reference parameter names).
 				register_parameters_in_scope(ctor_ref.parameter_nodes());
+				
+				// Parse noexcept specifier and trailing requires clause after params are in scope
+				ctor_ref.set_noexcept(parse_constructor_exception_specifier());
+				if (auto req = parse_trailing_requires_clause()) {
+					ctor_ref.set_requires_clause(*req);
+				}
 				
 				// Skip GCC __attribute__ between specifiers and initializer list
 				skip_gcc_attributes();

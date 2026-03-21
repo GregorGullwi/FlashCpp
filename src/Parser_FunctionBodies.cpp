@@ -728,12 +728,20 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 // Priority 4: Find a regular (non-constructor, non-destructor) member function in struct_info
 // that matches the given name, cv-qualifiers, and parameter count.
 // Returns a mutable pointer to the matching StructMemberFunction, or nullptr if not found.
+//
+// Per C++20 [dcl.fct.def.general]/p2, an out-of-line definition must match a previously
+// introduced declaration by name, parameter-type-list, and cv-qualifiers.
+// Entries stored as FunctionDeclarationNode are fully verifiable (param count checked).
+// Entries stored under a different node type (e.g. some operator representations) cannot
+// have their parameter-type-list verified here; they are accepted as matching declarations
+// only when no fully-verifiable match exists.
 StructMemberFunction* Parser::find_member_function_by_signature(
 	StructTypeInfo& struct_info,
 	StringHandle name,
 	const FlashCpp::MemberQualifiers& quals,
 	size_t param_count)
 {
+	StructMemberFunction* unverified_match = nullptr;
 	for (auto& member : struct_info.member_functions) {
 		if (member.getName() != name ||
 			member.is_const()    != quals.is_const() ||
@@ -743,14 +751,16 @@ StructMemberFunction* Parser::find_member_function_by_signature(
 		if (member.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& decl_func = member.function_decl.as<FunctionDeclarationNode>();
 			if (decl_func.parameter_nodes().size() == param_count) {
-				return &member;
+				return &member;  // Fully-verified match — prefer over any unverified one.
 			}
-		} else {
-			// Non-FunctionDeclarationNode entries (e.g. operator nodes): accept first match
-			return &member;
+		} else if (!unverified_match) {
+			// Declaration stored under a non-FunctionDeclarationNode node type:
+			// name and qualifiers match but parameter count cannot be verified.
+			// Keep as candidate and continue looking for a fully-verified match.
+			unverified_match = &member;
 		}
 	}
-	return nullptr;
+	return unverified_match;
 }
 
 // Priority 4: Helper to extract the TypeSpecifierNode from a parameter ASTNode.
