@@ -663,6 +663,23 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			return true;
 		};
 
+		auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
+			TempVar result_temp = var_counter.next();
+			GlobalLoadOp load_op;
+			load_op.result.type = binding.type;
+			load_op.result.ir_type = toIrType(binding.type);
+			load_op.result.size_in_bits = binding.size_in_bits;
+			load_op.result.value = result_temp;
+			load_op.global_name = binding.store_name;
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
+
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
+				binding.type, binding.size_in_bits.value));
+
+			return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp});
+		};
+
 		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -684,35 +701,26 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
 					}
 
-					// Generate GlobalStore IR: global_store @global_name, %value
+					// Materialize the final assigned value into a stack temp before GlobalStore.
+					// This mirrors the compound-assignment path and avoids backend register-tracking
+					// gaps when the RHS comes from a conversion result that only lives in a register.
+					TempVar store_temp = var_counter.next();
+					AssignmentOp assign_op;
+					assign_op.result = store_temp;
+					assign_op.lhs.type = gsi.type;
+					assign_op.lhs.size_in_bits = gsi.size_in_bits;
+					assign_op.lhs.value = store_temp;
+					assign_op.rhs = toTypedValue(rhsExprResult);
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+
 					std::vector<IrOperand> store_operands;
 					store_operands.emplace_back(gsi.store_name);
-
-					// Extract the value from RHS
-					if (const auto* temp_var = std::get_if<TempVar>(&rhsExprResult.value)) {
-						store_operands.emplace_back(*temp_var);
-					} else if (std::holds_alternative<StringHandle>(rhsExprResult.value)
-					|| std::holds_alternative<unsigned long long>(rhsExprResult.value)
-					|| std::holds_alternative<double>(rhsExprResult.value)) {
-						// Local variable (StringHandle) or constant: load into a temp first
-						TempVar temp = var_counter.next();
-						AssignmentOp assign_op;
-						assign_op.result = temp;
-						assign_op.lhs.type = rhsExprResult.type;
-						assign_op.lhs.size_in_bits = rhsExprResult.size_in_bits;
-						assign_op.lhs.value = temp;
-						assign_op.rhs = toTypedValue(rhsExprResult);
-						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-						store_operands.emplace_back(temp);
-					} else {
-						FLASH_LOG(Codegen, Error, "GlobalStore: unsupported RHS IrOperand type");
-						return ExprResult{};
-					}
+					store_operands.emplace_back(store_temp);
 
 					ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_operands), binaryOperatorNode.get_token());
 
-					// Return the converted RHS with the global's declared type/size.
-					return makeExprResult(gsi.type, gsi.size_in_bits, rhsExprResult.value);
+					// C++20 [expr.ass]/3: the result is an lvalue referring to the left operand.
+					return makeGlobalAssignmentResultLValue(gsi);
 				}
 			}
 		}
