@@ -356,7 +356,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			const auto& elements = init_list.initializers();
 			if (static_cast<size_t>(offset) >= elements.size()) {
 				return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-					" out of bounds (size " + std::to_string(elements.size()) + ")");
+					" out of bounds (size " + std::to_string(elements.size()) + ")", EvalErrorType::NotConstantExpression);
 			}
 			return evaluate(elements[static_cast<size_t>(offset)], context);
 		}
@@ -368,14 +368,14 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			if (!arr_result.array_elements.empty()) {
 				if (static_cast<size_t>(offset) >= arr_result.array_elements.size()) {
 					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-						" out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")");
+						" out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")", EvalErrorType::NotConstantExpression);
 				}
 				return arr_result.array_elements[static_cast<size_t>(offset)];
 			}
 			if (!arr_result.array_values.empty()) {
 				if (static_cast<size_t>(offset) >= arr_result.array_values.size()) {
 					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-						" out of bounds (array size " + std::to_string(arr_result.array_values.size()) + ")");
+						" out of bounds (array size " + std::to_string(arr_result.array_values.size()) + ")", EvalErrorType::NotConstantExpression);
 				}
 				return EvalResult::from_int(arr_result.array_values[static_cast<size_t>(offset)]);
 			}

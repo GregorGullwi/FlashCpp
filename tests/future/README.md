@@ -13,3 +13,16 @@ They are stored here (outside `tests/`) so that the CI test runners
 
 Once the corresponding enforcement is implemented, move each file back to
 `tests/` so it is tested normally.
+
+## Previously here, now promoted to `tests/`
+
+The following tests were moved to `tests/` once constexpr pointer violation
+enforcement was implemented (ptr+ptr, OOB dereference, relational comparison
+of different-array pointers now produce compile errors tagged
+`EvalErrorType::NotConstantExpression`):
+
+* `test_constexpr_ptr_arith_fail.cpp`
+* `test_constexpr_ptr_diff_different_arrays_fail.cpp`
+* `test_constexpr_ptr_negative_offset_fail.cpp`
+* `test_constexpr_ptr_oob_deref_fail.cpp`
+* `test_constexpr_ptr_relational_diff_arrays_fail.cpp`

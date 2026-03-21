@@ -164,8 +164,8 @@ EvalResult make_checked_constexpr_pointer_result(
 	EvaluationContext* context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
 	if (offset < 0) {
-		return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) +
-			" outside the valid range in constant expression");
+		return EvalResult::error("Pointer arithmetic produced negative offset " + std::to_string(offset) +
+			" in constant expression", EvalErrorType::NotConstantExpression);
 	}
 
 	const auto upper_bound = try_get_constexpr_pointer_upper_bound(var_name, context, bindings);
@@ -176,7 +176,7 @@ EvalResult make_checked_constexpr_pointer_result(
 	if (static_cast<uint64_t>(offset) > static_cast<uint64_t>(*upper_bound)) {
 		return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) +
 			" outside the valid range [0, " + std::to_string(*upper_bound) +
-			"] for '" + std::string(var_name) + "' in constant expression");
+			"] for '" + std::string(var_name) + "' in constant expression", EvalErrorType::NotConstantExpression);
 	}
 
 	return EvalResult::from_pointer(var_name, offset);
@@ -1760,7 +1760,7 @@ EvalResult Evaluator::apply_binary_op(
 		if (op == "<" || op == "<=" || op == ">" || op == ">=") {
 			if (lhs_is_ptr && rhs_is_ptr) {
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
-					return EvalResult::error("Relational comparison between pointers to different variables is not allowed in constant expressions");
+					return EvalResult::error("Relational comparison between pointers to different variables is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 				}
 				if (op == "<")  return EvalResult::from_bool(lhs.pointer_offset <  rhs.pointer_offset);
 				if (op == "<=") return EvalResult::from_bool(lhs.pointer_offset <= rhs.pointer_offset);
@@ -1796,7 +1796,7 @@ EvalResult Evaluator::apply_binary_op(
 					context,
 					bindings);
 			}
-			return EvalResult::error("Addition of two pointers is not allowed in constant expressions");
+			return EvalResult::error("Addition of two pointers is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 		}
 		if (op == "-") {
 			if (lhs_is_ptr && !rhs_is_ptr) {
@@ -1814,7 +1814,7 @@ EvalResult Evaluator::apply_binary_op(
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
-					return EvalResult::error("Subtraction of pointers to different variables is not allowed in constant expressions");
+					return EvalResult::error("Subtraction of pointers to different variables is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 				}
 				return EvalResult::from_int(lhs.pointer_offset - rhs.pointer_offset);
 			}

@@ -120,30 +120,26 @@ failure is a compile error, not a warning.  C++20 also requires that a `consteva
 FlashCpp currently:
 * parses both `constexpr` and `consteval` specifiers and records them in the AST
   (`is_constexpr()` / `is_consteval()`)
-* does **not** enforce either rule:
+* enforces compile errors for constexpr pointer violations tagged with
+  `EvalErrorType::NotConstantExpression` (e.g. ptr+ptr, OOB dereference,
+  relational comparison of different-array pointers) — these previously lived
+  in `tests/future/` and are now regular `_fail` tests in `tests/`
+* does **not** enforce the general case:
   - a `constexpr` global variable whose initializer fails constant evaluation
-    produces a `[WARN][Codegen] Non-constant initializer` warning and zero-initializes
+    for evaluator-limitation reasons (`EvalErrorType::Other`) still produces a
+    `[WARN][Codegen] Non-constant initializer` warning and zero-initializes
     the variable instead of issuing a compile error
   - a `consteval` function is treated identically to a `constexpr` function
     (may be called at runtime without error)
 
-The reason enforcement is deferred is that `ConstExpr::Evaluator` cannot yet
+The reason full enforcement is deferred is that `ConstExpr::Evaluator` cannot yet
 reliably distinguish "this expression is genuinely not a constant expression" from
 "this expression *would* be constant but FlashCpp's evaluator does not support it
-yet".  Throwing a hard error on every evaluation failure would produce false
-positives for valid C++20 programs that exercise unsupported evaluator features.
+yet".  Throwing a hard error on every `Other`-type evaluation failure would produce
+false positives for valid C++20 programs that exercise unsupported evaluator features.
 
-**Future task**: once the evaluator coverage is broad enough, change `evalToValue`
-in `IrGenerator_Stmt_Decl.cpp` to call `throw CompileError(...)` when
-`node.is_constexpr()` is true and constant evaluation fails, and add a separate
-diagnostic for `consteval` call sites outside constant-evaluated contexts.
-
-The five test files below document the desired (currently unenforced) behaviour.
-They live in `tests/future/` so the CI test runners do not pick them up as
-`_fail.cpp` tests (which would cause "UNEXPECTED PASS" failures). Once
-enforcement is implemented, move them back to `tests/`.
-* `tests/future/test_constexpr_ptr_arith_fail.cpp`
-* `tests/future/test_constexpr_ptr_diff_different_arrays_fail.cpp`
-* `tests/future/test_constexpr_ptr_negative_offset_fail.cpp`
-* `tests/future/test_constexpr_ptr_oob_deref_fail.cpp`
-* `tests/future/test_constexpr_ptr_relational_diff_arrays_fail.cpp`
+**Future task**: continue tagging evaluator errors as `NotConstantExpression` when
+they represent true C++ violations (not evaluator gaps), then the existing enforcement
+path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
+to compile errors.  Add a separate diagnostic for `consteval` call sites outside
+constant-evaluated contexts.
