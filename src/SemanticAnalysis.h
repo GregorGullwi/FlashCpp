@@ -47,6 +47,9 @@ public:
 	SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols);
 
 	// Main entry point: run the translation-unit semantic pass.
+	// Phase 1 boundary guard: starts with a lightweight walk over the sema-owned
+	// post-parse AST surface and reports forbidden surviving template-only
+	// expression nodes before semantic normalization begins.
 	void run();
 
 	// Access collected statistics after run().
@@ -133,6 +136,14 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);
+	void registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info);
+	void registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl);
+	void registerOuterTemplateBindingsInScope(const VariableDeclarationNode& var);
+	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
+	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
+	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
+	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);
@@ -255,4 +266,9 @@ private:
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
+
+	// Enclosing implicit-member context for bodies/default initializers currently
+	// being normalized. Used to type `IdentifierBinding::NonStaticMember`
+	// sema-first instead of falling back to parser-owned member-context lookup.
+	std::vector<TypeIndex> member_context_stack_;
 };

@@ -39,6 +39,35 @@ The disambiguation routing in `parse_statement_or_declaration` is **correct**
 The remaining work is to extend `parse_variable_declaration` (and the declarator
 parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
 
+## Local variable uses can misbind inside function templates
+
+Local variables declared inside a function template body can later be rejected as
+if they were unresolved non-dependent names:
+
+```cpp
+struct Box {
+    int value;
+    Box(int);
+};
+
+template<int N>
+int f() {
+    Box box(N);
+    return box.value; // can fail: "'box' was not declared before the template definition"
+}
+```
+
+Observed while writing a constructor-overload regression: FlashCpp emitted
+`error: non-dependent name 'box' was not declared before the template definition
+(C++20 [temp.res]/9)` even though `box` is a local declared earlier in the same
+template definition.
+
+This appears to be a template-body local-scope/binding bug rather than a real
+two-phase lookup violation.
+
+**Workaround**: avoid introducing a named local in the affected template body;
+route the value through a helper call or another expression form instead.
+
 ## Unscoped enum enumerator access through type aliases
 
 Accessing unscoped enum values using a type alias as the qualifier
@@ -110,6 +139,62 @@ used in an `if` statement preceding another `if` that reads a different member
 of the same struct. The workaround is to use `int` flags instead of `bool`
 members, or avoid chaining `if (!obj.bool_field)` with subsequent member
 accesses. Observed during copy/move constructor regression testing.
+
+## Direct member access on prvalue struct temporaries can crash at runtime
+
+Accessing a struct member directly from a prvalue temporary can compile and link
+but produce a runtime stack overflow in the generated program:
+
+```cpp
+struct Box {
+    int value;
+    Box(int x) : value(x) {}
+};
+
+int f() {
+    return Box(7).value; // observed runtime crash (0xC00000FD)
+}
+```
+
+This was observed while writing a template constructor-overload regression; both
+`Box(N).value` and `Box{N}.value` hit the same nearby failure mode. The symptom
+looks like a temporary-object/member-access codegen bug rather than a semantic
+analysis error.
+
+**Workaround**: avoid direct member access on a prvalue temporary; pass the
+temporary through a helper function or otherwise materialize/access it through a
+different path.
+
+## Nested template static members of struct type can misbehave at runtime
+
+Struct-typed static members inside nested template classes are still unreliable
+at runtime. Inline/`constexpr` forms can read back as zero-initialized even when
+their template-substituted initializer should produce non-zero field values, and
+mutable storage variants can crash when written through:
+
+```cpp
+template<typename U, class C, int N>
+struct Outer {
+    struct Payload { int a; int b; };
+    struct Inner {
+        static constexpr Payload payload = { int(sizeof(C) - sizeof(U)), N };
+        int value = payload.a + payload.b;
+    };
+};
+
+int main() {
+    Outer<char, int, 39>::Inner inner{};
+    return inner.value + Outer<char, int, 39>::Inner::payload.a; // observed 0, expected 45
+}
+```
+
+Observed while trying to add focused validation around nested static-member
+substitution/layout. This looks like a remaining nested-class/static-object
+codegen/runtime bug rather than a parser/sema typing failure.
+
+**Workaround**: avoid struct-typed static members inside nested template
+classes; use scalar static members, move the object out of the nested template
+class, or materialize the value through another helper path.
 
 ## `constexpr`/`consteval` enforcement — partially implemented
 

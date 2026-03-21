@@ -975,6 +975,16 @@ ASTNode Parser::substituteTemplateParameters(
 		
 		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
+		InlineVector<StringHandle, 4> outer_template_param_names;
+		outer_template_param_names.reserve(template_params.size());
+		for (const auto& template_param : template_params) {
+			if (template_param.is<TemplateParameterNode>()) {
+				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+			}
+		}
+		if (!outer_template_param_names.empty()) {
+			new_var.set_outer_template_bindings(outer_template_param_names, template_args);
+		}
 		
 		// Preserve constexpr/constinit flags
 		if (var_decl.is_constexpr()) new_var.set_is_constexpr(true);

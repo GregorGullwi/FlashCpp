@@ -333,8 +333,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substitute_nontype_template_param(param_name, args, params);
 	};
 	
-	// Helper lambda to substitute template parameters in member default initializers
-	// Handles both TemplateParameterReferenceNode and IdentifierNode
+	// Helper lambda to substitute template parameters in member default initializers.
+	// Use the generic substitution walk so compound expressions like `N + 0`
+	// and nested template-dependent expressions are handled uniformly.
 	auto substitute_default_initializer = [&](
 		const std::optional<ASTNode>& default_init,
 		const std::vector<TemplateTypeArg>& args,
@@ -342,33 +343,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (!default_init.has_value()) {
 			return std::nullopt;
 		}
-		
-		const ASTNode& init_node = default_init.value();
-		if (!init_node.is<ExpressionNode>()) {
-			return default_init;  // Return as-is if not an expression
-		}
-		
-		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-		std::string_view param_name_to_substitute;
-		
-		// Check if the initializer is a template parameter reference or identifier
-		if (const auto* template_parameter_reference = std::get_if<TemplateParameterReferenceNode>(&init_expr)) {
-			const TemplateParameterReferenceNode& tparam_ref = *template_parameter_reference;
-			param_name_to_substitute = tparam_ref.param_name().view();
-		} else if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&init_expr)) {
-			const IdentifierNode& ident = *identifier_ptr;
-			param_name_to_substitute = ident.name();
-		}
-		
-		// Try to substitute if we found a parameter name
-		if (!param_name_to_substitute.empty()) {
-			auto substituted = substitute_template_param_in_initializer(param_name_to_substitute, args, params);
-			if (substituted.has_value()) {
-				return substituted;
+
+		return substituteTemplateParameters(default_init.value(), params, args);
+	};
+
+	auto get_substituted_type_size_bytes = [&](Type substituted_type, TypeIndex substituted_type_index) -> size_t {
+		if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == substituted_type_index) {
+					if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
+						return struct_info->total_size;
+					}
+					break;
+				}
 			}
 		}
-		
-		return default_init;  // Return original if no substitution was performed
+
+		return get_type_size_bits(substituted_type) / 8;
 	};
 	
 	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
@@ -1833,7 +1824,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					original_type_spec, template_params, template_args);
 				
-				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+				size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 				
 				// Substitute template parameters in the static member initializer
 				// Use ExpressionSubstitutor to handle all types of template-dependent expressions
@@ -1911,6 +1902,49 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 		}
+
+		// Partial specializations receive raw concrete instantiation args
+		// (e.g. [int, double] for Box<int, double>) while template_params describe
+		// only the specialization's deduced parameters (e.g. [T] for Box<int, T>).
+		// Build one arg vector aligned with template_params and reuse it across the
+		// sema-owned AST copy path so bindings stay positional.
+		std::vector<TemplateTypeArg> template_args_for_pattern_storage;
+		if (!pattern_args.empty()) {
+			size_t template_param_slot = 0;
+			template_args_for_pattern_storage.reserve(template_params.size());
+			for (const auto& template_param : template_params) {
+				if (!template_param.is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				std::optional<TemplateTypeArg> deduced_arg;
+				for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
+					const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
+					if (pattern_arg.is_value || !pattern_arg.is_dependent) {
+						continue;
+					}
+
+					size_t dependent_param_index = 0;
+					for (size_t i = 0; i < pattern_idx; ++i) {
+						if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
+							dependent_param_index++;
+						}
+					}
+
+					if (dependent_param_index == template_param_slot) {
+						deduced_arg = deduceArgFromPattern(template_args[pattern_idx], pattern_arg);
+						break;
+					}
+				}
+
+				if (deduced_arg.has_value()) {
+					template_args_for_pattern_storage.push_back(*deduced_arg);
+				}
+				template_param_slot++;
+			}
+		}
+		const std::vector<TemplateTypeArg>& template_args_for_pattern =
+			template_args_for_pattern_storage.empty() ? template_args : template_args_for_pattern_storage;
 		
 		for (const auto& type_alias : pattern_struct.type_aliases()) {
 			// Build the qualified name: enable_if_true_int::type
@@ -2023,14 +2057,56 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			false  // is_class
 		);
 		StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+		InlineVector<StringHandle, 4> outer_template_param_names;
+		outer_template_param_names.reserve(template_params.size());
+		for (const auto& template_param : template_params) {
+			if (template_param.is<TemplateParameterNode>()) {
+				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+			}
+		}
+		instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 		
 		// Copy data members
 		for (const auto& member_decl : pattern_struct.members()) {
+			ASTNode substituted_member_decl = substituteTemplateParameters(
+				member_decl.declaration, template_params, template_args_for_pattern);
+			std::optional<ASTNode> substituted_default_initializer = member_decl.default_initializer.has_value()
+				? std::optional<ASTNode>(substituteTemplateParameters(
+					*member_decl.default_initializer, template_params, template_args_for_pattern))
+				: std::nullopt;
+			std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
+				? std::optional<ASTNode>(substituteTemplateParameters(
+					*member_decl.bitfield_width_expr, template_params, template_args_for_pattern))
+				: std::nullopt;
 			instantiated_struct_ref.add_member(
-				member_decl.declaration,
+				substituted_member_decl,
 				member_decl.access,
-				member_decl.default_initializer
+				substituted_default_initializer,
+				member_decl.bitfield_width,
+				substituted_bitfield_width_expr
 			);
+		}
+		for (const auto& static_member : pattern_struct.static_members()) {
+			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			original_type_spec.set_type_index(static_member.type_index);
+			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+				original_type_spec, template_params, template_args_for_pattern);
+			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
+			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+				? std::optional<ASTNode>(substituteTemplateParameters(
+					*static_member.initializer, template_params, template_args_for_pattern))
+				: std::nullopt;
+			instantiated_struct_ref.add_static_member(
+				static_member.name,
+				substituted_type,
+				substituted_type_index,
+				substituted_size,
+				static_member.alignment,
+				static_member.access,
+				substituted_initializer,
+				static_member.cv_qualifier,
+				static_member.reference_qualifier,
+				static_member.pointer_depth);
 		}
 		
 		// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
@@ -2045,6 +2121,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name,  // Set correct parent struct name
 					orig_ctor.name()    // Constructor name (same as template name)
 				);
+				new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 				
 				// Copy parameters
 				for (const auto& param : orig_ctor.parameter_nodes()) {
@@ -2084,50 +2161,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy all parameters and definition
 				FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+				new_func.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
 				for (const auto& param : orig_func.parameter_nodes()) {
 					new_func.add_parameter_node(param);
 				}
+				std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
+				for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) {
+						continue;
+					}
+					std::string_view pname = template_params[i].as<TemplateParameterNode>().name();
+					deduced_args[pname] = template_args_for_pattern[i];
+				}
 				if (orig_func.get_definition().has_value()) {
 					FLASH_LOG(Templates, Debug, "Copying function definition to new function");
-					new_func.set_definition(*orig_func.get_definition());
+					ASTNode substituted_body = *orig_func.get_definition();
+					if (!template_args_for_pattern.empty()) {
+						substituted_body = substituteTemplateParameters(
+							*orig_func.get_definition(),
+							template_params,
+							template_args_for_pattern
+						);
+					}
+					new_func.set_definition(substituted_body);
 				} else if (orig_func.has_template_body_position()) {
 					// Member struct template partial specializations store function bodies
 					// as deferred template body positions — re-parse the body now with
 					// concrete template arguments so the definition is available at codegen.
 					FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
 					
-					// Build deduced param → arg mapping using pattern_args-based deduction.
-					// For partial specializations, template_args are the raw concrete arguments
-					// (e.g., [int*] for Container<int*>), not the deduced parameter values.
-					// pattern_args describe the pattern (e.g., [T*]) and we match dependent
-					// entries to find the correct template_args position for each param.
-					std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
-					if (!pattern_args.empty()) {
-						for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
-							if (!template_params[param_idx].is<TemplateParameterNode>()) continue;
-							std::string_view pname = template_params[param_idx].as<TemplateParameterNode>().name();
-							for (size_t pi = 0; pi < pattern_args.size() && pi < template_args.size(); ++pi) {
-								if (!pattern_args[pi].is_value && pattern_args[pi].is_dependent) {
-									size_t dep_count = 0;
-									for (size_t j = 0; j < pi; ++j) {
-										if (!pattern_args[j].is_value && pattern_args[j].is_dependent)
-											dep_count++;
-									}
-									if (dep_count == param_idx) {
-										deduced_args[pname] = deduceArgFromPattern(template_args[pi], pattern_args[pi]);
-										break;
-									}
-								}
-							}
-						}
-					} else {
-						// Fallback: direct 1:1 mapping (primary template path)
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (!template_params[i].is<TemplateParameterNode>()) continue;
-							deduced_args[template_params[i].as<TemplateParameterNode>().name()] = template_args[i];
-						}
-					}
-					
+					// Reuse the already-aligned template args so deferred body re-parsing
+					// sees the deduced specialization parameters, not the raw concrete
+					// instantiation arguments.
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
 						Type concrete_type = deduced_arg.base_type;
@@ -2157,17 +2222,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						// Substitute template parameters in the parsed body
-						// Build param order from template_params (not unordered_map) to preserve declaration order
-						std::vector<std::string_view> template_param_order;
-						for (const auto& tp : template_params) {
-							if (tp.is<TemplateParameterNode>()) {
-								std::string_view pname = tp.as<TemplateParameterNode>().name();
-								if (deduced_args.count(pname))
-									template_param_order.push_back(pname);
-							}
-						}
-						ExpressionSubstitutor substitutor(deduced_args, *this, template_param_order);
-						ASTNode substituted_body = substitutor.substitute(*block_result.node());
+						ASTNode substituted_body = substituteTemplateParameters(
+							*block_result.node(),
+							template_params,
+							template_args_for_pattern
+						);
 						new_func.set_definition(substituted_body);
 					}
 					
@@ -2204,10 +2263,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 // Build template parameter name to type mapping for substitution
 			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 			std::vector<std::string_view> template_param_order;
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
 				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 				// param.name() already returns string_view
-				param_map[param.name()] = template_args[i];
+				param_map[param.name()] = template_args_for_pattern[i];
 				template_param_order.push_back(param.name());
 			}
 			
@@ -3912,7 +3971,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					original_type_spec, template_params, template_args_to_use);
 				
-				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+				size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 				
 				// Add with nullopt initializer - will be filled in during lazy instantiation
 				struct_info->addStaticMember(
@@ -4240,7 +4299,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_type_spec, template_params, template_args_to_use);
 			
 			// Calculate the substituted size based on the substituted type
-			size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 			
 			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.type,
 			          " -> substituted type=", (int)substituted_type, ", size=", substituted_size);
@@ -4265,78 +4324,62 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (const auto& static_member : class_decl.static_members()) {
 			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.name));
 			
-			// Check if initializer needs substitution (e.g., fold expressions, template parameters)
-			std::optional<ASTNode> substituted_initializer = static_member.initializer;
-		if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
-			const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-			
-			// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
-			if (std::holds_alternative<FoldExpressionNode>(expr)) {
-				const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
-				std::string_view pack_name = fold.pack_name();
-				std::string_view op = fold.op();
-				FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
-				
-				// Find the parameter pack in template parameters
-				std::optional<size_t> pack_param_idx;
-				for (size_t p = 0; p < template_params.size(); ++p) {
-					const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-					if (tparam.name() == pack_name && tparam.is_variadic()) {
-						pack_param_idx = p;
-						break;
-					}
-				}
-				
-				if (pack_param_idx.has_value()) {
-					// Collect the values from the variadic pack arguments
-					std::vector<int64_t> pack_values;
-					bool all_values_found = true;
-					
-					// For variadic packs, arguments after non-variadic parameters are the pack values
-					size_t non_variadic_count = 0;
-					for (const auto& param : template_params) {
-						if (!param.as<TemplateParameterNode>().is_variadic()) {
-							non_variadic_count++;
+			// Start with generic template substitution so compound expressions like
+			// `N + 0` don't leak raw template references into codegen.
+			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+				? std::optional<ASTNode>(substituteTemplateParameters(
+					*static_member.initializer, template_params, template_args_to_use))
+				: std::nullopt;
+			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+				const ExpressionNode& expr = substituted_initializer->as<ExpressionNode>();
+
+				// Generic substitution already resolves ordinary template references
+				// here. Fold expressions still need explicit expansion because the
+				// substitution walk preserves FoldExpressionNode.
+				if (std::holds_alternative<FoldExpressionNode>(expr)) {
+					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+					std::string_view pack_name = fold.pack_name();
+					std::string_view op = fold.op();
+					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+
+					// Find the parameter pack in template parameters
+					std::optional<size_t> pack_param_idx;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.name() == pack_name && tparam.is_variadic()) {
+							pack_param_idx = p;
+							break;
 						}
 					}
-					
-					for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
-						if (template_args_to_use[i].is_value) {
-							pack_values.push_back(template_args_to_use[i].value);
-							FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
-						} else {
-							all_values_found = false;
+
+					if (pack_param_idx.has_value()) {
+						// For variadic packs, arguments after non-variadic parameters are the pack values.
+						std::vector<int64_t> pack_values;
+						bool all_values_found = true;
+						size_t non_variadic_count = 0;
+						for (const auto& param : template_params) {
+							if (!param.as<TemplateParameterNode>().is_variadic()) {
+								non_variadic_count++;
+							}
 						}
-					}
-					
-					if (all_values_found && !pack_values.empty()) {
-						auto fold_result = evaluate_fold_expression(op, pack_values);
-						if (fold_result.has_value()) {
-							substituted_initializer = *fold_result;
+
+						for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
+							if (template_args_to_use[i].is_value) {
+								pack_values.push_back(template_args_to_use[i].value);
+								FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
+							} else {
+								all_values_found = false;
+							}
+						}
+
+						if (all_values_found && !pack_values.empty()) {
+							if (auto fold_result = evaluate_fold_expression(op, pack_values); fold_result.has_value()) {
+								substituted_initializer = *fold_result;
+							}
 						}
 					}
 				}
 			}
-			// Handle TemplateParameterReferenceNode (e.g., static constexpr T value = v;)
-			else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-				const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-				FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-				if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_to_use, template_params)) {
-					substituted_initializer = subst;
-					FLASH_LOG(Templates, Debug, "Substituted template parameter '", tparam_ref.param_name(), "'");
-				}
-			}
-			// Handle IdentifierNode that might be a template parameter
-			else if (std::holds_alternative<IdentifierNode>(expr)) {
-				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-				std::string_view id_name = id_node.name();
-				FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-				if (auto subst = substitute_template_param_in_initializer(id_name, template_args_to_use, template_params)) {
-					substituted_initializer = subst;
-					FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
-				}
-			}
-		}
 		
 		struct_info->addStaticMember(
 			static_member.name,
@@ -4353,6 +4396,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	std::vector<ASTNode> instantiated_nested_class_nodes;
+	instantiated_nested_class_nodes.reserve(class_decl.nested_classes().size());
+
 	// Copy nested classes from the template with template parameter substitution
 	for (const auto& nested_class : class_decl.nested_classes()) {
 		if (nested_class.is<StructDeclarationNode>()) {
@@ -4361,18 +4407,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Create a new StructTypeInfo for the nested class
 			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+			auto instantiated_nested_struct = emplace_node<StructDeclarationNode>(
+				nested_struct.name(),
+				nested_struct.is_class(),
+				nested_struct.is_union()
+			);
+			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
+			InlineVector<StringHandle, 4> nested_outer_template_param_names;
+			nested_outer_template_param_names.reserve(template_params.size());
+			for (const auto& template_param : template_params) {
+				if (template_param.is<TemplateParameterNode>()) {
+					nested_outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+				}
+			}
+			instantiated_nested_struct_ref.set_outer_template_bindings(nested_outer_template_param_names, template_args_to_use);
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				
-				// Use substitute_template_parameter for consistent template parameter matching
-				// This handles pointer levels, qualifiers, and all type transformations correctly
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
-				
-				// Create a substituted type specifier with the substituted type
+				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
+					decl, template_params, template_args_to_use);
+				bool is_array_member = !resolved_array_dimensions.empty();
+
 				TypeSpecifierNode substituted_type_spec(
 					substituted_type,
 					type_spec.qualifier(),
@@ -4381,23 +4440,86 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 				substituted_type_spec.set_type_index(substituted_type_index);
 				
-				// Copy pointer levels from the original type specifier
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				
-				// Add member to the nested struct info
-				// For pointers, use pointer size (64 bits on x64), otherwise use type size
+
 				size_t member_size;
-				if (substituted_type_spec.is_pointer()) {
-					member_size = 8;  // 64-bit pointer
+				if (is_array_member) {
+					size_t total_elements = 1;
+					for (size_t dim_size : resolved_array_dimensions) {
+						total_elements *= dim_size;
+					}
+
+					size_t element_size;
+					if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+						element_size = 8;
+					} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+						const TypeInfo* member_struct_info = nullptr;
+						for (const auto& ti : gTypeInfo) {
+							if (ti.type_index_ == substituted_type_index) {
+								member_struct_info = &ti;
+								break;
+							}
+						}
+						if (member_struct_info && member_struct_info->getStructInfo()) {
+							element_size = member_struct_info->getStructInfo()->total_size;
+						} else {
+							element_size = get_type_size_bits(substituted_type) / 8;
+						}
+					} else {
+						element_size = get_type_size_bits(substituted_type) / 8;
+					}
+					member_size = element_size * total_elements;
+				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					member_size = 8;
+				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+					const TypeInfo* member_struct_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == substituted_type_index) {
+							member_struct_info = &ti;
+							break;
+						}
+					}
+					if (member_struct_info && member_struct_info->getStructInfo()) {
+						member_size = member_struct_info->getStructInfo()->total_size;
+					} else {
+						member_size = get_type_size_bits(substituted_type) / 8;
+					}
 				} else {
 					member_size = substituted_type_spec.size_in_bits() / 8;
 				}
-				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
-				
+				size_t member_alignment;
+				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					member_alignment = 8;
+				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+					const TypeInfo* member_struct_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == substituted_type_index) {
+							member_struct_info = &ti;
+							break;
+						}
+					}
+					if (member_struct_info && member_struct_info->getStructInfo()) {
+						member_alignment = member_struct_info->getStructInfo()->alignment;
+					} else {
+						member_alignment = get_type_alignment(substituted_type, member_size);
+					}
+				} else {
+					member_alignment = get_type_alignment(substituted_type, member_size);
+				}
+
 				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
-				// Phase 7B: Intern member name and use StringHandle overload
+				size_t referenced_size_bits = ref_qual != ReferenceQualifier::None
+					? get_type_size_bits(substituted_type)
+					: 0;
+				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+					member_decl.default_initializer, template_args_to_use, template_params);
+				std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
+					? std::optional<ASTNode>(substituteTemplateParameters(
+						*member_decl.bitfield_width_expr, template_params, template_args_to_use))
+					: std::nullopt;
+
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
@@ -4406,80 +4528,75 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_size,
 					member_alignment,
 					member_decl.access,
-					member_decl.default_initializer,
+					substituted_default_initializer,
 					ref_qual,
-					ref_qual != ReferenceQualifier::None ? get_type_size_bits(substituted_type_spec.type()) : 0,
-					false,
-					{},
+					referenced_size_bits,
+					is_array_member,
+					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
-					member_decl.bitfield_width,
+					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 					substituted_type_spec.has_function_signature() ? std::optional(substituted_type_spec.function_signature()) : std::nullopt
+				);
+
+				ASTNode substituted_member_decl = substituteTemplateParameters(
+					member_decl.declaration, template_params, template_args_to_use);
+				instantiated_nested_struct_ref.add_member(
+					substituted_member_decl,
+					member_decl.access,
+					substituted_default_initializer,
+					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
+					substituted_bitfield_width_expr
 				);
 			}
 			
-			// Copy static members from the original nested struct
-			// Look up the original nested struct by building its qualified name from the template
+			auto copy_nested_static_members = [&](const StructTypeInfo& original_struct_info) {
+				for (const auto& static_member : original_struct_info.static_members) {
+					TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+					original_type_spec.set_type_index(static_member.type_index);
+					auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+						original_type_spec, template_params, template_args_to_use);
+					size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
+					std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+						? std::optional<ASTNode>(substituteTemplateParameters(
+							*static_member.initializer, template_params, template_args_to_use))
+						: std::nullopt;
+					nested_struct_info->addStaticMember(
+						static_member.getName(),
+						substituted_type,
+						substituted_type_index,
+						substituted_size,
+						static_member.alignment,
+						static_member.access,
+						substituted_initializer,
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
+					);
+					instantiated_nested_struct_ref.add_static_member(
+						static_member.getName(),
+						substituted_type,
+						substituted_type_index,
+						substituted_size,
+						static_member.alignment,
+						static_member.access,
+						substituted_initializer,
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
+					);
+				}
+			};
+
 			StringBuilder original_nested_name_builder;
 			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
-			
-			FLASH_LOG(Templates, Debug, "Looking for original nested class: ", original_nested_name);
 			auto original_nested_it = gTypesByName.find(StringTable::getOrInternStringHandle(original_nested_name));
-			if (original_nested_it != gTypesByName.end()) {
-				const TypeInfo* original_nested_type = original_nested_it->second;
-				FLASH_LOG(Templates, Debug, "Found original nested class, checking struct info...");
-				if (original_nested_type->getStructInfo()) {
-					const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
-					FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
-					          " static members from nested class ", original_nested_name);
-					for (const auto& static_member : original_struct_info->static_members) {
-						FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
-						nested_struct_info->addStaticMember(
-							static_member.getName(),
-							static_member.type,
-							static_member.type_index,
-							static_member.size,
-							static_member.alignment,
-							static_member.access,
-							static_member.initializer,
-							static_member.cv_qualifier,
-							static_member.reference_qualifier,
-							static_member.pointer_depth
-						);
-					}
-				} else {
-					FLASH_LOG(Templates, Debug, "Original nested class has no struct info");
-				}
+			if (original_nested_it != gTypesByName.end() && original_nested_it->second->getStructInfo()) {
+				copy_nested_static_members(*original_nested_it->second->getStructInfo());
 			} else {
-				// Try looking up with just the nested struct name (without template prefix)
-				// This handles cases where templates use simple names for nested types
-				std::string_view simple_name = StringTable::getStringView(nested_struct.name());
-				FLASH_LOG(Templates, Debug, "Looking for nested class with simple name: ", simple_name);
 				auto simple_nested_it = gTypesByName.find(nested_struct.name());
-				if (simple_nested_it != gTypesByName.end()) {
-					const TypeInfo* original_nested_type = simple_nested_it->second;
-					if (original_nested_type->getStructInfo()) {
-						const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
-						FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
-						          " static members from nested class (simple name) ", simple_name);
-						for (const auto& static_member : original_struct_info->static_members) {
-							FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
-							nested_struct_info->addStaticMember(
-								static_member.getName(),
-								static_member.type,
-								static_member.type_index,
-								static_member.size,
-								static_member.alignment,
-								static_member.access,
-								static_member.initializer,
-								static_member.cv_qualifier,
-								static_member.reference_qualifier,
-								static_member.pointer_depth
-							);
-						}
-					}
-				} else {
-					FLASH_LOG(Templates, Debug, "Original nested class not found in gTypesByName");
+				if (simple_nested_it != gTypesByName.end() && simple_nested_it->second->getStructInfo()) {
+					copy_nested_static_members(*simple_nested_it->second->getStructInfo());
 				}
 			}
 			
@@ -4503,8 +4620,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
+			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
+			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
 	}
 
@@ -4765,12 +4884,58 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Get a pointer to the moved struct_info for later use
 	StructTypeInfo* struct_info_ptr = struct_type_info.getStructInfo();
 
-	// Create an AST node for the instantiated struct so member functions can be code-generated
+	// Create an AST node for the instantiated struct so member declarations and
+	// member functions can be sema-normalized/code-generated.
 	auto instantiated_struct = emplace_node<StructDeclarationNode>(
 		instantiated_name,
 		false  // is_class
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
+	InlineVector<StringHandle, 4> outer_template_param_names;
+	outer_template_param_names.reserve(template_params.size());
+	for (const auto& template_param : template_params) {
+		if (template_param.is<TemplateParameterNode>()) {
+			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+	instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+
+	for (const auto& member_decl : class_decl.members()) {
+		ASTNode substituted_member_decl = substituteTemplateParameters(
+			member_decl.declaration, template_params, template_args_to_use);
+		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+			member_decl.default_initializer, template_args_to_use, template_params);
+		std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
+			? std::optional<ASTNode>(substituteTemplateParameters(
+				*member_decl.bitfield_width_expr, template_params, template_args_to_use))
+			: std::nullopt;
+		instantiated_struct_ref.add_member(
+			substituted_member_decl,
+			member_decl.access,
+			substituted_default_initializer,
+			member_decl.bitfield_width,
+			substituted_bitfield_width_expr);
+	}
+	for (const auto& static_member : struct_info_ptr->static_members) {
+		instantiated_struct_ref.add_static_member(
+			static_member.name,
+			static_member.type,
+			static_member.type_index,
+			static_member.size,
+			static_member.alignment,
+			static_member.access,
+			static_member.initializer,
+			static_member.cv_qualifier,
+			static_member.reference_qualifier,
+			static_member.pointer_depth);
+	}
+
+	for (auto& nested_class_node : instantiated_nested_class_nodes) {
+		if (nested_class_node.is<StructDeclarationNode>()) {
+			nested_class_node.as<StructDeclarationNode>().set_enclosing_class(&instantiated_struct_ref);
+		}
+		instantiated_struct_ref.add_nested_class(nested_class_node);
+	}
 	
 	// Log lazy instantiation status (already determined earlier in the function)
 	if (use_lazy_instantiation) {
@@ -4889,13 +5054,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5034,13 +5192,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 
 				// Substitute and copy parameters
@@ -5393,6 +5544,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						instantiated_name
 					);
+					new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 					
 					// Substitute and copy parameters
 					for (const auto& param : ctor_decl.parameter_nodes()) {
@@ -5516,6 +5668,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						specialized_dtor_name
 					);
+					new_dtor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 					
 					// Copy noexcept properties from the original destructor declaration.
 					// DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
@@ -5612,13 +5765,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref);
-				InlineVector<StringHandle, 4> outer_template_param_names;
-				outer_template_param_names.reserve(template_params.size());
-				for (const auto& template_param : template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-					}
-				}
 				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
 				
 				// Copy parameter nodes with outer template parameter substitution

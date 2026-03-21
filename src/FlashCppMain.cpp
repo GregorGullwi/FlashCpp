@@ -447,7 +447,17 @@ int main_impl(int argc, char *argv[]) {
     SemanticAnalysis sema(*parser, context, gSymbolTable);
     {
         PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time);
-        sema.run();
+        try {
+            sema.run();
+        } catch (const CompileError& e) {
+            FLASH_LOG(General, Error, "error: ", e.what());
+            std::cerr << "error: " << e.what() << std::endl;
+            return 1;
+        } catch (const InternalError& e) {
+            FLASH_LOG(General, Error, "internal error: ", e.what());
+            std::cerr << "internal error: " << e.what() << std::endl;
+            return 1;
+        }
 
         if (show_perf_stats) {
             const auto& stats = sema.stats();

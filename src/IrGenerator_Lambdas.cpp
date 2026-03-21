@@ -41,6 +41,10 @@
 		info.lambda_body = lambda.body();
 		info.captures = lambda.captures();
 		info.is_mutable = lambda.is_mutable();
+		if (lambda.has_outer_template_bindings()) {
+			info.outer_template_param_names = lambda.outer_template_param_names();
+			info.outer_template_args = lambda.outer_template_args();
+		}
 
 		for (const auto& capture : lambda.captures()) {
 			if (capture.is_capture_all()) {

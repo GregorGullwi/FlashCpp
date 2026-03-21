@@ -731,6 +731,38 @@ public:
 	bool is_constexpr() const { return is_constexpr_; }
 	bool is_consteval() const { return is_consteval_; }
 
+	template<typename NameContainer, typename ArgContainer>
+	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		outer_template_param_names_.clear();
+		outer_template_args_.clear();
+		outer_template_param_names_.reserve(template_param_names.size());
+		outer_template_args_.reserve(template_args.size());
+
+		for (StringHandle param_name : template_param_names) {
+			outer_template_param_names_.push_back(param_name);
+		}
+
+		for (const auto& arg : template_args) {
+			TypeInfo::TemplateArgInfo info;
+			info.base_type = arg.base_type;
+			info.type_index = arg.type_index;
+			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+			info.pointer_depth = arg.pointer_depth;
+			info.cv_qualifier = arg.cv_qualifier;
+			info.ref_qualifier = arg.ref_qualifier;
+			info.value = arg.value;
+			info.is_value = arg.is_value;
+			info.is_array = arg.is_array;
+			info.array_size = arg.array_size;
+			info.dependent_name = arg.dependent_name;
+			outer_template_args_.push_back(std::move(info));
+		}
+	}
+
+	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+
 	// Generate a unique name for the lambda's generated function
 	StringHandle generate_lambda_name() const {
 		return StringTable::getOrInternStringHandle(StringBuilder().append("__lambda_"sv).append(lambda_id_));
@@ -748,11 +780,16 @@ private:
 	bool is_noexcept_;    // Whether the lambda is noexcept
 	bool is_constexpr_;   // Whether the lambda is constexpr
 	bool is_consteval_;   // Whether the lambda is consteval
+	InlineVector<StringHandle, 4> outer_template_param_names_;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };
 
-// Template parameter reference node - represents a reference to a template parameter in expressions
+// Template parameter reference node - represents a reference to a template parameter in expressions.
+// Phase-boundary note: unlike FoldExpressionNode / PackExpansionExprNode, this
+// template-related node is currently allowed to survive parsing into sema and
+// codegen when it denotes a value that still needs later handling.
 class TemplateParameterReferenceNode {
 public:
 	explicit TemplateParameterReferenceNode(StringHandle param_name, Token token)
@@ -853,8 +890,12 @@ private:
 	Token requires_token_;               // For error reporting
 };
 
+// Post-parse boundary note: most variants below are legal on the sema-owned
+// expression surface. `TemplateParameterReferenceNode` is still a supported
+// surviving template-related node. `FoldExpressionNode` and
+// `PackExpansionExprNode` are parser/template-only helpers there and are
+// guarded by the lightweight post-parse boundary checker before sema runs.
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
-
