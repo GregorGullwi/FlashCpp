@@ -20,7 +20,9 @@ namespace {
 			if (struct_info.isMoveAssignmentDeleted()) {
 				throwDeletedSameTypeAssignmentCompileError(struct_info, true);
 			}
-			return;
+			if (struct_info.findMoveAssignmentOperator(true)) {
+				return;
+			}
 		}
 
 		if (struct_info.isCopyAssignmentDeleted()) {

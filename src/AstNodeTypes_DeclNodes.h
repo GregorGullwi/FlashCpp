@@ -567,11 +567,15 @@ struct StructTypeInfo {
 		return findMoveConstructor() != nullptr;
 	}
 
-	// Find copy assignment operator (operator= taking const Type& or Type& parameter)
-	const StructMemberFunction* findCopyAssignmentOperator() const;
+	// Find copy assignment operator (operator= taking const Type& or Type& parameter).
+	// By default this only returns user-declared operators; pass include_implicit=true
+	// to also consider implicitly generated special members.
+	const StructMemberFunction* findCopyAssignmentOperator(bool include_implicit = false) const;
 
-	// Find move assignment operator (operator= taking Type&& parameter)
-	const StructMemberFunction* findMoveAssignmentOperator() const;
+	// Find move assignment operator (operator= taking Type&& parameter).
+	// By default this only returns user-declared operators; pass include_implicit=true
+	// to also consider implicitly generated special members.
+	const StructMemberFunction* findMoveAssignmentOperator(bool include_implicit = false) const;
 
 	bool hasCopyAssignmentOperator() const {
 		return findCopyAssignmentOperator() != nullptr;

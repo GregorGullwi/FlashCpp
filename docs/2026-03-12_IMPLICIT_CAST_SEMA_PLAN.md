@@ -1166,6 +1166,30 @@ indirection stores.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_member_fail.cpp test_deleted_copy_assignment_array_element_fail.cpp test_deleted_copy_assignment_indirect_fail.cpp test_deleted_move_assignment_member_fail.cpp test_deleted_move_assignment_array_element_fail.cpp test_deleted_move_assignment_indirect_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp`
 
+### Follow-up slice ✅: deleted copy-assignment fallback for xvalue same-type assignment
+
+**Goal:** Preserve deleted copy-assignment diagnostics when the RHS is an xvalue
+but the class has no move assignment operator, so overload resolution falls back
+to the copy assignment operator.
+
+**Implementation:**
+- `src/AstNodeTypes.cpp`
+	- `findCopyAssignmentOperator(...)` and `findMoveAssignmentOperator(...)`
+	  now optionally include implicitly generated special members so callers can
+	  ask the same “does a move assignment actually exist?” question that the
+	  assignment selection path answers
+- `src/IrGenerator_Expr_Operators.cpp`
+	- `diagnoseDeletedSameTypeAssignmentUsage(...)` now only returns early for
+	  xvalue assignments when a move assignment operator really exists; otherwise
+	  it falls through to the deleted copy-assignment check
+
+**Regression tests added:**
+- `tests/test_deleted_copy_assignment_xvalue_fallback_fail.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_fail.cpp test_deleted_copy_assignment_xvalue_fallback_fail.cpp test_deleted_move_assignment_fail.cpp`
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had

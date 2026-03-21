@@ -819,58 +819,68 @@ const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
 	return nullptr;
 }
 
-const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
-    for (const auto& func : member_functions) {
-        if (!isAssignOperator(func.operator_kind)) continue;
-        const auto* func_node = get_function_decl_node(func.function_decl);
+namespace {
+	bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
+		const StructMemberFunction& func,
+		bool want_move,
+		bool include_implicit) {
+		if (!isAssignOperator(func.operator_kind)) {
+			return false;
+		}
 
-        // Fast path: already refined to CopyAssign
-        if (func.operator_kind == OverloadableOperator::CopyAssign) {
-            if (func_node && !func_node->is_implicit()) return &func;
-            continue;
-        }
+		const auto* func_node = get_function_decl_node(func.function_decl);
+		if (!func_node) {
+			return false;
+		}
+		if (!include_implicit && func_node->is_implicit()) {
+			return false;
+		}
 
-        // Slow path: generic Assign — inspect parameter signature
-        if (!func_node || func_node->is_implicit()) continue;
+		const OverloadableOperator expected_kind =
+			want_move ? OverloadableOperator::MoveAssign : OverloadableOperator::CopyAssign;
+		if (func.operator_kind == expected_kind) {
+			return true;
+		}
+		if (func.operator_kind != OverloadableOperator::Assign) {
+			return false;
+		}
 
-        const auto& params = func_node->parameter_nodes();
-        if (params.size() == 1) {
-            const auto& param_decl = params[0].as<DeclarationNode>();
-            const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-            if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct
-                && isOwnTypeIndex(param_type.type_index())) {
-                return &func;
-            }
-        }
-    }
-    return nullptr;
+		const auto& params = func_node->parameter_nodes();
+		if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+			return false;
+		}
+
+		const auto& param_decl = params[0].as<DeclarationNode>();
+		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
+			return false;
+		}
+
+		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		const bool matches_reference = want_move
+			? param_type.is_rvalue_reference()
+			: param_type.is_lvalue_reference();
+		return matches_reference
+			&& param_type.type() == Type::Struct
+			&& struct_info.isOwnTypeIndex(param_type.type_index());
+	}
 }
 
-const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
-    for (const auto& func : member_functions) {
-        if (!isAssignOperator(func.operator_kind)) continue;
-        const auto* func_node = get_function_decl_node(func.function_decl);
+const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator(bool include_implicit) const {
+	for (const auto& func : member_functions) {
+		if (isMatchingSameTypeAssignmentOperator(*this, func, false, include_implicit)) {
+			return &func;
+		}
+	}
+	return nullptr;
+}
 
-        // Fast path: already refined to MoveAssign
-        if (func.operator_kind == OverloadableOperator::MoveAssign) {
-            if (func_node && !func_node->is_implicit()) return &func;
-            continue;
-        }
-
-        // Slow path: generic Assign — inspect parameter signature
-        if (!func_node || func_node->is_implicit()) continue;
-
-        const auto& params = func_node->parameter_nodes();
-        if (params.size() == 1) {
-            const auto& param_decl = params[0].as<DeclarationNode>();
-            const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-            if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
-                && isOwnTypeIndex(param_type.type_index())) {
-                return &func;
-            }
-        }
-    }
-    return nullptr;
+const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool include_implicit) const {
+	for (const auto& func : member_functions) {
+		if (isMatchingSameTypeAssignmentOperator(*this, func, true, include_implicit)) {
+			return &func;
+		}
+	}
+	return nullptr;
 }
 
 // Finalize struct layout with base classes
