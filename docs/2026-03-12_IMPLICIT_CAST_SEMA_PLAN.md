@@ -1264,6 +1264,8 @@ clear local sources of truth.
 - `inferExpressionType` still does not handle: `PackExpansionExprNode`. This
   should normally be expanded during template substitution; surviving nodes
   still fall back to parser type resolution or no annotation.
+- Broader parser/template-substitution/sema boundary cleanup is tracked
+  separately in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
 
 ### Parallel rollout guidance
 
