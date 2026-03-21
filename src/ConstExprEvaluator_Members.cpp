@@ -456,8 +456,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
-	if (!func_decl.is_constexpr()) {
-		return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+	if (!func_decl.is_constexpr() && !func_decl.is_consteval()) {
+		return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name));
 	}
 
 	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
@@ -725,8 +725,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
-	if (!actual_func->is_constexpr()) {
-		return EvalResult::error("Member function must be constexpr: " + std::string(func_name));
+	if (!actual_func->is_constexpr() && !actual_func->is_consteval()) {
+		return EvalResult::error("Member function must be constexpr or consteval: " + std::string(func_name));
 	}
 
 	const auto& definition = actual_func->get_definition();
@@ -776,6 +776,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 
 	auto saved_struct_info = context.struct_info;
 	context.struct_info = bound_struct_info;
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.return_type_info = nullptr;
+	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
 	context.current_depth++;
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
@@ -784,6 +793,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	if (result.success() && mutable_bindings) {
 		if (write_back_to_object_binding) {
@@ -873,7 +883,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		}
 
 		if (lookup_mode == MemberFunctionLookupMode::ConstexprEvaluable) {
-			bool can_evaluate = func_decl.is_constexpr() ||
+			bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
 				(context.storage_duration == ConstExpr::StorageDuration::Static);
 			if (!can_evaluate || !func_decl.get_definition().has_value()) {
 				continue;
@@ -2808,6 +2818,29 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(object_initializer);
 	if (!ctor_call_ptr) {
+		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
+		// The initializer may be an ASTNode holding a FunctionCallNode directly,
+		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
+		bool is_func_call = initializer.is<FunctionCallNode>() || initializer.is<MemberFunctionCallNode>();
+		if (!is_func_call && initializer.is<ExpressionNode>()) {
+			const ExpressionNode& expr = initializer.as<ExpressionNode>();
+			is_func_call = std::holds_alternative<FunctionCallNode>(expr) ||
+			               std::holds_alternative<MemberFunctionCallNode>(expr);
+		}
+		if (is_func_call) {
+			auto func_result = evaluate(initializer, context);
+			if (func_result.success() && !func_result.object_member_bindings.empty()) {
+				auto it = func_result.object_member_bindings.find(member_name);
+				if (it != func_result.object_member_bindings.end()) {
+					resolved_member.value = it->second;
+					return std::nullopt;
+				}
+				return EvalResult::error("Member '" + std::string(member_name) + "' not found in function call result");
+			}
+			if (!func_result.success()) {
+				return func_result;
+			}
+		}
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct initializer");
 	}
 
@@ -3652,9 +3685,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
 	
-	// Check if it's a constexpr function
-	if (!actual_func->is_constexpr()) {
-		return EvalResult::error("Member function must be constexpr: " + std::string(func_name));
+	// Check if it's a constexpr or consteval function
+	if (!actual_func->is_constexpr() && !actual_func->is_consteval()) {
+		return EvalResult::error("Member function must be constexpr or consteval: " + std::string(func_name));
 	}
 	
 	// Get the function body
@@ -3706,6 +3739,15 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 		auto saved_struct_info = context.struct_info;
 		context.struct_info = struct_info;
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+	context.return_type_info = nullptr;
+	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+		TypeIndex ret_idx = ret_spec.type_index();
+		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
+			context.return_type_info = &gTypeInfo[ret_idx.value];
+	}
 	
 	// Increase recursion depth
 	context.current_depth++;
@@ -3718,6 +3760,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
 	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
 		context.struct_info = saved_struct_info;
 	restore_template_bindings();
 	return result;

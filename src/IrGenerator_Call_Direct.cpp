@@ -2,6 +2,92 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+// ── Shared consteval-materialization helpers ────────────────────────────────
+
+const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
+	if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) return nullptr;
+	const TypeInfo* ti = &gTypeInfo[type_idx.value];
+	// Chase aliases up to 64 levels deep.
+	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
+		if (!ti->type_index_.is_valid() || ti->type_index_.value >= gTypeInfo.size()) break;
+		ti = &gTypeInfo[ti->type_index_.value];
+	}
+	return ti;
+}
+
+unsigned long long AstToIr::evalResultScalarToRaw(const ConstExpr::EvalResult& r) {
+	if (const auto* ll = std::get_if<long long>(&r.value))
+		return static_cast<unsigned long long>(*ll);
+	if (const auto* ull = std::get_if<unsigned long long>(&r.value))
+		return *ull;
+	if (const auto* b = std::get_if<bool>(&r.value))
+		return *b ? 1ULL : 0ULL;
+	return static_cast<unsigned long long>(r.as_int());
+}
+
+// Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
+static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
+	if (member_type == Type::Float) {
+		float fval = static_cast<float>(r.as_double());
+		uint32_t fbits = 0;
+		std::memcpy(&fbits, &fval, sizeof(float));
+		return static_cast<unsigned long long>(fbits);
+	}
+	if (member_type == Type::Double || member_type == Type::LongDouble) {
+		double dval = r.as_double();
+		unsigned long long dbits = 0;
+		std::memcpy(&dbits, &dval, sizeof(double));
+		return dbits;
+	}
+	// Integer / bool / enum: extract as raw integer bits.
+	if (const auto* ll = std::get_if<long long>(&r.value))
+		return static_cast<unsigned long long>(*ll);
+	if (const auto* ull = std::get_if<unsigned long long>(&r.value))
+		return *ull;
+	if (const auto* b = std::get_if<bool>(&r.value))
+		return *b ? 1ULL : 0ULL;
+	return static_cast<unsigned long long>(r.as_int());
+}
+
+ExprResult AstToIr::materializeConstevalAggregateResult(
+	const ConstExpr::EvalResult& eval_result,
+	const TypeSpecifierNode& ret_spec,
+	Type ret_type,
+	SizeInBits ret_size,
+	const Token& call_token) {
+	if (eval_result.object_member_bindings.empty()) return {};
+
+	const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(ret_spec.type_index());
+	if (!struct_type_info) return {};
+	const StructTypeInfo* si = struct_type_info->getStructInfo();
+	if (!si) return {};
+
+	TempVar struct_tmp = var_counter.next();
+	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
+
+	VariableDeclOp vdecl;
+	vdecl.type = ret_type;
+	vdecl.size_in_bits = ret_size;
+	vdecl.var_name = struct_tmp_handle;
+	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));
+
+	for (const auto& member : si->members) {
+		const std::string_view member_sv = StringTable::getStringView(member.getName());
+		auto it = eval_result.object_member_bindings.find(member_sv);
+		if (it == eval_result.object_member_bindings.end()) continue;
+		MemberStoreOp ms;
+		ms.value.type = member.type;
+		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.type)};
+		ms.object = struct_tmp_handle;
+		ms.member_name = member.getName();
+		ms.offset = static_cast<int>(member.offset);
+		ms.struct_type_info = struct_type_info;
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
+	}
+	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+}
+
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
@@ -520,6 +606,27 @@
 			resolveMangledName(matched_func_decl);
 		}
 
+		// Defensive fallback for precomputed-mangled calls: if all lookups above failed to populate
+		// matched_func_decl (e.g., address comparison failed among multiple overloads), scan
+		// gSymbolTable by unqualified name and match on DeclarationNode pointer equality.
+		// Without this, a consteval function with a precomputed mangled name could bypass the
+		// consteval enforcement check below (C++20 [dcl.consteval]).
+		if (!matched_func_decl && has_precomputed_mangled) {
+			for (const auto& overload : gSymbolTable_overloads) {
+				const FunctionDeclarationNode* candidate = nullptr;
+				if (overload.is<FunctionDeclarationNode>())
+					candidate = &overload.as<FunctionDeclarationNode>();
+				else if (overload.is<TemplateFunctionDeclarationNode>())
+					candidate = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+				if (candidate && &candidate->decl_node() == &decl_node) {
+					matched_func_decl = candidate;
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function via gSymbolTable pointer scan (precomputed mangled): {}", function_name);
+					break;
+				}
+			}
+		}
+
 		// Final fallback: if we're in a member function, check the current struct's member functions
 		if (!matched_func_decl && current_struct_name_.isValid() && !functionCallNode.has_qualified_name()) {
 			auto type_it = gTypesByName.find(current_struct_name_);
@@ -814,6 +921,56 @@
 					}
 				}
 			}
+		}
+
+		// consteval enforcement: every call to a consteval function is an immediate invocation and
+		// must be a constant expression (C++20 [dcl.consteval]).  generateFunctionCallIr is only
+		// reached when emitting runtime IR, so we first try to fold the call at compile time.
+		// If the fold succeeds we return the constant directly (no runtime call emitted).
+		// If it fails the call is genuinely ill-formed — throw a CompileError.
+		// Note: when has_precomputed_mangled is true, matched_func_decl may be null if all
+		// symbol-table lookups failed.  In that case the call will be emitted as a runtime call,
+		// which is safe for constexpr functions; consteval functions are checked below.
+		if (matched_func_decl && matched_func_decl->is_consteval()) {
+			// Use the global symbol table so free functions declared at namespace scope can be found.
+			extern SymbolTable gSymbolTable;
+			ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+			ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
+			ctx.parser = parser_;
+			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(functionCallNode);
+			auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+			if (!eval_result.success()) {
+				throw CompileError("call to consteval function '" + std::string(func_name_view) +
+					"' cannot be used in a non-constant context: " + eval_result.error_message);
+			}
+			// Materialize the constant result into an ExprResult without emitting a call instruction.
+			const TypeSpecifierNode& ret_spec =
+				matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
+			const Type ret_type = ret_spec.type();
+			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
+			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
+
+			// Float / double
+			if (ret_type == Type::Float) {
+				float fval = static_cast<float>(eval_result.as_double());
+				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)});
+			}
+			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+				double dval = eval_result.as_double();
+				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits});
+			}
+
+			// Aggregate / struct: emit VariableDecl + MemberStore sequence
+			if (!eval_result.object_member_bindings.empty()) {
+				auto agg = materializeConstevalAggregateResult(
+					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
+				if (agg.type != Type::Void) return agg;
+			}
+
+			// Scalar integer / bool / enum
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)});
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)

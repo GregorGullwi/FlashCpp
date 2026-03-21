@@ -360,6 +360,12 @@ struct EvaluationContext {
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
 
+	// Return type of the constexpr function currently being evaluated.
+	// Set by evaluate_function_call_with_bindings so that aggregate initializer
+	// return expressions (e.g., return {0, 0} in a struct-returning function)
+	// can be mapped to the correct struct member names.
+	const TypeInfo* return_type_info = nullptr;
+
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}

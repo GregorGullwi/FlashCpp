@@ -519,6 +519,61 @@
 		// Get the function declaration directly from the node (no need to look it up)
 		const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
+
+		// consteval enforcement: every call to a consteval function is an immediate invocation
+		// and must be a constant expression (C++20 [dcl.consteval]).  Try compile-time evaluation
+		// first; only throw if the call genuinely cannot be constant-evaluated.
+		//
+		// We evaluate the call as a plain FunctionCallNode (stripping the object) rather than
+		// wrapping the MemberFunctionCallNode.  The evaluator's member-function path requires
+		// the object to be constexpr, but C++20 only requires the *call expression* to be a
+		// constant — a consteval member that doesn't read `this` state is valid on a
+		// non-constexpr object (e.g., `Calc c; c.triple(14)`).  Using FunctionCallNode avoids
+		// the unnecessary object-constexpr check and matches the direct-call enforcement path.
+		if (func_decl.is_consteval()) {
+			std::string_view func_name_sv = func_decl_node.identifier_token().value();
+			extern SymbolTable gSymbolTable;
+			ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+			ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
+			ctx.parser = parser_;
+			// Build a FunctionCallNode from the member function declaration + arguments,
+			// so the evaluator uses the free-function path (no object-constexpr requirement).
+			ChunkedVector<ASTNode> args_copy;
+			memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+				args_copy.push_back(arg);
+			});
+			FunctionCallNode synth_call(func_decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
+			auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+			if (!eval_result.success()) {
+				throw CompileError("call to consteval function '" + std::string(func_name_sv) +
+					"' cannot be used in a non-constant context: " + eval_result.error_message);
+			}
+			// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
+			const TypeSpecifierNode& ret_spec =
+				func_decl_node.type_node().as<TypeSpecifierNode>();
+			const Type ret_type = ret_spec.type();
+			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
+			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
+
+			if (ret_type == Type::Float) {
+				float fval = static_cast<float>(eval_result.as_double());
+				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)});
+			}
+			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+				double dval = eval_result.as_double();
+				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits});
+			}
+			if (!eval_result.object_member_bindings.empty()) {
+				auto agg = materializeConstevalAggregateResult(
+					eval_result, ret_spec, ret_type, ret_size,
+					memberFunctionCallNode.called_from());
+				if (agg.type != Type::Void) return agg;
+			}
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)});
+		}
 		auto getParamDecl = [](const ASTNode& param_node) -> const DeclarationNode* {
 			if (param_node.is<DeclarationNode>()) {
 				return &param_node.as<DeclarationNode>();
