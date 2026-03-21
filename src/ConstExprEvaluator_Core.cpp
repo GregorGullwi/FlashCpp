@@ -2444,7 +2444,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 						
 						// For static storage duration, also try non-constexpr functions with simple bodies
 						// (static initializers can call any function whose body is available)
-						bool can_evaluate = func_decl.is_constexpr() ||
+						bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
 							(context.storage_duration == ConstExpr::StorageDuration::Static);
 						if (can_evaluate) {
 							// Get the function body
