@@ -606,6 +606,27 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			resolveMangledName(matched_func_decl);
 		}
 
+		// Defensive fallback for precomputed-mangled calls: if all lookups above failed to populate
+		// matched_func_decl (e.g., address comparison failed among multiple overloads), scan
+		// gSymbolTable by unqualified name and match on DeclarationNode pointer equality.
+		// Without this, a consteval function with a precomputed mangled name could bypass the
+		// consteval enforcement check below (C++20 [dcl.consteval]).
+		if (!matched_func_decl && has_precomputed_mangled) {
+			for (const auto& overload : gSymbolTable_overloads) {
+				const FunctionDeclarationNode* candidate = nullptr;
+				if (overload.is<FunctionDeclarationNode>())
+					candidate = &overload.as<FunctionDeclarationNode>();
+				else if (overload.is<TemplateFunctionDeclarationNode>())
+					candidate = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+				if (candidate && &candidate->decl_node() == &decl_node) {
+					matched_func_decl = candidate;
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function via gSymbolTable pointer scan (precomputed mangled): {}", function_name);
+					break;
+				}
+			}
+		}
+
 		// Final fallback: if we're in a member function, check the current struct's member functions
 		if (!matched_func_decl && current_struct_name_.isValid() && !functionCallNode.has_qualified_name()) {
 			auto type_it = gTypesByName.find(current_struct_name_);
