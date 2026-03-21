@@ -752,7 +752,10 @@ private:
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };
 
-// Template parameter reference node - represents a reference to a template parameter in expressions
+// Template parameter reference node - represents a reference to a template parameter in expressions.
+// Phase-boundary note: unlike FoldExpressionNode / PackExpansionExprNode, this
+// template-related node is currently allowed to survive parsing into sema and
+// codegen when it denotes a value that still needs later handling.
 class TemplateParameterReferenceNode {
 public:
 	explicit TemplateParameterReferenceNode(StringHandle param_name, Token token)
@@ -853,8 +856,12 @@ private:
 	Token requires_token_;               // For error reporting
 };
 
+// Post-parse boundary note: most variants below are legal on the sema-owned
+// expression surface. `TemplateParameterReferenceNode` is still a supported
+// surviving template-related node. `FoldExpressionNode` and
+// `PackExpansionExprNode` are parser/template-only helpers there and are
+// guarded by the lightweight post-parse boundary checker before sema runs.
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
-

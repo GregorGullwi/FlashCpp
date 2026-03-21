@@ -47,6 +47,9 @@ public:
 	SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols);
 
 	// Main entry point: run the translation-unit semantic pass.
+	// Phase 1 boundary guard: starts with a lightweight walk over the sema-owned
+	// post-parse AST surface and reports forbidden surviving template-only
+	// expression nodes before semantic normalization begins.
 	void run();
 
 	// Access collected statistics after run().

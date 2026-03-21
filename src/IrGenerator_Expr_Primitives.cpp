@@ -65,6 +65,9 @@
 			} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				return generateTemplateParameterReferenceIr(expr);
 			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+				// Phase-boundary invariant: fold/pack helper nodes may exist in
+				// parser-owned template state, but they must not reach the
+				// sema/codegen-owned expression surface.
 				FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
 				throw InternalError("Unexpanded fold expression reached codegen - complex pack pattern not yet supported");
 			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
