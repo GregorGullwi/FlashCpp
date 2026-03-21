@@ -1209,6 +1209,21 @@ bitwise store.
 **Regression coverage:** added a runtime regression test showing that user-defined
 same-type `operator=` now runs for both global and static-local struct targets.
 
+### Follow-up slice ✅: pointer-to-member access init-conversion typing
+
+**Goal:** Make `PointerToMemberAccessNode` expose the accessed member value type
+to semantic conversion annotation, so initializations like `double d = obj.*pm;`
+receive the expected arithmetic conversion slot.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `inferExpressionType(PointerToMemberAccessNode)` now strips the single
+	  pointer-like layer from the member-pointer operand’s inferred type before
+	  interning the result, matching the value produced by codegen
+
+**Regression coverage:** added a runtime regression test for `int` member access
+feeding a `double` initialization through `obj.*pm`.
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had

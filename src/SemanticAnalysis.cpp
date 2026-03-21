@@ -1457,7 +1457,16 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-				return inferExpressionType(e.member_pointer());
+				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
+				if (!member_pointer_type_id) {
+					return {};
+				}
+
+				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
+				if (!result_desc.pointer_levels.empty()) {
+					result_desc.pointer_levels.pop_back();
+				}
+				return type_context_.intern(result_desc);
 			}
 			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				// Array subscript: the result type is the element type of the array.
