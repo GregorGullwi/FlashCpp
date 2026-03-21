@@ -170,6 +170,9 @@ Phase 3 has started with two low-risk local fallback removals:
 - `deducePlaceholderReturnType()` now relies on sema-owned inference only; the
   documented parser fallback helper is gone, leaving only the still-documented
   direct expression fallback sites inside `inferExpressionType(...)`
+- hidden friend bodies attached to struct AST are now normalized from the
+  enclosing struct walk before their queued top-level hidden-friend copies,
+  so sema can reuse the enclosing template-binding scope for those bodies
 
 ## Workstreams
 

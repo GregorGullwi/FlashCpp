@@ -1475,8 +1475,12 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	const auto& def = func.get_definition();
 	if (!def.has_value()) return;  // Forward declaration only
 
-	// Record that sema has normalized this function body.
-	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
+	// Hidden friends can also be queued as top-level declarations. Normalize each
+	// concrete body at most once so the enclosing-struct walk can own it without
+	// later duplicating sema work from the queued top-level copy.
+	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
+		return;
+	}
 
 	SemanticContext ctx;
 	// Track return type for return-statement conversion annotation
@@ -1498,8 +1502,9 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 	const auto& def = ctor.get_definition();
 	if (!def.has_value()) return;
 
-	// Record that sema has normalized this constructor body.
-	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
+	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
+		return;
+	}
 
 	SemanticContext ctx;
 
@@ -1534,8 +1539,9 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 	const auto& def = dtor.get_definition();
 	if (!def.has_value()) return;
 
-	// Record that sema has normalized this destructor body.
-	normalized_bodies_.insert(static_cast<const void*>(&(*def)));
+	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
+		return;
+	}
 
 	SemanticContext ctx;
 	// Destructors cannot have parameters; push/pop a scope for consistency
@@ -1590,6 +1596,22 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 		}
 		else if (func_node.is<FunctionDeclarationNode>()) {
 			normalizeFunctionDeclaration(func_node.as<FunctionDeclarationNode>());
+		}
+	}
+
+	for (const auto& friend_decl_node : decl.friend_declarations()) {
+		if (!friend_decl_node.is<FriendDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& friend_decl = friend_decl_node.as<FriendDeclarationNode>();
+		if (!friend_decl.function_declaration().has_value()) {
+			continue;
+		}
+
+		const ASTNode& friend_function = *friend_decl.function_declaration();
+		if (friend_function.is<FunctionDeclarationNode>()) {
+			normalizeFunctionDeclaration(friend_function.as<FunctionDeclarationNode>());
 		}
 	}
 }
