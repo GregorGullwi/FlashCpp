@@ -89,6 +89,10 @@ struct EvalResult {
 	// element [pointer_offset] of the array variable named by pointer_to_var
 	// (e.g. &arr[2] yields pointer_to_var="arr", pointer_offset=2).
 	int64_t pointer_offset = 0;
+	// When is_array is true and this handle is valid, it records the binding-map key
+	// that this array was loaded from. Enables array-to-pointer decay for the pattern
+	// `return data + N;` inside a constexpr member function where `data` is a member array.
+	StringHandle array_origin_var;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -97,37 +101,37 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}};
 		return r;
 	}
 
@@ -438,7 +442,8 @@ public:
 			const StructTypeInfo* struct_info,
 			const InitializerListNode& init_list,
 			std::unordered_map<std::string_view, EvalResult>& bindings,
-			EvaluationContext& context);
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings = nullptr);
 		static EvalResult bind_members_from_constructor_initializers(
 			const StructTypeInfo* struct_info,
 			const ConstructorDeclarationNode& ctor_decl,
@@ -693,6 +698,16 @@ private:
 			const std::unordered_map<std::string_view, EvalResult>& bindings,
 			EvaluationContext& context,
 			std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+	// Call a 0-argument named constexpr member function on an already-evaluated object
+	// EvalResult (one with object_type_index and object_member_bindings populated).
+	// For template instantiations whose member-function stubs lack a body, this helper
+	// automatically falls back to the base template's StructTypeInfo to find the function
+	// definition. Template parameter bindings are saved and restored around the call.
+	// Returns the return value of the member function, or an error EvalResult on failure.
+	static EvalResult call_constexpr_member_fn_on_object(
+		const EvalResult& object,
+		std::string_view func_name,
+		EvaluationContext& context);
 	static ResolvedMemberFunctionCandidate find_call_operator_candidate(
 		const StructTypeInfo* struct_info,
 		size_t argument_count,
