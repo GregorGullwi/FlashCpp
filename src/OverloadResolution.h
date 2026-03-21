@@ -383,8 +383,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is allowed (qualification conversion - adding const)
+			// Per C++20 [over.ics.rank]/3.2.5, this belongs to the ExactMatch category.
 			if (!from_pointee_is_const && to_pointee_is_const) {
-				return {ConversionRank::Conversion, StandardConversionKind::QualificationAdjustment, true};
+				return {ConversionRank::ExactMatch, StandardConversionKind::QualificationAdjustment, true};
 			}
 			// const T* → T* is NOT allowed (would remove const)
 			if (from_pointee_is_const && !to_pointee_is_const) {
