@@ -223,6 +223,15 @@ struct PostParseBoundaryReport {
 		recordSample("PackExpansionExprNode", token);
 	}
 
+	const PostParseBoundarySample* firstSample(std::string_view node_kind) const {
+		for (const auto& sample : samples) {
+			if (sample.node_kind == node_kind) {
+				return &sample;
+			}
+		}
+		return nullptr;
+	}
+
 private:
 	void recordSample(const char* node_kind, const Token& token) {
 		if (samples.size() >= 8) {
@@ -652,20 +661,49 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 	}
 
 	const size_t total_violations = report.fold_expression_count + report.pack_expansion_count;
-	FLASH_LOG(General, Warning,
-		"Post-parse boundary check: found ", report.fold_expression_count,
-		" FoldExpressionNode and ", report.pack_expansion_count,
-		" PackExpansionExprNode instances on the sema-owned AST surface; keeping Phase 1 bridge paths enabled");
+	const auto* first_fold_sample = report.firstSample("FoldExpressionNode");
+	const bool has_fold_violation = report.fold_expression_count != 0;
+	if (has_fold_violation) {
+		FLASH_LOG(General, Error,
+			"Post-parse boundary check: found ", report.fold_expression_count,
+			" FoldExpressionNode and ", report.pack_expansion_count,
+			" PackExpansionExprNode instances on the sema-owned AST surface; enforcing fold boundary before semantic normalization");
+	} else {
+		FLASH_LOG(General, Warning,
+			"Post-parse boundary check: found ", report.fold_expression_count,
+			" FoldExpressionNode and ", report.pack_expansion_count,
+			" PackExpansionExprNode instances on the sema-owned AST surface; pack-expansion enforcement remains deferred");
+	}
 
 	for (const auto& sample : report.samples) {
-		FLASH_LOG(General, Warning,
-			"  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
+		if (has_fold_violation) {
+			FLASH_LOG(General, Error,
+				"  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
+		} else {
+			FLASH_LOG(General, Warning,
+				"  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
+		}
 	}
 
 	if (report.samples.size() < total_violations) {
-		FLASH_LOG(General, Warning,
-			"  ... ", (total_violations - report.samples.size()),
-			" additional post-parse boundary sample(s) omitted");
+		if (has_fold_violation) {
+			FLASH_LOG(General, Error,
+				"  ... ", (total_violations - report.samples.size()),
+				" additional post-parse boundary sample(s) omitted");
+		} else {
+			FLASH_LOG(General, Warning,
+				"  ... ", (total_violations - report.samples.size()),
+				" additional post-parse boundary sample(s) omitted");
+		}
+	}
+
+	if (has_fold_violation) {
+		std::string message = "unexpanded FoldExpressionNode reached semantic analysis after parsing/template substitution";
+		if (first_fold_sample && first_fold_sample->token.line() > 0) {
+			message += " near line " + std::to_string(first_fold_sample->token.line()) +
+				":" + std::to_string(first_fold_sample->token.column());
+		}
+		throw InternalError(message);
 	}
 }
 } // namespace
@@ -1757,12 +1795,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				popScope();
 			}
 			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
-				if (e.init_expr().has_value()) {
-					normalizeExpression(*e.init_expr(), ctx);
-				}
-				if (e.pack_expr().has_value()) {
-					normalizeExpression(*e.pack_expr(), ctx);
-				}
+				throw InternalError(
+					"FoldExpressionNode reached SemanticAnalysis::normalizeExpression after post-parse fold enforcement");
 			}
 			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				normalizeExpression(e.pattern(), ctx);
@@ -1913,15 +1947,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
-				// Classification: transition-only invariant bridge. The Phase 1
-				// post-parse checker reports these nodes before sema starts, but
-				// keep the parser fallback here until Phase 2 tightens the boundary.
-				FLASH_LOG(General, Debug,
-					"SemanticAnalysis: FoldExpressionNode reached inferExpressionType; falling back to parser type resolution");
-				if (auto expr_type = parser_.get_expression_type(node); expr_type.has_value()) {
-					return canonicalizeType(*expr_type);
-				}
-				return {};
+				throw InternalError(
+					"FoldExpressionNode reached SemanticAnalysis::inferExpressionType after post-parse fold enforcement");
 			}
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());

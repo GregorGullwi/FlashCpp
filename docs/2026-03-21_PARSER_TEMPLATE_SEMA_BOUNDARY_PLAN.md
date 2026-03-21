@@ -111,6 +111,22 @@ If fold or pack-expansion helper nodes are found on the sema-owned surface after
 parsing, that is now treated as an explicit boundary violation report instead of
 an undocumented accidental fallback.
 
+## Phase 2 progress
+
+The fold-expression half of Phase 2 is now tightened:
+
+- surviving `FoldExpressionNode` on the sema-owned post-parse surface is no
+  longer treated as a permissive sema typing fallback
+- the post-parse boundary check now fails compilation before semantic
+  normalization if such a fold survives
+- `SemanticAnalysis::normalizeExpression(...)` and
+  `SemanticAnalysis::inferExpressionType(...)` now treat surviving folds as
+  unreachable invariant violations instead of consulting
+  `parser_.get_expression_type(...)`
+
+`PackExpansionExprNode` remains on the Phase 2 backlog as a logged-only
+boundary violation for the next slice.
+
 ## Workstreams
 
 ### Workstream 1: make post-parse AST legality explicit
@@ -138,15 +154,16 @@ the sema/codegen entry points that currently carry defensive fallbacks.
 Current behavior:
 
 - substitution expands fold expressions
-- codegen hard-fails if a fold survives
-- sema now has an explicit parser-fallback case as a defensive bridge
+- sema now fails before normalization if a fold survives on the sema-owned
+  surface
+- codegen still hard-fails if a fold survives outside that guarded path
 
 Required next step:
 
-- audit the remaining paths where a fold can reach sema
-- keep the current sema fallback only as a transition aid
-- once the invariant is proven, tighten that path into an assertion or targeted
-  early diagnostic instead of relying on parser fallback
+- audit the remaining parser-owned paths where a fold can still exist outside
+  the sema-owned surface
+- decide whether any surviving cases should become earlier parser/substitution
+  diagnostics instead of invariant failures
 
 #### PackExpansionExprNode
 
@@ -196,7 +213,6 @@ Then migrate those buckets one at a time:
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | temporary auto-return bridge |
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
-| `inferExpressionType(FoldExpressionNode)` | keep sema annotation paths alive if an illegal fold survives | transition-only invariant bridge |
 | `inferExpressionType(QualifiedIdentifierNode)` | recover namespace/class-qualified lookup results | parser-owned qualified-lookup fact |
 | `inferExpressionType(LambdaExpressionNode)` | recover closure type before sema can always observe generated lambda type info locally | temporary closure-materialization bridge |
 | `tryResolveCallableOperator()` | build overload-resolution argument types when local sema inference has gaps | local inference-gap bridge |
@@ -246,7 +262,7 @@ Implemented in this slice:
 ### Phase 2: seal template-only nodes
 
 - tighten fold-expression handling from permissive fallback toward explicit
-  invariant enforcement
+  invariant enforcement **(fold half implemented)**
 - add earlier detection/diagnostics for surviving `PackExpansionExprNode`
 
 ### Phase 3: migrate sema off parser fallbacks
