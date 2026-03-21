@@ -346,6 +346,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		return substituteTemplateParameters(default_init.value(), params, args);
 	};
+
+	auto get_substituted_type_size_bytes = [&](Type substituted_type, TypeIndex substituted_type_index) -> size_t {
+		if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == substituted_type_index) {
+					if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
+						return struct_info->total_size;
+					}
+					break;
+				}
+			}
+		}
+
+		return get_type_size_bits(substituted_type) / 8;
+	};
 	
 	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
 	// Uses ConstExpr::evaluate_fold_expression for the actual computation
@@ -1809,7 +1824,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					original_type_spec, template_params, template_args);
 				
-				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+				size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 				
 				// Substitute template parameters in the static member initializer
 				// Use ExpressionSubstitutor to handle all types of template-dependent expressions
@@ -2033,7 +2048,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			original_type_spec.set_type_index(static_member.type_index);
 			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 				original_type_spec, template_params, template_args);
-			size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 			std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 				? std::optional<ASTNode>(substituteTemplateParameters(
 					*static_member.initializer, template_params, template_args))
@@ -3931,7 +3946,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					original_type_spec, template_params, template_args_to_use);
 				
-				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+				size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 				
 				// Add with nullopt initializer - will be filled in during lazy instantiation
 				struct_info->addStaticMember(
@@ -4259,7 +4274,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_type_spec, template_params, template_args_to_use);
 			
 			// Calculate the substituted size based on the substituted type
-			size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 			
 			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.type,
 			          " -> substituted type=", (int)substituted_type, ", size=", substituted_size);
@@ -4292,73 +4307,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				: std::nullopt;
 			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
 				const ExpressionNode& expr = substituted_initializer->as<ExpressionNode>();
-			
-			// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
-			if (std::holds_alternative<FoldExpressionNode>(expr)) {
-				const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
-				std::string_view pack_name = fold.pack_name();
-				std::string_view op = fold.op();
-				FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
-				
-				// Find the parameter pack in template parameters
-				std::optional<size_t> pack_param_idx;
-				for (size_t p = 0; p < template_params.size(); ++p) {
-					const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
-					if (tparam.name() == pack_name && tparam.is_variadic()) {
-						pack_param_idx = p;
-						break;
-					}
-				}
-				
-				if (pack_param_idx.has_value()) {
-					// Collect the values from the variadic pack arguments
-					std::vector<int64_t> pack_values;
-					bool all_values_found = true;
-					
-					// For variadic packs, arguments after non-variadic parameters are the pack values
-					size_t non_variadic_count = 0;
-					for (const auto& param : template_params) {
-						if (!param.as<TemplateParameterNode>().is_variadic()) {
-							non_variadic_count++;
+
+				// Generic substitution already resolves ordinary template references
+				// here. Fold expressions still need explicit expansion because the
+				// substitution walk preserves FoldExpressionNode.
+				if (std::holds_alternative<FoldExpressionNode>(expr)) {
+					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+					std::string_view pack_name = fold.pack_name();
+					std::string_view op = fold.op();
+					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+
+					// Find the parameter pack in template parameters
+					std::optional<size_t> pack_param_idx;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.name() == pack_name && tparam.is_variadic()) {
+							pack_param_idx = p;
+							break;
 						}
 					}
-					
-					for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
-						if (template_args_to_use[i].is_value) {
-							pack_values.push_back(template_args_to_use[i].value);
-							FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
-						} else {
-							all_values_found = false;
+
+					if (pack_param_idx.has_value()) {
+						// For variadic packs, arguments after non-variadic parameters are the pack values.
+						std::vector<int64_t> pack_values;
+						bool all_values_found = true;
+						size_t non_variadic_count = 0;
+						for (const auto& param : template_params) {
+							if (!param.as<TemplateParameterNode>().is_variadic()) {
+								non_variadic_count++;
+							}
+						}
+
+						for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
+							if (template_args_to_use[i].is_value) {
+								pack_values.push_back(template_args_to_use[i].value);
+								FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
+							} else {
+								all_values_found = false;
+							}
+						}
+
+						if (all_values_found && !pack_values.empty()) {
+							if (auto fold_result = evaluate_fold_expression(op, pack_values); fold_result.has_value()) {
+								substituted_initializer = *fold_result;
+							}
 						}
 					}
-					
-					if (all_values_found && !pack_values.empty()) {
-						auto fold_result = evaluate_fold_expression(op, pack_values);
-						if (fold_result.has_value()) {
-							substituted_initializer = *fold_result;
-						}
-					}
 				}
-			}
-			// Handle TemplateParameterReferenceNode (e.g., static constexpr T value = v;)
-			else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-				const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-				FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-				if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_to_use, template_params)) {
-					substituted_initializer = subst;
-					FLASH_LOG(Templates, Debug, "Substituted template parameter '", tparam_ref.param_name(), "'");
-				}
-			}
-			// Handle IdentifierNode that might be a template parameter
-			else if (std::holds_alternative<IdentifierNode>(expr)) {
-				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
-				std::string_view id_name = id_node.name();
-				FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-				if (auto subst = substitute_template_param_in_initializer(id_name, template_args_to_use, template_params)) {
-					substituted_initializer = subst;
-					FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
-				}
-			}
 			}
 		
 		struct_info->addStaticMember(
@@ -4535,7 +4530,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					original_type_spec.set_type_index(static_member.type_index);
 					auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 						original_type_spec, template_params, template_args_to_use);
-					size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+					size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 					std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 						? std::optional<ASTNode>(substituteTemplateParameters(
 							*static_member.initializer, template_params, template_args_to_use))

@@ -179,6 +179,10 @@ Phase 3 has started with two low-risk local fallback removals:
 - focused nested-class regressions now cover mixed-order template-parameter use
   across both retained default member initializers and retained nested
   `static constexpr` initializers
+- static-member substitution paths now share a struct-aware substituted-size
+  helper, and the AST fallback path now relies on generic substitution plus
+  explicit fold handling only instead of redundant post-substitution template
+  reference handlers
 - `inferExpressionType(TemplateParameterReferenceNode)` now resolves through
   sema-owned outer-template binding scope only; the direct parser fallback for
   surviving template-parameter references is gone

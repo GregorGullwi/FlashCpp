@@ -165,6 +165,37 @@ analysis error.
 temporary through a helper function or otherwise materialize/access it through a
 different path.
 
+## Nested template static members of struct type can misbehave at runtime
+
+Struct-typed static members inside nested template classes are still unreliable
+at runtime. Inline/`constexpr` forms can read back as zero-initialized even when
+their template-substituted initializer should produce non-zero field values, and
+mutable storage variants can crash when written through:
+
+```cpp
+template<typename U, class C, int N>
+struct Outer {
+    struct Payload { int a; int b; };
+    struct Inner {
+        static constexpr Payload payload = { int(sizeof(C) - sizeof(U)), N };
+        int value = payload.a + payload.b;
+    };
+};
+
+int main() {
+    Outer<char, int, 39>::Inner inner{};
+    return inner.value + Outer<char, int, 39>::Inner::payload.a; // observed 0, expected 45
+}
+```
+
+Observed while trying to add focused validation around nested static-member
+substitution/layout. This looks like a remaining nested-class/static-object
+codegen/runtime bug rather than a parser/sema typing failure.
+
+**Workaround**: avoid struct-typed static members inside nested template
+classes; use scalar static members, move the object out of the nested template
+class, or materialize the value through another helper path.
+
 ## `constexpr`/`consteval` enforcement — partially implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;
