@@ -662,21 +662,28 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 
 	const size_t total_violations = report.fold_expression_count + report.pack_expansion_count;
 	const auto* first_fold_sample = report.firstSample("FoldExpressionNode");
+	const auto* first_pack_sample = report.firstSample("PackExpansionExprNode");
 	const bool has_fold_violation = report.fold_expression_count != 0;
+	const bool has_pack_violation = report.pack_expansion_count != 0;
 	if (has_fold_violation) {
 		FLASH_LOG(General, Error,
 			"Post-parse boundary check: found ", report.fold_expression_count,
 			" FoldExpressionNode and ", report.pack_expansion_count,
 			" PackExpansionExprNode instances on the sema-owned AST surface; enforcing fold boundary before semantic normalization");
+	} else if (has_pack_violation) {
+		FLASH_LOG(General, Error,
+			"Post-parse boundary check: found ", report.fold_expression_count,
+			" FoldExpressionNode and ", report.pack_expansion_count,
+			" PackExpansionExprNode instances on the sema-owned AST surface; pack expansion is unsupported there before semantic normalization");
 	} else {
 		FLASH_LOG(General, Warning,
 			"Post-parse boundary check: found ", report.fold_expression_count,
 			" FoldExpressionNode and ", report.pack_expansion_count,
-			" PackExpansionExprNode instances on the sema-owned AST surface; pack-expansion enforcement remains deferred");
+			" PackExpansionExprNode instances on the sema-owned AST surface");
 	}
 
 	for (const auto& sample : report.samples) {
-		if (has_fold_violation) {
+		if (has_fold_violation || has_pack_violation) {
 			FLASH_LOG(General, Error,
 				"  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
 		} else {
@@ -686,7 +693,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 	}
 
 	if (report.samples.size() < total_violations) {
-		if (has_fold_violation) {
+		if (has_fold_violation || has_pack_violation) {
 			FLASH_LOG(General, Error,
 				"  ... ", (total_violations - report.samples.size()),
 				" additional post-parse boundary sample(s) omitted");
@@ -704,6 +711,16 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 				":" + std::to_string(first_fold_sample->token.column());
 		}
 		throw InternalError(message);
+	}
+
+	if (has_pack_violation) {
+		std::string message =
+			"unsupported PackExpansionExprNode reached semantic analysis; pack expansion should have been eliminated during template substitution";
+		if (first_pack_sample && first_pack_sample->token.line() > 0) {
+			message += " near line " + std::to_string(first_pack_sample->token.line()) +
+				":" + std::to_string(first_pack_sample->token.column());
+		}
+		throw CompileError(message);
 	}
 }
 } // namespace
@@ -1799,7 +1816,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					"FoldExpressionNode reached SemanticAnalysis::normalizeExpression after post-parse fold enforcement");
 			}
 			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
-				normalizeExpression(e.pattern(), ctx);
+				throw InternalError(
+					"PackExpansionExprNode reached SemanticAnalysis::normalizeExpression after post-parse pack enforcement");
 			}
 			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				normalizeExpression(e.expr(), ctx);
