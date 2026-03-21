@@ -865,8 +865,7 @@
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
-		std::string_view object_name = identifier.name();
-		if (object_name == "this") {
+		if (identifier.name() == "this") {
 			// First try [*this] capture - returns copy of the object
 			if (auto copy_this_temp = emitLoadCopyThis(member_token)) {
 				base_object = *copy_this_temp;
@@ -883,8 +882,7 @@
 				return true;
 			}
 		}
-		const bool setup_ok = validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference);
-		if (!setup_ok) {
+		if (!validateAndSetupIdentifierMemberAccess(identifier.name(), base_object, base_type, base_type_index, is_pointer_dereference)) {
 			return false;
 		}
 		const auto binding_info = resolveGlobalOrStaticBinding(identifier);
