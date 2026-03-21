@@ -395,6 +395,44 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 	return result;
 }
 
+// Dereference a pointer (EvalResult with pointer_to_var set) against local bindings first,
+// then the symbol table.  Handles scalars (offset == 0) and arrays (any offset).
+// This is the preferred deref helper for all bindings-aware evaluation paths.
+EvalResult Evaluator::deref_pointer_with_bindings(
+	const EvalResult& ptr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	std::string_view var_name = StringTable::getStringView(ptr.pointer_to_var);
+	int64_t offset = ptr.pointer_offset;
+
+	// Check local bindings first (handles local scalars and arrays at any offset).
+	auto it = bindings.find(var_name);
+	if (it != bindings.end()) {
+		const EvalResult& bound = it->second;
+		if (bound.is_array) {
+			if (offset < 0) return EvalResult::error("Negative pointer offset in dereference");
+			size_t idx = static_cast<size_t>(offset);
+			if (!bound.array_elements.empty()) {
+				if (idx >= bound.array_elements.size())
+					return EvalResult::error("Array index out of bounds in constant expression");
+				return bound.array_elements[idx];
+			}
+			if (!bound.array_values.empty()) {
+				if (idx >= bound.array_values.size())
+					return EvalResult::error("Array index out of bounds in constant expression");
+				return EvalResult::from_int(bound.array_values[idx]);
+			}
+		} else if (offset == 0) {
+			return bound;
+		}
+	}
+	// Check for a value snapshot stored in the pointer EvalResult (outer-scope scalar pointer).
+	if (offset == 0 && !ptr.array_elements.empty()) {
+		return ptr.array_elements[0];
+	}
+	return dereference_constexpr_pointer(var_name, context, offset);
+}
+
 EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
 	// sizeof is always a constant expression
 	// Get the actual size from the type

@@ -521,6 +521,11 @@ private:
 	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
 	// When offset != 0, the variable must be an array and element [offset] is returned.
 	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset = 0);
+	// Dereference a pointer result against local bindings first, then the symbol table.
+	// Handles scalars (offset == 0) and arrays (any offset).
+	static EvalResult deref_pointer_with_bindings(
+		const EvalResult& ptr, const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	// Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
 	// pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
 	// evaluates it.  If check_static is true, also handles access to static struct members.
@@ -639,6 +644,9 @@ private:
 		const IdentifierNode* identifier,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
+	// Returns true if the identifier resolves to a declared array variable (not a pointer).
+	// Used by evaluate_array_subscript to route array and pointer subscripts correctly.
+	static bool identifier_is_array_var(const IdentifierNode& id, EvaluationContext& context);
 	static std::optional<ASTNode> lookup_function_symbol(
 		const FunctionCallNode& func_call,
 		std::string_view fallback_name,

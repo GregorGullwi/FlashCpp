@@ -234,6 +234,17 @@ std::optional<ASTNode> Evaluator::lookup_identifier_symbol(
 	return symbols.lookup(fallback_name);
 }
 
+// Returns true if the identifier resolves to a declared array variable (not a pointer).
+bool Evaluator::identifier_is_array_var(const IdentifierNode& id, EvaluationContext& context) {
+	if (!context.symbols) return false;
+	auto sym = lookup_identifier_symbol(&id, id.name(), *context.symbols);
+	if (!sym.has_value() && context.global_symbols)
+		sym = context.global_symbols->lookup(id.name());
+	return sym.has_value()
+		&& sym->is<VariableDeclarationNode>()
+		&& sym->as<VariableDeclarationNode>().declaration().is_array();
+}
+
 std::optional<ASTNode> Evaluator::lookup_function_symbol(
 	const FunctionCallNode& func_call,
 	std::string_view fallback_name,
@@ -520,10 +531,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	}
 	// Handle pointer subscript: ptr[i] → *(ptr + i)
 	if (array_result->pointer_to_var.isValid()) {
-		int64_t effective_offset = array_result->pointer_offset + index;
-		return dereference_constexpr_pointer(
-			StringTable::getStringView(array_result->pointer_to_var),
-			context, effective_offset);
+		EvalResult offset_ptr = *array_result;
+		offset_ptr.pointer_offset += index;
+		return deref_pointer_with_bindings(offset_ptr, bindings, context);
 	}
 	if (!array_result->is_array) {
 		return EvalResult::error("Subscript on non-array variable in constant expression");
@@ -1197,25 +1207,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
-				// Check local bindings first (for zero-offset pointers to scalar variables)
-				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
-				if (operand_result.pointer_offset == 0) {
-					auto it = bindings.find(ptr_var_name);
-					if (it != bindings.end()) {
-						const EvalResult& bound = it->second;
-						// If the bound value is an array, return element [0] rather than the whole array.
-						if (bound.is_array) {
-							if (!bound.array_elements.empty()) return bound.array_elements[0];
-							if (!bound.array_values.empty()) return EvalResult::from_int(bound.array_values[0]);
-						}
-						return bound;
-					}
-					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
-					if (!operand_result.array_elements.empty()) {
-						return operand_result.array_elements[0];
-					}
-				}
-				return dereference_constexpr_pointer(ptr_var_name, context, operand_result.pointer_offset);
+				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -1377,25 +1369,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
-				// Check local bindings first (for zero-offset pointers to scalar variables)
-				std::string_view ptr_var_name = StringTable::getStringView(operand_result.pointer_to_var);
-				if (operand_result.pointer_offset == 0) {
-					auto it = bindings.find(ptr_var_name);
-					if (it != bindings.end()) {
-						const EvalResult& bound = it->second;
-						// If the bound value is an array, return element [0] rather than the whole array.
-						if (bound.is_array) {
-							if (!bound.array_elements.empty()) return bound.array_elements[0];
-							if (!bound.array_values.empty()) return EvalResult::from_int(bound.array_values[0]);
-						}
-						return bound;
-					}
-					// Check for a value snapshot (e.g., pointer to a variable from an outer scope)
-					if (!operand_result.array_elements.empty()) {
-						return operand_result.array_elements[0];
-					}
-				}
-				return dereference_constexpr_pointer(ptr_var_name, context, operand_result.pointer_offset);
+				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
 			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 		}
@@ -4169,7 +4143,7 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 	// 2. An identifier (e.g., arr or ptr)
 	// 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
 	const ASTNode& array_expr = subscript.array_expr();
-	
+
 	// Check if it's a member access (e.g., obj.data[0])
 	if (array_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
@@ -4177,15 +4151,18 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			return evaluate_member_array_subscript(*member_access_ptr, static_cast<size_t>(index), context);
 		}
 		if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&expr)) {
-			auto result = evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
-			if (result.success()) return result;
-			// Fall through to pointer path if array subscript failed (might be a pointer variable)
+			if (identifier_is_array_var(*identifier_ptr, context)) {
+				return evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
+			}
+			// Identifier is a pointer variable or local binding — fall through to pointer path.
 		}
 	}
 	if (array_expr.is<IdentifierNode>()) {
-		auto result = evaluate_variable_array_subscript(array_expr.as<IdentifierNode>(), static_cast<size_t>(index), context);
-		if (result.success()) return result;
-		// Fall through to pointer path if array subscript failed
+		const IdentifierNode& id = array_expr.as<IdentifierNode>();
+		if (identifier_is_array_var(id, context)) {
+			return evaluate_variable_array_subscript(id, static_cast<size_t>(index), context);
+		}
+		// Identifier is a pointer variable or local binding — fall through to pointer path.
 	}
 	
 	// Try evaluating the array expression — if it yields a pointer, treat ptr[i] as *(ptr + i).
