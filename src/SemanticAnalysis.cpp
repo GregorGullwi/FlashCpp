@@ -2602,39 +2602,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	return {};
 }
 
-std::optional<TypeSpecifierNode> SemanticAnalysis::getDocumentedParserTypeFallback(const ASTNode& node) {
-	if (!node.is<ExpressionNode>()) {
-		return std::nullopt;
-	}
-
-	const ExpressionNode& expr = node.as<ExpressionNode>();
-	if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
-		if (identifier->binding() == IdentifierBinding::NonStaticMember ||
-			identifier->binding() == IdentifierBinding::Unresolved) {
-			return parser_.get_expression_type(node);
-		}
-		return std::nullopt;
-	}
-
-	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-		return parser_.get_expression_type(node);
-	}
-
-	return std::nullopt;
-}
-
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(const ASTNode& arg) {
 	if (const CanonicalTypeId inferred_type_id = inferExpressionType(arg)) {
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_type_id));
 		adjust_argument_type_for_overload_resolution(arg, arg_type);
 		return arg_type;
-	}
-
-	// Phase 3 bridge: keep a narrow parser fallback only for the remaining
-	// documented parser-owned expression forms.
-	if (auto parser_type = getDocumentedParserTypeFallback(arg); parser_type.has_value()) {
-		adjust_argument_type_for_overload_resolution(arg, *parser_type);
-		return parser_type;
 	}
 
 	return std::nullopt;

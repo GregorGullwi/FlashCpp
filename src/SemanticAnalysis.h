@@ -143,7 +143,6 @@ private:
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
-	std::optional<TypeSpecifierNode> getDocumentedParserTypeFallback(const ASTNode& node);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
