@@ -466,40 +466,42 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		
 		const DeclarationNode& spec_decl = spec_var_decl.declaration();
 		ASTNode spec_type = spec_decl.type_node();
-		
-		std::optional<ASTNode> init_expr;
-		if (spec_var_decl.initializer().has_value()) {
-			const auto& spec_params = spec_template.template_parameters();
-			if (!spec_params.empty()) {
-				// Build deduced args from the structural match substitutions.
-				// TemplatePattern::matches() already deduced T→int by stripping
-				// pattern qualifiers, so we use those substitutions directly.
-				std::vector<TemplateTypeArg> converted_args;
-				converted_args.reserve(spec_params.size());
-				for (const auto& param : spec_params) {
-					if (param.is<TemplateParameterNode>()) {
-						const TemplateParameterNode& tp = param.as<TemplateParameterNode>();
-						auto it = structural_match->substitutions.find(tp.nameHandle());
-						if (it != structural_match->substitutions.end()) {
-							converted_args.push_back(it->second);
+		const auto& spec_params = spec_template.template_parameters();
+		std::vector<TemplateTypeArg> converted_args;
+		if (!spec_params.empty()) {
+			// Build deduced args from the structural match substitutions.
+			// TemplatePattern::matches() already deduced T→int by stripping
+			// pattern qualifiers, so we use those substitutions directly.
+			converted_args.reserve(spec_params.size());
+			for (const auto& param : spec_params) {
+				if (param.is<TemplateParameterNode>()) {
+					const TemplateParameterNode& tp = param.as<TemplateParameterNode>();
+					auto it = structural_match->substitutions.find(tp.nameHandle());
+					if (it != structural_match->substitutions.end()) {
+						converted_args.push_back(it->second);
+					} else {
+						// Fallback: use resolved arg with qualifiers stripped
+						if (converted_args.size() < resolved_args.size()) {
+							FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
+							          tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
+							TemplateTypeArg deduced = resolved_args[converted_args.size()];
+							deduced.ref_qualifier = ReferenceQualifier::None;
+							deduced.pointer_depth = 0;
+							deduced.pointer_cv_qualifiers.clear();
+							deduced.is_array = false;
+							converted_args.push_back(deduced);
 						} else {
-							// Fallback: use resolved arg with qualifiers stripped
-							if (converted_args.size() < resolved_args.size()) {
-								FLASH_LOG(Templates, Debug, "Deduction fallback for param '",
-								          tp.name(), "': using arg[", converted_args.size(), "] with qualifiers stripped");
-								TemplateTypeArg deduced = resolved_args[converted_args.size()];
-								deduced.ref_qualifier = ReferenceQualifier::None;
-								deduced.pointer_depth = 0;
-								deduced.pointer_cv_qualifiers.clear();
-								deduced.is_array = false;
-								converted_args.push_back(deduced);
-							} else {
-								FLASH_LOG(Templates, Warning, "Cannot deduce param '",
-								          tp.name(), "': no substitution and no remaining args");
-							}
+							FLASH_LOG(Templates, Warning, "Cannot deduce param '",
+							          tp.name(), "': no substitution and no remaining args");
 						}
 					}
 				}
+			}
+		}
+
+		std::optional<ASTNode> init_expr;
+		if (spec_var_decl.initializer().has_value()) {
+			if (!spec_params.empty()) {
 				init_expr = substituteTemplateParameters(
 					*spec_var_decl.initializer(), spec_params, converted_args);
 				spec_type = substituteTemplateParameters(
@@ -518,6 +520,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		
 		auto var_decl_node = emplace_node<VariableDeclarationNode>(decl_node, init_expr, StorageClass::None);
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+		InlineVector<StringHandle, 4> outer_template_param_names;
+		outer_template_param_names.reserve(spec_params.size());
+		for (const auto& template_param : spec_params) {
+			if (template_param.is<TemplateParameterNode>()) {
+				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+			}
+		}
+		if (!outer_template_param_names.empty()) {
+			var_decl_node.as<VariableDeclarationNode>().set_outer_template_bindings(outer_template_param_names, converted_args);
+		}
 		gSymbolTable.insertGlobal(persistent_name, var_decl_node);
 		ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
 		return var_decl_node;
@@ -759,6 +771,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	);
 	// Mark as constexpr to match the template pattern
 	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
+	InlineVector<StringHandle, 4> outer_template_param_names;
+	outer_template_param_names.reserve(template_params.size());
+	for (const auto& template_param : template_params) {
+		if (template_param.is<TemplateParameterNode>()) {
+			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+		}
+	}
+	if (!outer_template_param_names.empty()) {
+		instantiated_var_decl.as<VariableDeclarationNode>().set_outer_template_bindings(outer_template_param_names, resolved_args);
+	}
 	
 	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
 	// This allows constexpr evaluation to find and evaluate the variable

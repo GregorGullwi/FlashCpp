@@ -894,6 +894,29 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& la
 	}
 }
 
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const VariableDeclarationNode& var) {
+	if (!var.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = var.outer_template_param_names();
+	const auto& param_args = var.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor) {
 	if (!ctor.has_outer_template_bindings()) {
 		return;
@@ -1401,7 +1424,10 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 		const auto& init = var.initializer();
 		if (init.has_value()) {
 			SemanticContext ctx;
+			pushScope();
+			registerOuterTemplateBindingsInScope(var);
 			normalizeExpression(*init, ctx);
+			popScope();
 		}
 	}
 	// Template declarations, forward declarations, typedefs, using directives,
@@ -1560,6 +1586,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 	}
 	else if (node.is<VariableDeclarationNode>()) {
 		const auto& var = node.as<VariableDeclarationNode>();
+		registerOuterTemplateBindingsInScope(var);
 		// Record local variable type in the current scope for expression inference
 		const auto& decl = var.declaration();
 		const ASTNode vtype = decl.type_node();

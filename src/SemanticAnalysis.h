@@ -138,6 +138,7 @@ private:
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);
 	void registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info);
+	void registerOuterTemplateBindingsInScope(const VariableDeclarationNode& var);
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);

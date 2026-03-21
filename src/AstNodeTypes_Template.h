@@ -264,12 +264,46 @@ public:
 	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
 	bool is_constinit() const { return is_constinit_; }
 
+	template<typename NameContainer, typename ArgContainer>
+	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
+		outer_template_param_names_.clear();
+		outer_template_args_.clear();
+		outer_template_param_names_.reserve(template_param_names.size());
+		outer_template_args_.reserve(template_args.size());
+
+		for (StringHandle param_name : template_param_names) {
+			outer_template_param_names_.push_back(param_name);
+		}
+
+		for (const auto& arg : template_args) {
+			TypeInfo::TemplateArgInfo info;
+			info.base_type = arg.base_type;
+			info.type_index = arg.type_index;
+			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+			info.pointer_depth = arg.pointer_depth;
+			info.cv_qualifier = arg.cv_qualifier;
+			info.ref_qualifier = arg.ref_qualifier;
+			info.value = arg.value;
+			info.is_value = arg.is_value;
+			info.is_array = arg.is_array;
+			info.array_size = arg.array_size;
+			info.dependent_name = arg.dependent_name;
+			outer_template_args_.push_back(std::move(info));
+		}
+	}
+
+	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
+	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+
 private:
 	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
 	StorageClass storage_class_;
 	bool is_constexpr_;
 	bool is_constinit_;
+	InlineVector<StringHandle, 4> outer_template_param_names_;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
 
 // Structured binding declaration node (C++17 feature)
