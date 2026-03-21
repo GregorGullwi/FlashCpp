@@ -147,6 +147,18 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 	}
 	return desc;
 }
+
+CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
+	CanonicalTypeDesc desc;
+	desc.base_type = member.type;
+	desc.type_index = member.type_index;
+	desc.base_cv = member.cv_qualifier;
+	desc.ref_qualifier = member.reference_qualifier;
+	for (int i = 0; i < member.pointer_depth; ++i) {
+		desc.pointer_levels.push_back(PointerLevel{});
+	}
+	return desc;
+}
 }
 
 // --- CanonicalTypeDesc::operator== ---
@@ -2210,10 +2222,35 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
-				// Classification: parser-owned qualified-lookup fact. Sema does not
-				// yet reconstruct all namespace/class qualification results locally.
-				if (auto type_opt = parser_.get_expression_type(node))
-					return canonicalizeType(*type_opt);
+				NamespaceHandle ns_handle = e.namespace_handle();
+				if (!ns_handle.isGlobal()) {
+					std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
+					auto owner_it = gTypesByName.find(StringTable::getOrInternStringHandle(owner_name));
+					if (owner_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+						std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+						owner_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
+					}
+
+					if (owner_it != gTypesByName.end()) {
+						if (owner_it->second->isStruct()) {
+							const StructTypeInfo* struct_info = owner_it->second->getStructInfo();
+							if (struct_info) {
+								const StringHandle member_name_handle = e.nameHandle();
+								parser_.instantiateLazyStaticMember(struct_info->name, member_name_handle);
+								const auto static_member_result = struct_info->findStaticMemberRecursive(member_name_handle);
+								const StructStaticMember* static_member = static_member_result.first;
+								if (static_member) {
+									return type_context_.intern(canonicalTypeDescFromStaticMember(*static_member));
+								}
+							}
+						} else if (owner_it->second->isEnum()) {
+							CanonicalTypeDesc desc;
+							desc.base_type = Type::Enum;
+							desc.type_index = owner_it->second->type_index_;
+							return type_context_.intern(desc);
+						}
+					}
+				}
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, DynamicCastNode>) {
