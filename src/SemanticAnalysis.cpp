@@ -2275,10 +2275,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					desc.type_index = it->second->type_index_;
 					return type_context_.intern(desc);
 				}
-				// Classification: temporary closure-materialization bridge while
-				// parser-generated lambda types are still the source of truth here.
-				if (auto type_opt = parser_.get_expression_type(node))
-					return canonicalizeType(*type_opt);
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
@@ -2736,12 +2732,10 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	if (candidates.empty()) return;
 
 	// Try to build argument type specifiers for the real overload-resolution path.
-	// inferExpressionType handles most expression forms (numeric/bool literals, identifiers,
-	// member access, binary ops, sub-calls); parser_.get_expression_type is the
-	// classification-bridge fallback for local inference gaps (e.g. cast
-	// expressions, initializer lists) while sema-owned overload typing is filled in.
-	// If neither can supply a type for any argument, all_types_known is set to false and
-	// the arity-only heuristic is used instead.
+	// inferExpressionType now covers the sema-owned cases we rely on here
+	// (including casts, initializer-list construction, and lambda closures).
+	// If it cannot supply a type for any argument, all_types_known is set to
+	// false and the arity-only heuristic is used instead.
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(arg_count);
 	bool all_types_known = true;
@@ -2750,13 +2744,8 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 		if (arg_type_id) {
 			arg_types.push_back(materializeTypeSpecifier(type_context_.get(arg_type_id)));
 		} else {
-			auto parser_type = parser_.get_expression_type(arg);
-			if (parser_type.has_value()) {
-				arg_types.push_back(*parser_type);
-			} else {
-				all_types_known = false;
-				break;
-			}
+			all_types_known = false;
+			break;
 		}
 	}
 
