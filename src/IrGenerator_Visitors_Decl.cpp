@@ -1118,7 +1118,10 @@
 			}
 
 			// Generate global storage for static members
-			auto static_member_type_it = gTypesByName.find(node.name());
+			StringHandle static_member_lookup_name = current_struct_name_.isValid()
+				? current_struct_name_
+				: node.name();
+			auto static_member_type_it = gTypesByName.find(static_member_lookup_name);
 			if (static_member_type_it != gTypesByName.end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
 

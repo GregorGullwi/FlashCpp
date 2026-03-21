@@ -4383,6 +4383,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	std::vector<ASTNode> instantiated_nested_class_nodes;
+	instantiated_nested_class_nodes.reserve(class_decl.nested_classes().size());
+
 	// Copy nested classes from the template with template parameter substitution
 	for (const auto& nested_class : class_decl.nested_classes()) {
 		if (nested_class.is<StructDeclarationNode>()) {
@@ -4391,18 +4394,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Create a new StructTypeInfo for the nested class
 			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+			auto instantiated_nested_struct = emplace_node<StructDeclarationNode>(
+				nested_struct.name(),
+				nested_struct.is_class(),
+				nested_struct.is_union()
+			);
+			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
+			InlineVector<StringHandle, 4> nested_outer_template_param_names;
+			nested_outer_template_param_names.reserve(template_params.size());
+			for (const auto& template_param : template_params) {
+				if (template_param.is<TemplateParameterNode>()) {
+					nested_outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
+				}
+			}
+			instantiated_nested_struct_ref.set_outer_template_bindings(nested_outer_template_param_names, template_args_to_use);
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				
-				// Use substitute_template_parameter for consistent template parameter matching
-				// This handles pointer levels, qualifiers, and all type transformations correctly
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
-				
-				// Create a substituted type specifier with the substituted type
+				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
+					decl, template_params, template_args_to_use);
+				bool is_array_member = !resolved_array_dimensions.empty();
+
 				TypeSpecifierNode substituted_type_spec(
 					substituted_type,
 					type_spec.qualifier(),
@@ -4411,23 +4427,86 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 				substituted_type_spec.set_type_index(substituted_type_index);
 				
-				// Copy pointer levels from the original type specifier
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				
-				// Add member to the nested struct info
-				// For pointers, use pointer size (64 bits on x64), otherwise use type size
+
 				size_t member_size;
-				if (substituted_type_spec.is_pointer()) {
-					member_size = 8;  // 64-bit pointer
+				if (is_array_member) {
+					size_t total_elements = 1;
+					for (size_t dim_size : resolved_array_dimensions) {
+						total_elements *= dim_size;
+					}
+
+					size_t element_size;
+					if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+						element_size = 8;
+					} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+						const TypeInfo* member_struct_info = nullptr;
+						for (const auto& ti : gTypeInfo) {
+							if (ti.type_index_ == substituted_type_index) {
+								member_struct_info = &ti;
+								break;
+							}
+						}
+						if (member_struct_info && member_struct_info->getStructInfo()) {
+							element_size = member_struct_info->getStructInfo()->total_size;
+						} else {
+							element_size = get_type_size_bits(substituted_type) / 8;
+						}
+					} else {
+						element_size = get_type_size_bits(substituted_type) / 8;
+					}
+					member_size = element_size * total_elements;
+				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					member_size = 8;
+				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+					const TypeInfo* member_struct_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == substituted_type_index) {
+							member_struct_info = &ti;
+							break;
+						}
+					}
+					if (member_struct_info && member_struct_info->getStructInfo()) {
+						member_size = member_struct_info->getStructInfo()->total_size;
+					} else {
+						member_size = get_type_size_bits(substituted_type) / 8;
+					}
 				} else {
 					member_size = substituted_type_spec.size_in_bits() / 8;
 				}
-				size_t member_alignment = get_type_alignment(substituted_type_spec.type(), member_size);
-				
+				size_t member_alignment;
+				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					member_alignment = 8;
+				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+					const TypeInfo* member_struct_info = nullptr;
+					for (const auto& ti : gTypeInfo) {
+						if (ti.type_index_ == substituted_type_index) {
+							member_struct_info = &ti;
+							break;
+						}
+					}
+					if (member_struct_info && member_struct_info->getStructInfo()) {
+						member_alignment = member_struct_info->getStructInfo()->alignment;
+					} else {
+						member_alignment = get_type_alignment(substituted_type, member_size);
+					}
+				} else {
+					member_alignment = get_type_alignment(substituted_type, member_size);
+				}
+
 				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
-				// Phase 7B: Intern member name and use StringHandle overload
+				size_t referenced_size_bits = ref_qual != ReferenceQualifier::None
+					? get_type_size_bits(substituted_type)
+					: 0;
+				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
+					member_decl.default_initializer, template_args_to_use, template_params);
+				std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
+					? std::optional<ASTNode>(substituteTemplateParameters(
+						*member_decl.bitfield_width_expr, template_params, template_args_to_use))
+					: std::nullopt;
+
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
@@ -4436,80 +4515,75 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_size,
 					member_alignment,
 					member_decl.access,
-					member_decl.default_initializer,
+					substituted_default_initializer,
 					ref_qual,
-					ref_qual != ReferenceQualifier::None ? get_type_size_bits(substituted_type_spec.type()) : 0,
-					false,
-					{},
+					referenced_size_bits,
+					is_array_member,
+					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
-					member_decl.bitfield_width,
+					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
 					substituted_type_spec.has_function_signature() ? std::optional(substituted_type_spec.function_signature()) : std::nullopt
+				);
+
+				ASTNode substituted_member_decl = substituteTemplateParameters(
+					member_decl.declaration, template_params, template_args_to_use);
+				instantiated_nested_struct_ref.add_member(
+					substituted_member_decl,
+					member_decl.access,
+					substituted_default_initializer,
+					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
+					substituted_bitfield_width_expr
 				);
 			}
 			
-			// Copy static members from the original nested struct
-			// Look up the original nested struct by building its qualified name from the template
+			auto copy_nested_static_members = [&](const StructTypeInfo& original_struct_info) {
+				for (const auto& static_member : original_struct_info.static_members) {
+					TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+					original_type_spec.set_type_index(static_member.type_index);
+					auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+						original_type_spec, template_params, template_args_to_use);
+					size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+					std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
+						? std::optional<ASTNode>(substituteTemplateParameters(
+							*static_member.initializer, template_params, template_args_to_use))
+						: std::nullopt;
+					nested_struct_info->addStaticMember(
+						static_member.getName(),
+						substituted_type,
+						substituted_type_index,
+						substituted_size,
+						static_member.alignment,
+						static_member.access,
+						substituted_initializer,
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
+					);
+					instantiated_nested_struct_ref.add_static_member(
+						static_member.getName(),
+						substituted_type,
+						substituted_type_index,
+						substituted_size,
+						static_member.alignment,
+						static_member.access,
+						substituted_initializer,
+						static_member.cv_qualifier,
+						static_member.reference_qualifier,
+						static_member.pointer_depth
+					);
+				}
+			};
+
 			StringBuilder original_nested_name_builder;
 			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
-			
-			FLASH_LOG(Templates, Debug, "Looking for original nested class: ", original_nested_name);
 			auto original_nested_it = gTypesByName.find(StringTable::getOrInternStringHandle(original_nested_name));
-			if (original_nested_it != gTypesByName.end()) {
-				const TypeInfo* original_nested_type = original_nested_it->second;
-				FLASH_LOG(Templates, Debug, "Found original nested class, checking struct info...");
-				if (original_nested_type->getStructInfo()) {
-					const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
-					FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
-					          " static members from nested class ", original_nested_name);
-					for (const auto& static_member : original_struct_info->static_members) {
-						FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
-						nested_struct_info->addStaticMember(
-							static_member.getName(),
-							static_member.type,
-							static_member.type_index,
-							static_member.size,
-							static_member.alignment,
-							static_member.access,
-							static_member.initializer,
-							static_member.cv_qualifier,
-							static_member.reference_qualifier,
-							static_member.pointer_depth
-						);
-					}
-				} else {
-					FLASH_LOG(Templates, Debug, "Original nested class has no struct info");
-				}
+			if (original_nested_it != gTypesByName.end() && original_nested_it->second->getStructInfo()) {
+				copy_nested_static_members(*original_nested_it->second->getStructInfo());
 			} else {
-				// Try looking up with just the nested struct name (without template prefix)
-				// This handles cases where templates use simple names for nested types
-				std::string_view simple_name = StringTable::getStringView(nested_struct.name());
-				FLASH_LOG(Templates, Debug, "Looking for nested class with simple name: ", simple_name);
 				auto simple_nested_it = gTypesByName.find(nested_struct.name());
-				if (simple_nested_it != gTypesByName.end()) {
-					const TypeInfo* original_nested_type = simple_nested_it->second;
-					if (original_nested_type->getStructInfo()) {
-						const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
-						FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
-						          " static members from nested class (simple name) ", simple_name);
-						for (const auto& static_member : original_struct_info->static_members) {
-							FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
-							nested_struct_info->addStaticMember(
-								static_member.getName(),
-								static_member.type,
-								static_member.type_index,
-								static_member.size,
-								static_member.alignment,
-								static_member.access,
-								static_member.initializer,
-								static_member.cv_qualifier,
-								static_member.reference_qualifier,
-								static_member.pointer_depth
-							);
-						}
-					}
-				} else {
-					FLASH_LOG(Templates, Debug, "Original nested class not found in gTypesByName");
+				if (simple_nested_it != gTypesByName.end() && simple_nested_it->second->getStructInfo()) {
+					copy_nested_static_members(*simple_nested_it->second->getStructInfo());
 				}
 			}
 			
@@ -4533,8 +4607,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
+			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
+			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
 	}
 
@@ -4839,6 +4915,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.cv_qualifier,
 			static_member.reference_qualifier,
 			static_member.pointer_depth);
+	}
+
+	for (auto& nested_class_node : instantiated_nested_class_nodes) {
+		if (nested_class_node.is<StructDeclarationNode>()) {
+			nested_class_node.as<StructDeclarationNode>().set_enclosing_class(&instantiated_struct_ref);
+		}
+		instantiated_struct_ref.add_nested_class(nested_class_node);
 	}
 	
 	// Log lazy instantiation status (already determined earlier in the function)

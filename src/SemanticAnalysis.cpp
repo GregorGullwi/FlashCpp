@@ -1614,6 +1614,12 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 			normalizeFunctionDeclaration(friend_function.as<FunctionDeclarationNode>());
 		}
 	}
+
+	for (const auto& nested_class_node : decl.nested_classes()) {
+		if (nested_class_node.is<StructDeclarationNode>()) {
+			normalizeStructDeclaration(nested_class_node.as<StructDeclarationNode>());
+		}
+	}
 }
 
 void SemanticAnalysis::normalizeNamespace(const NamespaceDeclarationNode& ns) {
