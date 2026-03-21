@@ -1138,6 +1138,20 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 
 **Suite:** 1628 pass / 0 fail / 67 expected-fail.
 
+### Post-Phase-18 cleanup (continued): own-type check, computeMinRequiredArgs, throw/catch
+
+**Goal:** Fix two correctness bugs introduced by the earlier `min_required <= 1` relaxation, and tighten the deleted assignment operator detection.
+
+**Bugs fixed:**
+1. `Parser_Decl_StructEnum.cpp:2768-2771` — copy/move ctor classification: added `param_type.type_index() == struct_type_info.type_index_` own-type check. Without this, a constructor like `Foo(const Bar&, int=0)` with `min_required==1` was incorrectly classified as a copy constructor (suppressing implicit copy ctor generation).
+2. `Parser_Decl_StructEnum.cpp:2898-2902` — inherited ctor filtering: added `base_struct_info->isOwnTypeIndex(param_type.type_index())` check. Without this, a base-class converting ctor like `Base(const SomeConfig&, int=0)` was wrongly skipped during `using Base::Base;` constructor inheritance.
+3. `Parser_Decl_StructEnum.cpp:2155` — deleted assignment operator detection: changed `!params.empty()` to `!params.empty() && computeMinRequiredArgs(params) <= 1`, so multi-required-arg operators (like `operator=(const Foo&, const Bar&)`) are not falsely detected as copy/move assignments.
+
+**Regression test added:**
+- `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
+
+**Suite:** 1629 pass / 0 fail / 67 expected-fail.
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.

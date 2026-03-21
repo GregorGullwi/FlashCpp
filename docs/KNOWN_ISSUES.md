@@ -109,6 +109,8 @@ Assignment operators with trailing default arguments (e.g.
 not recognized by these helpers. If such operators are ever used, the slow path
 will fail to match and the operator will not be found. The same applies to the
 assignment operator refinement in `Parser_Decl_StructEnum.cpp:2806`.
+(Note: the deleted assignment operator detection at `Parser_Decl_StructEnum.cpp:2155`
+was fixed to use `computeMinRequiredArgs(params) <= 1` in the post-Phase-18 cleanup.)
 
 ## Boolean negation + struct member access in chained if-statements
 
