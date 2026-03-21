@@ -1432,6 +1432,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				return {};
 			}
+			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+				// Fold expressions should normally be expanded during template
+				// substitution before sema/codegen sees them. Keep an explicit
+				// fallback here so remaining sema annotation paths match the
+				// documented roadmap behavior instead of silently dropping to the
+				// catch-all invalid result.
+				FLASH_LOG(General, Debug,
+					"SemanticAnalysis: FoldExpressionNode reached inferExpressionType; falling back to parser type resolution");
+				if (auto expr_type = parser_.get_expression_type(node); expr_type.has_value()) {
+					return canonicalizeType(*expr_type);
+				}
+				return {};
+			}
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {

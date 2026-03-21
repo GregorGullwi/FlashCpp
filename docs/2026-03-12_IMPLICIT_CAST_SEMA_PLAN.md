@@ -1224,6 +1224,24 @@ receive the expected arithmetic conversion slot.
 **Regression coverage:** added a runtime regression test for `int` member access
 feeding a `double` initialization through `obj.*pm`.
 
+### Follow-up slice ✅: explicit FoldExpressionNode sema fallback
+
+**Goal:** Remove the remaining low-risk `inferExpressionType` gap for
+`FoldExpressionNode` without duplicating template-substitution fold expansion in
+sema.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `inferExpressionType(FoldExpressionNode)` now has an explicit case that logs
+	  when an unexpanded fold reaches sema and falls back to
+	  `parser_.get_expression_type(...)`
+	- this keeps fold expressions on the same documented fallback path while
+	  making the behavior intentional and easier to debug
+
+**Regression coverage:** revalidated the existing fold-expression tests rather
+than adding a new runtime case, because fold expressions are still expected to
+be expanded during template instantiation before codegen.
+
 ### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
 
 **Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
@@ -1243,7 +1261,9 @@ clear local sources of truth.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`. These return invalid and fall back to parser type resolution or no annotation.
+- `inferExpressionType` still does not handle: `PackExpansionExprNode`. This
+  should normally be expanded during template substitution; surviving nodes
+  still fall back to parser type resolution or no annotation.
 
 ### Parallel rollout guidance
 
