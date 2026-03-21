@@ -266,4 +266,9 @@ private:
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
+
+	// Enclosing implicit-member context for bodies/default initializers currently
+	// being normalized. Used to type `IdentifierBinding::NonStaticMember`
+	// sema-first instead of falling back to parser-owned member-context lookup.
+	std::vector<TypeIndex> member_context_stack_;
 };
