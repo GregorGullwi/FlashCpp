@@ -1111,10 +1111,50 @@ ParseResult Parser::parse_lambda_expression() {
         lambda_is_constexpr,
         lambda_is_consteval
     );
+	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
+	if (!current_template_param_names_.empty() && !template_param_substitutions_.empty()) {
+		InlineVector<StringHandle, 4> outer_template_param_names;
+		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args;
+		outer_template_param_names.reserve(current_template_param_names_.size());
+		outer_template_args.reserve(current_template_param_names_.size());
+		for (StringHandle param_name : current_template_param_names_) {
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.param_name != param_name) {
+					continue;
+				}
+
+				TypeInfo::TemplateArgInfo info;
+				if (subst.is_value_param) {
+					info.base_type = subst.value_type;
+					info.value = subst.value;
+					info.is_value = true;
+				} else if (subst.is_type_param) {
+					info.base_type = subst.substituted_type.base_type;
+					info.type_index = subst.substituted_type.type_index;
+					info.pointer_depth = subst.substituted_type.pointer_depth;
+					info.pointer_cv_qualifiers = subst.substituted_type.pointer_cv_qualifiers;
+					info.cv_qualifier = subst.substituted_type.cv_qualifier;
+					info.ref_qualifier = subst.substituted_type.ref_qualifier;
+					info.is_array = subst.substituted_type.is_array;
+					info.array_size = subst.substituted_type.array_size;
+					info.dependent_name = subst.substituted_type.dependent_name;
+				} else {
+					continue;
+				}
+
+				outer_template_param_names.push_back(param_name);
+				outer_template_args.push_back(std::move(info));
+				break;
+			}
+		}
+		if (!outer_template_args.empty()) {
+			lambda_ref.set_outer_template_bindings(outer_template_param_names, outer_template_args);
+		}
+	}
 
     // Register the lambda closure type in the type system immediately
     // This allows auto type deduction to work
-    const auto& lambda = lambda_node.as<LambdaExpressionNode>();
+    const auto& lambda = lambda_ref;
     auto closure_name = lambda.generate_lambda_name();
 
     // Get captures from the lambda node (since we moved them above)

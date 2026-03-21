@@ -852,6 +852,48 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const FunctionDeclar
 	}
 }
 
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda) {
+	if (!lambda.has_outer_template_bindings()) {
+		return;
+	}
+
+	const auto& param_names = lambda.outer_template_param_names();
+	const auto& param_args = lambda.outer_template_args();
+	const size_t binding_count = std::min(param_names.size(), param_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
+void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info) {
+	const size_t binding_count = std::min(
+		lambda_info.outer_template_param_names.size(),
+		lambda_info.outer_template_args.size());
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = lambda_info.outer_template_param_names[i];
+		if (!param_name.isValid()) {
+			continue;
+		}
+
+		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(lambda_info.outer_template_args[i]);
+		if (desc.base_type == Type::Invalid) {
+			continue;
+		}
+
+		addLocalType(param_name, type_context_.intern(desc));
+	}
+}
+
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor) {
 	if (!ctor.has_outer_template_bindings()) {
 		return;
@@ -921,6 +963,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		popScope();
 		symbols_.exit_scope();
 	});
+	registerOuterTemplateBindingsInScope(lambda_info);
 
 	for (const auto& param_node : param_nodes) {
 		if (!param_node.is<DeclarationNode>()) {
@@ -1889,6 +1932,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				// Push a scope for lambda parameters so they are visible inside
 				// the body but do not leak into the enclosing scope.
 				pushScope();
+				registerOuterTemplateBindingsInScope(e);
 				for (const auto& param : e.parameters()) {
 					if (param.template is<DeclarationNode>()) {
 						const auto& decl = param.template as<DeclarationNode>();

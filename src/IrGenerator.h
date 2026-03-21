@@ -108,6 +108,8 @@ struct LambdaInfo {
 	// Generic lambda support (lambdas with auto parameters)
 	bool is_generic = false;                     // True if lambda has any auto parameters
 	std::vector<size_t> auto_param_indices;      // Indices of parameters with auto type
+	InlineVector<StringHandle, 4> outer_template_param_names;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args;
 	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
 	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
 	std::vector<ASTNode> resolved_param_nodes;
