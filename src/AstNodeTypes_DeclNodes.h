@@ -1504,6 +1504,9 @@ private:
 
 // C++17 Fold Expressions
 // Supports: (...op pack), (pack op...), (init op...op pack), (pack op...op init)
+// Phase-boundary note: this is a parser/template-substitution helper node. It
+// may legitimately live in parser-owned template state, but it is forbidden on
+// the ordinary post-parse expression surface that sema/codegen consume.
 class FoldExpressionNode {
 public:
 	enum class Direction { Left, Right };
@@ -1547,6 +1550,9 @@ private:
 
 // Pack expansion expression: expr...
 // Used in template argument contexts like (declval<Args>()...)
+// Phase-boundary note: this is also a parser/template-only helper on the
+// sema-owned post-parse surface. If it survives into ordinary expressions past
+// parsing/template substitution, that is a boundary violation.
 class PackExpansionExprNode {
 public:
 	explicit PackExpansionExprNode(ASTNode pattern, Token ellipsis_token)

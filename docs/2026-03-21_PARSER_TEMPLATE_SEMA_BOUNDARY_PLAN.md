@@ -74,6 +74,43 @@ After `Parser::parse()` returns and before `SemanticAnalysis::run()` starts:
 - sema can infer or read expression types without having to ask the parser to
   recompute them on demand in common paths
 
+## Phase 1 status
+
+This document's Phase 1 slice is now implemented as inventory + guardrails only.
+
+- the legal sema-owned post-parse expression surface is now documented in code
+  comments near `ExpressionNode`, `TemplateParameterReferenceNode`,
+  `FoldExpressionNode`, and `PackExpansionExprNode`
+- a lightweight checker now runs at the sema entry point and walks the
+  sema-owned post-parse AST surface before normalization begins
+- that checker reports surviving `FoldExpressionNode` /
+  `PackExpansionExprNode` instances as boundary violations, but deliberately
+  keeps the existing bridge/fallback behavior in place for now
+- current `SemanticAnalysis.cpp` uses of `parser_.get_expression_type(...)` are
+  now inventory-tagged in code with brief classification comments
+
+### Legal post-parse / pre-sema expression-node surface (Phase 1)
+
+For Phase 1, the legal surface is defined in terms of the AST that sema is about
+to own and walk, not every parser-internal template artifact that may still be
+stored elsewhere in parser-owned state.
+
+- legal on the sema-owned surface:
+  - ordinary `ExpressionNode` variants that represent runtime or sema-visible
+    expressions
+  - `TemplateParameterReferenceNode`, which is still a supported surviving
+    template-related node in sema/codegen today
+- forbidden on the sema-owned surface:
+  - `FoldExpressionNode`
+  - `PackExpansionExprNode`
+- intentionally out of scope for the Phase 1 checker:
+  - parser-owned template declarations / deferred template bodies that sema does
+    not yet walk directly
+
+If fold or pack-expansion helper nodes are found on the sema-owned surface after
+parsing, that is now treated as an explicit boundary violation report instead of
+an undocumented accidental fallback.
+
 ## Workstreams
 
 ### Workstream 1: make post-parse AST legality explicit
@@ -152,6 +189,20 @@ Then migrate those buckets one at a time:
 2. prefer resolved AST annotations over live parser recomputation
 3. leave only narrow fallback sites that are explicitly documented
 
+#### Phase 1 inventory of current `SemanticAnalysis.cpp` parser fallbacks
+
+| Site | Current purpose | Phase 1 classification |
+| --- | --- | --- |
+| `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | temporary auto-return bridge |
+| `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
+| `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
+| `inferExpressionType(FoldExpressionNode)` | keep sema annotation paths alive if an illegal fold survives | transition-only invariant bridge |
+| `inferExpressionType(QualifiedIdentifierNode)` | recover namespace/class-qualified lookup results | parser-owned qualified-lookup fact |
+| `inferExpressionType(LambdaExpressionNode)` | recover closure type before sema can always observe generated lambda type info locally | temporary closure-materialization bridge |
+| `tryResolveCallableOperator()` | build overload-resolution argument types when local sema inference has gaps | local inference-gap bridge |
+| `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge |
+| `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge |
+
 ### Workstream 4: add an explicit post-parse invariant check
 
 Introduce a lightweight validation pass, or a debug-only verification mode,
@@ -186,9 +237,11 @@ Important coverage areas:
 
 ### Phase 1: inventory and guardrails
 
-- document legal post-parse expression forms
-- audit `parser_.get_expression_type(...)` usage in `SemanticAnalysis.cpp`
-- add a narrow invariant checker for surviving fold/pack nodes
+Implemented in this slice:
+
+- documented legal post-parse expression forms for the sema-owned surface
+- audited `parser_.get_expression_type(...)` usage in `SemanticAnalysis.cpp`
+- added a narrow invariant checker for surviving fold/pack nodes
 
 ### Phase 2: seal template-only nodes
 
