@@ -1170,6 +1170,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 			if (isPlaceholderAutoType(return_type.type())) {
 				pushScope();
 				auto cleanup = ScopeGuard([this]() { popScope(); });
+				registerOuterTemplateBindingsInScope(func);
 				for (const auto& param_node : func.parameter_nodes()) {
 					if (!param_node.is<DeclarationNode>()) {
 						continue;
