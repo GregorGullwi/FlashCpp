@@ -167,6 +167,9 @@ Phase 3 has started with two low-risk local fallback removals:
 - instantiated struct AST now retains member/static-member expressions plus
   outer-template bindings, and sema walks those struct-owned expressions instead
   of skipping them entirely
+- `deducePlaceholderReturnType()` now relies on sema-owned inference only; the
+  documented parser fallback helper remains only in overload-resolution
+  argument typing and the still-documented direct expression fallback sites
 
 ## Workstreams
 
@@ -251,7 +254,7 @@ Then migrate those buckets one at a time:
 
 | Site | Current purpose | Phase 1 classification |
 | --- | --- | --- |
-| `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | narrowed auto-return bridge: function/lambda deduction now sees outer-template bindings before using the documented fallback |
+| `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction | sema-owned now: function/lambda deduction seeds outer-template bindings before inference, so this site no longer uses parser fallback |
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators; parser fallback remains for implicit-member/unresolved identifiers |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | narrowed bridge: function/ctor/dtor/lambda/variable/struct outer-template bindings now seed sema scope; parser fallback remains for contexts without that metadata |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge (now sema-first) |

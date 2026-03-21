@@ -1257,13 +1257,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			return materializeTypeSpecifier(type_context_.get(inferred_type_id));
 		}
 
-		// Classification: temporary auto-return bridge. Keep parser fallback
-		// limited to the documented parser-owned expression forms that sema still
-		// cannot reconstruct locally.
-		auto expr_type = getDocumentedParserTypeFallback(expr_node);
-		if (expr_type.has_value() && !isPlaceholderAutoType(expr_type->type())) {
-			return expr_type;
-		}
+		// Function and lambda callers seed parameter and outer-template bindings
+		// before auto-return deduction, so this path now relies on sema-owned
+		// inference only.
 		return std::nullopt;
 	};
 
