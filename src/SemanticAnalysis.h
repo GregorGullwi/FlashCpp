@@ -136,6 +136,7 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);

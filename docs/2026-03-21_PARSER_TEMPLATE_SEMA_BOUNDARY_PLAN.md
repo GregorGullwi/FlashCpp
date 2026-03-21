@@ -135,6 +135,9 @@ Phase 3 has started with two low-risk local fallback removals:
   immediate lambda-closure registration in `gTypesByName`
 - `tryResolveCallableOperator()` now uses sema-owned inference exclusively when
   trying to build overload-resolution argument types
+- constructor-overload argument typing now goes through a shared sema-first
+  helper, with parser fallback retained only for the remaining parser-owned
+  lookup facts
 
 ## Workstreams
 
@@ -223,8 +226,8 @@ Then migrate those buckets one at a time:
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
 | `inferExpressionType(QualifiedIdentifierNode)` | recover namespace/class-qualified lookup results | parser-owned qualified-lookup fact |
-| `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge |
-| `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge |
+| `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge (now sema-first) |
+| `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge (now sema-first) |
 
 ### Workstream 4: add an explicit post-parse invariant check
 

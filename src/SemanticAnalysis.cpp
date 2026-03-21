@@ -2302,6 +2302,23 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	return {};
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(const ASTNode& arg) {
+	if (const CanonicalTypeId inferred_type_id = inferExpressionType(arg)) {
+		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_type_id));
+		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		return arg_type;
+	}
+
+	// Phase 3 bridge: keep a narrow parser fallback only for remaining
+	// parser-owned lookup facts that sema still does not reconstruct locally.
+	if (auto parser_type = parser_.get_expression_type(arg); parser_type.has_value()) {
+		adjust_argument_type_for_overload_resolution(arg, *parser_type);
+		return parser_type;
+	}
+
+	return std::nullopt;
+}
+
 // --- Scoped enum diagnostic helper ---
 // C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 
@@ -3017,19 +3034,15 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(num_args);
 	arguments.visit([&](ASTNode arg) {
-		// Classification: constructor-overload bridge. Constructor argument typing
-		// still begins with parser-owned facts before sema inference takes over for
-		// annotation and verification.
-		auto arg_type_opt = parser_.get_expression_type(arg);
+		// Classification: constructor-overload bridge. Prefer sema-owned argument
+		// inference first; keep parser fallback only for the remaining lookup facts
+		// that sema does not yet mirror locally.
+		auto arg_type_opt = buildOverloadResolutionArgType(arg);
 		if (!arg_type_opt.has_value()) {
 			arg_types.clear();
 			return;
 		}
-		TypeSpecifierNode arg_type = *arg_type_opt;
-		// Mirror what codegen does: adjust lvalue arguments so that reference
-		// overloads are preferred when the argument is an lvalue.
-		adjust_argument_type_for_overload_resolution(arg, arg_type);
-		arg_types.push_back(std::move(arg_type));
+		arg_types.push_back(std::move(*arg_type_opt));
 	});
 	if (arg_types.size() != num_args) return;
 
@@ -3075,25 +3088,13 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	for (size_t arg_idx = 0; arg_idx < initializers.size(); ++arg_idx) {
 		const ASTNode& arg = initializers[arg_idx];
 		// Classification: constructor-overload bridge for braced initialization.
-		// This remains parser-first, with a sema fallback immediately below for
-		// expression forms that sema can already infer on its own.
-		auto arg_type_opt = parser_.get_expression_type(arg);
-		if (!arg_type_opt.has_value()) {
-			// Parser couldn't resolve the type — fall back to inferExpressionType()
-			// + materializeTypeSpecifier() so the normal resolve_constructor_overload
-			// path can still run for all arguments (including scoped enum values and
-			// constructors with default parameters).
-			const CanonicalTypeId inferred_type_id = inferExpressionType(arg);
-			if (inferred_type_id) {
-				arg_type_opt = materializeTypeSpecifier(type_context_.get(inferred_type_id));
-			}
-		}
+		// This now shares the same sema-first argument typing path as ordinary
+		// constructor calls.
+		auto arg_type_opt = buildOverloadResolutionArgType(arg);
 		if (!arg_type_opt.has_value()) {
 			return;
 		}
-		TypeSpecifierNode arg_type = *arg_type_opt;
-		adjust_argument_type_for_overload_resolution(arg, arg_type);
-		arg_types.push_back(std::move(arg_type));
+		arg_types.push_back(std::move(*arg_type_opt));
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
