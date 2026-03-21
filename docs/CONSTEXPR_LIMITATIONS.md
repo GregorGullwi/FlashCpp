@@ -259,10 +259,29 @@ constexpr int find_value(int key) {
 }
 
 static_assert(find_value(2) == 20);  // ✅ Works
+
+struct ConstRange {
+    int values[4];
+    constexpr const int* begin() const { return &values[0]; }
+    constexpr const int* end() const { return &values[4]; }
+};
+
+constexpr int sum_range() {
+    int sum = 0;
+    for (int value : ConstRange{{1, 2, 3, 4}}) {
+        sum += value;
+    }
+    return sum;
+}
+
+static_assert(sum_range() == 10);  // ✅ Works
 ```
 
 Range-based for loops over local arrays (both primitive and struct types) are supported.
-Range-based for over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) is not yet supported.
+Range-based for over constexpr objects with `begin()`/`end()` is also supported when
+those functions return pointers (including local objects, member-access ranges, and
+returned temporary objects materialized for the loop). Custom iterator-object returns
+from `begin()`/`end()` are still a remaining limitation.
 
 ### ✅ Constexpr Recursion
 
@@ -469,7 +488,7 @@ Array support is still incomplete in more complex cases.
 **Known remaining limitations include:**
 
 1. **Inferred array size in richer contexts**: straightforward local inferred-size arrays now work, including simple local scalar arrays and simple local aggregate-array member reads, but `int arr[] = {1,2,3}` can still fail in more complex parser/evaluator contexts
-2. **Range-based for over arrays**: range-based for loops over local arrays now work in constexpr, but over objects with `begin()`/`end()` methods are not yet supported
+2. **Range-based for over begin/end objects**: constexpr range-for now supports objects whose `begin()`/`end()` return pointers, but richer iterator-object types (custom iterator structs/classes) are still unsupported
 
 **Guidance for array access:** Prefer explicit array sizes when practical, but straightforward inferred-size local array patterns are now supported too.
 
@@ -840,10 +859,10 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Sub-word struct returns from constexpr functions: structs smaller than a machine word (e.g., 3-byte `Color{r,g,b}`) are now correctly propagated in all bytes to both compile-time and runtime call sites
 
 ### Medium
-- ⚠️ Constexpr free function calls (basic support exists)
+- ⚠️ Constexpr free function calls (basic support exists; returned temporary begin/end ranges now work in supported pointer-iterator shapes)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
-- ⚠️ Range-based for loops over objects with `begin()`/`end()` (e.g., `std::array`, `std::vector`) are not yet supported in constexpr
+- ⚠️ Range-based for loops over objects with `begin()`/`end()` are partially supported in constexpr when `begin()`/`end()` return pointers; custom iterator objects (such as richer `std::array` / `std::vector`-style iterator types) remain unsupported
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).

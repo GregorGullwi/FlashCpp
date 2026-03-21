@@ -1289,18 +1289,28 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				// &arr[i]: address of array element → pointer with offset
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
 					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
+					if (arr_name.empty() && subscript->array_expr().is<ExpressionNode>()) {
+						const ExpressionNode& array_expr = subscript->array_expr().as<ExpressionNode>();
+						if (const auto* member_access = std::get_if<MemberAccessNode>(&array_expr)) {
+							const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
+							if (object_id && object_id->name() == "this") {
+								arr_name = member_access->member_name();
+							}
+						}
+					}
 					if (!arr_name.empty()) {
 						auto idx_result = evaluate_expression_with_bindings(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the whole array so pointer arithmetic can still index it
+						// correctly after the original binding goes out of scope.
 						auto arr_it = bindings.find(arr_name);
 						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
 							const EvalResult& arr = arr_it->second;
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
-								ptr_result.array_elements = {arr.array_elements[idx]};
+							if (!arr.array_elements.empty()) {
+								ptr_result.array_elements = arr.array_elements;
+							}
 						}
 						return ptr_result;
 					}
@@ -1462,18 +1472,28 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				// &arr[i]: address of array element → pointer with offset
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
 					std::string_view arr_name = getIdentifierNameFromAstNode(subscript->array_expr());
+					if (arr_name.empty() && subscript->array_expr().is<ExpressionNode>()) {
+						const ExpressionNode& array_expr = subscript->array_expr().as<ExpressionNode>();
+						if (const auto* member_access = std::get_if<MemberAccessNode>(&array_expr)) {
+							const IdentifierNode* object_id = tryGetIdentifier(member_access->object());
+							if (object_id && object_id->name() == "this") {
+								arr_name = member_access->member_name();
+							}
+						}
+					}
 					if (!arr_name.empty()) {
 						auto idx_result = recursive_eval(subscript->index_expr(), bindings, context);
 						if (!idx_result.success()) return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the whole array so pointer arithmetic can still index it
+						// correctly after the original binding goes out of scope.
 						auto arr_it = bindings.find(arr_name);
 						if (arr_it != bindings.end() && arr_it->second.is_array && elem_offset >= 0) {
 							const EvalResult& arr = arr_it->second;
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr.array_elements.empty() && idx < arr.array_elements.size())
-								ptr_result.array_elements = {arr.array_elements[idx]};
+							if (!arr.array_elements.empty()) {
+								ptr_result.array_elements = arr.array_elements;
+							}
 						}
 						return ptr_result;
 					}
@@ -1788,11 +1808,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				EvalResult result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success()) {
+					result.array_elements = lhs.array_elements;
+				}
+				return result;
 			}
 			if (!lhs_is_ptr && rhs_is_ptr) {
 				// n + ptr
@@ -1800,11 +1824,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				EvalResult result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(rhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success()) {
+					result.array_elements = rhs.array_elements;
+				}
+				return result;
 			}
 			return EvalResult::error("Addition of two pointers is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 		}
@@ -1815,11 +1843,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				EvalResult result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success()) {
+					result.array_elements = lhs.array_elements;
+				}
+				return result;
 			}
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array
@@ -3932,7 +3964,8 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	const StructTypeInfo* struct_info,
 	const InitializerListNode& init_list,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings) {
 	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
 		std::string_view mname;
@@ -3949,13 +3982,34 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 
 		const ASTNode& initializer = init_list.initializers()[mi];
 			if (member_info) {
-				auto val = materialize_member_initializer_value(*member_info, initializer, context);
+				EvalResult val;
+				if (member_info->is_array && initializer.is<InitializerListNode>()) {
+					const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
+					val = Evaluator::materialize_array_value(
+						member_info->type,
+						member_info->type_index,
+						member_init_list,
+						context,
+						evaluation_bindings);
+				} else if (evaluation_bindings) {
+					val = Evaluator::evaluate_expression_with_bindings_const(
+						initializer,
+						*evaluation_bindings,
+						context);
+				} else {
+					val = materialize_member_initializer_value(*member_info, initializer, context);
+				}
 				if (!val.success()) return val;
 				bindings[mname] = std::move(val);
 				continue;
 		}
 
-		auto val = evaluate(initializer, context);
+		auto val = evaluation_bindings
+			? Evaluator::evaluate_expression_with_bindings_const(
+				initializer,
+				*evaluation_bindings,
+				context)
+			: evaluate(initializer, context);
 		if (!val.success()) return val;
 		bindings[mname] = val;
 	}

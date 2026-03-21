@@ -438,7 +438,8 @@ public:
 			const StructTypeInfo* struct_info,
 			const InitializerListNode& init_list,
 			std::unordered_map<std::string_view, EvalResult>& bindings,
-			EvaluationContext& context);
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings = nullptr);
 		static EvalResult bind_members_from_constructor_initializers(
 			const StructTypeInfo* struct_info,
 			const ConstructorDeclarationNode& ctor_decl,

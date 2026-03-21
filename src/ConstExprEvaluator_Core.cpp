@@ -469,10 +469,24 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
 	// For scalar pointers: array_elements = {pointed_value}, offset = 0.
-	// For array-element pointers: array_elements = {element_at_offset}, any offset.
-	// In both cases, array_elements[0] is exactly what this pointer dereferences to.
+	// For array pointers/materialized member-array pointers, array_elements may
+	// contain the full array snapshot so the current offset can still be applied
+	// after the original binding has gone out of scope.
 	if (!ptr.array_elements.empty()) {
-		return ptr.array_elements[0];
+		if (offset < 0) {
+			return EvalResult::error("Negative pointer offset in dereference");
+		}
+		size_t idx = static_cast<size_t>(offset);
+		if (ptr.array_elements.size() == 1) {
+			if (idx != 0) {
+				return EvalResult::error("Array index out of bounds in constant expression");
+			}
+			return ptr.array_elements[0];
+		}
+		if (idx >= ptr.array_elements.size()) {
+			return EvalResult::error("Array index out of bounds in constant expression");
+		}
+		return ptr.array_elements[idx];
 	}
 	return dereference_constexpr_pointer(var_name, context, offset);
 }
@@ -2940,14 +2954,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						break;
 					}
 				}
-				size_t positional_idx = 0;
-				for (size_t i = 0; i < init_list.size() && positional_idx < si->members.size(); ++i) {
-					const auto& member = si->members[positional_idx++];
-					auto element_result = evaluate_expression_with_bindings(
-						init_list.initializers()[i], bindings, context);
-					if (!element_result.success()) return element_result;
-					result.object_member_bindings[StringTable::getStringView(member.getName())] =
-						std::move(element_result);
+				auto bind_result = bind_members_from_initializer_list(
+					si,
+					init_list,
+					result.object_member_bindings,
+					context,
+					&bindings);
+				if (!bind_result.success()) {
+					return bind_result;
 				}
 				return result;
 			}
@@ -3274,15 +3288,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 		}
 		
-		// Evaluate the range expression to get the array
+		// Evaluate the range expression once, matching range-for materialization semantics.
 		auto range_result = evaluate_expression_with_bindings(ranged_for.get_range_expression(), bindings, context);
 		if (!range_result.success()) {
 			return range_result;
-		}
-		
-		// Only support array iteration for now
-		if (!range_result.is_array || range_result.array_elements.empty()) {
-			return EvalResult::error("Range-based for: range is not an array or has no elements in constexpr context");
 		}
 		
 		// Get the loop variable name from the declaration
@@ -3302,30 +3311,135 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		// when the loop ends (also handles the shadowing case if the outer scope
 		// already has a variable with the same name).
 		loop_guard.scope.on_declare(loop_var_name, range_decl_bindings);
-		
-		// Iterate over array elements
-		for (const EvalResult& element : range_result.array_elements) {
-			// Check complexity limit
+
+		auto execute_loop_body = [&](const EvalResult& element) -> EvalResult {
+			range_decl_bindings[loop_var_name] = element;
+			return evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
+		};
+
+		if (range_result.is_array) {
+			const size_t element_count = !range_result.array_elements.empty()
+				? range_result.array_elements.size()
+				: range_result.array_values.size();
+
+			for (size_t i = 0; i < element_count; ++i) {
+				if (++context.step_count > context.max_steps) {
+					return EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop");
+				}
+
+				EvalResult element = !range_result.array_elements.empty()
+					? range_result.array_elements[i]
+					: EvalResult::from_int(range_result.array_values[i]);
+
+				auto body_result = execute_loop_body(element);
+				if (body_result.success()) {
+					return body_result;
+				}
+				if (isBreakExecuted(body_result)) {
+					break;
+				}
+				if (isContinueExecuted(body_result)) {
+					continue;
+				}
+				if (!isStatementExecutedWithoutReturn(body_result)) {
+					return body_result;
+				}
+			}
+
+			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+		}
+
+		if (!range_result.object_type_index.is_valid() || range_result.object_type_index.value >= gTypeInfo.size()) {
+			return EvalResult::error("Range-based for: range is not an array or supported begin/end object in constexpr context");
+		}
+
+		const StructTypeInfo* range_struct_info = gTypeInfo[range_result.object_type_index.value].getStructInfo();
+		if (!range_struct_info) {
+			return EvalResult::error("Range-based for: range is not an array or supported begin/end object in constexpr context");
+		}
+
+		const StructMemberFunction* begin_func = range_struct_info->findMemberFunction("begin");
+		const StructMemberFunction* end_func = range_struct_info->findMemberFunction("end");
+		if (!begin_func || !end_func ||
+			!begin_func->function_decl.is<FunctionDeclarationNode>() ||
+			!end_func->function_decl.is<FunctionDeclarationNode>()) {
+			return EvalResult::error("Range-based for: constexpr begin()/end() not found for range object");
+		}
+
+		const FunctionDeclarationNode& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
+		const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
+		if (!begin_func_decl.decl_node().type_node().is<TypeSpecifierNode>() ||
+			!end_func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
+			return EvalResult::error("Range-based for: begin()/end() have invalid return types in constexpr context");
+		}
+
+		const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode& end_return_type = end_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		if (begin_return_type.pointer_depth() == 0 || end_return_type.pointer_depth() == 0) {
+			return EvalResult::error("Range-based for: constexpr begin()/end() currently require pointer-returning iterators");
+		}
+
+		static size_t constexpr_range_object_counter = 0;
+		StringBuilder range_name_builder;
+		range_name_builder.append("__constexpr_range_").append(constexpr_range_object_counter++);
+		std::string_view materialized_range_name = range_name_builder.commit();
+		loop_guard.scope.on_declare(materialized_range_name, range_decl_bindings);
+		range_decl_bindings[materialized_range_name] = range_result;
+
+		Token range_token(Token::Type::Identifier, materialized_range_name, 0, 0, 0);
+		ASTNode range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+
+		auto make_range_member_call = [&](const FunctionDeclarationNode& func_decl) -> ASTNode {
+			ChunkedVector<ASTNode> no_args;
+			return ASTNode::emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(range_object_expr, func_decl, std::move(no_args), Token()));
+		};
+
+		EvalResult begin_iter = evaluate_expression_with_bindings(make_range_member_call(begin_func_decl), bindings, context);
+		if (!begin_iter.success()) {
+			return begin_iter;
+		}
+		EvalResult end_iter = evaluate_expression_with_bindings(make_range_member_call(end_func_decl), bindings, context);
+		if (!end_iter.success()) {
+			return end_iter;
+		}
+		if (!begin_iter.pointer_to_var.isValid() || !end_iter.pointer_to_var.isValid()) {
+			return EvalResult::error("Range-based for: constexpr begin()/end() currently require pointer-returning iterators");
+		}
+
+		while (true) {
 			if (++context.step_count > context.max_steps) {
 				return EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop");
 			}
-			
-			// Bind the loop variable to the current element (overwrites on each iteration)
-			range_decl_bindings[loop_var_name] = element;
-			
-			// Execute the body
-			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
+
+			auto cond_result = apply_binary_op(begin_iter, end_iter, "!=", &context, &bindings);
+			if (!cond_result.success()) {
+				return cond_result;
+			}
+			if (!cond_result.as_bool()) {
+				break;
+			}
+
+			auto element = deref_pointer_with_bindings(begin_iter, bindings, context);
+			if (!element.success()) {
+				return element;
+			}
+
+			auto body_result = execute_loop_body(element);
 			if (body_result.success()) {
 				return body_result;
 			}
 			if (isBreakExecuted(body_result)) {
-				break;  // break exits the loop
+				break;
 			}
-			if (isContinueExecuted(body_result)) {
-				continue;  // continue goes to next element
-			}
-			if (!isStatementExecutedWithoutReturn(body_result)) {
+			if (!isContinueExecuted(body_result) &&
+				!isStatementExecutedWithoutReturn(body_result)) {
 				return body_result;
+			}
+
+			begin_iter = apply_binary_op(begin_iter, EvalResult::from_int(1), "+", &context, &bindings);
+			if (!begin_iter.success()) {
+				return begin_iter;
 			}
 		}
 		
