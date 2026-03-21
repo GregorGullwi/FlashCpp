@@ -144,6 +144,10 @@ Phase 3 has started with two low-risk local fallback removals:
 - `inferExpressionType(IdentifierNode)` now recovers globals/functions/static
   members/enumerator declarations from sema's `symbols_` plus AST binding
   metadata; parser fallback remains only for implicit-member/unresolved cases
+- the broad parser fallbacks in auto-return deduction and constructor
+  overload-argument typing now route through a shared helper that only permits
+  parser typing for `TemplateParameterReferenceNode` and unresolved
+  `IdentifierNode` forms that still need parser-owned context
 
 ## Workstreams
 

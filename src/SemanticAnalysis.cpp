@@ -1080,10 +1080,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 			return materializeTypeSpecifier(type_context_.get(inferred_type_id));
 		}
 
-		// Classification: temporary auto-return bridge. This still asks the parser
-		// for return-expression facts when sema's local inference surface is not
-		// yet complete for the expression in question.
-		auto expr_type = parser_.get_expression_type(expr_node);
+		// Classification: temporary auto-return bridge. Keep parser fallback
+		// limited to the documented parser-owned expression forms that sema still
+		// cannot reconstruct locally.
+		auto expr_type = getDocumentedParserTypeFallback(expr_node);
 		if (expr_type.has_value() && !isPlaceholderAutoType(expr_type->type())) {
 			return expr_type;
 		}
@@ -2391,6 +2391,27 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	return {};
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::getDocumentedParserTypeFallback(const ASTNode& node) {
+	if (!node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+		if (identifier->binding() == IdentifierBinding::NonStaticMember ||
+			identifier->binding() == IdentifierBinding::Unresolved) {
+			return parser_.get_expression_type(node);
+		}
+		return std::nullopt;
+	}
+
+	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+		return parser_.get_expression_type(node);
+	}
+
+	return std::nullopt;
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(const ASTNode& arg) {
 	if (const CanonicalTypeId inferred_type_id = inferExpressionType(arg)) {
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_type_id));
@@ -2398,9 +2419,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		return arg_type;
 	}
 
-	// Phase 3 bridge: keep a narrow parser fallback only for remaining
-	// parser-owned lookup facts that sema still does not reconstruct locally.
-	if (auto parser_type = parser_.get_expression_type(arg); parser_type.has_value()) {
+	// Phase 3 bridge: keep a narrow parser fallback only for the remaining
+	// documented parser-owned expression forms.
+	if (auto parser_type = getDocumentedParserTypeFallback(arg); parser_type.has_value()) {
 		adjust_argument_type_for_overload_resolution(arg, *parser_type);
 		return parser_type;
 	}
