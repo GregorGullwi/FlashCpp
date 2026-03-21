@@ -93,6 +93,89 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 	return result;
 }
 
+std::optional<size_t> try_get_constexpr_pointer_upper_bound(
+	std::string_view var_name,
+	EvaluationContext* context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	if (bindings) {
+		auto binding_it = bindings->find(var_name);
+		if (binding_it != bindings->end()) {
+			const EvalResult& bound = binding_it->second;
+			if (bound.is_array) {
+				if (!bound.array_elements.empty()) {
+					return bound.array_elements.size();
+				}
+				if (!bound.array_values.empty()) {
+					return bound.array_values.size();
+				}
+			}
+			return size_t{0};
+		}
+	}
+
+	if (!context || !context->symbols) {
+		return std::nullopt;
+	}
+
+	auto symbol = context->symbols->lookup(var_name);
+	if (!symbol.has_value() && context->global_symbols) {
+		symbol = context->global_symbols->lookup(var_name);
+	}
+	if (!symbol.has_value() || !symbol->is<VariableDeclarationNode>()) {
+		return std::nullopt;
+	}
+
+	const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+	if (!var_decl.is_constexpr()) {
+		return std::nullopt;
+	}
+
+	if (!var_decl.declaration().is_array()) {
+		return size_t{0};
+	}
+
+	if (const auto array_size = var_decl.declaration().array_size(); array_size.has_value()) {
+		const ASTNode& size_node = array_size.value();
+		if (size_node.is<NumericLiteralNode>()) {
+			const auto literal_value = size_node.as<NumericLiteralNode>().value();
+			if (const auto* ull_value = std::get_if<unsigned long long>(&literal_value)) {
+				return static_cast<size_t>(*ull_value);
+			}
+		}
+	}
+
+	const auto& initializer = var_decl.initializer();
+	if (initializer.has_value() && initializer->is<InitializerListNode>()) {
+		return initializer->as<InitializerListNode>().initializers().size();
+	}
+
+	return std::nullopt;
+}
+
+EvalResult make_checked_constexpr_pointer_result(
+	std::string_view var_name,
+	int64_t offset,
+	EvaluationContext* context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	if (offset < 0) {
+		return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) +
+			" outside the valid range in constant expression");
+	}
+
+	const auto upper_bound = try_get_constexpr_pointer_upper_bound(var_name, context, bindings);
+	if (!upper_bound.has_value()) {
+		return EvalResult::from_pointer(var_name, offset);
+	}
+
+	if (static_cast<uint64_t>(offset) > static_cast<uint64_t>(*upper_bound)) {
+		return EvalResult::error("Pointer arithmetic produced offset " + std::to_string(offset) +
+			" outside the valid range [0, " + std::to_string(*upper_bound) +
+			"] for '" + std::string(var_name) + "' in constant expression");
+	}
+
+	return EvalResult::from_pointer(var_name, offset);
+}
+
 // Returns the result type after C++ usual arithmetic conversions, for use in
 // binary arithmetic results.  Returns nullopt when either operand lacks an
 // exact_type (caller should produce an untyped result in that case).
@@ -1047,15 +1130,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						// Apply the operation
 						EvalResult new_value;
 						if (op == "+=") {
-							new_value = apply_binary_op(current, rhs_result, "+");
+							new_value = apply_binary_op(current, rhs_result, "+", &context, &bindings);
 						} else if (op == "-=") {
-							new_value = apply_binary_op(current, rhs_result, "-");
+							new_value = apply_binary_op(current, rhs_result, "-", &context, &bindings);
 						} else if (op == "*=") {
-							new_value = apply_binary_op(current, rhs_result, "*");
+							new_value = apply_binary_op(current, rhs_result, "*", &context, &bindings);
 						} else if (op == "/=") {
-							new_value = apply_binary_op(current, rhs_result, "/");
+							new_value = apply_binary_op(current, rhs_result, "/", &context, &bindings);
 						} else if (op == "%=") {
-							new_value = apply_binary_op(current, rhs_result, "%");
+							new_value = apply_binary_op(current, rhs_result, "%", &context, &bindings);
 						}
 						
 						if (!new_value.success()) return new_value;
@@ -1089,7 +1172,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		if (!lhs_result.success()) return lhs_result;
 		if (!rhs_result.success()) return rhs_result;
 		
-		return apply_binary_op(lhs_result, rhs_result, bin_op.op());
+		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}
 	
 	// Handle unary operators (including ++ and --)
@@ -1141,9 +1224,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					EvalResult one = EvalResult::from_int(1);
 					EvalResult new_value;
 					if (op == "++") {
-						new_value = apply_binary_op(current, one, "+");
+						new_value = apply_binary_op(current, one, "+", &context, &bindings);
 					} else {
-						new_value = apply_binary_op(current, one, "-");
+						new_value = apply_binary_op(current, one, "-", &context, &bindings);
 					}
 					
 					if (!new_value.success()) return new_value;
@@ -1338,7 +1421,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!lhs_result.success()) return lhs_result;
 		if (!rhs_result.success()) return rhs_result;
 		
-		return apply_binary_op(lhs_result, rhs_result, bin_op.op());
+		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}
 	
 	// For unary operators
@@ -1628,7 +1711,10 @@ std::optional<long long> Evaluator::safe_shr(long long a, long long b, int width
 }
 
 // Helper to apply binary operators
-EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& rhs, std::string_view op) {
+EvalResult Evaluator::apply_binary_op(
+	const EvalResult& lhs, const EvalResult& rhs, std::string_view op,
+	EvaluationContext* context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
 	// Handle operations involving constexpr pointers.
 	// Valid constexpr pointers (pointer_to_var.isValid()) are always non-null since they
 	// represent address-of named constexpr variables.  nullptr evaluates to integer 0.
@@ -1682,24 +1768,42 @@ EvalResult Evaluator::apply_binary_op(const EvalResult& lhs, const EvalResult& r
 		if (op == "+") {
 			if (lhs_is_ptr && !rhs_is_ptr) {
 				// ptr + n
-				return EvalResult::from_pointer(
+				const auto new_offset = safe_add(lhs.pointer_offset, rhs.as_int());
+				if (!new_offset.has_value()) {
+					return EvalResult::error("Signed integer overflow in constant expression");
+				}
+				return make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
-					lhs.pointer_offset + rhs.as_int());
+					*new_offset,
+					context,
+					bindings);
 			}
 			if (!lhs_is_ptr && rhs_is_ptr) {
 				// n + ptr
-				return EvalResult::from_pointer(
+				const auto new_offset = safe_add(rhs.pointer_offset, lhs.as_int());
+				if (!new_offset.has_value()) {
+					return EvalResult::error("Signed integer overflow in constant expression");
+				}
+				return make_checked_constexpr_pointer_result(
 					StringTable::getStringView(rhs.pointer_to_var),
-					rhs.pointer_offset + lhs.as_int());
+					*new_offset,
+					context,
+					bindings);
 			}
 			return EvalResult::error("Addition of two pointers is not allowed in constant expressions");
 		}
 		if (op == "-") {
 			if (lhs_is_ptr && !rhs_is_ptr) {
 				// ptr - n
-				return EvalResult::from_pointer(
+				const auto new_offset = safe_sub(lhs.pointer_offset, rhs.as_int());
+				if (!new_offset.has_value()) {
+					return EvalResult::error("Signed integer overflow in constant expression");
+				}
+				return make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
-					lhs.pointer_offset - rhs.as_int());
+					*new_offset,
+					context,
+					bindings);
 			}
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array

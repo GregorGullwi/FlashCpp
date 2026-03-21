@@ -268,7 +268,7 @@ EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const AS
 		return rhs_result;
 	}
 
-	return apply_binary_op(lhs_result, rhs_result, op);
+	return apply_binary_op(lhs_result, rhs_result, op, &context);
 }
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,

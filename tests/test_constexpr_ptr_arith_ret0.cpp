@@ -26,7 +26,9 @@ static_assert(*(p2 - 2) == 10);
 static_assert(p2 - p0 == 2);
 static_assert(p0 - p0 == 0);
 constexpr const int* p4 = &arr[4];
+constexpr const int* pend = p0 + 5;
 static_assert(p4 - p0 == 4);
+static_assert(pend - p0 == 5);
 static_assert(p0 - p4 == -4);
 
 // ptr[i] (subscript through pointer)
