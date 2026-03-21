@@ -51,3 +51,4 @@ To show IR, use `--log-level=Codegen:debug`
 * If you encounter existing bugs while testing, notify the user. If it's close to the area you are already working on, make an effort to investigste and fix it.
 * Try to make complete C++20 standard compliant solutions. If you deviate from that, notify the user and make a TODO.
 * Avoid coding in fallback paths. Invalid cases should throw InternalError or CompileError.
+* When creating tests, mix different native types and sizes with structs and templates to get good coverage of each feature.
