@@ -60,23 +60,6 @@ uses a different code path.
 
 **Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.
 
-## Deleted special member diagnostics still incomplete in some paths
-
-FlashCpp now rejects several previously-silent deleted special-member uses at
-compile time:
-
-- same-type deleted copy constructor use in direct-init, copy-init, and
-  brace-init from lvalue sources
-- same-type deleted move constructor use in xvalue copy-initialization
-- same-type deleted copy/move assignment in direct variable assignments
-
-Remaining gaps are narrower and currently centered on paths that still bypass
-the explicit same-type special-member checks:
-
-- member / array / indirection assignments that lower through
-  `handleLValueAssignment` still store directly and can bypass deleted
-  assignment diagnostics
-
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 
 When `&x` is evaluated where `x` is a local constexpr variable (in bindings),

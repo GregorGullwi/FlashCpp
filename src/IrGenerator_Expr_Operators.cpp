@@ -4018,6 +4018,75 @@ const Token& token) {
 
 	FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
 
+	auto tryResolveExprTypeIndex = [&](const ExprResult& expr_result) -> TypeIndex {
+		if (expr_result.type_index.is_valid()) {
+			return expr_result.type_index;
+		}
+
+		auto resolveBaseTypeIndex = [&](const auto& self, const std::variant<StringHandle, TempVar>& base) -> TypeIndex {
+			if (const auto* base_name = std::get_if<StringHandle>(&base)) {
+				if (auto symbol = lookupSymbol(*base_name)) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+						decl && decl->type_node().is<TypeSpecifierNode>()) {
+						return decl->type_node().as<TypeSpecifierNode>().type_index();
+					}
+				}
+				return {};
+			}
+
+			const TempVar& base_temp = std::get<TempVar>(base);
+			TempVarMetadata base_meta = getTempVarMetadata(base_temp);
+			if (!base_meta.lvalue_info.has_value()) {
+				return {};
+			}
+			return self(self, base_meta.lvalue_info->base);
+		};
+
+		if (const auto* base_name = std::get_if<StringHandle>(&expr_result.value)) {
+			return resolveBaseTypeIndex(resolveBaseTypeIndex, *base_name);
+		}
+
+		const auto* temp_var = std::get_if<TempVar>(&expr_result.value);
+		if (!temp_var) {
+			return {};
+		}
+
+		TempVarMetadata expr_meta = getTempVarMetadata(*temp_var);
+		if (!expr_meta.lvalue_info.has_value()) {
+			return {};
+		}
+		return resolveBaseTypeIndex(resolveBaseTypeIndex, expr_meta.lvalue_info->base);
+	};
+
+	auto diagnoseDeletedMetadataAssignment = [&]() {
+		if (lv_info.kind != LValueInfo::Kind::ArrayElement
+			&& lv_info.kind != LValueInfo::Kind::Member
+			&& lv_info.kind != LValueInfo::Kind::Indirect) {
+			return;
+		}
+
+		if (lhs_operands.type != Type::Struct || rhs_operands.type != Type::Struct) {
+			return;
+		}
+
+		TypeIndex lhs_type_index = tryResolveExprTypeIndex(lhs_operands);
+		TypeIndex rhs_type_index = tryResolveExprTypeIndex(rhs_operands);
+		if (!lhs_type_index.is_valid()
+			|| !rhs_type_index.is_valid()
+			|| lhs_type_index != rhs_type_index
+			|| lhs_type_index.value >= gTypeInfo.size()) {
+			return;
+		}
+
+		if (const StructTypeInfo* struct_info = gTypeInfo[lhs_type_index.value].getStructInfo()) {
+			diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhs_operands));
+		}
+	};
+
+	// The metadata path can emit stores directly and skip the regular assignment logic,
+	// so preserve deleted special-member diagnostics here for handled lvalue forms.
+	diagnoseDeletedMetadataAssignment();
+
 	// Route to appropriate store instruction based on LValueInfo::Kind
 	switch (lv_info.kind) {
 		case LValueInfo::Kind::ArrayElement: {

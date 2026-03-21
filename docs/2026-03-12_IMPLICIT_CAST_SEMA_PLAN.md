@@ -1139,9 +1139,32 @@ special-member work.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_deleted_move_ctor_copy_init_fail.cpp test_deleted_move_ctor_direct_init_xvalue_fail.cpp test_deleted_move_ctor_brace_init_xvalue_fail.cpp`
 
-**Remaining gap after this follow-up:**
-- lvalue-metadata store paths (`handleLValueAssignment`) still bypass deleted
-  assignment diagnostics for member/array/indirect assignments
+### Follow-up slice ✅: deleted assignment diagnostics in lvalue-metadata store paths
+
+**Goal:** Preserve deleted same-type copy/move assignment diagnostics when
+`handleLValueAssignment` takes the fast path for member, array-element, and
+indirection stores.
+
+**Implementation:**
+- `src/IrGenerator_Expr_Operators.cpp`
+	- added `tryResolveExprTypeIndex(...)` so metadata-driven lvalue stores can
+	  recover struct `TypeIndex` information from expression results or lvalue
+	  metadata when the direct `ExprResult` no longer carries it
+	- `handleLValueAssignment(...)` now calls
+	  `diagnoseDeletedSameTypeAssignmentUsage(...)` before emitting metadata-path
+	  stores for `Member`, `ArrayElement`, and `Indirect` lvalues
+
+**Regression tests added:**
+- `tests/test_deleted_copy_assignment_member_fail.cpp`
+- `tests/test_deleted_copy_assignment_array_element_fail.cpp`
+- `tests/test_deleted_copy_assignment_indirect_fail.cpp`
+- `tests/test_deleted_move_assignment_member_fail.cpp`
+- `tests/test_deleted_move_assignment_array_element_fail.cpp`
+- `tests/test_deleted_move_assignment_indirect_fail.cpp`
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_member_fail.cpp test_deleted_copy_assignment_array_element_fail.cpp test_deleted_copy_assignment_indirect_fail.cpp test_deleted_move_assignment_member_fail.cpp test_deleted_move_assignment_array_element_fail.cpp test_deleted_move_assignment_indirect_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp`
 
 ### Known limitations (current, as of Phase 19)
 
@@ -1150,8 +1173,6 @@ special-member work.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
-- Deleted special member diagnostics are still incomplete in some
-  lvalue-metadata assignment paths (tracked in `docs/KNOWN_ISSUES.md`).
 
 ### Parallel rollout guidance
 
