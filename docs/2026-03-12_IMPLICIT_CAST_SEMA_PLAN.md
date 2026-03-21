@@ -823,7 +823,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- Unification of `determineConversionKind()` (SemanticAnalysis.cpp) and `can_convert_type()` (OverloadResolution.h) into a single `buildConversionPlan()` helper remains TODO.
+- ~~Unification of `determineConversionKind()` (SemanticAnalysis.cpp) and `can_convert_type()` (OverloadResolution.h) into a single `buildConversionPlan()` helper remains TODO.~~ (Resolved: Phase 11 unified primitive types, Phase 19 extended to `TypeSpecifierNode`-level.)
 
 ### Phase 11: unified `buildConversionPlan` + C++20 promotion rank fix ✅
 - `buildConversionPlan(Type, Type)` added to `OverloadResolution.h`: single source of truth returning `ConversionPlan` (rank + kind + validity) for primitive-type conversions. Replaces the previous two-call pattern of `can_convert_type()` + `determineConversionKind()`.
@@ -852,7 +852,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - ~~Enum→primitive conversions are not yet annotated by the sema pass~~ (resolved in Phase 12).
 
 ### Phase 12: enum→primitive sema annotation + identifier type inference fallback ✅
@@ -869,7 +869,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - ~~Scoped enum (`enum class`) source types are correctly rejected by `buildConversionPlan` (no implicit conversion for scoped enums per C++11+), but the sema pass does not emit a diagnostic for attempted implicit conversion from a scoped enum. A future phase should add a proper diagnostic.~~ (resolved in Phase 13)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 
@@ -890,7 +890,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - ~~Scoped enum diagnostic covers variable init and return contexts; assignment RHS (`scoped_val = x;` where x is a scoped enum) and function call argument contexts are not yet diagnosed. Scoped enum used in binary arithmetic (e.g., `scoped_val + 1`) silently resolves to underlying type without diagnostic.~~ (resolved in Phase 14)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - ~~Unary promotion codegen consumption applies both sema-first and fallback-promotion paths; once sema coverage is complete, the fallback should be removed.~~ (resolved in Phase 15)
@@ -917,7 +917,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - `inferExpressionType` still does not handle: `ArraySubscriptNode`, `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - Scoped enum constructor argument diagnostics not yet implemented (deferred: `tryAnnotateConstructorCallArgConversions` does not diagnose scoped enum, but constructor overload resolution typically prevents this).
@@ -979,7 +979,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
 - ~~`inferExpressionType` still does not handle: `NewExpressionNode`, `DeleteExpressionNode`, `TypeidNode`, `LambdaExpressionNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `ThrowExpressionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.~~ (Partially resolved in Phase 17: `NewExpressionNode`, `DeleteExpressionNode`, `LambdaExpressionNode`, `ThrowExpressionNode` now handled.)
 - `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
@@ -1015,7 +1015,7 @@ The right split is:
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - Global simple `=` assignment returns a prvalue (converted RHS temporary) instead of an lvalue referring to the global per C++20 `[expr.ass]/3`.
-- `buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.
+- ~~`buildConversionPlan` handles only primitive `Type` values; the `TypeSpecifierNode` overload of `can_convert_type` still has separate logic for pointers, references, user-defined conversions, and struct type-index matching. A future phase should extend `buildConversionPlan` to handle full `TypeSpecifierNode`-level conversions.~~ (Resolved in Phase 19.)
 - `inferExpressionType` still does not handle: `TypeidNode`, `SizeofPackNode`, `FoldExpressionNode`, `PackExpansionExprNode`, `PseudoDestructorCallNode`, `InitializerListConstructionNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
 - ~~`tryAnnotateInitListConstructorArgs` scoped enum fallback does not handle constructors with default arguments (uses `params.size() < initializers.size()` guard, but should verify `has_default_value()` on surplus params). See Phase 18 plan below.~~ (Resolved: default-arg support added to shared helper.)
 - ~~Constructor matching logic is duplicated across 4+ layers — see Phase 18 plan for unification.~~ (Resolved: `findSameTypeConstructorCore` is the single shared helper.)
@@ -1151,6 +1151,26 @@ The sema fallback at `SemanticAnalysis.cpp:2522-2538` is the newest copy and was
 - `tests/test_throw_catch_default_arg_copy_ctor_ret0.cpp` — throw/catch cycle with a copy ctor that has a trailing default argument, exercising the `emitSameTypeCopyOrMoveConstructorCall` early-return path.
 
 **Suite:** 1629 pass / 0 fail / 67 expected-fail.
+
+### Phase 19 ✅: `buildConversionPlan` extended to `TypeSpecifierNode`-level conversions
+
+**Goal:** Extend `buildConversionPlan` from primitive `Type` values to full `TypeSpecifierNode`-level conversions, covering pointers, references, struct type-index matching, derived-to-base, user-defined conversions, and type aliases. Refactor `can_convert_type(const TypeSpecifierNode&, const TypeSpecifierNode&)` to delegate to the new overload via `.toResult()`, matching the pattern the primitive overload already uses.
+
+**Implementation:**
+- Added `buildConversionPlan(const TypeSpecifierNode&, const TypeSpecifierNode&)` overload in `src/OverloadResolution.h`: returns `ConversionPlan` (rank + `StandardConversionKind` + validity) for all TypeSpecifierNode-level conversion cases.
+- `can_convert_type(const TypeSpecifierNode&, const TypeSpecifierNode&)` refactored to a one-liner: `return buildConversionPlan(from, to).toResult();` — all existing callers remain unchanged, no API breakage.
+- Conversion kinds assigned to previously untyped conversion paths:
+  - Pointer `T* → const T*`: `QualificationAdjustment`
+  - Pointer `T* → void*` / `const T* → const void*`: `PointerConversion`
+  - Unresolved `UserDefined` pointer types: `PointerConversion`
+  - Derived-to-base reference binding: `DerivedToBase`
+  - Struct-to-primitive / primitive-to-struct / struct-to-struct converting constructors: `UserDefined`
+  - Unresolved type alias conversions: `None` (kind indeterminate at parse time)
+- Internal calls from `can_convert_type(Type, Type)` replaced with `buildConversionPlan(Type, Type)` to return full plans instead of discarding the `StandardConversionKind`.
+- No new `StandardConversionKind` values needed — all existing enum values in `src/SemanticTypes.h` are sufficient.
+- `ConversionRank` values remain identical — no overload resolution behavior change.
+
+**Suite:** 1633 pass / 0 fail / 67 expected-fail.
 
 ### Parallel rollout guidance
 
@@ -1773,7 +1793,7 @@ Work:
 - teach debug printing
 - teach expression dispatch and lowering from annotations
 
-#### Step 3: conversion-plan support (partially done — Phase 11)
+#### Step 3: conversion-plan support (done — Phases 11 + 19)
 
 - `src/OverloadResolution.h`
 
@@ -1783,7 +1803,7 @@ Work:
 - add `TypeContext` / type interning support (done in Phase 1)
 - ✅ reuse existing rank rules (Phase 11 delegates `can_convert_type` to `buildConversionPlan`)
 - ✅ keep behavior matching existing overload ranking first (Phase 11 — all tests pass)
-- TODO: extend `buildConversionPlan` to `TypeSpecifierNode`-level conversions
+- ✅ TODO: extend `buildConversionPlan` to `TypeSpecifierNode`-level conversions (Phase 19)
 
 #### Step 3b: semantic constant-evaluation integration
 

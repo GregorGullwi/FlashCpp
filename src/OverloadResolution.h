@@ -312,13 +312,16 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	return false;
 }
 
-// Check if one type can be implicitly converted to another (considering pointers and references)
+// Build a unified conversion plan for full TypeSpecifierNode-level conversions.
+// Handles pointers, references, struct type-index matching, derived-to-base,
+// user-defined conversions, and type aliases. Returns ConversionPlan (rank +
+// StandardConversionKind + validity) covering all cases.
 // 
 // IMPORTANT: For proper overload resolution with lvalue vs rvalue references, the caller must:
 // - Set is_lvalue_reference(true) on 'from' TypeSpecifierNode for lvalue expressions (named variables, etc.)
 // - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 // This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
-inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
@@ -328,7 +331,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (from.is_pointer() && to.is_pointer()) {
 		// Pointer depth must match
 		if (from.pointer_depth() != to.pointer_depth()) {
-			return TypeConversionResult::no_match();
+			return ConversionPlan::no_match();
 		}
 
 		// Resolve type aliases for both types before comparing
@@ -360,18 +363,18 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		// Exact type match for pointers (after resolving aliases)
 		// Must also check const qualifiers to distinguish const T* from T*
 		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
-			return TypeConversionResult::exact_match();
+			return ConversionPlan::exact_match();
 		}
 		
 		// If base types match but const qualifiers differ
 		if (from_resolved == to_resolved) {
 			// T* → const T* is allowed (qualification conversion - adding const)
 			if (!from_pointee_is_const && to_pointee_is_const) {
-				return TypeConversionResult::conversion();
+				return {ConversionRank::Conversion, StandardConversionKind::QualificationAdjustment, true};
 			}
 			// const T* → T* is NOT allowed (would remove const)
 			if (from_pointee_is_const && !to_pointee_is_const) {
-				return TypeConversionResult::no_match();
+				return ConversionPlan::no_match();
 			}
 		}
 		
@@ -382,9 +385,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
 			// Still enforce const-correctness: const T* → T* is not allowed
 			if (from_pointee_is_const && !to_pointee_is_const) {
-				return TypeConversionResult::no_match();
+				return ConversionPlan::no_match();
 			}
-			return TypeConversionResult::conversion();
+			return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 		}
 
 		// Pointer conversions: any pointer can implicitly convert to void*
@@ -402,13 +405,13 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
 			// Rule: const T* cannot convert to non-const void* (would violate const correctness)
 			if (from_pointee_is_const && !to_pointee_is_const) {
-				return TypeConversionResult::no_match();
+				return ConversionPlan::no_match();
 			}
 			// All other cases are valid: T*→void*, T*→const void*, const T*→const void*
-			return TypeConversionResult::conversion();
+			return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 		}
 
-		return TypeConversionResult::no_match();
+		return ConversionPlan::no_match();
 	}
 
 	// Check reference compatibility
@@ -437,19 +440,19 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
 						    isTransitivelyDerivedFrom(from.type_index(), to.type_index())) {
-							return TypeConversionResult{ConversionRank::Conversion, true};
+							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
-						return TypeConversionResult::no_match();
+						return ConversionPlan::no_match();
 					}
 					if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
-						return TypeConversionResult::no_match();
+						return ConversionPlan::no_match();
 					}
-					return TypeConversionResult::exact_match();
+					return ConversionPlan::exact_match();
 				}
 				
 				// Lvalue ref can't bind to rvalue ref parameter
 				// Rvalue ref can't bind to lvalue ref parameter  
-				return TypeConversionResult::no_match();
+				return ConversionPlan::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
 				// Handle binding of non-references to reference parameters
@@ -469,29 +472,29 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				}
 				if (!types_match) {
 					// Allow conversions for const lvalue refs only
-					auto conversion = can_convert_type(from_base, to_base);
-					if (!to_is_rvalue && to_is_const && conversion.is_valid) {
+					auto plan = buildConversionPlan(from_base, to_base);
+					if (!to_is_rvalue && to_is_const && plan.is_valid) {
 						// Const lvalue ref can bind to values that can be converted
-						return conversion;
+						return plan;
 					}
-					return TypeConversionResult::no_match();
+					return ConversionPlan::no_match();
 				}
 				
 				if (to_is_rvalue) {
 					// Rvalue reference can bind to temporaries (prvalues)
 					// Non-reference values are treated as rvalues when passed
-					return TypeConversionResult::exact_match();
+					return ConversionPlan::exact_match();
 				} else {
 					// Lvalue reference
 					if (to_is_const) {
 						// Const lvalue ref can bind to both lvalues and rvalues
-						return TypeConversionResult::exact_match();
+						return ConversionPlan::exact_match();
 					} else {
 						// Non-const lvalue ref can only bind to lvalues
 						// In this context, 'from' is not marked as a reference, indicating
 						// it represents the value category of a non-lvalue expression (rvalue)
 						// Note: The caller must set is_lvalue_reference on 'from' for actual lvalue expressions
-						return TypeConversionResult::no_match();
+						return ConversionPlan::no_match();
 					}
 				}
 			}
@@ -515,24 +518,24 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 					// Different struct types: a converting constructor (e.g. Target(const Source&))
 					// may allow this conversion. Check gTypeInfo if available.
 					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
-						return TypeConversionResult{ConversionRank::UserDefined, true};
+						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
 					// Struct info not yet finalized (parse-time): optimistically allow.
 					if (to.type_index().value >= gTypeInfo.size() ||
 						!gTypeInfo[to.type_index().value].getStructInfo()) {
-						return TypeConversionResult{ConversionRank::UserDefined, true};
+						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
-					return TypeConversionResult::no_match();
+					return ConversionPlan::no_match();
 				}
-				return TypeConversionResult::exact_match();
+				return ConversionPlan::exact_match();
 			}
 			// If one type is still UserDefined after resolution attempt, accept as conversion
 			// This handles unresolved template parameter type aliases
 			if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
-				return TypeConversionResult::conversion();
+				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
-			return can_convert_type(from_resolved, to_resolved);
+			return buildConversionPlan(from_resolved, to_resolved);
 		}
 	}
 
@@ -542,7 +545,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (from.type() == Type::Struct && to.type() != Type::Struct) {
 		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
 		// CodeGen will verify and generate the actual call
-		return TypeConversionResult{ConversionRank::UserDefined, true};
+		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
@@ -550,7 +553,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (to.type() == Type::Struct && from.type() != Type::Struct) {
 		// Could be a converting constructor in 'to' struct - accept it tentatively
 		// CodeGen will handle the actual constructor call
-		return TypeConversionResult{ConversionRank::UserDefined, true};
+		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 
 	// Handle UserDefined type aliases: 
@@ -565,13 +568,13 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (from_type == Type::UserDefined && !from.type_index().is_valid()) {
 		// 'from' is an unresolved type alias - allow if 'to' is integral
 		if (is_integral_type(to_type)) {
-			return TypeConversionResult::conversion();
+			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
 	if (to_type == Type::UserDefined && !to.type_index().is_valid()) {
 		// 'to' is an unresolved type alias - allow if 'from' is integral
 		if (is_integral_type(from_type)) {
-			return TypeConversionResult::conversion();
+			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
 
@@ -581,20 +584,27 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (from_type == Type::Struct && to_type == Type::Struct &&
 		from.type_index().is_valid() && to.type_index().is_valid()) {
 		if (from.type_index() == to.type_index()) {
-			return TypeConversionResult::exact_match();
+			return ConversionPlan::exact_match();
 		}
 		// Different struct types: check for a converting constructor
 		if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
-			return TypeConversionResult{ConversionRank::UserDefined, true};
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		// Struct info not yet finalized (parse-time): optimistically allow.
 		if (to.type_index().value >= gTypeInfo.size() ||
 			!gTypeInfo[to.type_index().value].getStructInfo()) {
-			return TypeConversionResult{ConversionRank::UserDefined, true};
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
-		return TypeConversionResult::no_match();
+		return ConversionPlan::no_match();
 	}
-	return can_convert_type(from_type, to_type);
+	return buildConversionPlan(from_type, to_type);
+}
+
+// Check if one type can be implicitly converted to another (considering pointers and references).
+// Delegates to buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode) for the unified
+// conversion logic, matching the pattern the primitive overload already uses.
+inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	return buildConversionPlan(from, to).toResult();
 }
 
 // Result of overload resolution
