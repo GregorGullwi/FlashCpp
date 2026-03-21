@@ -26,3 +26,4 @@ test_*_exe
 x64/
 src/*.pch
 *.result
+a.out
