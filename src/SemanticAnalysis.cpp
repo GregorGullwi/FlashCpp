@@ -1424,6 +1424,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				return {};
 			}
+			else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+				const CanonicalTypeId param_id = lookupLocalType(e.param_name());
+				if (param_id) return param_id;
+				if (auto expr_type = parser_.get_expression_type(node); expr_type.has_value()) {
+					return canonicalizeType(*expr_type);
+				}
+				return {};
+			}
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {
@@ -1447,6 +1455,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
 				}
 				return {};
+			}
+			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				return inferExpressionType(e.member_pointer());
 			}
 			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				// Array subscript: the result type is the element type of the array.

@@ -1166,13 +1166,30 @@ indirection stores.
 - `.\build_flashcpp.bat`
 - `.\tests\run_all_tests.ps1 test_deleted_copy_assignment_member_fail.cpp test_deleted_copy_assignment_array_element_fail.cpp test_deleted_copy_assignment_indirect_fail.cpp test_deleted_move_assignment_member_fail.cpp test_deleted_move_assignment_array_element_fail.cpp test_deleted_move_assignment_indirect_fail.cpp test_deleted_copy_assignment_fail.cpp test_deleted_move_assignment_fail.cpp`
 
+### Follow-up slice ✅: inferExpressionType for template-parameter references and pointer-to-member access
+
+**Goal:** Close the remaining low-risk `inferExpressionType` gaps that already had
+clear local sources of truth.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp`
+	- `TemplateParameterReferenceNode` now resolves through `lookupLocalType(...)`
+	  first and falls back to `parser_.get_expression_type(...)` if the template
+	  parameter is not present in the sema scope stack
+	- `PointerToMemberAccessNode` now forwards the inferred type of its
+	  `member_pointer()` operand, matching the existing IR-generation expectation
+
+**Windows validation:**
+- `.\build_flashcpp.bat`
+- `.\tests\run_all_tests.ps1 template_nontype_ret10.cpp test_template_type_param_functional_cast_ret0.cpp test_pointer_to_member_comprehensive_ret0.cpp test_ptr_to_member_type_alias_ret42.cpp`
+
 ### Known limitations (current, as of Phase 19)
 
 - User-defined `operator bool()` / converting constructors remain in codegen.
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`, `PointerToMemberAccessNode`, `TemplateParameterReferenceNode`. These return invalid and fall back to parser type resolution or no annotation.
+- `inferExpressionType` still does not handle: `FoldExpressionNode`, `PackExpansionExprNode`. These return invalid and fall back to parser type resolution or no annotation.
 
 ### Parallel rollout guidance
 
