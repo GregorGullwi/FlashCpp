@@ -138,6 +138,9 @@ Phase 3 has started with two low-risk local fallback removals:
 - constructor-overload argument typing now goes through a shared sema-first
   helper, with parser fallback retained only for the remaining parser-owned
   lookup facts
+- `inferExpressionType(QualifiedIdentifierNode)` now mirrors the parser's
+  namespace/static-member/enum lookup directly in sema, including lazy static
+  member instantiation for struct-qualified names
 
 ## Workstreams
 
@@ -225,7 +228,6 @@ Then migrate those buckets one at a time:
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | temporary auto-return bridge |
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
-| `inferExpressionType(QualifiedIdentifierNode)` | recover namespace/class-qualified lookup results | parser-owned qualified-lookup fact |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge (now sema-first) |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge (now sema-first) |
 
