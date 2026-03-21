@@ -524,27 +524,39 @@
 		// and must be a constant expression (C++20 [dcl.consteval]).  Try compile-time evaluation
 		// first; only throw if the call genuinely cannot be constant-evaluated.
 		//
-		// We evaluate the call as a plain FunctionCallNode (stripping the object) rather than
-		// wrapping the MemberFunctionCallNode.  The evaluator's member-function path requires
-		// the object to be constexpr, but C++20 only requires the *call expression* to be a
-		// constant — a consteval member that doesn't read `this` state is valid on a
-		// non-constexpr object (e.g., `Calc c; c.triple(14)`).  Using FunctionCallNode avoids
-		// the unnecessary object-constexpr check and matches the direct-call enforcement path.
+		// Strategy: first try the MemberFunctionCallNode path, which correctly resolves 'this'
+		// member bindings when the object is constexpr.  If that fails (e.g., non-constexpr
+		// object), fall back to a synthetic FunctionCallNode (stripping the object), which works
+		// for consteval members that don't access 'this' state.
 		if (func_decl.is_consteval()) {
 			std::string_view func_name_sv = func_decl_node.identifier_token().value();
 			extern SymbolTable gSymbolTable;
 			ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 			ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 			ctx.parser = parser_;
-			// Build a FunctionCallNode from the member function declaration + arguments,
-			// so the evaluator uses the free-function path (no object-constexpr requirement).
-			ChunkedVector<ASTNode> args_copy;
-			memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
-				args_copy.push_back(arg);
-			});
-			FunctionCallNode synth_call(func_decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
-			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
-			auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+			// Step 1: Try evaluation via the member-function path (handles constexpr objects
+			// with 'this' access correctly).
+			auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(memberFunctionCallNode);
+			auto eval_result = ConstExpr::Evaluator::evaluate(member_eval_node, ctx);
+			if (!eval_result.success()) {
+				// Step 2: Fall back to a synthetic FunctionCallNode (no object-constexpr
+				// requirement).  Works for consteval members that don't read 'this' state
+				// (e.g., `Calc c; c.triple(14)` where triple doesn't use any member).
+				// Preserve the first error so that if the fallback also fails we report
+				// the more specific member-path diagnostic (not a "can't see member
+				// variables" error from the fallback).
+				auto first_error = eval_result;
+				ChunkedVector<ASTNode> args_copy;
+				memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+					args_copy.push_back(arg);
+				});
+				FunctionCallNode synth_call(func_decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+				auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
+				eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
+				if (!eval_result.success()) {
+					eval_result = first_error;
+				}
+			}
 			if (!eval_result.success()) {
 				throw CompileError("call to consteval function '" + std::string(func_name_sv) +
 					"' cannot be used in a non-constant context: " + eval_result.error_message);
