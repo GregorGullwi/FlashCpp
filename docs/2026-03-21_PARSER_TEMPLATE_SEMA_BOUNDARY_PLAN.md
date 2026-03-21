@@ -127,6 +127,15 @@ Phase 2 is now implemented for both boundary-helper node kinds:
 - `SemanticAnalysis::normalizeExpression(...)` now also treats surviving pack
   expansions as unreachable once the boundary check has run
 
+## Phase 3 progress
+
+Phase 3 has started with two low-risk local fallback removals:
+
+- `inferExpressionType(LambdaExpressionNode)` now relies only on the parser's
+  immediate lambda-closure registration in `gTypesByName`
+- `tryResolveCallableOperator()` now uses sema-owned inference exclusively when
+  trying to build overload-resolution argument types
+
 ## Workstreams
 
 ### Workstream 1: make post-parse AST legality explicit
@@ -214,8 +223,6 @@ Then migrate those buckets one at a time:
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | parser-owned identifier lookup fact |
 | `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | temporary template-parameter bridge |
 | `inferExpressionType(QualifiedIdentifierNode)` | recover namespace/class-qualified lookup results | parser-owned qualified-lookup fact |
-| `inferExpressionType(LambdaExpressionNode)` | recover closure type before sema can always observe generated lambda type info locally | temporary closure-materialization bridge |
-| `tryResolveCallableOperator()` | build overload-resolution argument types when local sema inference has gaps | local inference-gap bridge |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge |
 
