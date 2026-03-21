@@ -158,9 +158,12 @@ in `IrGenerator_Stmt_Decl.cpp` to call `throw CompileError(...)` when
 `node.is_constexpr()` is true and constant evaluation fails, and add a separate
 diagnostic for `consteval` call sites outside constant-evaluated contexts.
 
-The five test files below document the desired (currently unenforced) behaviour:
-* `tests/test_constexpr_ptr_arith_fail.cpp`
-* `tests/test_constexpr_ptr_diff_different_arrays_fail.cpp`
-* `tests/test_constexpr_ptr_negative_offset_fail.cpp`
-* `tests/test_constexpr_ptr_oob_deref_fail.cpp`
-* `tests/test_constexpr_ptr_relational_diff_arrays_fail.cpp`
+The five test files below document the desired (currently unenforced) behaviour.
+They live in `tests/future/` so the CI test runners do not pick them up as
+`_fail.cpp` tests (which would cause "UNEXPECTED PASS" failures). Once
+enforcement is implemented, move them back to `tests/`.
+* `tests/future/test_constexpr_ptr_arith_fail.cpp`
+* `tests/future/test_constexpr_ptr_diff_different_arrays_fail.cpp`
+* `tests/future/test_constexpr_ptr_negative_offset_fail.cpp`
+* `tests/future/test_constexpr_ptr_oob_deref_fail.cpp`
+* `tests/future/test_constexpr_ptr_relational_diff_arrays_fail.cpp`
