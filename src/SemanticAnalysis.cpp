@@ -1617,10 +1617,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, SizeofExprNode> ||
+			                   std::is_same_v<T, SizeofPackNode> ||
 			                   std::is_same_v<T, AlignofExprNode>) {
-				// sizeof and alignof always return size_t (UnsignedLongLong on 64-bit).
+				// sizeof, sizeof... and alignof always return size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
 				desc.base_type = Type::UnsignedLongLong;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, TypeidNode>) {
+				// The current backend models typeid as producing a const void* handle.
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Void;
+				desc.base_cv = CVQualifier::Const;
+				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
@@ -1628,6 +1637,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const ASTNode& type_node = e.type_node();
 				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>())
 					return canonicalizeType(type_node.template as<TypeSpecifierNode>());
+				return {};
+			}
+			else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+				const ASTNode& target_type_node = e.target_type();
+				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
+					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -1683,6 +1698,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			}
 			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				// C++20 [expr.delete]: delete-expression is a void expression.
+				CanonicalTypeDesc desc;
+				desc.base_type = Type::Void;
+				return type_context_.intern(desc);
+			}
+			else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				CanonicalTypeDesc desc;
 				desc.base_type = Type::Void;
 				return type_context_.intern(desc);
