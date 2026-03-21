@@ -164,6 +164,9 @@ Phase 3 has started with two low-risk local fallback removals:
 - sema's `resolveRemainingAutoReturnsInNode()` now seeds function outer-template
   bindings before deducing `auto` returns, so instantiated function returns that
   mention surviving `TemplateParameterReferenceNode`s can resolve sema-first too
+- instantiated struct AST now retains member/static-member expressions plus
+  outer-template bindings, and sema walks those struct-owned expressions instead
+  of skipping them entirely
 
 ## Workstreams
 
@@ -250,7 +253,7 @@ Then migrate those buckets one at a time:
 | --- | --- | --- |
 | `deducePlaceholderReturnType()` | recover return-expression type for `auto` / `decltype(auto)` deduction when sema inference cannot yet supply it | narrowed auto-return bridge: function/lambda deduction now sees outer-template bindings before using the documented fallback |
 | `inferExpressionType(IdentifierNode)` | recover types for non-local identifiers outside sema's local scope stack | narrowed bridge: sema-native for globals/functions/static members/enumerators; parser fallback remains for implicit-member/unresolved identifiers |
-| `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | narrowed bridge: function/ctor/dtor/lambda/variable outer-template bindings now seed sema scope; parser fallback remains for contexts without that metadata |
+| `inferExpressionType(TemplateParameterReferenceNode)` | recover instantiated template-parameter value types not visible through local sema scope alone | narrowed bridge: function/ctor/dtor/lambda/variable/struct outer-template bindings now seed sema scope; parser fallback remains for contexts without that metadata |
 | `tryAnnotateConstructorCallArgConversions()` | build constructor overload-resolution argument types | constructor-overload bridge (now sema-first) |
 | `tryAnnotateInitListConstructorArgs()` | build constructor overload-resolution argument types for braced initialization | constructor-overload bridge (now sema-first) |
 
