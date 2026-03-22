@@ -4470,11 +4470,20 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
+			Type elem_type = type_spec.type();
 			while (base_result.array_elements.size() < declared_size) {
-				base_result.array_elements.push_back(EvalResult::from_int(0LL));
-				if (!base_result.array_values.empty()) {
+				EvalResult zero_elem;
+				if (isFloatingPointType(elem_type)) {
+					zero_elem = EvalResult::from_double(0.0);
+				} else if (isUnsignedIntegralType(elem_type)) {
+					zero_elem = EvalResult::from_uint(0ULL);
+				} else {
+					zero_elem = EvalResult::from_int(0LL);
+				}
+				if (!base_result.array_values.empty() && !isFloatingPointType(elem_type)) {
 					base_result.array_values.push_back(0LL);
 				}
+				base_result.array_elements.push_back(std::move(zero_elem));
 			}
 		}
 		return base_result;
