@@ -4490,14 +4490,18 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	TypeSpecifierNode inner_type_spec = type_spec;
 	inner_type_spec.set_array_dimensions(inner_dims);
 
-	// Check if the init_list is "fully flat" — all elements are scalars (no nested InitializerListNode).
+	// Check if the init_list is "fully flat" — non-empty and all elements are scalars
+	// (no nested InitializerListNode).
 	// Per C++20 dcl.init.aggr, a fully-flat list distributes scalars sequentially across inner
 	// dimensions (brace-elision): e.g. int[2][3] = {1,2,3,4,5,6} → {{1,2,3},{4,5,6}}.
-	bool is_fully_flat = init_list.size() > 0;
-	for (size_t k = 0; k < init_list.size(); ++k) {
-		if (init_list.initializers()[k].is<InitializerListNode>()) {
-			is_fully_flat = false;
-			break;
+	bool is_fully_flat = false;
+	if (init_list.size() > 0) {
+		is_fully_flat = true;
+		for (size_t k = 0; k < init_list.size(); ++k) {
+			if (init_list.initializers()[k].is<InitializerListNode>()) {
+				is_fully_flat = false;
+				break;
+			}
 		}
 	}
 
@@ -4625,6 +4629,12 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 		const ASTNode& initializer = init_list.initializers()[mi];
 		if (member_info) {
 			EvalResult val;
+			const bool is_struct_brace_init =
+				!member_info->is_array &&
+				initializer.is<InitializerListNode>() &&
+				(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+				member_info->type_index.is_valid() &&
+				member_info->type_index.value < gTypeInfo.size();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
@@ -4634,9 +4644,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					member_init_list,
 					context,
 					evaluation_bindings);
-			} else if (!member_info->is_array && initializer.is<InitializerListNode>() &&
-				(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
-				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
+			} else if (is_struct_brace_init) {
 				// Nested InitializerListNode for a struct member — use aggregate materializer
 				// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
