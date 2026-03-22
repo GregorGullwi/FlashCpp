@@ -484,6 +484,15 @@ public:
 			const InitializerListNode& init_list,
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+		// Variant that accepts the full TypeSpecifierNode so that multi-dimensional arrays
+		// (e.g., int[2][3]) can be materialised with proper inner-dimension sizes even when
+		// the initializer list is shorter than the outer dimension (zero-padding) or contains
+		// plain scalar initialisers that should initialise a nested row.
+		static EvalResult materialize_array_value_with_spec(
+			const TypeSpecifierNode& type_spec,
+			const InitializerListNode& init_list,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 		static EvalResult bind_members_from_initializer_list(
 			const StructTypeInfo* struct_info,
 			const InitializerListNode& init_list,

@@ -898,18 +898,39 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 	if (peek() == "{"_tok) {
 		// If this is an array declaration, set the array info on type_specifier
 		if (decl_node.is_array()) {
-			std::optional<size_t> array_size_val;
-			if (decl_node.array_size().has_value()) {
-				// Try to evaluate the array size as a constant expression
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-				if (eval_result.success()) {
-					array_size_val = static_cast<size_t>(eval_result.as_int());
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			const auto& decl_dims = decl_node.array_dimensions();
+			if (decl_dims.size() > 1) {
+				// Multi-dimensional array: evaluate all dimension sizes and propagate them.
+				std::vector<size_t> dim_sizes;
+				dim_sizes.reserve(decl_dims.size());
+				bool all_evaluated = true;
+				for (const auto& dim_expr : decl_dims) {
+					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+					if (eval_result.success()) {
+						dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
+					} else {
+						all_evaluated = false;
+						break;
+					}
 				}
+				if (all_evaluated && !dim_sizes.empty()) {
+					type_specifier.set_array_dimensions(dim_sizes);
+				}
+			} else {
+				// Single-dimension array (original path).
+				std::optional<size_t> array_size_val;
+				if (decl_node.array_size().has_value()) {
+					// Try to evaluate the array size as a constant expression
+					auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
+					if (eval_result.success()) {
+						array_size_val = static_cast<size_t>(eval_result.as_int());
+					}
+				}
+				// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
+				// and will be set after parsing the initializer list
+				type_specifier.set_array(true, array_size_val);
 			}
-			// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
-			// and will be set after parsing the initializer list
-			type_specifier.set_array(true, array_size_val);
 		}
 
 		// Parse brace initializer list
@@ -1155,11 +1176,20 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		std::optional<size_t> array_size = type_specifier.array_size();
 		size_t element_count = 0;
 
-		// Build a non-array element type specifier for nested brace-init of struct elements.
-		// This is a copy of type_specifier with the array flag cleared so that a nested {…}
-		// is parsed as a struct (aggregate) initializer rather than another array initializer.
+		// Build the element type specifier for nested brace-init.
+		// For multi-dimensional arrays (e.g., int[2][3]), the element type is the remaining
+		// array type (int[3]), not a plain scalar.  For single-dimension arrays, clear the
+		// array flag so nested {…} is parsed as a struct (aggregate) initializer.
 		TypeSpecifierNode element_type_spec = type_specifier;
-		element_type_spec.set_array(false);
+		if (type_specifier.array_dimension_count() > 1) {
+			// Multi-dimensional: element type has the remaining dimensions
+			std::vector<size_t> elem_dims(
+				type_specifier.array_dimensions().begin() + 1,
+				type_specifier.array_dimensions().end());
+			element_type_spec.set_array_dimensions(elem_dims);
+		} else {
+			element_type_spec.set_array(false);
+		}
 
 		// Parse comma-separated initializer expressions
 		while (true) {
