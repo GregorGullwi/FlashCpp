@@ -1413,6 +1413,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							}
 							member_slot = &m_it->second;
 						} else {
+							if (offset != 0) {
+								return EvalResult::error("Arrow assignment: non-zero pointer offset on non-array heap object in constexpr assignment");
+							}
 							auto m_it = heap_val.object_member_bindings.find(ma.member_name());
 							if (m_it == heap_val.object_member_bindings.end()) {
 								return EvalResult::error("Arrow assignment: member not found in heap struct: " + std::string(ma.member_name()));
