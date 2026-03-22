@@ -3649,6 +3649,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		this_arg.value = std::get<TempVar>(source_value);
 		this_arg.type_index = source.type_index;
 		call_op.args.push_back(std::move(this_arg));
+	} else {
+		throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar");
 	}
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
