@@ -1516,6 +1516,11 @@ EvalResult Evaluator::evaluate_delete_expression(
 	}
 
 	StringHandle heap_key = ptr_result.pointer_to_var;
+	if (ptr_result.pointer_offset != 0) {
+		return EvalResult::error("delete-expression: pointer is not the original allocation "
+			"(has non-zero offset " + std::to_string(ptr_result.pointer_offset) + "); "
+			"only the pointer returned by 'new' can be deleted in a constant expression");
+	}
 	auto heap_it = context.constexpr_heap.find(heap_key);
 	if (heap_it == context.constexpr_heap.end()) {
 		return EvalResult::error("delete-expression: pointer does not refer to a constexpr heap allocation "
@@ -1530,7 +1535,6 @@ EvalResult Evaluator::evaluate_delete_expression(
 			? "delete[]: non-array pointer (use plain `delete`)"
 			: "delete: array pointer (use `delete[]`)");
 	}
-	heap_it->second.freed = true;
 	// delete-expression yields void; return a sentinel success value.
 	return EvalResult::from_int(0LL);
 }
