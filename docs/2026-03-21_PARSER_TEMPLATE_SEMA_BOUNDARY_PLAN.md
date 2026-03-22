@@ -204,7 +204,34 @@ Phase 3 has started with two low-risk local fallback removals:
   list, so the positional invariant is explicit instead of being repeated by
   hand at each callsite
 
-## Workstreams
+## Phase 4 progress
+
+Phase 4 tightens the hard boundaries now that Phases 1-3 have eliminated all
+direct `parser_.get_expression_type(...)` calls and enforced pre-sema boundary
+checks:
+
+- `logPostParseBoundaryReport()` dead code removed: the Warning-only else
+  branches were unreachable because `hasViolations()` returning true guarantees
+  at least one of fold or pack counts is nonzero; sample and overflow logging
+  now unconditionally use Error level
+- `inferExpressionType(PackExpansionExprNode)` now throws `InternalError` as an
+  assertion, closing a gap where `FoldExpressionNode` had such a guard but
+  `PackExpansionExprNode` did not
+- `normalizeExpression(FoldExpressionNode)` and
+  `normalizeExpression(PackExpansionExprNode)` comments updated to Phase 4
+  "unreachable after pre-sema boundary check" style
+- codegen expression-visitor handlers for `FoldExpressionNode` and
+  `PackExpansionExprNode` in `IrGenerator_Expr_Primitives.cpp` reduced from
+  verbose logging-then-throw to concise assertion-only `InternalError` throws
+- codegen noexcept check for `FoldExpressionNode` in
+  `IrGenerator_Expr_Conversions.cpp` changed from conservative `return false`
+  to an assertion throw, and a matching `PackExpansionExprNode` assertion added
+- `ConstExprEvaluator_Core.cpp` fold/pack handling annotated with Phase 4
+  dual-context note: the constexpr evaluator is called from both parser-owned
+  template-substitution contexts (where fold/pack may legitimately appear) and
+  sema-owned contexts (where the pre-sema boundary check already guarantees
+  they are absent)
+
 
 ### Workstream 1: make post-parse AST legality explicit
 
@@ -356,21 +383,28 @@ Current narrow follow-up after the nested-class slice:
 ### Phase 4: tighten hard boundaries
 
 - make surviving parser/template-only expression nodes a pre-sema failure in
-  normal builds once the tree is clean
+  normal builds once the tree is clean **(implemented: pre-sema boundary check
+  throws InternalError/CompileError unconditionally)**
 - reduce codegen defensive handling to assertion-only paths if appropriate
+  **(implemented: codegen fold/pack handlers reduced to InternalError
+  assertions; noexcept check also converted)**
 
 ## Exit criteria
 
 This plan is complete when:
 
-- the legal post-parse AST surface is documented
+- the legal post-parse AST surface is documented **(done: Phase 1)**
 - surviving `PackExpansionExprNode` is treated as an invariant violation or an
-  earlier targeted diagnostic
+  earlier targeted diagnostic **(done: Phase 2 pre-sema check + Phase 4
+  assertion-only codegen guards)**
 - `FoldExpressionNode` no longer needs parser-fallback behavior in normal flow
+  **(done: Phase 2 pre-sema check + Phase 4 assertion-only codegen guards)**
 - the number of sema `parser_.get_expression_type(...)` dependencies is reduced
-  to a small, explicit, justified set
+  to a small, explicit, justified set **(done: Phase 3 eliminated all such
+  calls from SemanticAnalysis.cpp)**
 - sema/codegen ownership is clear enough that new work does not add fresh
-  parser-to-sema fallback paths casually
+  parser-to-sema fallback paths casually **(done: Phase 4 codegen handlers
+  are assertion-only, constexpr evaluator dual-context documented)**
 
 ## Why this is separate from the implicit-cast roadmap
 
