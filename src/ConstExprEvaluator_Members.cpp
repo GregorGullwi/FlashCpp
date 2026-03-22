@@ -726,6 +726,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			return std::nullopt;
 		}
 		bound_struct_info = context.struct_info;
+		bound_type_index = context.struct_type_index;
 		for (const auto& member : context.struct_info->members) {
 			std::string_view member_name = StringTable::getStringView(member.getName());
 			auto binding_it = bindings.find(member_name);
@@ -826,7 +827,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	auto saved_struct_info = context.struct_info;
+	auto saved_struct_type_index = context.struct_type_index;
 	context.struct_info = bound_struct_info;
+	context.struct_type_index = bound_type_index;
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
@@ -846,6 +849,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
 	if (result.success() && mutable_bindings) {
 		if (write_back_to_object_binding) {
 			auto object_it = mutable_bindings->find(object_name);
@@ -944,8 +948,10 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	}
 
 	auto saved_struct_info = context.struct_info;
+	auto saved_struct_type_index = context.struct_type_index;
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.struct_info = struct_info;
+	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
 	if (match.function->decl_node().type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_node().as<TypeSpecifierNode>();
@@ -965,6 +971,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
 	context.template_param_names = std::move(saved_template_param_names);
 	context.template_args = std::move(saved_template_args);
 	return result;
@@ -1428,7 +1435,30 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 				}
 
-				// Handle subscript assignment: arr[i] = value  (C++20 constexpr heap arrays)
+			// Handle dot member assignment: local_obj.member = value (non-this, non-arrow)
+			// This handles patterns like: Pair p{3,4}; p.a = 10;
+			if (const auto* ma_ptr = std::get_if<MemberAccessNode>(&lhs_expr);
+			    ma_ptr && !ma_ptr->is_arrow()) {
+				// Lambda encapsulates the dot-assignment logic with early returns for each
+				// precondition check (object is identifier, not 'this', found in bindings,
+				// member exists), returning nullopt to fall through to other handlers.
+				auto dot_assign = [&]() -> std::optional<EvalResult> {
+					const ASTNode& obj = ma_ptr->object();
+					if (!obj.is<ExpressionNode>()) return std::nullopt;
+					const auto* obj_id = std::get_if<IdentifierNode>(&obj.as<ExpressionNode>());
+					if (!obj_id || obj_id->name() == "this") return std::nullopt;
+					EvalResult* obj_binding = findMutableBindingValue(obj_id->name(), bindings, context);
+					if (!obj_binding) return std::nullopt;
+					auto member_it = obj_binding->object_member_bindings.find(ma_ptr->member_name());
+					if (member_it == obj_binding->object_member_bindings.end()) return std::nullopt;
+					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+					if (!rhs_result.success()) return rhs_result;
+					return apply_op_to(member_it->second, rhs_result);
+				};
+				if (auto result = dot_assign()) return *result;
+			}
+
+			// Handle subscript assignment: arr[i] = value  (C++20 constexpr heap arrays)
 				// LHS is ArraySubscriptNode(array=expr_that_yields_pointer, index=expr)
 				if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
 					const auto& subscript = std::get<ArraySubscriptNode>(lhs_expr);
@@ -1834,6 +1864,41 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 		}
 
+	// Special case: *this in a constexpr member function body.
+	// Constructs an EvalResult representing the current object state.
+	// Uses context.struct_type_index (set alongside struct_info when entering a member function body)
+	// to avoid an O(n) linear search through gTypeInfo.
+	if (op == "*") {
+		const ASTNode& operand = unary_op->get_operand();
+		if (operand.is<ExpressionNode>()) {
+			const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+			if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
+				if (id->name() == "this" && context.struct_info) {
+					EvalResult this_obj = EvalResult::from_int(0);
+					// Use the cached type index; validate it before trusting it.
+					if (context.struct_type_index.is_valid() &&
+						context.struct_type_index.value < gTypeInfo.size()) {
+						this_obj.object_type_index = context.struct_type_index;
+					} else {
+						// struct_type_index must be set alongside struct_info when entering a
+						// member function body. This indicates a call site that sets struct_info
+						// but forgets to populate struct_type_index.
+						return EvalResult::error("Internal error: *this used in constexpr member function but struct_type_index is not set — ensure evaluate_member_function_call sets context.struct_type_index");
+					}
+					// Copy current member bindings into the object
+					for (const auto& member : context.struct_info->members) {
+						std::string_view member_name = StringTable::getStringView(member.getName());
+						auto it = bindings.find(member_name);
+						if (it != bindings.end()) {
+							this_obj.object_member_bindings[member_name] = it->second;
+						}
+					}
+					return this_obj;
+				}
+			}
+		}
+	}
+
 		auto operand_result = recursive_eval(unary_op->get_operand(), bindings, context);
 		if (!operand_result.success()) return operand_result;
 
@@ -1983,6 +2048,20 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		}
 	}
 	
+	// Handle ConstructorCallNode for struct types (e.g., Pair{a, b} inside constexpr function bodies).
+	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
+	// constructor arguments that reference local variables.
+	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
+		const ASTNode& type_node = ctor_call->type_node();
+		if (type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+			if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+				type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+				return materialize_constructor_object_value(*ctor_call, context, &bindings);
+			}
+		}
+	}
+
 	// For literals and other expressions without parameters, evaluate normally
 	return evaluate(expr_node, context);
 }
@@ -4111,7 +4190,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		load_template_bindings_from_type(&gTypeInfo[type_index.value], context);
 	}
 		auto saved_struct_info = context.struct_info;
+		auto saved_struct_type_index = context.struct_type_index;
 		context.struct_info = struct_info;
+		context.struct_type_index = type_index;
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
@@ -4135,6 +4216,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
 	restore_template_bindings();
 	return result;
 }

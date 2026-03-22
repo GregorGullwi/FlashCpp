@@ -927,6 +927,9 @@ Potential areas for enhancement (in order of complexity):
 - ✅ All compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) now correctly truncate results to the declared unsigned type's width (e.g. `unsigned char x = 200; x += 100;` wraps to 44)
 - ✅ Arrow member write (`p->member = value`) on heap-allocated structs in constexpr `new`/`delete` — all compound-assignment forms (`p->count += 1`, etc.) are also supported
 - ✅ Use-after-free through arrow access produces a clear "use after free" diagnostic instead of a confusing "variable not found" error
+- ✅ **Struct constructor calls inside constexpr function bodies** *(Implemented)* — `ConstructorCallNode` for struct/user-defined types is now handled in the bindings-aware evaluator, enabling patterns like `return Pair{a, b}` from a constexpr function, `Point p = Point{5, 6}` as a local variable, and calling member functions on locally-constructed objects.
+- ✅ **Local struct member assignment (`p.a = value`) in constexpr functions** *(Implemented)* — Dot-member assignment on local struct variables (non-`this`, non-arrow) is now supported. Both simple (`p.a = 10`) and compound (`p.a += 3`) assignment operators work. Enables swap patterns, loop accumulators, and general local struct mutation.
+- ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -1180,3 +1183,6 @@ struct CaptureExample {
 - `tests/test_constexpr_new_array_toolarge_fail.cpp` - Constexpr array size limit (expected failure)
 - `tests/test_constexpr_short_circuit_ret0.cpp` - Short-circuit `&&`/`||` in constexpr
 - `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` - Bitwise compound assignments in constexpr
+- `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` - Struct constructor calls inside constexpr function bodies (return struct, local struct usage)
+- `tests/test_constexpr_local_member_assign_ret0.cpp` - Local struct member dot-assignment (`p.a = value`) in constexpr functions
+- `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
