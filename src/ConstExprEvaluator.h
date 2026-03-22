@@ -472,7 +472,8 @@ public:
 			const StructTypeInfo* struct_info,
 			TypeIndex type_index,
 			const InitializerListNode& init_list,
-			EvaluationContext& context);
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_constructor_object_value(
 			const ConstructorCallNode& ctor_call,
 			EvaluationContext& context,

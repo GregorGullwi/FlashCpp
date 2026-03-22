@@ -1176,6 +1176,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		std::optional<size_t> array_size = type_specifier.array_size();
 		size_t element_count = 0;
 
+		// For multi-dimensional arrays, compute the total flattened element count to support
+		// C++20 brace-elision (e.g., int[2][3] = {1,2,3,4,5,6} distributes scalars across rows).
+		std::optional<size_t> flat_total_size;
+		if (type_specifier.array_dimension_count() > 1 && array_size.has_value()) {
+			size_t total = 1;
+			for (size_t d : type_specifier.array_dimensions()) total *= d;
+			flat_total_size = total;
+		}
+
 		// Build the element type specifier for nested brace-init.
 		// For multi-dimensional arrays (e.g., int[2][3]), the element type is the remaining
 		// array type (int[3]), not a plain scalar.  For single-dimension arrays, clear the
@@ -1198,9 +1207,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				break;
 			}
 
-			// Check if we have too many initializers
-			if (array_size.has_value() && element_count >= *array_size) {
-				return ParseResult::error("Too many initializers for array", current_token_);
+			// Check if we have too many initializers.
+			// For multi-dimensional arrays with flat brace-elision (next token is a scalar, not '{'),
+			// allow up to the total flattened count; otherwise use the outer dimension as the limit.
+			if (array_size.has_value()) {
+				size_t limit = (flat_total_size.has_value() && peek() != "{"_tok)
+					? *flat_total_size
+					: *array_size;
+				if (element_count >= limit) {
+					return ParseResult::error("Too many initializers for array", current_token_);
+				}
 			}
 
 			ParseResult init_expr_result;

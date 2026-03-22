@@ -4289,14 +4289,15 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 	const StructTypeInfo* struct_info,
 	TypeIndex type_index,
 	const InitializerListNode& init_list,
-	EvaluationContext& context) {
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	if (!struct_info) {
 		return EvalResult::error("Aggregate object is not a struct");
 	}
 
 	EvalResult object_result = EvalResult::from_int(0);
 	object_result.object_type_index = type_index;
-	auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context);
+	auto bind_members_result = bind_members_from_initializer_list(struct_info, init_list, object_result.object_member_bindings, context, outer_bindings);
 	if (!bind_members_result.success()) {
 		return bind_members_result;
 	}
@@ -4339,7 +4340,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 				const auto& arg = ctor_call.arguments()[i];
 				init_list.add_initializer(arg);
 			}
-			auto agg_result = materialize_aggregate_object_value(struct_info, type_index, init_list, context);
+			auto agg_result = materialize_aggregate_object_value(struct_info, type_index, init_list, context, outer_bindings);
 			if (agg_result.success()) {
 				return agg_result;
 			}
@@ -4465,7 +4466,18 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.
-		return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
+		auto base_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
+		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
+		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
+			size_t declared_size = dims[0];
+			while (base_result.array_elements.size() < declared_size) {
+				base_result.array_elements.push_back(EvalResult::from_int(0LL));
+				if (!base_result.array_values.empty()) {
+					base_result.array_values.push_back(0LL);
+				}
+			}
+		}
+		return base_result;
 	}
 
 	// Multi-dimensional array (e.g., int[2][3]).
@@ -4478,50 +4490,82 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	TypeSpecifierNode inner_type_spec = type_spec;
 	inner_type_spec.set_array_dimensions(inner_dims);
 
+	// Check if the init_list is "fully flat" — all elements are scalars (no nested InitializerListNode).
+	// Per C++20 dcl.init.aggr, a fully-flat list distributes scalars sequentially across inner
+	// dimensions (brace-elision): e.g. int[2][3] = {1,2,3,4,5,6} → {{1,2,3},{4,5,6}}.
+	bool is_fully_flat = init_list.size() > 0;
+	for (size_t k = 0; k < init_list.size(); ++k) {
+		if (init_list.initializers()[k].is<InitializerListNode>()) {
+			is_fully_flat = false;
+			break;
+		}
+	}
+
 	std::vector<EvalResult> elements;
 	elements.reserve(outer_size);
 
-	for (size_t i = 0; i < outer_size; ++i) {
-		EvalResult elem;
-		if (i < init_list.size()) {
-			const ASTNode& initializer = init_list.initializers()[i];
-			if (initializer.is<InitializerListNode>()) {
-				// Nested brace-init list for inner array ({…} form).
-				elem = materialize_array_value_with_spec(
-					inner_type_spec,
-					initializer.as<InitializerListNode>(),
-					context, bindings);
+	if (is_fully_flat) {
+		// Compute the number of scalar elements each inner array consumes.
+		size_t inner_size = 1;
+		for (size_t d : inner_dims) inner_size *= d;
+
+		size_t scalar_cursor = 0;
+		for (size_t i = 0; i < outer_size; ++i) {
+			EvalResult elem;
+			if (scalar_cursor >= init_list.size()) {
+				// No more scalars: zero-initialise.
+				elem = make_zero_array_for_dims(inner_dims);
 			} else {
-				// Scalar initializer with brace-elision (e.g. {1} for int[2][3]):
-				// per C++20, the scalar seeds the first element of the inner array;
-				// remaining inner elements are zero-initialised.
-				// Evaluate the scalar, start with a fully zero-initialised inner array,
-				// then place the scalar at the first (innermost) element.
-				EvalResult scalar_result = bindings
-					? evaluate_expression_with_bindings_const(initializer, *bindings, context)
-					: evaluate(initializer, context);
-				if (!scalar_result.success()) {
-					elem = std::move(scalar_result);
+				// Build a sub-init-list consuming up to inner_size scalars from the flat list.
+				InitializerListNode sub_init;
+				for (size_t j = 0; j < inner_size && scalar_cursor < init_list.size(); ++j, ++scalar_cursor) {
+					sub_init.add_initializer(init_list.initializers()[scalar_cursor]);
+				}
+				elem = materialize_array_value_with_spec(inner_type_spec, sub_init, context, bindings);
+			}
+			if (!elem.success()) {
+				return elem;
+			}
+			elements.push_back(std::move(elem));
+		}
+	} else {
+		for (size_t i = 0; i < outer_size; ++i) {
+			EvalResult elem;
+			if (i < init_list.size()) {
+				const ASTNode& initializer = init_list.initializers()[i];
+				if (initializer.is<InitializerListNode>()) {
+					// Nested brace-init list for inner array ({…} form).
+					elem = materialize_array_value_with_spec(
+						inner_type_spec,
+						initializer.as<InitializerListNode>(),
+						context, bindings);
 				} else {
-					elem = make_zero_array_for_dims(inner_dims);
-					// Walk down the [0] chain to place the scalar at the deepest first element.
-					EvalResult* target = &elem;
-					while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
-						target = &target->array_elements[0];
-					}
-					if (target->is_array && !target->array_elements.empty()) {
-						target->array_elements[0] = std::move(scalar_result);
+					// Single scalar in an otherwise mixed list: seed first element of inner array.
+					EvalResult scalar_result = bindings
+						? evaluate_expression_with_bindings_const(initializer, *bindings, context)
+						: evaluate(initializer, context);
+					if (!scalar_result.success()) {
+						elem = std::move(scalar_result);
+					} else {
+						elem = make_zero_array_for_dims(inner_dims);
+						EvalResult* target = &elem;
+						while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
+							target = &target->array_elements[0];
+						}
+						if (target->is_array && !target->array_elements.empty()) {
+							target->array_elements[0] = std::move(scalar_result);
+						}
 					}
 				}
+			} else {
+				// Missing initializer: zero-initialise the entire inner array.
+				elem = make_zero_array_for_dims(inner_dims);
 			}
-		} else {
-			// Missing initializer: zero-initialise the entire inner array.
-			elem = make_zero_array_for_dims(inner_dims);
+			if (!elem.success()) {
+				return elem;
+			}
+			elements.push_back(std::move(elem));
 		}
-		if (!elem.success()) {
-			return elem;
-		}
-		elements.push_back(std::move(elem));
 	}
 
 	EvalResult result;
@@ -4590,6 +4634,22 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					member_init_list,
 					context,
 					evaluation_bindings);
+			} else if (!member_info->is_array && initializer.is<InitializerListNode>() &&
+				(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
+				// Nested InitializerListNode for a struct member — use aggregate materializer
+				// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
+				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
+				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
+					val = Evaluator::materialize_aggregate_object_value(
+						member_struct_info,
+						member_info->type_index,
+						member_init_list,
+						context,
+						evaluation_bindings);
+				} else {
+					val = EvalResult::error("Member struct type not found for nested brace-init");
+				}
 			} else if (evaluation_bindings) {
 				val = Evaluator::evaluate_expression_with_bindings_const(
 					initializer,

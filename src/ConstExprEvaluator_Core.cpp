@@ -3359,7 +3359,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
+								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 								if (!object_result.success()) {
 									return object_result;
 								}
