@@ -89,6 +89,8 @@ public:
 	// Look up the pre-resolved callable operator() for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
+	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
+	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
 
 	// Instantiation-time semantic hook for generic lambda parameter normalization.
 	std::vector<ASTNode> normalizeGenericLambdaParams(
@@ -149,6 +151,9 @@ private:
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);
+	CastInfoIndex allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
+		CanonicalTypeId target_type_id,
+		StandardConversionKind cast_kind);
 
 	// Store a semantic slot for the given expression node pointer.
 	void setSlot(const void* key, const SemanticSlot& slot);
@@ -208,6 +213,9 @@ private:
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
 	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
+		const TypeSpecifierNode& param_type,
+		const char* context_description);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -266,6 +274,8 @@ private:
 	// Side table: FunctionCallNode pointer → resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
+	std::unordered_map<const FunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> function_call_ref_bindings_;
+	std::unordered_map<const MemberFunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> member_call_ref_bindings_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited

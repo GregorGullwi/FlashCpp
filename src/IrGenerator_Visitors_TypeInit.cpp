@@ -167,11 +167,13 @@
 			// Expression statement (e.g., function call, lambda expression, etc.)
 			// Evaluate the expression but discard the result
 			visitExpressionNode(node.as<ExpressionNode>());
+			emitAndClearFullExpressionTempDestructors();
 		}
 		else if (node.is<LambdaExpressionNode>()) {
 			// Lambda expression as a statement
 			// Evaluate the lambda (creates closure instance) but discard the result
 			generateLambdaExpressionIr(node.as<LambdaExpressionNode>());
+			emitAndClearFullExpressionTempDestructors();
 		}
 		else {
 			puts(node.type_name());

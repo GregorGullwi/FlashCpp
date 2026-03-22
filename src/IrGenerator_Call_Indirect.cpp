@@ -1423,6 +1423,32 @@
 						param_type = &param_decl.type_node().as<TypeSpecifierNode>();
 					}
 				}
+				const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
+				if (param_type && sema_) {
+					sema_ref_binding = sema_->getMemberFunctionCallRefBinding(&memberFunctionCallNode, arg_index);
+				}
+
+				if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
+					ExpressionContext arg_context = sema_ref_binding->binds_directly()
+						? ExpressionContext::LValueAddress
+						: ExpressionContext::Load;
+					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+					if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+							argument_result, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
+						TypedValue typed_arg = toTypedValue(*sema_bound_arg);
+						typed_arg.cv_qualifier = param_type->cv_qualifier();
+						typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
+						if (param_type->type_index().is_valid()) {
+							typed_arg.type_index = param_type->type_index();
+						}
+						typed_arg.ref_qualifier = param_type->is_rvalue_reference()
+							? ReferenceQualifier::RValueReference
+							: ReferenceQualifier::LValueReference;
+						call_op.args.push_back(std::move(typed_arg));
+						arg_index++;
+						return;
+					}
+				}
 
 				// For variables (identifiers), handle specially to avoid unnecessary dereferences
 				// when passing reference arguments to reference parameters
@@ -1439,7 +1465,8 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 						// Check if parameter expects a reference
-						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+							param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
@@ -1474,7 +1501,8 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 						// Check if parameter expects a reference
-						if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+							param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
@@ -1521,7 +1549,8 @@
 					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 
 					// Check if parameter expects a reference and argument is a literal
-					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+					if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference, but argument is not an identifier
 						// We need to materialize the value into a temporary and pass its address
 

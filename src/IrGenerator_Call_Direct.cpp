@@ -1046,13 +1046,18 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				param_ref_qualifier = cached_param->ref_qualifier;
 				param_is_pack = cached_param->is_parameter_pack;
 			}
+			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
+			if (param_type && sema_) {
+				sema_ref_binding = sema_->getFunctionCallRefBinding(&functionCallNode, arg_index);
+			}
 
 			// Special case: if argument is a reference identifier being passed to a reference parameter,
 			// handle it directly without visiting the expression. This prevents the Load context from
 			// generating a Dereference operation (which would give us the value, not the address).
 			// For reference-to-reference passing, we just want to pass the variable name directly,
 			// and let the IRConverter use MOV to load the address stored in the reference.
-			if (param_ref_qualifier != CVReferenceQualifier::None &&
+			if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+			param_ref_qualifier != CVReferenceQualifier::None &&
 			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				const DeclarationNode* decl_ptr = lookupDeclaration(identifier.name());
@@ -1077,12 +1082,21 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
 			// This is needed for non-reference arguments being passed to reference parameters
-			if (param_ref_qualifier != CVReferenceQualifier::None) {
+			if (param_ref_qualifier != CVReferenceQualifier::None &&
+				(!sema_ref_binding || !sema_ref_binding->is_valid() || sema_ref_binding->binds_directly())) {
 				arg_context = ExpressionContext::LValueAddress;
 			}
 
 			ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
+
+			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
+				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
+						argumentIrOperands, argument, *param_type, sema_ref_binding, functionCallNode.called_from())) {
+					appendArgumentIrResult(*sema_bound_arg);
+					return;
+				}
+			}
 
 			bool materialized_selected_ctor = false;
 			if (param_type) {

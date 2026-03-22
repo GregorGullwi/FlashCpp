@@ -2204,6 +2204,22 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const Functio
 	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
+const CallArgReferenceBindingInfo* SemanticAnalysis::getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const {
+	auto it = function_call_ref_bindings_.find(key);
+	if (it == function_call_ref_bindings_.end() || arg_index >= it->second.size()) {
+		return nullptr;
+	}
+	return &it->second[arg_index];
+}
+
+const CallArgReferenceBindingInfo* SemanticAnalysis::getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const {
+	auto it = member_call_ref_bindings_.find(key);
+	if (it == member_call_ref_bindings_.end() || arg_index >= it->second.size()) {
+		return nullptr;
+	}
+	return &it->second[arg_index];
+}
+
 void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
 	semantic_slots_[key] = slot;
 }
@@ -2213,6 +2229,17 @@ CastInfoIndex SemanticAnalysis::allocateCastInfo(const ImplicitCastInfo& info) {
 	stats_.cast_infos_allocated++;
 	// CastInfoIndex is 1-based; 0 is the "no cast" sentinel
 	return CastInfoIndex{static_cast<uint16_t>(cast_info_table_.size())};
+}
+
+CastInfoIndex SemanticAnalysis::allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
+	CanonicalTypeId target_type_id,
+	StandardConversionKind cast_kind) {
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = source_type_id;
+	cast_info.target_type_id = target_type_id;
+	cast_info.cast_kind = cast_kind;
+	cast_info.value_category_after = ValueCategory::PRValue;
+	return allocateCastInfo(cast_info);
 }
 
 // --- Scope tracking ---
@@ -3482,6 +3509,72 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 		best_match->parameter_nodes().size());
 }
 
+std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferenceBinding(const ASTNode& arg,
+	const TypeSpecifierNode& param_type,
+	const char* context_description) {
+	if (!arg.is<ExpressionNode>()) return std::nullopt;
+	if (!param_type.is_reference() && !param_type.is_rvalue_reference()) return std::nullopt;
+
+	CanonicalTypeId inferred_arg_type_id{};
+	auto arg_binding_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
+	if (!arg_binding_type_opt.has_value()) return std::nullopt;
+
+	const TypeSpecifierNode& arg_binding_type = *arg_binding_type_opt;
+	TypeSpecifierNode param_value_type = param_type;
+	param_value_type.set_reference_qualifier(ReferenceQualifier::None);
+	TypeSpecifierNode arg_value_type = arg_binding_type;
+	arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
+
+	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
+	const CanonicalTypeId param_value_type_id = canonicalizeType(param_value_type);
+	const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
+	if (!param_type_id || !param_value_type_id || !arg_value_type_id) return std::nullopt;
+
+	diagnoseScopedEnumConversion(arg, param_value_type_id, context_description, inferred_arg_type_id);
+
+	CallArgReferenceBindingInfo info;
+	info.parameter_type_id = param_type_id;
+
+	const bool arg_is_lvalue = arg_binding_type.is_lvalue_reference();
+	const bool arg_is_xvalue = arg_binding_type.is_rvalue_reference();
+	const ConversionPlan direct_plan = buildConversionPlan(arg_binding_type, param_type);
+	if (direct_plan.is_valid && (arg_is_lvalue || arg_is_xvalue) &&
+		(direct_plan.kind == StandardConversionKind::None ||
+		 direct_plan.kind == StandardConversionKind::DerivedToBase)) {
+		info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::BindsReferenceDirectly;
+		return info;
+	}
+
+	if (arg_is_xvalue && param_type.is_reference() && param_type.is_const()) {
+		const ConversionPlan xvalue_const_lref_plan = buildConversionPlan(arg_value_type, param_value_type);
+		if (xvalue_const_lref_plan.is_valid &&
+			xvalue_const_lref_plan.kind == StandardConversionKind::None) {
+			info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::BindsReferenceDirectly;
+			return info;
+		}
+	}
+
+	if (param_type.is_rvalue_reference()) {
+		if (arg_is_lvalue) return std::nullopt;
+	} else if (param_type.is_reference()) {
+		if (!param_type.is_const()) return std::nullopt;
+	}
+
+	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
+	if (!value_plan.is_valid || value_plan.rank == ConversionRank::UserDefined) {
+		return std::nullopt;
+	}
+
+	info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::MaterializesTemporary;
+	if (value_plan.kind != StandardConversionKind::None) {
+		info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(
+			arg_value_type_id,
+			param_value_type_id,
+			value_plan.kind);
+	}
+	return info;
+}
+
 // --- Function call argument conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
@@ -3659,6 +3752,9 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 	const auto& param_nodes = func_decl->parameter_nodes();
 
 	if (arguments.size() < countMinRequiredArgs(*func_decl) || arguments.size() > param_nodes.size()) return;
+	auto& ref_bindings = function_call_ref_bindings_[&call_node];
+	ref_bindings.clear();
+	ref_bindings.resize(arguments.size());
 
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];
@@ -3669,7 +3765,12 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-		if (param_type.is_reference() || param_type.is_rvalue_reference()) continue;
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in function argument")) {
+				ref_bindings[i] = *binding;
+			}
+			continue;
+		}
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 		// Quick exit when both types are inferable and already identical (no cast needed).
@@ -3692,6 +3793,9 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 	const auto& param_nodes = func_decl.parameter_nodes();
 
 	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size()) return;
+	auto& ref_bindings = member_call_ref_bindings_[&call_node];
+	ref_bindings.clear();
+	ref_bindings.resize(arguments.size());
 
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];
@@ -3703,8 +3807,12 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 
-		// Skip reference/rvalue-reference parameters: no implicit arithmetic conversion for binding.
-		if (param_type.is_reference() || param_type.is_rvalue_reference()) continue;
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in member function argument")) {
+				ref_bindings[i] = *binding;
+			}
+			continue;
+		}
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);

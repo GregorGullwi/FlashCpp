@@ -496,9 +496,27 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					}
 					return ConversionPlan::exact_match();
 				}
-				
-				// Lvalue ref can't bind to rvalue ref parameter
-				// Rvalue ref can't bind to lvalue ref parameter  
+
+				// Reference binding may still be viable through temporary materialization.
+				// C++20 [dcl.init.ref]: a const lvalue reference can bind to a temporary
+				// materialized from an lvalue/xvalue after a standard conversion, and an
+				// rvalue reference can bind to a temporary materialized from an xvalue when
+				// a standard conversion is required.
+				if (!to_is_rvalue && to.is_const()) {
+					auto plan = buildConversionPlan(from_base, to_base);
+					if (plan.is_valid) {
+						return plan;
+					}
+				}
+				if (from_is_rvalue && to_is_rvalue) {
+					auto plan = buildConversionPlan(from_base, to_base);
+					if (plan.is_valid) {
+						return plan;
+					}
+				}
+
+				// Lvalue ref can't bind to rvalue ref parameter, and non-const lvalue refs
+				// can't bind to xvalues of a different reference kind.
 				return ConversionPlan::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
@@ -518,10 +536,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					types_match = false;
 				}
 				if (!types_match) {
-					// Allow conversions for const lvalue refs only
+					// Allow conversions for const lvalue refs and rvalue refs by
+					// materializing a temporary of the referred-to type.
 					auto plan = buildConversionPlan(from_base, to_base);
-					if (!to_is_rvalue && to_is_const && plan.is_valid) {
+					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
+						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
+						// and rvalue refs can bind to converted prvalues.
 						return plan;
 					}
 					return ConversionPlan::no_match();

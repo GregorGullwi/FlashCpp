@@ -74,6 +74,15 @@ namespace {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+		auto flushFullExpressionTemps = [this]() {
+			emitAndClearFullExpressionTempDestructors();
+		};
+		struct FullExpressionTempFlushGuard {
+			decltype(flushFullExpressionTemps)& flush;
+			~FullExpressionTempFlushGuard() {
+				flush();
+			}
+		} full_expression_temp_flush_guard{flushFullExpressionTemps};
 		auto prepare_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode*& ctor) {
 			std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
 			bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&

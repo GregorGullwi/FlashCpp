@@ -159,6 +159,7 @@
 
 				// Call any enclosing __finally funclets before returning
 				emitSehFinallyCallsBeforeReturn(node.return_token());
+				emitAndClearFullExpressionTempDestructors();
 
 				// Emit destructor calls for all local variables before returning
 				emitDestructorsForNonLocalExit(0);
@@ -187,6 +188,7 @@
 							const auto& ident = std::get<IdentifierNode>(operand_expr);
 							if (ident.name() == "this") {
 								emitSehFinallyCallsBeforeReturn(node.return_token());
+								emitAndClearFullExpressionTempDestructors();
 								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
 								current_function_return_type_, current_function_return_size_,
@@ -216,6 +218,7 @@
 				// (the expression was already evaluated for its side effects)
 				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
+					emitAndClearFullExpressionTempDestructors();
 					emitDestructorsForNonLocalExit(0);
 					emitVoidReturn(node.return_token());
 					return;
@@ -370,6 +373,7 @@
 
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
+			emitAndClearFullExpressionTempDestructors();
 
 			// Emit destructor calls for all local variables before returning.
 			// The return value expression has already been evaluated above, so destroying
@@ -406,6 +410,7 @@
 		else {
 			// Call any enclosing __finally funclets before returning
 			emitSehFinallyCallsBeforeReturn(node.return_token());
+			emitAndClearFullExpressionTempDestructors();
 			// Emit destructor calls for all local variables before returning
 			emitDestructorsForNonLocalExit(0);
 			emitVoidReturn(node.return_token());

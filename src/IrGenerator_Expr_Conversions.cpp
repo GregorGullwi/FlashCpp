@@ -2474,6 +2474,123 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return arg_result;
 	}
 
+	std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
+		const ASTNode& arg_expr,
+		const TypeSpecifierNode& param_type,
+		const CallArgReferenceBindingInfo* binding_info,
+		const Token& source_token) {
+		if (!binding_info || !binding_info->is_valid()) {
+			return std::nullopt;
+		}
+		if (!param_type.is_reference() && !param_type.is_rvalue_reference()) {
+			return std::nullopt;
+		}
+
+		auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
+			if (value_result.type != Type::Struct || !value_result.type_index.is_valid()) {
+				return;
+			}
+			if (value_result.type_index.value >= gTypeInfo.size()) {
+				return;
+			}
+			const TypeInfo& type_info = gTypeInfo[value_result.type_index.value];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (!struct_info || !struct_info->hasDestructor()) {
+				return;
+			}
+			if (const auto* temp_var = std::get_if<TempVar>(&value_result.value)) {
+				registerFullExpressionTempDestructor(type_info.name(), *temp_var);
+			}
+		};
+
+		auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
+			if (value_result.type == Type::Struct) {
+				if (std::holds_alternative<TempVar>(value_result.value)) {
+					registerStructTempDestructorIfNeeded(value_result);
+					return value_result;
+				}
+			}
+
+			TempVar temp_var = var_counter.next();
+			AssignmentOp assign_op;
+			assign_op.result = temp_var;
+			assign_op.lhs = makeTypedValue(value_result.type, value_result.size_in_bits, temp_var);
+			assign_op.rhs = toTypedValue(value_result);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
+
+			TempVar addr_var = emitAddressOf(value_result.type, value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			return makeExprResult(value_result.type, SizeInBits{64}, IrOperand{addr_var}, value_result.type_index);
+		};
+
+		if (binding_info->binds_directly()) {
+			if (arg_expr.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg_expr.as<ExpressionNode>())) {
+				const auto& identifier = std::get<IdentifierNode>(arg_expr.as<ExpressionNode>());
+				const DeclarationNode* decl = lookupDeclaration(identifier.name());
+				if (decl) {
+					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						return makeExprResult(
+							type_node.type(),
+							SizeInBits{64},
+							IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
+							type_node.type_index());
+					}
+
+					TempVar addr_var = emitAddressOf(
+						type_node.type(),
+						static_cast<int>(type_node.size_in_bits()),
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+						source_token);
+					return makeExprResult(type_node.type(), SizeInBits{64}, IrOperand{addr_var}, type_node.type_index());
+				}
+			}
+
+			if (std::holds_alternative<TempVar>(arg_result.value)) {
+				TempVar expr_var = std::get<TempVar>(arg_result.value);
+				bool is_already_address = false;
+				auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+				if (metadata_storage.hasMetadata(expr_var)) {
+					TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+					is_already_address = metadata.category == ValueCategory::LValue ||
+						metadata.category == ValueCategory::XValue;
+				}
+				if (is_already_address) {
+					return arg_result;
+				}
+
+				TempVar addr_var = emitAddressOf(
+					arg_result.type,
+					arg_result.size_in_bits.value,
+					IrValue(expr_var),
+					source_token);
+				return makeExprResult(arg_result.type, SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index);
+			}
+
+			return std::nullopt;
+		}
+
+		if (!binding_info->materializes_temporary()) {
+			return std::nullopt;
+		}
+
+		if (binding_info->has_pre_bind_cast()) {
+			const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
+			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
+			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
+			Type from_t = from_desc.base_type;
+			const Type to_t = to_desc.base_type;
+			if (from_t == Type::Enum && from_t != arg_result.type) {
+				from_t = arg_result.type;
+			}
+			if (from_t == Type::Struct || to_t == Type::Struct) {
+				return std::nullopt;
+			}
+			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+		}
+
+		return materializeTemporaryAndTakeAddress(arg_result);
+	}
+
 	std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 		ExprResult source_result,
 		const ASTNode& source_expr,

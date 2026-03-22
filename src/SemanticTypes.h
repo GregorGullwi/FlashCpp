@@ -217,6 +217,17 @@ inline bool hasFlag(ConversionPlanFlags flags, ConversionPlanFlags flag) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
 }
 
+struct CallArgReferenceBindingInfo {
+	CanonicalTypeId parameter_type_id{};
+	CastInfoIndex pre_bind_cast_info_index{};
+	ConversionPlanFlags flags = ConversionPlanFlags::None;
+
+	bool is_valid() const { return hasFlag(flags, ConversionPlanFlags::IsValid); }
+	bool binds_directly() const { return hasFlag(flags, ConversionPlanFlags::BindsReferenceDirectly); }
+	bool materializes_temporary() const { return hasFlag(flags, ConversionPlanFlags::MaterializesTemporary); }
+	bool has_pre_bind_cast() const { return static_cast<bool>(pre_bind_cast_info_index); }
+};
+
 // --- Conversion step (one step in a conversion sequence) ---
 
 struct ConversionStep {

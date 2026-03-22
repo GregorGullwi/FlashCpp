@@ -5209,14 +5209,11 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 		}
 
 		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer, TempVars from heap_alloc, and pointer variables from delete
-		bool object_is_pointer = false;
-		if (std::holds_alternative<TempVar>(dtor_op.object)) {
-			// TempVars are always pointers in destructor calls (from heap_free)
-			object_is_pointer = true;
-		} else if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
+		// This includes 'this' pointer, heap pointers, and any frontend-marked pointer temp.
+		bool object_is_pointer = dtor_op.object_is_pointer;
+		if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
 			StringHandle obj_handle = *string_ptr;
-			object_is_pointer = dtor_op.object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
