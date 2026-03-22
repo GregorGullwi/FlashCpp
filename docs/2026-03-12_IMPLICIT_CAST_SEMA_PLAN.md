@@ -1255,18 +1255,6 @@ clear local sources of truth.
 	- `PointerToMemberAccessNode` now forwards the inferred type of its
 	  `member_pointer()` operand, matching the existing IR-generation expectation
 
-### Known limitations (current, as of Phase 19)
-
-- User-defined `operator bool()` / converting constructors remain in codegen.
-- Reference binding, temporary materialization, lifetime extension remain in codegen.
-- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
-- `inferExpressionType` parser fallback (`parser_.get_expression_type`) may be slower than direct scope-stack lookup for hot paths; profiling should verify this is not a bottleneck for large translation units.
-- `inferExpressionType` still does not handle: `PackExpansionExprNode`. This
-  should normally be expanded during template substitution; surviving nodes
-  still fall back to parser type resolution or no annotation.
-- Broader parser/template-substitution/sema boundary cleanup is tracked
-  separately in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
-
 ### Phase 20 ✅: `MemberFunctionCallNode` argument conversions
 
 **Goal:** Fill the gap where member function calls (`obj.method(args)`) did not
@@ -1346,6 +1334,27 @@ helper. Annotate struct→primitive conversions in sema using `StandardConversio
   operators (`Derived : Base` where `Base` has `operator int()`).
 
 **Test result:** 1679 pass, 98 expected-fail (was 1677/98 before this phase).
+
+**Phase 21 investigation items:**
+
+1. **Function-arg path does not consume sema `UserDefined` annotation.** `IrGenerator_Call_Direct.cpp:1097-1115` only handles `from_type != Type::Struct` standard conversions — it ignores `UserDefined` annotations and re-discovers the conversion operator via fallback lookup. Correct today; blocks future fallback removal. Phase 22+ should add the `UserDefined` branch here.
+2. **Optimistic `UserDefined` annotation without operator existence check.** `buildConversionPlan(Type::Struct, primitive)` returns `UserDefined` unconditionally without verifying a conversion operator exists. Codegen handles this safely via `findConversionOperator` null check, but `slots_filled` stats overcount.
+3. **`emitConversionOperatorCall` missing assertion for non-struct source values.** If the source value is a literal (`unsigned long long`/`double`), neither the `StringHandle` nor `TempVar` branch matches, emitting a zero-arg `CallOp`. Unreachable for struct sources in practice; add an assertion to catch future misuse.
+4. **`is_non_primitive` / `is_unresolved_type` lambda naming.** Two nearly-identical lambdas with subtly different membership (only `is_non_primitive` includes `Type::Struct`). Consider renaming `is_non_primitive` → `is_non_primitive_target`.
+5. **`Struct→FunctionPointer` annotation now permitted.** Harmless (codegen's `findConversionOperator` returns nullptr), but creates spurious `UserDefined` slots for rare cases.
+6. **`ir_type` now set on `this` arg.** Correctness improvement over old code (which left it default-initialized). Subtle behavioral change for downstream IR consumers.
+7. **Dead `pointer_depth` ternary in `IrGenerator_Call_Direct.cpp:1220`.** Enclosing guard already requires `pointer_depth() == 0`; simplify to `static_cast<int>(param_type->size_in_bits())`.
+
+### Known limitations (current, as of Phase 21)
+
+- User-defined `operator bool()` / converting constructors remain in codegen.
+- Reference binding, temporary materialization, lifetime extension remain in codegen.
+- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
+- `inferExpressionType` parser fallback may be slower than direct scope-stack lookup for hot paths.
+- `inferExpressionType` does not handle `PackExpansionExprNode` (normally expanded during template substitution).
+- Broader parser/template-substitution/sema boundary cleanup tracked in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
+- Function-arg codegen path does not consume sema `UserDefined` annotations (item 1 above).
+- Sema optimistically annotates `UserDefined` without verifying operator existence (item 2 above).
 
 ### Parallel rollout guidance
 
