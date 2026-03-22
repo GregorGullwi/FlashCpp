@@ -850,6 +850,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
+	if (!result.success() && (result.error_message == "Constexpr member function did not return a value" ||
+							  result.error_message == "Constexpr function return statement has no expression")) {
+		if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
+			if (ret_spec.type() == Type::Void) {
+				result = EvalResult::from_int(0LL);
+			}
+		}
+	}
 	if (result.success() && mutable_bindings) {
 		if (write_back_to_object_binding) {
 			auto object_it = mutable_bindings->find(object_name);

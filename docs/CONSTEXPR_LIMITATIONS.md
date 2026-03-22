@@ -379,6 +379,61 @@ struct Counter {
 };
 ```
 
+### ✅ Default Constructor Invocation for Local Struct Variables (NEW)
+
+Declaring a local struct variable without an initializer inside a constexpr function now invokes the default constructor:
+
+```cpp
+struct Counter {
+    int value;
+    constexpr Counter() { value = 42; }  // constructor body style
+};
+
+constexpr int f() {
+    Counter c;       // ✅ default constructor called — c.value == 42
+    return c.value;
+}
+static_assert(f() == 42);  // ✅ Works
+
+struct Mixed {
+    int value;
+    int step;
+    constexpr Mixed() : value(1) { step = 2; }  // init-list + body
+};
+constexpr int g() {
+    Mixed m;
+    return m.value + m.step;
+}
+static_assert(g() == 3);  // ✅ Works
+```
+
+When no default constructor exists, members are zero-filled (applying default member initializers where present).
+
+### ✅ Void Mutating Member Functions on Local Structs (NEW)
+
+Calling a `void`-returning non-const member function on a local struct variable inside a constexpr function now correctly mutates the object:
+
+```cpp
+struct Counter {
+    int value;
+    constexpr Counter() : value(0) {}
+    constexpr void increment() { value++; }
+    constexpr void add(int n) { value += n; }
+    constexpr int get() const { return value; }
+};
+
+constexpr int f() {
+    Counter c;
+    c.increment();   // ✅ c.value == 1
+    c.increment();   // ✅ c.value == 2
+    c.add(5);        // ✅ c.value == 7
+    return c.get();  // ✅ 7
+}
+static_assert(f() == 7);  // ✅ Works
+```
+
+Multiple void method calls accumulate correctly, and changes made inside the method body are visible to subsequent calls on the same object.
+
 ### ✅ Nested Member Access (NEW)
 
 Accessing members of nested objects is now supported:
@@ -930,6 +985,8 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **Struct constructor calls inside constexpr function bodies** *(Implemented)* — `ConstructorCallNode` for struct/user-defined types is now handled in the bindings-aware evaluator, enabling patterns like `return Pair{a, b}` from a constexpr function, `Point p = Point{5, 6}` as a local variable, and calling member functions on locally-constructed objects.
 - ✅ **Local struct member assignment (`p.a = value`) in constexpr functions** *(Implemented)* — Dot-member assignment on local struct variables (non-`this`, non-arrow) is now supported. Both simple (`p.a = 10`) and compound (`p.a += 3`) assignment operators work. Enables swap patterns, loop accumulators, and general local struct mutation.
 - ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
+- ✅ **Default constructor invocation for uninitialized local struct variables in constexpr functions** *(Implemented)* — Declaring a local struct variable without an explicit initializer (e.g., `Counter c;`) now invokes the default constructor, including constructors with a body. Both member-initializer-list and constructor-body styles work. Zero-fill with default member initializers is applied when no default constructor exists.
+- ✅ **Void mutating member function calls on local constexpr structs** *(Implemented)* — Calling a `void`-returning non-const member function on a local struct variable (e.g., `c.increment()`) now correctly mutates the local object and writes the updated member values back. Repeated calls accumulate correctly, and parameterized void methods (e.g., `c.add(5)`) also work.
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)

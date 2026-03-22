@@ -3396,11 +3396,55 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				return EvalResult::error("Statement executed (not a return)");
 			}
 
-			// Uninitialized variable - set to 0
-				EvalResult default_result = EvalResult::from_int(0);
-				maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
-				declaration_bindings[var_name] = std::move(default_result);
-				return EvalResult::error("Statement executed (not a return)");
+			// Uninitialized variable — check if it's a struct/class type requiring default construction
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+					type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						TypeIndex type_index = type_spec.type_index();
+						EvalResult object_result = EvalResult::from_int(0LL);
+						object_result.object_type_index = type_index;
+
+						ChunkedVector<ASTNode> empty_args;
+						const ConstructorDeclarationNode* default_ctor =
+							find_matching_constructor(struct_info, empty_args, context, nullptr);
+
+						if (default_ctor) {
+							std::unordered_map<std::string_view, EvalResult> empty_bindings;
+							auto materialize_result = materialize_members_from_constructor(
+								struct_info, *default_ctor, empty_bindings,
+								object_result.object_member_bindings, context, false);
+							if (!materialize_result.success()) {
+								return materialize_result;
+							}
+							declaration_bindings[var_name] = std::move(object_result);
+							return EvalResult::error("Statement executed (not a return)");
+						}
+
+						for (const auto& member : struct_info->members) {
+							std::string_view mname = StringTable::getStringView(member.getName());
+							if (member.default_initializer.has_value()) {
+								auto def_result = evaluate(*member.default_initializer, context);
+								if (!def_result.success()) {
+									return def_result;
+								}
+								object_result.object_member_bindings[mname] = std::move(def_result);
+							} else {
+								object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+							}
+						}
+						declaration_bindings[var_name] = std::move(object_result);
+						return EvalResult::error("Statement executed (not a return)");
+					}
+				}
+			}
+			// Fallback: set to 0
+			EvalResult default_result = EvalResult::from_int(0);
+			maybe_set_binding_result_exact_type(default_result, decl, nullptr, context);
+			declaration_bindings[var_name] = std::move(default_result);
+			return EvalResult::error("Statement executed (not a return)");
 	}
 	
 	// Handle for loops (C++14 constexpr)
