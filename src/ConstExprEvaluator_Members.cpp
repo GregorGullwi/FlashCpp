@@ -617,6 +617,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 					return EvalResult::error("Arrow member access: pointer offset out of bounds for heap struct array");
 				}
 				target_obj = &heap_obj.array_elements[static_cast<size_t>(offset)];
+			} else if (offset != 0) {
+				return EvalResult::error("Arrow member access: non-zero pointer offset on non-array heap object");
 			}
 			auto member_it = target_obj->object_member_bindings.find(member_access.member_name());
 			if (member_it != target_obj->object_member_bindings.end()) {
