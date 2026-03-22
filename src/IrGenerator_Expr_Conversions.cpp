@@ -2264,10 +2264,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return true;
 	}
 
-	// Fold expressions: would need to check all sub-expressions
+	// Phase 4: fold/pack helper nodes are unreachable in codegen after pre-sema
+	// boundary enforcement; assertions guard the invariant.
 	if (std::holds_alternative<FoldExpressionNode>(expr)) {
-		// Conservatively assume may throw
-		return false;
+		throw InternalError("FoldExpressionNode survived into codegen noexcept check after pre-sema boundary enforcement");
+	}
+	if (std::holds_alternative<PackExpansionExprNode>(expr)) {
+		throw InternalError("PackExpansionExprNode survived into codegen noexcept check after pre-sema boundary enforcement");
 	}
 
 	// Pseudo-destructor calls: noexcept iff the type's destructor is noexcept.

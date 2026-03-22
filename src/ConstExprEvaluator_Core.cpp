@@ -214,14 +214,18 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	}
 
 	// For FoldExpressionNode (e.g., (args && ...))
-	// Fold expressions depend on template parameter packs and must be evaluated during template instantiation
+	// Fold expressions depend on template parameter packs and must be evaluated during template instantiation.
+	// Phase 4 note: the pre-sema boundary check guarantees these do not survive into the sema-owned surface,
+	// but the constexpr evaluator is also called from parser-owned contexts during template substitution
+	// where fold expressions may legitimately appear; this error-return path serves that dual use.
 	if (std::holds_alternative<FoldExpressionNode>(expr)) {
 		return EvalResult::error("Fold expression requires template instantiation context",
 		                         EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For PackExpansionExprNode (e.g., args...)
-	// Pack expansions depend on template parameter packs and must be evaluated during template instantiation
+	// Pack expansions depend on template parameter packs and must be evaluated during template instantiation.
+	// Phase 4 note: same dual-context rationale as FoldExpressionNode above.
 	if (std::holds_alternative<PackExpansionExprNode>(expr)) {
 		return EvalResult::error("Pack expansion requires template instantiation context",
 		                         EvalErrorType::TemplateDependentExpression);
