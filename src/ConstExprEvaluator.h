@@ -348,6 +348,8 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+	// Cached type index for the current struct (parallel to struct_info; avoids O(n) search in gTypeInfo).
+	TypeIndex struct_type_index {};
 	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
 
 	// Pointer to the innermost active block scope tracker (null at top level).
