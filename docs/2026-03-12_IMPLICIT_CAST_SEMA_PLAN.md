@@ -1267,6 +1267,49 @@ clear local sources of truth.
 - Broader parser/template-substitution/sema boundary cleanup is tracked
   separately in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
 
+### Phase 20 ✅: `MemberFunctionCallNode` argument conversions
+
+**Goal:** Fill the gap where member function calls (`obj.method(args)`) did not
+annotate argument implicit conversions in sema and did not consume sema
+annotations in codegen. This caused incorrect results when passing mismatched
+primitive types to member functions (e.g., `int` → `double` parameter).
+
+**Bug:** `c.accumulate(3)` where `accumulate` expects `double` would pass the raw
+`int` value without conversion, producing garbage floating-point results.
+
+**Implementation:**
+- `src/SemanticAnalysis.h`: Declared
+  `tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode&)`.
+- `src/SemanticAnalysis.cpp` (`normalizeExpression`, `MemberFunctionCallNode` branch):
+  Added call to `tryAnnotateMemberFunctionCallArgConversions(e)` before child
+  normalization — matching the pattern used for `FunctionCallNode` and
+  `ConstructorCallNode`.
+- `src/SemanticAnalysis.cpp` (new function): Implemented
+  `tryAnnotateMemberFunctionCallArgConversions`.
+  - Directly accesses `call_node.function_declaration()` (no lookup needed;
+    parser always resolves member function references at parse time).
+  - Skips variadic functions and reference/rvalue-reference parameters.
+  - For each by-value argument, calls `tryAnnotateConversion` + 
+    `diagnoseScopedEnumConversion` — identical to the
+    `tryAnnotateCallArgConversions` inner loop.
+- `src/IrGenerator_Call_Indirect.cpp` (member function argument dispatch):
+  Updated all four "regular pass by value" paths to call
+  `applyConstructorArgConversion` (which checks the sema slot first, then falls
+  back to type-based conversion):
+  - Path A (`DeclarationNode` identifier): replace direct `makeTypedValue` with
+    `visitExpressionNode` + `applyConstructorArgConversion`.
+  - Path B (`VariableDeclarationNode` identifier): same.
+  - Path C (non-identifier, non-reference parameter): add `if (param_type)`
+    guard + `applyConstructorArgConversion`.
+  - Path D (unknown symbol type fallback): add `if (param_type)` guard +
+    `applyConstructorArgConversion`.
+  - Reference and rvalue-reference parameter paths: unchanged.
+- `tests/test_member_func_implicit_conv_ret0.cpp`: New test covering
+  `int → float`, `float → double`, `char → int`, `short → int`,
+  `int → double`, `double → float`, `float → int` in member calls.
+
+**Test result:** 1674 pass, 98 expected-fail (was 1673/98 before this phase).
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.

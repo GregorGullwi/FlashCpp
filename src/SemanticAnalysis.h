@@ -198,6 +198,9 @@ private:
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
 
+	// Annotate member-function-call arguments with their parameter-type conversions.
+	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
 
