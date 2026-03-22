@@ -3416,19 +3416,21 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							auto materialize_result = materialize_members_from_constructor(
 								struct_info, *default_ctor, empty_bindings,
 								object_result.object_member_bindings, context, false);
-							if (materialize_result.success()) {
-								declaration_bindings[var_name] = std::move(object_result);
-								return EvalResult::error("Statement executed (not a return)");
+							if (!materialize_result.success()) {
+								return materialize_result;
 							}
-							object_result.object_member_bindings.clear();
+							declaration_bindings[var_name] = std::move(object_result);
+							return EvalResult::error("Statement executed (not a return)");
 						}
 
 						for (const auto& member : struct_info->members) {
 							std::string_view mname = StringTable::getStringView(member.getName());
 							if (member.default_initializer.has_value()) {
 								auto def_result = evaluate(*member.default_initializer, context);
-								object_result.object_member_bindings[mname] =
-									def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+								if (!def_result.success()) {
+									return def_result;
+								}
+								object_result.object_member_bindings[mname] = std::move(def_result);
 							} else {
 								object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
 							}
