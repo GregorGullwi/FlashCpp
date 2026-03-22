@@ -4917,6 +4917,48 @@ std::optional<EvalResult> Evaluator::try_evaluate_member_from_constructor_initia
 	return std::nullopt;
 }
 
+// Attempt to materialize a struct object by finding and invoking a matching user-defined
+// constructor with the given arguments.  Returns std::nullopt when no matching constructor
+// exists (caller may fall back to aggregate initialization).  Returns an EvalResult
+// (success or error) when a constructor candidate was found and materialization was attempted.
+std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
+	const StructTypeInfo* struct_info,
+	TypeIndex type_index,
+	const ChunkedVector<ASTNode>& args,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const ConstructorDeclarationNode* matching_ctor =
+		find_matching_constructor(struct_info, args, context, outer_bindings);
+	if (!matching_ctor) {
+		return std::nullopt;
+	}
+
+	EvalResult object_result = EvalResult::from_int(0LL);
+	object_result.object_type_index = type_index;
+
+	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+	auto bind_result = bind_evaluated_arguments(
+		matching_ctor->parameter_nodes(),
+		args,
+		ctor_param_bindings,
+		context,
+		"Invalid parameter in constexpr struct construction",
+		outer_bindings,
+		true);
+	if (!bind_result.success()) {
+		return bind_result;
+	}
+
+	auto materialize_result = materialize_members_from_constructor(
+		struct_info, *matching_ctor, ctor_param_bindings,
+		object_result.object_member_bindings, context, false);
+	if (!materialize_result.success()) {
+		return materialize_result;
+	}
+
+	return object_result;
+}
+
 // Helper to extract member values from a constexpr object
 EvalResult Evaluator::extract_object_members(
 	const ASTNode& object_expr,
