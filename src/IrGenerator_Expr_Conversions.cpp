@@ -2605,10 +2605,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			return std::nullopt;
 		}
 
-		const CanonicalTypeDesc& source_desc = sema_->typeContext().get(cast_info.source_type_id);
 		const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
-		if (source_desc.base_type == Type::Struct ||
-			target_desc.base_type != Type::Struct ||
+		if (target_desc.base_type != Type::Struct ||
 			target_desc.type_index != target_type.type_index()) {
 			return std::nullopt;
 		}

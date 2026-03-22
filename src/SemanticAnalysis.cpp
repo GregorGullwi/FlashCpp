@@ -3025,7 +3025,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None) return false;
-	if (from_desc.base_type == Type::Struct || from_desc.base_type == Type::UserDefined ||
+	if (from_desc.base_type == Type::UserDefined ||
 		from_desc.base_type == Type::Invalid || isPlaceholderAutoType(from_desc.base_type)) {
 		return false;
 	}
@@ -3067,6 +3067,11 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 
 		const TypeConversionResult conversion = can_convert_type(arg_type, param_type);
 		if (!conversion.is_valid) continue;
+		// A converting-constructor candidate already contributes the single permitted
+		// user-defined conversion in the implicit conversion sequence. The source
+		// argument must therefore reach the constructor's first parameter using only
+		// standard conversions/reference binding, not another converting constructor.
+		if (conversion.rank == ConversionRank::UserDefined) continue;
 
 		if (!best_any || conversion.rank < best_any_rank) {
 			best_any = &ctor_decl;

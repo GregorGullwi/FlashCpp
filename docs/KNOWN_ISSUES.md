@@ -68,34 +68,6 @@ two-phase lookup violation.
 **Workaround**: avoid introducing a named local in the affected template body;
 route the value through a helper call or another expression form instead.
 
-## Some converting-constructor cases are still incomplete
-
-The sema-selected non-struct → struct converting-constructor path now covers
-variable copy-initialization, free-function arguments, member-call arguments,
-and return expressions. The remaining gap is broader converting-constructor
-coverage that still goes through older codegen-only paths, especially
-struct-source/struct-destination cases:
-
-```cpp
-struct Box {
-    int value;
-    Box(int v) : value(v) {}
-};
-
-Box wrap(Box b) { return b; }
-
-int main() {
-    Box src{7};
-    return wrap(src).value;   // same-type / struct-source cases are still separate
-}
-```
-
-Reference binding, temporary materialization, and lifetime extension are also
-still handled outside this slice.
-
-**Workaround**: spell the construction explicitly when you run into a remaining
-struct-source case, or route through a helper that names the desired object
-construction directly.
 
 ## Unscoped enum enumerator access through type aliases
 

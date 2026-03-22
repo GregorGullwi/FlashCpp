@@ -1415,8 +1415,8 @@ by sema for struct → bool via `operator bool()`).
 
 ### Known limitations (current, post-Phase 23 follow-up)
 
-- Sema-owned `UserDefined` coverage for non-struct → struct converting constructors now includes variable copy-initialization, free-function arguments, member-function arguments, and return expressions, including copy-init explicit-constructor rejection and selected-constructor tracking for those sites. Struct→struct converting-constructor cases remain separate.
-- Selected-constructor materialization is no longer declaration-only: non-declaration call/return sites now consume the same sema metadata, but broader struct-source converting-constructor flows are still codegen-owned.
+- Sema-owned `UserDefined` coverage for copy-initialization converting constructors now includes both non-struct → struct and struct → struct sources across variable copy-initialization, free-function arguments, member-function arguments, and return expressions, including copy-init explicit-constructor rejection and selected-constructor tracking for those sites.
+- Selected-constructor materialization is no longer declaration-only: declaration, call, and return sites now consume the same sema-selected converting-constructor metadata for both primitive and struct sources.
 - Reference binding, temporary materialization, and lifetime extension remain codegen-owned. The next safe slice is sema-owned per-argument reference-binding annotation.
 - `inferExpressionType` hot-path local reinference has been reduced, but the remaining constructor-overload/parser-bridge cost is structural rather than another obvious micro-optimization.
 - `inferExpressionType` intentionally does not handle `PackExpansionExprNode`; supported function-call argument pack expansions are eliminated during template substitution (including empty packs), and surviving pack-expansion helpers are a pre-sema boundary violation.

@@ -1920,17 +1920,22 @@ namespace {
 											sema_->castInfoTable()[slot->cast_info_index.value - 1];
 										if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 											cast_info.selected_constructor) {
-											const CanonicalTypeDesc& source_desc =
-												sema_->typeContext().get(cast_info.source_type_id);
-											if (source_desc.base_type != Type::Struct) {
-												sema_selected_converting_ctor = cast_info.selected_constructor;
-												const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
-												if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
-													const ASTNode& param_type_node =
-														ctor_params[0].as<DeclarationNode>().type_node();
-													if (param_type_node.is<TypeSpecifierNode>()) {
-														sema_selected_param_type =
-															&param_type_node.as<TypeSpecifierNode>();
+											const CanonicalTypeDesc& target_desc =
+												sema_->typeContext().get(cast_info.target_type_id);
+											if (target_desc.base_type == Type::Struct &&
+												target_desc.type_index == type_node.type_index()) {
+												const CanonicalTypeDesc& source_desc =
+													sema_->typeContext().get(cast_info.source_type_id);
+												if (source_desc.base_type != Type::Invalid) {
+													sema_selected_converting_ctor = cast_info.selected_constructor;
+													const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
+													if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
+														const ASTNode& param_type_node =
+															ctor_params[0].as<DeclarationNode>().type_node();
+														if (param_type_node.is<TypeSpecifierNode>()) {
+															sema_selected_param_type =
+																&param_type_node.as<TypeSpecifierNode>();
+														}
 													}
 												}
 											}
