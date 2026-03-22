@@ -4339,6 +4339,20 @@ EvalResult Evaluator::materialize_constructor_object_value(
 
 	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_call.arguments(), context, outer_bindings);
 	if (!matching_ctor) {
+		// No matching constructor found - try aggregate initialization if arguments are provided.
+		// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
+		if (ctor_call.arguments().size() > 0) {
+			// Convert arguments to InitializerListNode for aggregate initialization
+			InitializerListNode init_list;
+			for (size_t i = 0; i < ctor_call.arguments().size(); ++i) {
+				const auto& arg = ctor_call.arguments()[i];
+				init_list.add_initializer(arg);
+			}
+			auto agg_result = materialize_aggregate_object_value(struct_info, type_index, init_list, context);
+			if (agg_result.success()) {
+				return agg_result;
+			}
+		}
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
 
