@@ -430,8 +430,8 @@ private:
 					const StructTypeInfo* nested_struct = gTypeInfo[member.type_index.value].getStructInfo();
 					if (nested_struct) {
 						fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);
-						break;
 					}
+					break;
 				}
 
 				unsigned long long value = eval_to_value(member_init, member.type);
