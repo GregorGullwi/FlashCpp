@@ -1535,6 +1535,7 @@ EvalResult Evaluator::evaluate_delete_expression(
 			? "delete[]: non-array pointer (use plain `delete`)"
 			: "delete: array pointer (use `delete[]`)");
 	}
+	heap_it->second.freed = true;
 	// delete-expression yields void; return a sentinel success value.
 	return EvalResult::from_int(0LL);
 }
