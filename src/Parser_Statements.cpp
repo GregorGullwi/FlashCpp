@@ -1210,6 +1210,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Check if we have too many initializers.
 			// For multi-dimensional arrays with flat brace-elision (next token is a scalar, not '{'),
 			// allow up to the total flattened count; otherwise use the outer dimension as the limit.
+			// NOTE: Mixed brace-init lists (e.g. int arr[2][3] = {1, 2, 3, {4, 5, 6}}) are not
+			// supported by this parser.  When 3 scalars have been parsed and '{' is encountered,
+			// the limit switches back to the outer dimension (2), causing rejection.  Fully-flat
+			// brace-elision (all scalars, no nested braces) and fully-nested form (each inner
+			// array in its own {…}) both work correctly.  Mixed form is a known limitation.
 			if (array_size.has_value()) {
 				size_t limit = (flat_total_size.has_value() && peek() != "{"_tok)
 					? *flat_total_size

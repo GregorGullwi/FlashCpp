@@ -4440,11 +4440,17 @@ EvalResult Evaluator::materialize_array_value(
 }
 
 namespace {
-// Create a zero-initialized EvalResult for the given dimensions.
-// When dims is empty, returns a scalar zero.  For non-empty dims, returns
-// a nested is_array EvalResult of the appropriate depth.
-EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims) {
+// Create a zero-initialized EvalResult for the given dimensions and element type.
+// When dims is empty, returns a type-correct scalar zero (0.0 for float, 0u for unsigned, 0 for signed).
+// For non-empty dims, returns a nested is_array EvalResult of the appropriate depth.
+EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, Type element_type) {
 	if (dims.empty()) {
+		if (isFloatingPointType(element_type)) {
+			return EvalResult::from_double(0.0);
+		}
+		if (isUnsignedIntegralType(element_type)) {
+			return EvalResult::from_uint(0ULL);
+		}
 		return EvalResult::from_int(0LL);
 	}
 	EvalResult result;
@@ -4452,7 +4458,7 @@ EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims) {
 	result.array_elements.resize(dims[0]);
 	std::vector<size_t> inner_dims(dims.begin() + 1, dims.end());
 	for (auto& elem : result.array_elements) {
-		elem = make_zero_array_for_dims(inner_dims);
+		elem = make_zero_array_for_dims(inner_dims, element_type);
 	}
 	return result;
 }
@@ -4472,6 +4478,10 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
 			Type elem_type = type_spec.type();
+			base_result.array_elements.reserve(declared_size);
+			if (!base_result.array_values.empty() && !isFloatingPointType(elem_type)) {
+				base_result.array_values.reserve(declared_size);
+			}
 			while (base_result.array_elements.size() < declared_size) {
 				EvalResult zero_elem;
 				if (isFloatingPointType(elem_type)) {
@@ -4528,7 +4538,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			EvalResult elem;
 			if (scalar_cursor >= init_list.size()) {
 				// No more scalars: zero-initialise.
-				elem = make_zero_array_for_dims(inner_dims);
+				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
 			} else {
 				// Build a sub-init-list consuming up to inner_size scalars from the flat list.
 				InitializerListNode sub_init;
@@ -4561,7 +4571,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 					if (!scalar_result.success()) {
 						elem = std::move(scalar_result);
 					} else {
-						elem = make_zero_array_for_dims(inner_dims);
+						elem = make_zero_array_for_dims(inner_dims, type_spec.type());
 						EvalResult* target = &elem;
 						while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
 							target = &target->array_elements[0];
@@ -4573,7 +4583,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 				}
 			} else {
 				// Missing initializer: zero-initialise the entire inner array.
-				elem = make_zero_array_for_dims(inner_dims);
+				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
 			}
 			if (!elem.success()) {
 				return elem;
@@ -4752,7 +4762,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
 				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
-						member_struct_info, member_info->type_index, init_list, context);
+						member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
 				} else {
 					member_result = EvalResult::error("Member struct type not found for brace-init");
 				}
