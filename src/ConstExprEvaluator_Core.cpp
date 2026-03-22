@@ -1312,6 +1312,13 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		}
 	}
 	
+	// Handle struct types with arguments: delegate to materialize_constructor_object_value
+	// which first attempts user-defined constructor matching and falls back to aggregate
+	// initialization only when no matching constructor is found.
+	if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+		return materialize_constructor_object_value(ctor_call, context);
+	}
+
 	// For basic type conversions with 1 argument: Type(value)
 	if (args.size() != 1) {
 		return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
@@ -1721,7 +1728,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (var_decl.declaration().is_array()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context);
+				// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
+				// are materialized with the correct inner dimensions.
+				return materialize_array_value_with_spec(type_spec, init_list, context);
 			}
 
 			// Preserve the older generic array materialization for declarations whose
@@ -3326,7 +3335,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					if (decl.is_array()) {
 						if (decl.type_node().is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-							auto array_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, &bindings);
+							// Use the spec-aware overload so multi-dimensional arrays (e.g., int[2][3])
+							// are materialized with correct inner dimensions and proper zero-padding.
+							auto array_result = materialize_array_value_with_spec(type_spec, init_list, context, &bindings);
 							if (!array_result.success()) {
 								return array_result;
 							}

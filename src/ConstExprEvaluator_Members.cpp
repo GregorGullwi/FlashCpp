@@ -1508,6 +1508,42 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
 						}
 					}
+					// Case 3: nested subscript assignment for multi-dimensional arrays
+					// Pattern: mat[i][j] = val where mat is a local 2D array binding.
+					// subscript.array_expr() is an ASTNode containing ArraySubscriptNode(mat, i).
+					{
+						const ASTNode& inner_arr_expr = subscript.array_expr();
+						const ArraySubscriptNode* inner_sub = nullptr;
+						if (inner_arr_expr.is<ExpressionNode>()) {
+							const ExpressionNode& ie = inner_arr_expr.as<ExpressionNode>();
+							inner_sub = std::get_if<ArraySubscriptNode>(&ie);
+						}
+						if (inner_sub) {
+							// Evaluate outer index (i in mat[i][j])
+							auto outer_idx_result = evaluate_expression_with_bindings(inner_sub->index_expr(), bindings, context);
+							if (!outer_idx_result.success()) return outer_idx_result;
+							int64_t outer_idx = outer_idx_result.as_int();
+
+							// Extract base array name from the innermost identifier
+							std::string_view base_name = getIdentifierNameFromAstNode(inner_sub->array_expr());
+
+							if (!base_name.empty()) {
+								EvalResult* base_bound = findMutableBindingValue(base_name, bindings, context);
+								if (base_bound && base_bound->is_array) {
+									if (outer_idx < 0 || static_cast<size_t>(outer_idx) >= base_bound->array_elements.size()) {
+										return EvalResult::error("Outer array index out of bounds in constexpr 2D subscript assignment");
+									}
+									EvalResult& row = base_bound->array_elements[static_cast<size_t>(outer_idx)];
+									if (row.is_array) {
+										if (idx < 0 || static_cast<size_t>(idx) >= row.array_elements.size()) {
+											return EvalResult::error("Inner array index out of bounds in constexpr 2D subscript assignment");
+										}
+										return apply_op_to(row.array_elements[static_cast<size_t>(idx)], rhs_result);
+									}
+								}
+							}
+						}
+					}
 					return EvalResult::error("Subscript assignment target is not a constexpr heap array or local array");
 				}
 			}
@@ -3302,6 +3338,23 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 				return func_result;
 			}
 		}
+		// Fallback: evaluate the initializer directly.  This handles ternary operators,
+		// parenthesised expressions, and any other expression that yields a struct value
+		// (e.g., `constexpr Pt p = (true ? Pt{3,7} : Pt{1,2})`).
+		{
+			static const std::unordered_map<std::string_view, EvalResult> empty_bindings;
+			const std::unordered_map<std::string_view, EvalResult>& eval_bindings =
+				enclosing_bindings ? *enclosing_bindings : empty_bindings;
+			EvalResult gen_result = evaluate_expression_with_bindings_const(initializer, eval_bindings, context);
+			if (gen_result.success() && !gen_result.object_member_bindings.empty()) {
+				auto it = gen_result.object_member_bindings.find(member_name);
+				if (it != gen_result.object_member_bindings.end()) {
+					resolved_member.value = it->second;
+					return std::nullopt;
+				}
+				return EvalResult::error("Member '" + std::string(member_name) + "' not found in " + std::string(usage_name));
+			}
+		}
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct initializer");
 	}
 
@@ -4277,6 +4330,20 @@ EvalResult Evaluator::materialize_constructor_object_value(
 
 	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_call.arguments(), context, outer_bindings);
 	if (!matching_ctor) {
+		// No matching constructor found - try aggregate initialization if arguments are provided.
+		// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
+		if (ctor_call.arguments().size() > 0) {
+			// Convert arguments to InitializerListNode for aggregate initialization
+			InitializerListNode init_list;
+			for (size_t i = 0; i < ctor_call.arguments().size(); ++i) {
+				const auto& arg = ctor_call.arguments()[i];
+				init_list.add_initializer(arg);
+			}
+			auto agg_result = materialize_aggregate_object_value(struct_info, type_index, init_list, context);
+			if (agg_result.success()) {
+				return agg_result;
+			}
+		}
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
 
@@ -4334,6 +4401,12 @@ EvalResult Evaluator::materialize_array_value(
 			} else {
 				element_result = EvalResult::error("Array element type is not a struct");
 			}
+		} else if (element.is<InitializerListNode>()) {
+			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
+			element_result = materialize_array_value(
+				element_type, element_type_index,
+				element.as<InitializerListNode>(),
+				context, bindings);
 		} else if (bindings) {
 			element_result = evaluate_expression_with_bindings_const(element, *bindings, context);
 		} else {
@@ -4362,6 +4435,99 @@ EvalResult Evaluator::materialize_array_value(
 		array_result.array_values = std::move(array_values);
 	}
 	return array_result;
+}
+
+namespace {
+// Create a zero-initialized EvalResult for the given dimensions.
+// When dims is empty, returns a scalar zero.  For non-empty dims, returns
+// a nested is_array EvalResult of the appropriate depth.
+EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims) {
+	if (dims.empty()) {
+		return EvalResult::from_int(0LL);
+	}
+	EvalResult result;
+	result.is_array = true;
+	result.array_elements.resize(dims[0]);
+	std::vector<size_t> inner_dims(dims.begin() + 1, dims.end());
+	for (auto& elem : result.array_elements) {
+		elem = make_zero_array_for_dims(inner_dims);
+	}
+	return result;
+}
+} // namespace
+
+EvalResult Evaluator::materialize_array_value_with_spec(
+	const TypeSpecifierNode& type_spec,
+	const InitializerListNode& init_list,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+
+	const auto& dims = type_spec.array_dimensions();
+	if (dims.size() <= 1) {
+		// Single-dimension or unspecified: delegate to the base overload.
+		return materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
+	}
+
+	// Multi-dimensional array (e.g., int[2][3]).
+	// dims[0]    = outer element count (number of rows)
+	// dims[1..N] = inner dimensions (size of each row)
+	size_t outer_size = dims[0];
+	std::vector<size_t> inner_dims(dims.begin() + 1, dims.end());
+
+	// Build a TypeSpecifierNode for the inner (element) type.
+	TypeSpecifierNode inner_type_spec = type_spec;
+	inner_type_spec.set_array_dimensions(inner_dims);
+
+	std::vector<EvalResult> elements;
+	elements.reserve(outer_size);
+
+	for (size_t i = 0; i < outer_size; ++i) {
+		EvalResult elem;
+		if (i < init_list.size()) {
+			const ASTNode& initializer = init_list.initializers()[i];
+			if (initializer.is<InitializerListNode>()) {
+				// Nested brace-init list for inner array ({…} form).
+				elem = materialize_array_value_with_spec(
+					inner_type_spec,
+					initializer.as<InitializerListNode>(),
+					context, bindings);
+			} else {
+				// Scalar initializer with brace-elision (e.g. {1} for int[2][3]):
+				// per C++20, the scalar seeds the first element of the inner array;
+				// remaining inner elements are zero-initialised.
+				// Evaluate the scalar, start with a fully zero-initialised inner array,
+				// then place the scalar at the first (innermost) element.
+				EvalResult scalar_result = bindings
+					? evaluate_expression_with_bindings_const(initializer, *bindings, context)
+					: evaluate(initializer, context);
+				if (!scalar_result.success()) {
+					elem = std::move(scalar_result);
+				} else {
+					elem = make_zero_array_for_dims(inner_dims);
+					// Walk down the [0] chain to place the scalar at the deepest first element.
+					EvalResult* target = &elem;
+					while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
+						target = &target->array_elements[0];
+					}
+					if (target->is_array && !target->array_elements.empty()) {
+						target->array_elements[0] = std::move(scalar_result);
+					}
+				}
+			}
+		} else {
+			// Missing initializer: zero-initialise the entire inner array.
+			elem = make_zero_array_for_dims(inner_dims);
+		}
+		if (!elem.success()) {
+			return elem;
+		}
+		elements.push_back(std::move(elem));
+	}
+
+	EvalResult result;
+	result.is_array = true;
+	result.array_elements = std::move(elements);
+	return result;
 }
 
 namespace {
@@ -4949,7 +5115,12 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (index >= elements.size()) {
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
 		}
-		return evaluate(elements[index], context);
+		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
+		const ASTNode& elem = elements[index];
+		if (elem.is<InitializerListNode>()) {
+			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+		}
+		return evaluate(elem, context);
 	};
 	
 	if (!context.symbols) {
@@ -5009,8 +5180,19 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (index >= elements.size()) {
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
 		}
+
+		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
+		const ASTNode& elem = elements[index];
+		if (elem.is<InitializerListNode>()) {
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+				return materialize_array_value(type_spec.type(), type_spec.type_index(),
+				                               elem.as<InitializerListNode>(), context);
+			}
+			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+		}
 		
-		return evaluate(elements[index], context);
+		return evaluate(elem, context);
 	}
 	
 	return EvalResult::error("Array variable is not initialized with an array initializer");
