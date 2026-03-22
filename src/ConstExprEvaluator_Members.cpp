@@ -595,7 +595,27 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	}
 
 	const EvalResult* object_result = resolved_object.value;
-	if (!object_result || !object_result->object_type_index.is_valid()) {
+	if (!object_result) {
+		return std::nullopt;
+	}
+
+	// For arrow member access (p->x) on a heap-allocated struct, dereference the
+	// pointer first to get the struct's member bindings from the constexpr heap.
+	if (member_access.is_arrow() && object_result->pointer_to_var.isValid() &&
+	    !context.constexpr_heap.empty()) {
+		StringHandle heap_key = object_result->pointer_to_var;
+		auto heap_it = context.constexpr_heap.find(heap_key);
+		if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {
+			const EvalResult& heap_obj = heap_it->second.value;
+			auto member_it = heap_obj.object_member_bindings.find(member_access.member_name());
+			if (member_it != heap_obj.object_member_bindings.end()) {
+				return member_it->second;
+			}
+		}
+		return std::nullopt;
+	}
+
+	if (!object_result->object_type_index.is_valid()) {
 		return std::nullopt;
 	}
 
@@ -1220,7 +1240,22 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		std::string_view op = bin_op.op();
 		
 		// Handle assignment operators specially (they modify bindings)
-		if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=") {
+		if (op == "=" || isCompoundAssignmentOp(op)) {
+
+			// Helper: apply the assignment/compound-assignment operator to a target slot.
+			// Modifies `target` in place and returns the resulting value.
+			auto apply_op_to = [&](EvalResult& target, const EvalResult& rhs) -> EvalResult {
+				if (op == "=") {
+					target = rhs;
+					return rhs;
+				}
+				// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
+				std::string_view base_op = op.substr(0, op.size() - 1);
+				EvalResult new_val = apply_binary_op(target, rhs, base_op, &context, &bindings);
+				if (!new_val.success()) return new_val;
+				target = new_val;
+				return new_val;
+			};
 			// Get the left-hand side variable name
 			const ASTNode& lhs = bin_op.get_lhs();
 			if (lhs.is<ExpressionNode>()) {
@@ -1271,30 +1306,96 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							}
 						return rhs_result;
 					} else {
-						// Compound assignment - get current value first
-							if (!target_binding) {
+						// Compound assignment - use apply_op_to helper
+						if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
-							EvalResult current = *target_binding;
-						
-						// Apply the operation
-						EvalResult new_value;
-						if (op == "+=") {
-							new_value = apply_binary_op(current, rhs_result, "+", &context, &bindings);
-						} else if (op == "-=") {
-							new_value = apply_binary_op(current, rhs_result, "-", &context, &bindings);
-						} else if (op == "*=") {
-							new_value = apply_binary_op(current, rhs_result, "*", &context, &bindings);
-						} else if (op == "/=") {
-							new_value = apply_binary_op(current, rhs_result, "/", &context, &bindings);
-						} else if (op == "%=") {
-							new_value = apply_binary_op(current, rhs_result, "%", &context, &bindings);
-						}
-						
-						if (!new_value.success()) return new_value;
-							*target_binding = new_value;
-						return new_value;
+						return apply_op_to(*target_binding, rhs_result);
 					}
+				}
+
+				// Handle pointer dereference assignment: *ptr = value  (C++20 constexpr heap)
+				// LHS is UnaryOperatorNode(op="*", operand=expr_that_yields_pointer)
+				if (const auto* unary_ptr = std::get_if<UnaryOperatorNode>(&lhs_expr)) {
+					if (unary_ptr->op() == "*") {
+						auto ptr_result = evaluate_expression_with_bindings(
+							unary_ptr->get_operand(), bindings, context);
+						if (!ptr_result.success()) return ptr_result;
+						if (!ptr_result.pointer_to_var.isValid()) {
+							return EvalResult::error("Dereference assignment on non-pointer in constant expression");
+						}
+						StringHandle heap_key = ptr_result.pointer_to_var;
+						auto heap_it = context.constexpr_heap.find(heap_key);
+						if (heap_it == context.constexpr_heap.end()) {
+							return EvalResult::error("Dereference assignment: pointer does not refer to a constexpr heap object");
+						}
+						if (heap_it->second.freed) {
+							return EvalResult::error("Dereference assignment: use after free in constant expression");
+						}
+						int64_t offset = ptr_result.pointer_offset;
+
+						// Evaluate the RHS
+						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+						if (!rhs_result.success()) return rhs_result;
+
+						EvalResult& heap_val = heap_it->second.value;
+						if (heap_val.is_array) {
+							// Pointer into an array: update the element at offset
+							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
+								return EvalResult::error("Array index out of bounds in constexpr dereference assignment");
+							}
+							return apply_op_to(heap_val.array_elements[static_cast<size_t>(offset)], rhs_result);
+						} else {
+							if (offset != 0) {
+								return EvalResult::error("Non-zero pointer offset on non-array heap object in constexpr assignment");
+							}
+							return apply_op_to(heap_val, rhs_result);
+						}
+					}
+				}
+
+				// Handle subscript assignment: arr[i] = value  (C++20 constexpr heap arrays)
+				// LHS is ArraySubscriptNode(array=expr_that_yields_pointer, index=expr)
+				if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
+					const auto& subscript = std::get<ArraySubscriptNode>(lhs_expr);
+					auto arr_result = evaluate_expression_with_bindings(subscript.array_expr(), bindings, context);
+					if (!arr_result.success()) return arr_result;
+					auto idx_result = evaluate_expression_with_bindings(subscript.index_expr(), bindings, context);
+					if (!idx_result.success()) return idx_result;
+					int64_t idx = idx_result.as_int();
+
+					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+					if (!rhs_result.success()) return rhs_result;
+
+					// Case 1: arr_result is a pointer into the constexpr heap (new int[n])
+					if (arr_result.pointer_to_var.isValid()) {
+						StringHandle heap_key = arr_result.pointer_to_var;
+						int64_t base_offset = arr_result.pointer_offset;
+						auto heap_it = context.constexpr_heap.find(heap_key);
+						if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {
+							EvalResult& heap_val = heap_it->second.value;
+							if (heap_val.is_array) {
+								int64_t final_idx = base_offset + idx;
+								if (final_idx < 0 || static_cast<size_t>(final_idx) >= heap_val.array_elements.size()) {
+									return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
+								}
+								return apply_op_to(heap_val.array_elements[static_cast<size_t>(final_idx)], rhs_result);
+							}
+						}
+					}
+
+					// Case 2: arr_result is a local array binding
+					if (arr_result.is_array && arr_result.array_origin_var.isValid()) {
+						std::string_view arr_name = StringTable::getStringView(arr_result.array_origin_var);
+						EvalResult* bound = findMutableBindingValue(arr_name, bindings, context);
+						if (bound && bound->is_array) {
+							if (idx < 0 || static_cast<size_t>(idx) >= bound->array_elements.size()) {
+								return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
+							}
+							return apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
+						}
+					}
+					return EvalResult::error("Subscript assignment target is not a constexpr heap array or local array");
 				}
 			}
 			return EvalResult::error("Left-hand side of assignment must be a variable");
@@ -1498,6 +1599,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 	// For member access on 'this' (e.g., this->x in a member function)
 	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
 	// Writing (this->x = ...) is handled above in the assignment operator branch.
+
+	// For new-expressions (C++20 constexpr dynamic allocation)
+	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
+		return evaluate_new_expression(*new_expr, context, &bindings);
+	}
+
+	// For delete-expressions (C++20 constexpr dynamic deallocation)
+	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
+		return evaluate_delete_expression(*del_expr, context, &bindings);
+	}
 
 	// For other expression types, use the const version (cast bindings to const)
 	const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;

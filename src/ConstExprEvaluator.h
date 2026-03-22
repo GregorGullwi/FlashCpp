@@ -4,6 +4,8 @@
 #include "TemplateRegistry.h"  // For gTemplateRegistry
 #include "TypeTraitEvaluator.h"  // For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
+#include "IROperandHelpers.h"  // For isCompoundAssignmentOp / kCompoundOpTable
+#include "StringBuilder.h"  // For StringBuilder (heap key construction)
 #include "Log.h"  // For FLASH_LOG
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
@@ -132,6 +134,12 @@ struct EvalResult {
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
 		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}};
+		return r;
+	}
+
+	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
+	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}};
 		return r;
 	}
 
@@ -370,6 +378,42 @@ struct EvaluationContext {
 	// can be mapped to the correct struct member names.
 	const TypeInfo* return_type_info = nullptr;
 
+	// When true, short-circuit evaluation for && and || is disabled.
+	// Set by try_evaluate_constant_expression to prevent false positive results
+	// during template-argument disambiguation (where a truthy LHS of `||` would
+	// cause the speculative parse to succeed, incorrectly treating `<` as a
+	// template-argument-list opener).
+	bool is_speculative = false;
+
+	// Constexpr heap: tracks objects dynamically allocated with `new` inside a
+	// constant expression (C++20 [expr.const]/p5).  Each entry maps a synthetic
+	// key (e.g. "@new_0") to the allocated value and a freed flag.
+	// `delete ptr` marks the corresponding entry freed; at the end of a
+	// well-formed constant expression all allocations must have been freed.
+	struct ConstexprHeapEntry {
+		EvalResult value;
+		bool freed = false;
+		bool is_array = false;
+	};
+	std::unordered_map<StringHandle, ConstexprHeapEntry, StringHash, StringEqual> constexpr_heap;
+	size_t next_heap_id = 0;
+
+	// Allocate a fresh synthetic heap key, intern it, and return its StringHandle.
+	StringHandle alloc_heap_slot() {
+		return StringTable::getOrInternStringHandle(
+			StringBuilder().append("@new_"sv).append(static_cast<uint64_t>(next_heap_id++)).commit());
+	}
+
+	// Returns true iff any allocation that was made with `new` during this
+	// constant expression evaluation has not yet been freed with `delete`.
+	// Per C++20 [expr.const]/p5 this makes the expression ill-formed.
+	bool has_unfreed_heap_allocations() const {
+		for (const auto& [key, entry] : constexpr_heap) {
+			if (!entry.freed) return true;
+		}
+		return false;
+	}
+
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}
@@ -555,6 +599,10 @@ private:
 	static EvalResult evaluate_offsetof(const OffsetofExprNode& offsetof_expr);
 	static EvalResult evaluate_noexcept_expr(const NoexceptExprNode& noexcept_expr, EvaluationContext& context);
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context);
+	static EvalResult evaluate_new_expression(const NewExpressionNode& new_expr, EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+	static EvalResult evaluate_delete_expression(const DeleteExpressionNode& del_expr, EvaluationContext& context,
+		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
