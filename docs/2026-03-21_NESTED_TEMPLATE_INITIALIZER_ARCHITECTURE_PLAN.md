@@ -4,7 +4,7 @@
 
 This issue is currently **deferred unless it becomes necessary** for nearby work.
 
-- the bug remains tracked in `docs\KNOWN_ISSUES.md`
+- the bug remains tracked in `docs/KNOWN_ISSUES.md`
 - the compiler now has a clearer architectural plan for fixing it properly
 - the recommended future approach is to revisit it through the type-owned
   instantiation-context + normalized-initializer work described below, rather
