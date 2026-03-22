@@ -146,7 +146,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-This also includes straightforward nested local aggregate reads in constexpr functions, such as `obj.inner.value`, and straightforward local member-array reads such as `obj.data[1]`.
+This also includes straightforward local member-array reads such as `obj.data[1]`. Nested local aggregate reads such as `obj.inner.value` work when the outer object is aggregate-initialized (brace-init), but **not** when it is constructor-initialized — see the [Nested Member Access on Local Constructor-Initialized Objects](#-nested-member-access-on-local-constructor-initialized-objects-does-not-work-inside-constexpr-function-bodies) limitation below.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
@@ -575,6 +575,55 @@ static_assert(h() == 10); // ✅ Works
 ```
 
 When a ternary expression used as a struct initializer fails for a specific reason (e.g., undefined variable in a branch), the evaluator may produce a generic "requires a struct initializer" error instead of the actual evaluation failure message. This is because the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` (`src/ConstExprEvaluator_Members.cpp:3341-3357`) silently discards the specific error when the result has empty `object_member_bindings`.
+
+### ⚠️ Nested Member Access on Local Constructor-Initialized Objects Does Not Work Inside Constexpr Function Bodies
+
+When a local struct variable is constructed via a **user-defined constructor** inside a constexpr function body, **nested member access** (`o.inner.x`) fails. Single-level access (`o.x`) works because it goes through the bindings-aware evaluator (`try_evaluate_bound_member_access`), but two-level nested access (`o.inner.x`) takes a different code path through `evaluate_nested_member_access` → `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`), which only searches the **symbol table** — not `context.local_bindings` where local variables in constexpr function bodies live.
+
+```cpp
+struct Inner { int x; int y; };
+struct Outer {
+    Inner inner;
+    constexpr Outer(int a, int b) : inner{a, b} {}
+};
+
+constexpr int test() {
+    Outer o(3, 7);
+    return o.inner.x + o.inner.y;  // ⚠️ Fails: "Undefined variable in nested member access: o"
+}
+static_assert(test() == 10);  // ⚠️ Fails
+```
+
+**Note:** This also affects constructor member initializer lists that initialize aggregate sub-structs using constructor parameters (e.g., `: inner{a, b}`), since the nested access is the failing step.
+
+**What works:** Nested member access on **global** constexpr objects (looked up in the symbol table) works fine. Single-level member access on local objects also works. Nested access on local **aggregate-initialized** objects (brace-init, no user-defined constructor) works when the bindings-aware evaluator resolves both levels from `object_member_bindings`.
+
+**Root cause:** `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`) does not check `context.local_bindings`. The fix would involve making that function (or `evaluate_nested_member_access`) also look up the base object in `context.local_bindings` and use its `object_member_bindings` to resolve intermediate members.
+
+**Workaround:** Avoid nested member access on locally-constructed objects. Instead, access the intermediate member first and use single-level access:
+
+```cpp
+constexpr int test_workaround() {
+    Outer o(3, 7);
+    // Instead of o.inner.x, extract inner first:
+    int x = o.inner.x;  // ⚠️ Still fails (same nested access)
+    // True workaround: use aggregate init instead of a user-defined constructor
+    return x;
+}
+```
+
+Or use aggregate structs (no user-defined constructor) where nested access through the bindings-aware path works:
+
+```cpp
+struct Inner { int x; int y; };
+struct Outer { Inner inner; };  // aggregate, no constructor
+
+constexpr int test() {
+    Outer o{{3, 7}};            // aggregate brace-init
+    return o.inner.x + o.inner.y;  // ✅ Works
+}
+static_assert(test() == 10);  // ✅ Works
+```
 
 ### ⚠️ Array Access Has Partial Support
 
@@ -1032,7 +1081,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
-- ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`)
+- ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`) — note: nested access (`obj.inner.value`) only works for aggregate-initialized (brace-init) local objects; constructor-initialized local objects fail nested access because `resolve_constexpr_object_source` does not check `context.local_bindings` (see limitation above)
 - ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
