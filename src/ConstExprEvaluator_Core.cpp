@@ -3359,6 +3359,40 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								// Try a user-defined constructor first: block-scope `Type o(a, b)` is
+								// parsed as InitializerListNode{a, b}, so we must check for a matching
+								// constructor before falling back to aggregate initialization.
+								ChunkedVector<ASTNode> ctor_args;
+								for (const auto& arg : init_list.initializers()) {
+									ctor_args.push_back(arg);
+								}
+								const ConstructorDeclarationNode* matching_ctor =
+									find_matching_constructor(struct_info, ctor_args, context, &bindings);
+								if (matching_ctor) {
+									EvalResult object_result = EvalResult::from_int(0);
+									object_result.object_type_index = type_spec.type_index();
+									std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+									auto bind_result = bind_evaluated_arguments(
+										matching_ctor->parameter_nodes(),
+										ctor_args,
+										ctor_param_bindings,
+										context,
+										"Invalid parameter in constexpr local struct construction",
+										&bindings,
+										true);
+									if (!bind_result.success()) {
+										return bind_result;
+									}
+									auto materialize_result = materialize_members_from_constructor(
+										struct_info, *matching_ctor, ctor_param_bindings,
+										object_result.object_member_bindings, context, false);
+									if (!materialize_result.success()) {
+										return materialize_result;
+									}
+									maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
+									declaration_bindings[var_name] = std::move(object_result);
+									return EvalResult::error("Statement executed (not a return)");
+								}
 								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 								if (!object_result.success()) {
 									return object_result;
