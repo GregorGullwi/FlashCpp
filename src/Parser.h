@@ -1034,8 +1034,9 @@ public:  // Public methods for template instantiation
         // Used to decide whether a complex pack-expansion expression references a given pack parameter.
         static bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name);
 
-        // Expand a PackExpansionExprNode into multiple substituted arguments
-        // Returns true if expansion was performed, false otherwise
+        // Expand a PackExpansionExprNode into substituted call arguments.
+        // Returns true when the node was recognized and consumed; empty packs
+        // legitimately contribute zero arguments.
         bool expandPackExpansionArgs(
             const PackExpansionExprNode& pack_expansion,
             const InlineVector<ASTNode, 4>& template_params,

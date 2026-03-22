@@ -2416,9 +2416,33 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const auto slot = sema_->getSlot(key);
 			if (slot.has_value() && slot->has_cast()) {
 				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-				const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
-				if (from_t != Type::Struct && to_t != Type::Struct) {
+				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
+				const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
+				Type from_t = from_desc.base_type;
+				const Type to_t = to_desc.base_type;
+				if (ci.cast_kind == StandardConversionKind::UserDefined &&
+					from_desc.base_type == Type::Struct) {
+					TypeIndex source_type_idx = from_desc.type_index;
+					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
+						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+						const StructMemberFunction* conv_op = findConversionOperator(
+							src_type_info.getStructInfo(), param_base_type, param_type.type_index());
+						if (conv_op) {
+							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
+								StringTable::getStringView(src_type_info.name()), " to parameter type");
+							const int param_size = static_cast<int>(param_type.size_in_bits());
+							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
+									param_base_type, param_type.type_index(), param_size, source_token)) {
+								arg_result = *result;
+								sema_applied = true;
+							}
+						}
+					}
+				} else if (from_t != Type::Struct && to_t != Type::Struct) {
+					// Sema may annotate as Type::Enum while codegen resolves enum
+					// constants to their underlying type; use actual runtime type.
+					if (from_t == Type::Enum && from_t != arg_result.type)
+						from_t = arg_result.type;
 					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
 				}

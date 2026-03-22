@@ -143,7 +143,9 @@ private:
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
-	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(const ASTNode& arg);
+	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
+		const ASTNode& arg,
+		CanonicalTypeId* inferred_type_id = nullptr);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);
@@ -155,7 +157,9 @@ private:
 	// and a standard (non-user-defined) primitive conversion applies, allocate an
 	// ImplicitCastInfo and fill the expression's SemanticSlot.
 	// Returns true when a slot was filled.
-	bool tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id);
+	bool tryAnnotateConversion(const ASTNode& expr_node,
+		CanonicalTypeId target_type_id,
+		CanonicalTypeId expr_type_id = {});
 
 	// Try to annotate a return expression with implicit cast info when the
 	// expression type differs from the declared function return type.
@@ -227,8 +231,10 @@ private:
 	// Diagnose implicit conversion from scoped enum.
 	// C++11+: scoped enums do not allow implicit conversion to other types.
 	// Throws CompileError if expr_node is a scoped enum and target type differs.
-	void diagnoseScopedEnumConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id,
-		const char* context_description);
+	void diagnoseScopedEnumConversion(const ASTNode& expr_node,
+		CanonicalTypeId target_type_id,
+		const char* context_description,
+		CanonicalTypeId expr_type_id = {});
 
 	// Diagnose scoped enum used as operand in binary arithmetic/comparison with a
 	// different type.  Per C++20, scoped enums only support relational/equality
