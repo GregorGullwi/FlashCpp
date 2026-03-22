@@ -2332,6 +2332,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		};
 
 		// 1. Try sema annotation (Phase 6/8 contextual bool).
+		bool sema_applied_bool_conv = false;
 		if (sema_ && cond_node.is<ExpressionNode>()) {
 			const void* key = &cond_node.as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
@@ -2350,6 +2351,27 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					cast_info.cast_kind == StandardConversionKind::PointerConversion) {
 					return condition;
 				}
+				// Phase 23: Struct → bool via user-defined operator bool().
+				// Sema annotates as UserDefined; call emitConversionOperatorCall.
+				if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+					from_desc.base_type == Type::Struct) {
+					// Sema already verified the operator exists via structHasConversionOperatorTo;
+					// set flag immediately so the fallback doesn't duplicate this lookup.
+					sema_applied_bool_conv = true;
+					TypeIndex source_type_idx = from_desc.type_index;
+					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
+						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+						const StructMemberFunction* conv_op = findConversionOperator(
+							src_type_info.getStructInfo(), Type::Bool, TypeIndex{});
+						if (conv_op) {
+							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
+								StringTable::getStringView(src_type_info.name()), " to bool");
+							if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
+									Type::Bool, TypeIndex{}, 8, source_token))
+								return *result;
+						}
+					}
+				}
 			}
 		}
 		// 2. Fallback: floating-point conditions need explicit conversion because
@@ -2359,6 +2381,22 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    and must use TEST, not FloatNotEqual.
 		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.type)) {
 			return emitFloatNonZeroTest(condition);
+		}
+		// Fallback: struct → bool via operator bool() when sema did not annotate.
+		if (!sema_applied_bool_conv && condition.type == Type::Struct) {
+			TypeIndex cond_type_idx = condition.type_index;
+			if (cond_type_idx.is_valid() && cond_type_idx.value < gTypeInfo.size()) {
+				const TypeInfo& src_type_info = gTypeInfo[cond_type_idx.value];
+				const StructMemberFunction* conv_op = findConversionOperator(
+					src_type_info.getStructInfo(), Type::Bool, TypeIndex{});
+				if (conv_op) {
+					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
+						StringTable::getStringView(src_type_info.name()), " to bool");
+					if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
+							Type::Bool, TypeIndex{}, 8, source_token))
+						return *result;
+				}
+			}
 		}
 		return condition;
 	}
