@@ -2335,6 +2335,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				const CanonicalTypeId param_id = lookupLocalType(e.param_name());
 				if (param_id) return param_id;
+				// Phase 5 (boundary plan Workstream 2): after Phase 3, outer-template bindings
+				// are seeded for all instantiated function/lambda/struct/variable bodies, so
+				// this path indicates either a not-yet-migrated context or a valid unsupported
+				// template form. Log at Debug level to make unresolved cases observable.
+				FLASH_LOG(Templates, Debug,
+					"SemanticAnalysis: TemplateParameterReferenceNode '",
+					StringTable::getStringView(e.param_name()),
+					"' not resolved via sema-owned scope — returning empty type");
 				return {};
 			}
 			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
@@ -2805,6 +2813,97 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 		"'; use static_cast for explicit conversion");
 }
 
+// --- Conversion operator existence helper (Phase 5, Phase 21 Item 2) ---
+
+// Phase 5: Returns true if the struct type described by from_desc has a user-defined
+// conversion operator to the type described by to_desc.
+// Used by tryAnnotateConversion to avoid emitting spurious UserDefined sema annotations
+// when no matching conversion operator exists in the source struct.
+// Mirrors the operator-existence logic in AstToIr::findConversionOperator, but is
+// sema-owned and avoids interning new strings (uses string_view comparison only).
+static bool structHasConversionOperatorTo(
+	const CanonicalTypeDesc& from_desc,
+	const CanonicalTypeDesc& to_desc,
+	int depth = 0) {
+	// Guard against infinite recursion in pathological inheritance graphs.
+	static constexpr int kMaxInheritanceDepth = 8;
+	if (depth > kMaxInheritanceDepth) return false;
+	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size())
+		return false;
+	const StructTypeInfo* struct_info = gTypeInfo[from_desc.type_index.value].getStructInfo();
+	if (!struct_info) return false;
+
+	// Determine the expected "operator X" suffix.
+	std::string_view target_name;
+	if (to_desc.base_type == Type::Struct) {
+		if (!to_desc.type_index.is_valid() || to_desc.type_index.value >= gTypeInfo.size())
+			return false;
+		target_name = StringTable::getStringView(gTypeInfo[to_desc.type_index.value].name());
+	} else {
+		target_name = getTypeName(to_desc.base_type);
+		if (target_name.empty()) return false;
+	}
+
+	// Scan direct member functions for "operator TARGET".
+	static constexpr std::string_view kOpPrefix = "operator ";
+	// Fallback operator name emitted for type-aliased conversion targets.
+	// Mirrors the AstToIr::findConversionOperator workaround for type-aliased operators.
+	static constexpr std::string_view kUserDefinedOperator = "operator user_defined";
+	for (const auto& mf : struct_info->member_functions) {
+		const std::string_view mf_name = StringTable::getStringView(mf.getName());
+		// Direct match: "operator int", "operator float", "operator bool", etc.
+		// C++20 starts_with avoids the redundant explicit size check (Gemini Phase 5 review).
+		if (mf_name.starts_with(kOpPrefix) && mf_name.substr(kOpPrefix.size()) == target_name)
+			return true;
+		// Fallback: "operator user_defined" — a typedef-aliased conversion operator.
+		// Mirrors AstToIr::findConversionOperator: verify return type matches target before
+		// accepting, to avoid spurious annotations for unrelated type-aliased operators
+		// (Devin Phase 5 review: return-type verification for operator user_defined).
+		if (mf_name == kUserDefinedOperator) {
+			if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+			const auto& func_decl = mf.function_decl.as<FunctionDeclarationNode>();
+			const auto& return_type_node = func_decl.decl_node().type_node();
+			if (!return_type_node.is<TypeSpecifierNode>()) continue;
+			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
+			Type resolved_type = type_spec.type();
+			// Resolve UserDefined type aliases through gTypeInfo chain (same as codegen).
+			if (resolved_type == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
+				TypeIndex current_idx = type_spec.type_index();
+				int max_depth = 10;
+				while (resolved_type == Type::UserDefined && current_idx.value < gTypeInfo.size() && max_depth-- > 0) {
+					const TypeInfo& alias_info = gTypeInfo[current_idx.value];
+					if (alias_info.type_ != Type::Void && alias_info.type_ != Type::UserDefined) {
+						resolved_type = alias_info.type_;
+						break;
+					} else if (alias_info.type_ == Type::UserDefined && alias_info.type_index_ != current_idx) {
+						current_idx = alias_info.type_index_;
+					} else {
+						break;
+					}
+				}
+			}
+			if (resolved_type == to_desc.base_type) return true;
+			// Size-based fallback for still-unresolved UserDefined return types.
+			if (resolved_type == Type::UserDefined) {
+				const int expected_size = get_type_size_bits(to_desc.base_type);
+				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
+					return true;
+			}
+		}
+	}
+
+	// Recurse into non-deferred base classes (inherited conversion operators).
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred) continue;
+		CanonicalTypeDesc base_from_desc;
+		base_from_desc.base_type = Type::Struct;
+		base_from_desc.type_index = base.type_index;
+		if (structHasConversionOperatorTo(base_from_desc, to_desc, depth + 1))
+			return true;
+	}
+	return false;
+}
+
 // --- Core conversion annotation helper ---
 
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, CanonicalTypeId target_type_id) {
@@ -2831,7 +2930,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	auto is_unresolved_type = [](Type t) {
 		return t == Type::UserDefined || t == Type::Invalid || isPlaceholderAutoType(t);
 	};
-	auto is_non_primitive = [](Type t) {
+	auto is_non_primitive_target = [](Type t) {
 		return t == Type::Struct || t == Type::UserDefined ||
 		       t == Type::Invalid || isPlaceholderAutoType(t);
 	};
@@ -2841,7 +2940,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// Reject Struct→Struct (handled elsewhere) and primitive→Struct (converting constructors).
 	if (from_desc.base_type == Type::Struct && to_desc.base_type == Type::Struct) return false;
 	if (from_desc.base_type != Type::Struct && is_unresolved_type(from_desc.base_type)) return false;
-	if (is_non_primitive(to_desc.base_type)) return false;
+	if (is_non_primitive_target(to_desc.base_type)) return false;
 	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
@@ -2860,6 +2959,20 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
 	if (plan.rank == ConversionRank::UserDefined && from_desc.base_type != Type::Struct) return false;
+
+	// Phase 5: for UserDefined (struct→primitive) annotations, verify that a conversion
+	// operator actually exists before annotating. Without this check, sema optimistically
+	// annotates UserDefined for any Struct→primitive pair (Phase 21 item 2), which inflates
+	// slots_filled stats and misrepresents the actual operator availability.
+	// Codegen already handles null conv_op safely, so this is a stats/accuracy fix only.
+	if (plan.rank == ConversionRank::UserDefined) {
+		if (!structHasConversionOperatorTo(from_desc, to_desc)) {
+			FLASH_LOG(General, Debug,
+				"SemanticAnalysis: skipping UserDefined annotation — "
+				"no conversion operator found in struct source type");
+			return false;
+		}
+	}
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
