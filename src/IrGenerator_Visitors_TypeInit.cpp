@@ -79,6 +79,7 @@
 		}
 		else if (node.is<ExpressionNode>()) {
 			visitExpressionNode(node.as<ExpressionNode>());
+			emitAndClearFullExpressionTempDestructors();
 		}
 		else if (node.is<StructDeclarationNode>()) {
 			// Clear struct context for top-level structs to prevent them from being
@@ -162,12 +163,6 @@
 			// Compound requirements don't generate code - they're compile-time constraints
 			// They are part of requires expressions and evaluated during constraint checking
 			return;
-		}
-		else if (node.is<ExpressionNode>()) {
-			// Expression statement (e.g., function call, lambda expression, etc.)
-			// Evaluate the expression but discard the result
-			visitExpressionNode(node.as<ExpressionNode>());
-			emitAndClearFullExpressionTempDestructors();
 		}
 		else if (node.is<LambdaExpressionNode>()) {
 			// Lambda expression as a statement
