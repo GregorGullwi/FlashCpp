@@ -770,8 +770,8 @@ The following patterns are supported:
 
 **Known limitations of constexpr `new`/`delete`:**
 
-1. **Arrow member write (`p->member = value`) not supported** — Read access (`p->x + p->y`) works, but assignment through arrow access on heap-allocated structs is not yet implemented. The LHS assignment handler only recognizes plain identifiers, `this->member`, `*ptr`, and `arr[i]` forms.
-2. **🐛 Use-after-free on arrow access produces wrong diagnostic instead of "use after free"** — When accessing `p->member` on a freed heap pointer, `try_evaluate_bound_member_access` (`src/ConstExprEvaluator_Members.cpp:604-616`) silently returns `std::nullopt` instead of an explicit "use after free" error. This causes a confusing downstream error (e.g., "variable not found") rather than the clear diagnostic that the other dereference paths (`dereference_constexpr_pointer` at `src/ConstExprEvaluator_Core.cpp:389-391`, `deref_pointer_with_bindings` at `src/ConstExprEvaluator_Core.cpp:505-507`) correctly produce. **Fix:** the `!heap_it->second.freed` check at line 608 should return an `EvalResult::error(...)` when the entry is freed, not fall through to `return std::nullopt`.
+1. ✅ **Arrow member write (`p->member = value`) now supported** — Assignment and compound-assignment through arrow access on heap-allocated structs is now implemented. The LHS assignment handler now recognizes `p->member` forms in addition to plain identifiers, `this->member`, `*ptr`, and `arr[i]`.
+2. ✅ **Use-after-free on arrow access now produces a clear "use after free" diagnostic** — `try_evaluate_bound_member_access` now returns `EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression")` when the heap entry is freed, rather than silently returning `std::nullopt`.
 3. **Default constructors not invoked for `new MyStruct()`** — When `new MyStruct()` is called with no arguments, default member initializers are applied but a user-defined default constructor body is not executed. Only structs with explicit constructor arguments go through the full constructor materialization path.
 4. **`new`/`delete` not handled in the const-dispatch path** — `evaluate_expression_with_bindings_dispatch` (the const-bindings path) does not handle `NewExpressionNode` / `DeleteExpressionNode`; it falls through to `evaluate()` without bindings, so constructor arguments or delete operands referencing local variables would fail to resolve. In practice, `new`/`delete` with side effects only appears in the mutable path.
 5. **Constructor arguments evaluated via const bindings** — `evaluate_new_expression` receives bindings as `const std::unordered_map*`, so side-effecting constructor arguments like `new int(++x)` would produce an error rather than a wrong result.
@@ -924,6 +924,9 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Constexpr pointer arithmetic: `&arr[i]` (address of array element), `ptr + n`, `n + ptr`, `ptr - n` (pointer arithmetic), `ptr1 - ptr2` (pointer difference), `ptr[i]` (pointer subscript), `ptr < ptr2` / `ptr <= ptr2` / `ptr > ptr2` / `ptr >= ptr2` (pointer relational comparisons); works in both top-level constexpr and inside constexpr function bodies
 - ✅ `const char*` and string literals in constexpr: `constexpr const char* s = get_fn();`, `static_assert(s[0] == 'H')`, `str_len("Hello")` using `while (s[n] != '\0')` loop, string literal as function argument; standard escape sequences decoded at compile time
 - ✅ Sub-word struct returns from constexpr functions: structs smaller than a machine word (e.g., 3-byte `Color{r,g,b}`) are now correctly propagated in all bytes to both compile-time and runtime call sites
+- ✅ All compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) now correctly truncate results to the declared unsigned type's width (e.g. `unsigned char x = 200; x += 100;` wraps to 44)
+- ✅ Arrow member write (`p->member = value`) on heap-allocated structs in constexpr `new`/`delete` — all compound-assignment forms (`p->count += 1`, etc.) are also supported
+- ✅ Use-after-free through arrow access produces a clear "use after free" diagnostic instead of a confusing "variable not found" error
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -931,7 +934,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
-  - ⚠️ **Compound assignments don't apply unsigned type-width truncation** — The increment/decrement handler (`++`/`--`) explicitly truncates results to the declared unsigned type's width using `apply_uint_type_mask`. The compound assignment handler (`apply_op_to` lambda) does not perform this truncation. For example, `unsigned char x = 200; x += 100;` should wrap to `(300 & 0xFF) = 44`, but without truncation the stored value would be 300. This is a pre-existing issue for `+=`, `-=`, `*=`, `/=`, `%=` (the old code also lacked truncation), now extended to the new bitwise operators.
+  - ✅ **Compound assignments now apply unsigned type-width truncation** *(Implemented)* — The `apply_op_to` lambda now truncates results to the declared unsigned type's width using `apply_uint_type_mask`, matching the behavior of the `++`/`--` handler. For example, `unsigned char x = 200; x += 100;` now correctly wraps to 44. This applies to all compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`).
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
@@ -981,7 +984,7 @@ Potential areas for enhancement (in order of complexity):
 8. **Small structs are safe** - structs smaller than a machine word (e.g., a 3-byte
    `{unsigned char r, g, b}`) can be returned from constexpr functions to both
    compile-time and runtime variables correctly.
-9. **`new` / `delete` is supported in constexpr (C++20)** — all heap allocations must be freed before the constant expression returns. Arrow member writes (`p->x = 10`) on heap structs are not yet supported; use constructor arguments instead. Avoid `throw` expressions in constexpr code.
+9. **`new` / `delete` is supported in constexpr (C++20)** — all heap allocations must be freed before the constant expression returns. Arrow member writes (`p->x = 10`) on heap structs are now also supported. Avoid `throw` expressions in constexpr code.
 
 ### For Contributors
 
