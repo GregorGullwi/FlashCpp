@@ -1088,7 +1088,6 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type) {
 				Type arg_type = argumentIrOperands.type;
-				int arg_size = argumentIrOperands.size_in_bits.value;
 				Type param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
@@ -1110,7 +1109,6 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								from_type = argumentIrOperands.type;
 							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
 							arg_type = argumentIrOperands.type;
-							arg_size = argumentIrOperands.size_in_bits.value;
 							arg_type_index = argumentIrOperands.type_index;
 							sema_applied_arg_conversion = true;
 						}
@@ -1138,7 +1136,6 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						}
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
 						arg_type = argumentIrOperands.type;
-						arg_size = argumentIrOperands.size_in_bits.value;
 						arg_type_index = argumentIrOperands.type_index;
 					}
 				}
@@ -1220,90 +1217,19 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
-						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+						const int param_size = param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_struct_info, param_base_type, param_type->type_index());
+							source_type_info.getStructInfo(), param_base_type, param_type->type_index());
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
 								StringTable::getStringView(source_type_info.name()),
 								" to parameter type");
-
-							// Generate call to the conversion operator
-							TempVar result_var = var_counter.next();
-
-							// Get the source value
-							IrValue source_value = std::visit([](auto&& arg) -> IrValue {
-								using T = std::decay_t<decltype(arg)>;
-								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-									return arg;
-								} else {
-									return 0ULL;
-								}
-							}, argumentIrOperands.value);
-
-							// Generate the call to conversion operator
-							if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
-								const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
-								std::string_view mangled_name;
-								if (func_decl.has_mangled_name()) {
-									mangled_name = func_decl.mangled_name();
-								} else {
-									StringHandle struct_name_handle = source_type_info.name();
-									std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-									// Use the function's parent struct name, not the source type name,
-									// because the conversion operator may be inherited from a base class
-									// and we need to call the version defined in the base class.
-									std::string_view operator_struct_name = func_decl.parent_struct_name();
-									if (operator_struct_name.empty()) {
-										operator_struct_name = struct_name;
-									}
-									mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
-								}
-
-								CallOp call_op;
-								call_op.result = result_var;
-								call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-								call_op.return_type = param_base_type;
-								call_op.return_size_in_bits = SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())};
-								call_op.return_type_index = param_type->type_index();
-								call_op.is_member_function = true;
-								call_op.is_variadic = false;
-
-								// For member function calls, first argument is 'this' pointer
-								if (std::holds_alternative<StringHandle>(source_value)) {
-									// It's a variable - take its address
-									TempVar this_ptr = emitAddressOf(arg_type, arg_size, IrValue(std::get<StringHandle>(source_value)));
-
-									// Add 'this' as first argument
-									TypedValue this_arg;
-									this_arg.type = arg_type;
-									this_arg.ir_type = toIrType(arg_type);
-									this_arg.size_in_bits = SizeInBits{64};  // Pointer size
-									this_arg.value = this_ptr;
-									this_arg.type_index = arg_type_index;
-									call_op.args.push_back(std::move(this_arg));
-								} else if (std::holds_alternative<TempVar>(source_value)) {
-									// It's already a temporary
-									TypedValue this_arg;
-									this_arg.type = arg_type;
-									this_arg.ir_type = toIrType(arg_type);
-									this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
-									this_arg.value = std::get<TempVar>(source_value);
-									this_arg.type_index = arg_type_index;
-									call_op.args.push_back(std::move(this_arg));
-								}
-
-								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-
-								// Replace argumentIrOperands with the result of the conversion
-								argumentIrOperands = makeExprResult(param_base_type,
-									SizeInBits{param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits())},
-									IrOperand{result_var});
-							}
+							if (auto result = emitConversionOperatorCall(argumentIrOperands, source_type_info, *conv_op,
+									param_base_type, param_type->type_index(), param_size, Token()))
+								argumentIrOperands = *result;
 						}
 					}
 				}

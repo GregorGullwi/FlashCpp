@@ -3577,3 +3577,81 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 
 	return nullptr;
 }
+
+
+// Emit a call to a user-defined conversion operator and return the converted ExprResult.
+// All three call sites (return, variable-init, function-arg) share this implementation.
+std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
+	const ExprResult& source,
+	const TypeInfo& source_type_info,
+	const StructMemberFunction& conv_op,
+	Type target_type,
+	TypeIndex target_type_index,
+	int target_size_bits,
+	const Token& token) {
+
+	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
+		return std::nullopt;
+
+	const auto& func_decl = conv_op.function_decl.as<FunctionDeclarationNode>();
+	std::string_view struct_name = StringTable::getStringView(source_type_info.name());
+
+	std::string_view mangled_name;
+	if (func_decl.has_mangled_name()) {
+		mangled_name = func_decl.mangled_name();
+	} else {
+		// Use the function's parent struct name (handles inherited conversion operators)
+		std::string_view operator_struct_name = func_decl.parent_struct_name();
+		if (operator_struct_name.empty())
+			operator_struct_name = struct_name;
+		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
+	}
+
+	TempVar result_var = var_counter.next();
+
+	CallOp call_op;
+	call_op.result = result_var;
+	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+	call_op.return_type = target_type;
+	call_op.return_size_in_bits = SizeInBits{target_size_bits};
+	call_op.return_type_index = target_type_index;
+	call_op.is_member_function = true;
+	call_op.is_variadic = false;
+
+	// Determine the source object address and pass as 'this'
+	IrValue source_value = std::visit([](auto&& arg) -> IrValue {
+		using T = std::decay_t<decltype(arg)>;
+		if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+		              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>)
+			return arg;
+		else
+			return 0ULL;
+	}, source.value);
+
+	if (std::holds_alternative<StringHandle>(source_value)) {
+		// Named variable — take its address using the shared emitAddressOf helper
+		TempVar this_ptr = emitAddressOf(source.type, source.size_in_bits.value,
+			IrValue(std::get<StringHandle>(source_value)), token);
+
+		TypedValue this_arg;
+		this_arg.type = source.type;
+		this_arg.ir_type = toIrType(source.type);
+		this_arg.size_in_bits = SizeInBits{64};  // pointer size
+		this_arg.value = this_ptr;
+		this_arg.type_index = source.type_index;
+		call_op.args.push_back(std::move(this_arg));
+	} else if (std::holds_alternative<TempVar>(source_value)) {
+		// Already a TempVar — for struct types this holds the object address
+		TypedValue this_arg;
+		this_arg.type = source.type;
+		this_arg.ir_type = toIrType(source.type);
+		this_arg.size_in_bits = SizeInBits{64};  // pointer size
+		this_arg.value = std::get<TempVar>(source_value);
+		this_arg.type_index = source.type_index;
+		call_op.args.push_back(std::move(this_arg));
+	}
+
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
+
+	return makeExprResult(target_type, SizeInBits{target_size_bits}, IrOperand{result_var}, target_type_index);
+}

@@ -635,6 +635,24 @@ private:
 		Type target_type,
 		TypeIndex target_type_index = TypeIndex{}) const;
 
+	// Emit a call to a user-defined conversion operator and return the converted ExprResult.
+	// Returns nullopt if conv_op has no valid FunctionDeclarationNode (should not happen in practice).
+	// source           - ExprResult for the source struct object
+	// source_type_info - TypeInfo of the source struct (for struct name / mangling)
+	// conv_op          - conversion function found via findConversionOperator (must not be nullptr)
+	// target_type      - target primitive/struct type produced by the conversion
+	// target_type_index - TypeIndex of target (pass TypeIndex{} for primitive targets)
+	// target_size_bits - size in bits of the target type
+	// token            - source token for IR instruction location
+	std::optional<ExprResult> emitConversionOperatorCall(
+		const ExprResult& source,
+		const TypeInfo& source_type_info,
+		const StructMemberFunction& conv_op,
+		Type target_type,
+		TypeIndex target_type_index,
+		int target_size_bits,
+		const Token& token);
+
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))

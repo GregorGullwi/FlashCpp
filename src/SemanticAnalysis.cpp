@@ -2822,17 +2822,26 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
 	if (from_desc.base_type == to_desc.base_type) return false;
 
-	// Bail out if either side is not a plain primitive scalar (or enum source).
+	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
 	// Enum source types are allowed: C++20 permits implicit enum→primitive conversions
 	// (integral promotion, integral/floating conversion, boolean conversion).
 	// Enum as *target* is rejected: C++11+ forbids implicit conversion TO enum.
+	// Struct source is allowed when target is primitive: user-defined conversion operator.
+	// is_unresolved_type: sources where sema cannot determine a concrete scalar conversion.
+	auto is_unresolved_type = [](Type t) {
+		return t == Type::UserDefined || t == Type::Invalid || isPlaceholderAutoType(t);
+	};
 	auto is_non_primitive = [](Type t) {
 		return t == Type::Struct || t == Type::UserDefined ||
 		       t == Type::Invalid || isPlaceholderAutoType(t);
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
-	if (is_non_primitive(from_desc.base_type) || is_non_primitive(to_desc.base_type)) return false;
+	// Allow Struct source for user-defined conversion operators (Struct→primitive).
+	// Reject Struct→Struct (handled elsewhere) and primitive→Struct (converting constructors).
+	if (from_desc.base_type == Type::Struct && to_desc.base_type == Type::Struct) return false;
+	if (from_desc.base_type != Type::Struct && is_unresolved_type(from_desc.base_type)) return false;
+	if (is_non_primitive(to_desc.base_type)) return false;
 	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
@@ -2847,7 +2856,10 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node, Canonical
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
 	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);
-	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return false;
+	if (!plan.is_valid) return false;
+	// Allow UserDefined rank only when source is Struct (conversion operator case).
+	// Reject UserDefined for non-struct sources (converting constructors are separate).
+	if (plan.rank == ConversionRank::UserDefined && from_desc.base_type != Type::Struct) return false;
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
