@@ -548,6 +548,7 @@ static_assert(mat_assign() == 15);  // ✅ Works
 
 **Current limitations:**
 - 3D or higher array forms are not yet supported
+- Mixed brace-init lists (e.g., `int arr[2][3] = {1, 2, 3, {4, 5, 6}}`) are **not supported** by the parser. The parser tracks the element count against the outer dimension when it encounters a `{` token, so after consuming 3 flat scalars the limit switches back to the outer dimension (2) and rejects the 4th element. Fully-flat brace-elision (all scalars, no nested braces) and fully-nested form (each inner array in its own `{…}`) both work correctly. **TODO:** verify whether the regular (non-constexpr) parser path in `parse_brace_initializer` (`src/Parser_Statements.cpp`) has the same limitation and, if so, fix it there too so that runtime arrays also accept mixed brace-init lists per C++20 `[dcl.init.aggr]`.
 
 ### ✅ Aggregate Initialization Inside Constexpr Functions Uses Local Bindings (FIXED)
 
