@@ -5,6 +5,8 @@
 #include <functional>
 #include <unordered_map>
 
+class ConstructorDeclarationNode;
+
 // --- Standard conversion kinds (C++20 [conv]) ---
 
 enum class StandardConversionKind : uint8_t {
@@ -84,6 +86,7 @@ struct ImplicitCastInfo {
 	CanonicalTypeId target_type_id;
 	StandardConversionKind cast_kind;
 	ValueCategory value_category_after = ValueCategory::PRValue;
+	const ConstructorDeclarationNode* selected_constructor = nullptr;
 };
 
 // --- Canonical type descriptor (stored in TypeContext, indexed by CanonicalTypeId) ---
@@ -213,6 +216,17 @@ inline ConversionPlanFlags operator|(ConversionPlanFlags a, ConversionPlanFlags 
 inline bool hasFlag(ConversionPlanFlags flags, ConversionPlanFlags flag) {
 	return (static_cast<uint8_t>(flags) & static_cast<uint8_t>(flag)) != 0;
 }
+
+struct CallArgReferenceBindingInfo {
+	CanonicalTypeId parameter_type_id{};
+	CastInfoIndex pre_bind_cast_info_index{};
+	ConversionPlanFlags flags = ConversionPlanFlags::None;
+
+	bool is_valid() const { return hasFlag(flags, ConversionPlanFlags::IsValid); }
+	bool binds_directly() const { return hasFlag(flags, ConversionPlanFlags::BindsReferenceDirectly); }
+	bool materializes_temporary() const { return hasFlag(flags, ConversionPlanFlags::MaterializesTemporary); }
+	bool has_pre_bind_cast() const { return static_cast<bool>(pre_bind_cast_info_index); }
+};
 
 // --- Conversion step (one step in a conversion sequence) ---
 

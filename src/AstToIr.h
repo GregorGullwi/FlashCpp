@@ -66,6 +66,12 @@ private:
 		std::string struct_name;
 	};
 
+	struct FullExpressionTempDestructorInfo {
+		StringHandle struct_name;
+		std::variant<StringHandle, TempVar> object;
+		bool object_is_pointer = false;
+	};
+
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		StringHandle store_name;
@@ -116,6 +122,10 @@ private:
 	void emitPendingFunctionCleanupLP(const Token& token);
 
 	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name);
+	void registerFullExpressionTempDestructor(StringHandle struct_name,
+		std::variant<StringHandle, TempVar> object,
+		bool object_is_pointer = false);
+	void emitAndClearFullExpressionTempDestructors();
 
 	struct CatchScopeContext {
 		size_t base_depth;
@@ -129,6 +139,7 @@ private:
 
 	// Phase 2 capture state: vars captured by exitFunctionScope() awaiting LP emission
 	std::vector<std::pair<StringHandle, StringHandle>> pending_function_cleanup_vars_;
+	std::vector<FullExpressionTempDestructorInfo> pending_full_expression_temp_dtors_;
 	InlineVector<CatchScopeContext, 4> catch_scope_stack_;
 	size_t active_try_statement_depth_ = 0;
 	// Set by visitTryStatementNode() when any typed (non-catch-all) handlers are present.
@@ -196,6 +207,19 @@ private:
 	// ExprResult. param_type must not be null.
 	ExprResult applyConstructorArgConversion(ExprResult arg_result, const ASTNode& arg_expr,
 		const TypeSpecifierNode& param_type, const Token& source_token);
+	std::optional<ExprResult> materializeSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const ConstructorDeclarationNode& selected_ctor,
+		const Token& source_token,
+		bool use_return_slot = false);
+	std::optional<ExprResult> tryMaterializeSemaSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const Token& source_token,
+		bool use_return_slot = false);
 	// Read the sema-annotated conversion target type for an expression node.
 	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
 	Type getSemaAnnotatedTargetType(const ASTNode& node) const;
@@ -662,6 +686,11 @@ private:
 	int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;
+	std::optional<ExprResult> tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
+		const ASTNode& arg_expr,
+		const TypeSpecifierNode& param_type,
+		const CallArgReferenceBindingInfo* binding_info,
+		const Token& source_token);
 
 	// ========== Lambda Capture Helper Functions ==========
 

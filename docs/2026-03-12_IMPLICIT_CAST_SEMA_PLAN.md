@@ -1403,25 +1403,27 @@ by sema for struct → bool via `operator bool()`).
 
 ### Phase 23 investigation items:
 
-1. **`applyConstructorArgConversion` skips UserDefined annotations.** The sema path
-   in `IrGenerator_Expr_Conversions.cpp` checks `from_t != Type::Struct && to_t != Type::Struct`,
-   explicitly excluding Struct→primitive conversions from the sema-driven path. If a constructor
-   takes a primitive type and is passed a struct with `operator T()`, the codegen fallback handles
-   it. Correct today; blocks future fallback removal.
-2. **Integer → bool annotations in contextual bool not emitting explicit IR.** Sema annotates
-   `BooleanConversion` for int/char → bool but `applyConditionBoolConversion` returns `condition`
-   unchanged, relying on backend TEST. Correct for integers (TEST handles zero correctly); no
-   code change needed unless backend semantics change.
+1. ✅ **`applyConstructorArgConversion` skips UserDefined annotations.** *(fixed in post-Phase 23 follow-up)* `AstToIr::applyConstructorArgConversion` now consumes sema `StandardConversionKind::UserDefined` annotations for struct-source constructor arguments: it reads the sema canonical source/target descriptors, finds the conversion operator via `findConversionOperator`, and lowers the call via `emitConversionOperatorCall`. Regression coverage: `tests\test_ctor_arg_userdefined_sema_ret0.cpp`.
+2. ✅ **Integer → bool annotations in contextual bool not emitting explicit IR.** *(investigated in post-Phase 23 follow-up; limitation removed)* This is not an active implementation gap. Sema annotates `BooleanConversion`, `applyConditionBoolConversion` consumes that semantic intent, and integer/enum/pointer conditions intentionally rely on the backend's existing zero/non-zero `TEST` branch semantics. Only float contextual-bool needs explicit compare IR today.
 
-### Known limitations (current, as of Phase 23)
+### Post-Phase 23 follow-up ✅
 
-- Converting constructors (primitive → struct via single-arg ctor) remain in codegen.
-- `applyConstructorArgConversion` skips UserDefined (Struct→primitive) annotations (Phase 23 item 1).
-- Reference binding, temporary materialization, lifetime extension remain in codegen.
-- Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
-- `inferExpressionType` parser fallback may be slower than direct scope-stack lookup for hot paths.
-- `inferExpressionType` does not handle `PackExpansionExprNode` (normally expanded during template substitution).
-- Broader parser/template-substitution/sema boundary cleanup tracked in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
+- `applyConstructorArgConversion` now consumes sema `UserDefined` annotations for struct→primitive constructor arguments instead of rediscovering them in fallback codegen.
+- `SemanticAnalysis` now threads precomputed `CanonicalTypeId` values through assignment, scoped-enum diagnostics, binary/shift conversion annotation, and constructor-argument annotation paths, removing several redundant local `inferExpressionType` reinference sites.
+- Empty function-argument pack expansions are now consumed during template substitution instead of leaking `PackExpansionExprNode` across the pre-sema boundary. Regression coverage: `tests\test_pack_expansion_empty_fn_call_ret42.cpp`.
+- `SemanticAnalysis.cpp` no longer relies on `parser_.get_expression_type(...)`; the remaining parser/sema boundary work is narrower than when this plan was first written.
+- Direct/member explicit-argument reference binding now carries sema-owned temporary-materialization decisions through codegen-owned full-expression cleanup: struct temporaries reused for annotated reference binds are destroyed at the end of the surrounding expression/initializer/return full-expression instead of leaking past the call or being destroyed too early. Backend `DestructorCall` lowering now also respects `object_is_pointer` for `TempVar` targets so stack-backed temporary objects can be destroyed correctly.
+- Regression coverage: `tests/test_ref_binding_full_expr_lifetime_direct_call_ret0.cpp`, `tests/test_ref_binding_full_expr_lifetime_member_call_ret0.cpp`.
+
+### Known limitations (current, post-Phase 23 follow-up)
+
+- Sema-owned `UserDefined` coverage for copy-initialization converting constructors now includes both non-struct → struct and struct → struct sources across variable copy-initialization, free-function arguments, member-function arguments, and return expressions, including copy-init explicit-constructor rejection and selected-constructor tracking for those sites.
+- Selected-constructor materialization is no longer declaration-only: declaration, call, and return sites now consume the same sema-selected converting-constructor metadata for both primitive and struct sources.
+- Direct-call and member-call argument reference-binding classification is now sema-owned, including per-argument direct-bind vs temporary-materialization decisions and pre-bind standard-conversion metadata for reference parameters.
+- For those direct/member explicit-argument call paths, codegen now consumes the sema reference-binding decision through temporary materialization and end-of-full-expression cleanup for materialized struct temporaries. Broader reference-binding coverage outside direct/member explicit-argument call paths is still follow-up work.
+- `inferExpressionType` hot-path local reinference has been reduced, but the remaining constructor-overload/parser-bridge cost is structural rather than another obvious micro-optimization.
+- `inferExpressionType` intentionally does not handle `PackExpansionExprNode`; supported function-call argument pack expansions are eliminated during template substitution (including empty packs), and surviving pack-expansion helpers are a pre-sema boundary violation.
+- Separate architectural context: `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md` now mainly covers parser/template-substitution ownership and pre-sema fold/pack boundary enforcement, not the remaining reference-binding or converting-constructor backlog.
 
 ### Parallel rollout guidance
 

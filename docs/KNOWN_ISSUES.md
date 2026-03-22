@@ -68,6 +68,7 @@ two-phase lookup violation.
 **Workaround**: avoid introducing a named local in the affected template body;
 route the value through a helper call or another expression form instead.
 
+
 ## Unscoped enum enumerator access through type aliases
 
 Accessing unscoped enum values using a type alias as the qualifier

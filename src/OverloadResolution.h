@@ -288,8 +288,9 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 	return false;
 }
 
-// Check if target_struct has a single-arg converting constructor that accepts source_type,
-// OR if source derives from target (implicit derived-to-base conversion).
+// Check if target_struct has a converting constructor whose first parameter accepts
+// source_type and whose remaining parameters are all defaulted, OR if source derives
+// from target (implicit derived-to-base conversion).
 // Used to determine if struct-to-struct conversions are viable.
 // Only checks gTypeInfo (populated at or before IR-gen time).
 // Returns false both when struct info is genuinely absent (caller should then check
@@ -299,19 +300,35 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	if (target_idx.value >= gTypeInfo.size() || source_idx.value >= gTypeInfo.size()) return false;
 	const StructTypeInfo* target = gTypeInfo[target_idx.value].getStructInfo();
 	if (!target) return false;
+	auto count_min_required_params = [](const std::vector<ASTNode>& params) {
+		size_t min_required = params.size();
+		size_t i = params.size();
+		while (i > 0) {
+			if (!params[i - 1].is<DeclarationNode>()) break;
+			if (!params[i - 1].as<DeclarationNode>().has_default_value()) break;
+			--min_required;
+			--i;
+		}
+		return min_required;
+	};
 	// Check if source is a (transitively) derived class of target (derived-to-base conversion)
 	if (isTransitivelyDerivedFrom(source_idx, target_idx)) return true;
-	// Check single-arg user-defined constructors
+	// Check constructors whose first argument consumes the source and whose
+	// remaining arguments are defaulted.
 	for (const auto& mf : target->member_functions) {
 		if (!mf.is_constructor) continue;
-		// Constructors may be FunctionDeclarationNode or ConstructorDeclarationNode
 		const std::vector<ASTNode>* params_ptr = nullptr;
+		size_t min_required = 0;
 		if (mf.function_decl.is<FunctionDeclarationNode>()) {
-			params_ptr = &mf.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
+			params_ptr = &ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(*params_ptr);
 		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
-			params_ptr = &mf.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+			params_ptr = &ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(*params_ptr);
 		}
-		if (!params_ptr || params_ptr->size() != 1) continue;
+		if (!params_ptr || params_ptr->empty() || min_required > 1) continue;
 		if (!(*params_ptr)[0].is<DeclarationNode>()) continue;
 		const auto& param_type = (*params_ptr)[0].as<DeclarationNode>().type_node();
 		if (!param_type.is<TypeSpecifierNode>()) continue;
@@ -479,9 +496,27 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					}
 					return ConversionPlan::exact_match();
 				}
-				
-				// Lvalue ref can't bind to rvalue ref parameter
-				// Rvalue ref can't bind to lvalue ref parameter  
+
+				// Reference binding may still be viable through temporary materialization.
+				// C++20 [dcl.init.ref]: a const lvalue reference can bind to a temporary
+				// materialized from an lvalue/xvalue after a standard conversion, and an
+				// rvalue reference can bind to a temporary materialized from an xvalue when
+				// a standard conversion is required.
+				if (!to_is_rvalue && to.is_const()) {
+					auto plan = buildConversionPlan(from_base, to_base);
+					if (plan.is_valid) {
+						return plan;
+					}
+				}
+				if (from_is_rvalue && to_is_rvalue) {
+					auto plan = buildConversionPlan(from_base, to_base);
+					if (plan.is_valid) {
+						return plan;
+					}
+				}
+
+				// Lvalue ref can't bind to rvalue ref parameter, and non-const lvalue refs
+				// can't bind to xvalues of a different reference kind.
 				return ConversionPlan::no_match();
 			} else {
 				// 'from' is not a reference, 'to' is a reference
@@ -501,10 +536,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					types_match = false;
 				}
 				if (!types_match) {
-					// Allow conversions for const lvalue refs only
+					// Allow conversions for const lvalue refs and rvalue refs by
+					// materializing a temporary of the referred-to type.
 					auto plan = buildConversionPlan(from_base, to_base);
-					if (!to_is_rvalue && to_is_const && plan.is_valid) {
+					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
+						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
+						// and rvalue refs can bind to converted prvalues.
 						return plan;
 					}
 					return ConversionPlan::no_match();

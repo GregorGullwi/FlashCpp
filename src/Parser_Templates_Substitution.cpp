@@ -1203,21 +1203,30 @@ bool Parser::expandPackExpansionArgs(
 	}
 
 	size_t num_pack_elements = 0;
+	bool found_pack_context = false;
 	if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
+		found_pack_context = true;
 		num_pack_elements = template_args.size() - non_variadic_count;
 	}
 
-	// Also check pack_param_info_ for function parameter packs
+	// Also check pack_param_info_ for function parameter packs. Match the pack
+	// name against the pattern so empty packs are still recognized and consumed
+	// instead of leaking a PackExpansionExprNode across the parser/sema boundary.
 	std::string_view func_pack_name;
 	for (const auto& pack_info : pack_param_info_) {
-		if (pack_info.pack_size > 0) {
+		if (exprContainsIdentifier(pattern, pack_info.original_name)) {
+			found_pack_context = true;
 			func_pack_name = pack_info.original_name;
-			if (num_pack_elements == 0) num_pack_elements = pack_info.pack_size;
+			num_pack_elements = pack_info.pack_size;
 			break;
 		}
 	}
 
-	if (num_pack_elements == 0) return false;
+	if (!found_pack_context) return false;
+	if (num_pack_elements == 0) {
+		FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: empty pack");
+		return true;
+	}
 
 	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", num_pack_elements, " elements");
 	for (size_t pi = 0; pi < num_pack_elements; ++pi) {
