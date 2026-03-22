@@ -2441,11 +2441,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					ci.selected_constructor &&
 					from_desc.base_type != Type::Struct) {
-					Type from_t = from_desc.base_type;
-					if (from_t == Type::Enum && from_t != arg_result.type)
-						from_t = arg_result.type;
-					if (from_t != param_base_type) {
-						arg_result = generateTypeConversion(arg_result, from_t, param_base_type, source_token);
+					Type ctor_from_t = from_desc.base_type;
+					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.type)
+						ctor_from_t = arg_result.type;
+					if (ctor_from_t != param_base_type) {
+						arg_result = generateTypeConversion(arg_result, ctor_from_t, param_base_type, source_token);
 					}
 					sema_applied = true;
 				} else if (from_t != Type::Struct && to_t != Type::Struct) {
