@@ -2049,10 +2049,10 @@ EvalResult Evaluator::evaluate_callable_object(
 		if (context.current_depth >= context.max_recursion_depth) {
 			return EvalResult::error("Constexpr recursion depth limit exceeded in callable object call");
 		}
-			auto saved_struct_info = context.struct_info;
-			auto saved_struct_type_index = context.struct_type_index;
-			context.struct_info = struct_info;
-			context.struct_type_index = type_spec.type_index();
+		auto saved_struct_info = context.struct_info;
+		auto saved_struct_type_index = context.struct_type_index;
+		context.struct_info = struct_info;
+		context.struct_type_index = type_spec.type_index();
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -2061,8 +2061,8 @@ EvalResult Evaluator::evaluate_callable_object(
 			"Callable object operator() body is not a block",
 			"Constexpr callable object operator() did not return a value");
 		context.current_depth--;
-			context.struct_info = saved_struct_info;
-			context.struct_type_index = saved_struct_type_index;
+		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
 		return result;
 	}
 
@@ -2110,13 +2110,13 @@ EvalResult Evaluator::evaluate_callable_object(
 			true);
 		if (!bind_result.success()) return bind_result;
 
-			if (context.current_depth >= context.max_recursion_depth) {
-				return EvalResult::error("Constexpr recursion depth limit exceeded");
-			}
-			auto saved_struct_info = context.struct_info;
-			auto saved_struct_type_index = context.struct_type_index;
-			context.struct_info = struct_info;
-			context.struct_type_index = type_spec.type_index();
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		}
+		auto saved_struct_info = context.struct_info;
+		auto saved_struct_type_index = context.struct_type_index;
+		context.struct_info = struct_info;
+		context.struct_type_index = type_spec.type_index();
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
 			definition.value(),
@@ -2125,8 +2125,8 @@ EvalResult Evaluator::evaluate_callable_object(
 			"operator() body in brace-initialized callable is not a block",
 			"Constexpr operator() in brace-initialized callable did not return a value");
 		context.current_depth--;
-			context.struct_info = saved_struct_info;
-			context.struct_type_index = saved_struct_type_index;
+		context.struct_info = saved_struct_info;
+		context.struct_type_index = saved_struct_type_index;
 		return result;
 	}
 	
