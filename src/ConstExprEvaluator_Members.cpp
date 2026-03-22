@@ -4398,7 +4398,8 @@ EvalResult Evaluator::materialize_array_value(
 					element_struct_info,
 					element_type_index,
 					element.as<InitializerListNode>(),
-					context);
+					context,
+					bindings);
 			} else {
 				element_result = EvalResult::error("Array element type is not a struct");
 			}
