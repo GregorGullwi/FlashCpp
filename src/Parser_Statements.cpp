@@ -1175,6 +1175,20 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		// Get the array size if specified
 		std::optional<size_t> array_size = type_specifier.array_size();
 		size_t element_count = 0;
+		// Once any scalar (non-'{') element has been parsed in a multi-dim list the list is in
+		// fully-flat brace-elision mode. Locking this flag prevents the per-element limit from
+		// incorrectly switching back to the outer dimension limit when a later element happens
+		// to be a nested '{' initializer (mixed brace-init form).
+		bool saw_scalar = false;
+
+		// For multi-dimensional arrays, compute the total flattened element count to support
+		// C++20 brace-elision (e.g., int[2][3] = {1,2,3,4,5,6} distributes scalars across rows).
+		std::optional<size_t> flat_total_size;
+		if (type_specifier.array_dimension_count() > 1 && array_size.has_value()) {
+			size_t total = 1;
+			for (size_t d : type_specifier.array_dimensions()) total *= d;
+			flat_total_size = total;
+		}
 
 		// Build the element type specifier for nested brace-init.
 		// For multi-dimensional arrays (e.g., int[2][3]), the element type is the remaining
@@ -1198,9 +1212,24 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				break;
 			}
 
-			// Check if we have too many initializers
-			if (array_size.has_value() && element_count >= *array_size) {
-				return ParseResult::error("Too many initializers for array", current_token_);
+			// Check if we have too many initializers.
+			// For multi-dimensional arrays with flat brace-elision (next token is a scalar, not '{'),
+			// allow up to the total flattened count; otherwise use the outer dimension as the limit.
+			// Once a scalar has been seen (saw_scalar), lock in flat mode to avoid false rejections
+			// in mixed brace-init lists (e.g. int arr[2][3] = {1, 2, 3, {4, 5, 6}}).
+			// NOTE: Fully-flat brace-elision (all scalars) and fully-nested form (each inner array
+			// in its own {…}) both work correctly.  Mixed form is a known limitation of the evaluator
+			// but the parser now accepts it without a spurious "too many initializers" error.
+			if (array_size.has_value()) {
+				if (flat_total_size.has_value() && peek() != "{"_tok) {
+					saw_scalar = true;
+				}
+				size_t limit = (flat_total_size.has_value() && saw_scalar)
+					? *flat_total_size
+					: *array_size;
+				if (element_count >= limit) {
+					return ParseResult::error("Too many initializers for array", current_token_);
+				}
 			}
 
 			ParseResult init_expr_result;

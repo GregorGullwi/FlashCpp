@@ -146,7 +146,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-This also includes straightforward nested local aggregate reads in constexpr functions, such as `obj.inner.value`, and straightforward local member-array reads such as `obj.data[1]`.
+This also includes straightforward local member-array reads such as `obj.data[1]`. Nested local aggregate reads such as `obj.inner.value` work when the outer object is aggregate-initialized (brace-init), but **not** when it is constructor-initialized — see the [Nested Member Access on Local Constructor-Initialized Objects](#-nested-member-access-on-local-constructor-initialized-objects-does-not-work-inside-constexpr-function-bodies) limitation below.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
@@ -543,35 +543,86 @@ static_assert(mat_assign() == 15);  // ✅ Works
 - `arr[i][j] = value` subscript assignment in constexpr function bodies
 - Scalar brace-elision (`{v}` places `v` at `[0][0]`, zero-fills remaining elements)
 - Zero-init (`{0}`) for entire multi-dimensional array
+- Fully-flattened brace-elision (`int arr[2][3] = {1, 2, 3, 4, 5, 6}` without inner braces) — scalars now distributed correctly across inner dimensions per C++20 rules
+- Multiple scalar partial brace-init (`int mat[2][3] = {1, 2}`) — now correctly fills the first row sequentially
 
 **Current limitations:**
 - 3D or higher array forms are not yet supported
-- Fully-flattened brace-elision (`int arr[2][3] = {1, 2, 3, 4, 5, 6}` without inner braces) is not yet supported; use nested braces instead
-- Multiple scalar initializers with brace-elision (`int mat[2][3] = {1, 2}`) are not correctly distributed across inner dimensions; each scalar is treated as seeding a separate row's `[0]` position instead of filling the first row sequentially per C++20 rules. Use nested braces (`{{1, 2, 0}, {0, 0, 0}}`) as a workaround.
+- Mixed brace-init lists (e.g., `int arr[2][3] = {1, 2, 3, {4, 5, 6}}`) are **not supported** by the parser. The parser tracks the element count against the outer dimension when it encounters a `{` token, so after consuming 3 flat scalars the limit switches back to the outer dimension (2) and rejects the 4th element. Fully-flat brace-elision (all scalars, no nested braces) and fully-nested form (each inner array in its own `{…}`) both work correctly. **TODO:** verify whether the regular (non-constexpr) parser path in `parse_brace_initializer` (`src/Parser_Statements.cpp`) has the same limitation and, if so, fix it there too so that runtime arrays also accept mixed brace-init lists per C++20 `[dcl.init.aggr]`.
 
-### ⚠️ Ternary Struct Initializer Error Propagation
+### ✅ Aggregate Initialization Inside Constexpr Functions Uses Local Bindings (FIXED)
 
-When a ternary expression used as a struct initializer fails for a specific reason (e.g., undefined variable in a branch), the evaluator may produce a generic "requires a struct initializer" error instead of the actual evaluation failure message. This is because the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` (`src/ConstExprEvaluator_Members.cpp:3341-3357`) silently discards the specific error when the result has empty `object_member_bindings`.
-
-### ⚠️ Aggregate Initialization Inside Constexpr Functions Ignores Local Bindings
-
-When an aggregate struct (no user-defined constructors) is constructed inside a constexpr function body using local variables or function parameters as arguments (e.g., `Pt p{a, b}` where `a` and `b` are function parameters), the aggregate initialization fallback in `materialize_constructor_object_value` (`src/ConstExprEvaluator_Members.cpp:4333-4346`) does not pass the enclosing `outer_bindings` to the aggregate materializer. This means the argument expressions are evaluated without access to local variable bindings, causing evaluation to fail.
+Aggregate struct initialization inside constexpr function bodies (no user-defined constructor) now correctly accesses local variable bindings and function parameters:
 
 ```cpp
 struct Pt { int x; int y; }; // aggregate, no constructor
 constexpr int f(int a, int b) {
-    Pt p{a, b}; // ⚠️ May fail: 'a' and 'b' are in outer_bindings but not passed through
+    Pt p{a, b}; // ✅ Works: 'a' and 'b' found in local bindings
     return p.x + p.y;
 }
-static_assert(f(3, 7) == 10); // ⚠️ May fail
+static_assert(f(3, 7) == 10); // ✅ Works
 ```
 
-**Workaround:** Add a user-defined constexpr constructor to the struct, which uses the correct bindings-aware path:
+This also works with local variables as arguments:
 ```cpp
-struct Pt {
-    int x; int y;
-    constexpr Pt(int x_val, int y_val) : x(x_val), y(y_val) {}
+constexpr int h() {
+    int v1 = 3;
+    int v2 = 7;
+    Pt p{v1, v2}; // ✅ Works
+    return p.x + p.y;
+}
+static_assert(h() == 10); // ✅ Works
+```
+
+When a ternary expression used as a struct initializer fails for a specific reason (e.g., undefined variable in a branch), the evaluator may produce a generic "requires a struct initializer" error instead of the actual evaluation failure message. This is because the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` (`src/ConstExprEvaluator_Members.cpp:3341-3357`) silently discards the specific error when the result has empty `object_member_bindings`.
+
+### ⚠️ Nested Member Access on Local Constructor-Initialized Objects Does Not Work Inside Constexpr Function Bodies
+
+When a local struct variable is constructed via a **user-defined constructor** inside a constexpr function body, **nested member access** (`o.inner.x`) fails. Single-level access (`o.x`) works because it goes through the bindings-aware evaluator (`try_evaluate_bound_member_access`), but two-level nested access (`o.inner.x`) takes a different code path through `evaluate_nested_member_access` → `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`), which only searches the **symbol table** — not `context.local_bindings` where local variables in constexpr function bodies live.
+
+```cpp
+struct Inner { int x; int y; };
+struct Outer {
+    Inner inner;
+    constexpr Outer(int a, int b) : inner{a, b} {}
 };
+
+constexpr int test() {
+    Outer o(3, 7);
+    return o.inner.x + o.inner.y;  // ⚠️ Fails: "Undefined variable in nested member access: o"
+}
+static_assert(test() == 10);  // ⚠️ Fails
+```
+
+**Note:** This also affects constructor member initializer lists that initialize aggregate sub-structs using constructor parameters (e.g., `: inner{a, b}`), since the nested access is the failing step.
+
+**What works:** Nested member access on **global** constexpr objects (looked up in the symbol table) works fine. Single-level member access on local objects also works. Nested access on local **aggregate-initialized** objects (brace-init, no user-defined constructor) works when the bindings-aware evaluator resolves both levels from `object_member_bindings`.
+
+**Root cause:** `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`) does not check `context.local_bindings`. The fix would involve making that function (or `evaluate_nested_member_access`) also look up the base object in `context.local_bindings` and use its `object_member_bindings` to resolve intermediate members.
+
+**Workaround:** Avoid nested member access on locally-constructed objects. Instead, access the intermediate member first and use single-level access:
+
+```cpp
+constexpr int test_workaround() {
+    Outer o(3, 7);
+    // Instead of o.inner.x, extract inner first:
+    int x = o.inner.x;  // ⚠️ Still fails (same nested access)
+    // True workaround: use aggregate init instead of a user-defined constructor
+    return x;
+}
+```
+
+Or use aggregate structs (no user-defined constructor) where nested access through the bindings-aware path works:
+
+```cpp
+struct Inner { int x; int y; };
+struct Outer { Inner inner; };  // aggregate, no constructor
+
+constexpr int test() {
+    Outer o{{3, 7}};            // aggregate brace-init
+    return o.inner.x + o.inner.y;  // ✅ Works
+}
+static_assert(test() == 10);  // ✅ Works
 ```
 
 ### ⚠️ Array Access Has Partial Support
@@ -1030,7 +1081,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
-- ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`)
+- ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`) — note: nested access (`obj.inner.value`) only works for aggregate-initialized (brace-init) local objects; constructor-initialized local objects fail nested access because `resolve_constexpr_object_source` does not check `context.local_bindings` (see limitation above)
 - ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
@@ -1062,8 +1113,9 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
 - ✅ **Default constructor invocation for uninitialized local struct variables in constexpr functions** *(Implemented)* — Declaring a local struct variable without an explicit initializer (e.g., `Counter c;`) now invokes the default constructor, including constructors with a body. Both member-initializer-list and constructor-body styles work. Zero-fill with default member initializers is applied when no default constructor exists.
 - ✅ **Void mutating member function calls on local constexpr structs** *(Implemented)* — Calling a `void`-returning non-const member function on a local struct variable (e.g., `c.increment()`) now correctly mutates the local object and writes the updated member values back. Repeated calls accumulate correctly, and parameterized void methods (e.g., `c.add(5)`) also work.
-- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), and `{0}` zero-init are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
-- ✅ **Ternary operator returning struct types** *(Implemented)* — `constexpr Pt p = (cond ? Pt{3,7} : Pt{1,2})` now works at global scope and inside constexpr functions. Struct-typed `ConstructorCallNode` expressions are routed through `materialize_constructor_object_value` (with aggregate-init fallback), and the member resolution path gained a generic expression fallback for initializers that aren't constructor calls or initializer lists. See "Ternary Struct Initializer Error Propagation" and "Aggregate Initialization Inside Constexpr Functions Ignores Local Bindings" in the limitations section for known edge cases.
+- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), `{0}` zero-init, and fully-flattened brace-elision (`{1,2,3,4,5,6}` for `int[2][3]`) are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
+- ✅ **Aggregate initialization inside constexpr functions uses local bindings** *(Implemented)* — Aggregate structs (no user-defined constructor) can now be initialized with brace-init inside constexpr function bodies using local variables or function parameters as arguments (e.g., `Pt p{a, b}` where `a` and `b` are in scope).
+- ✅ **Ternary operator returning struct types** *(Implemented)* — `constexpr Pt p = (cond ? Pt{3,7} : Pt{1,2})` now works at global scope and inside constexpr functions. Struct-typed `ConstructorCallNode` expressions are routed through `materialize_constructor_object_value` (with aggregate-init fallback), and the member resolution path gained a generic expression fallback for initializers that aren't constructor calls or initializer lists. See "Ternary Struct Initializer Error Propagation" in the limitations section for the remaining edge case.
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
