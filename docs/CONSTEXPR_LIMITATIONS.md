@@ -766,7 +766,17 @@ The following patterns are supported:
 - Arrow member access on heap struct: `p->member`
 - Multiple allocations, loops with new/delete
 
-**Requirement:** All heap allocations must be freed before the constant expression returns (C++20 does not yet enforce this at compile time in FlashCpp, but the heap is local to the evaluation).
+**Requirement:** All heap allocations must be freed before the constant expression returns. The evaluator enforces this at the outermost function-call boundary (depth returning to 0).
+
+**Known limitations of constexpr `new`/`delete`:**
+
+1. **Arrow member write (`p->member = value`) not supported** — Read access (`p->x + p->y`) works, but assignment through arrow access on heap-allocated structs is not yet implemented. The LHS assignment handler only recognizes plain identifiers, `this->member`, `*ptr`, and `arr[i]` forms.
+2. **🐛 Use-after-free on arrow access produces wrong diagnostic instead of "use after free"** — When accessing `p->member` on a freed heap pointer, `try_evaluate_bound_member_access` (`src/ConstExprEvaluator_Members.cpp:604-616`) silently returns `std::nullopt` instead of an explicit "use after free" error. This causes a confusing downstream error (e.g., "variable not found") rather than the clear diagnostic that the other dereference paths (`dereference_constexpr_pointer` at `src/ConstExprEvaluator_Core.cpp:389-391`, `deref_pointer_with_bindings` at `src/ConstExprEvaluator_Core.cpp:505-507`) correctly produce. **Fix:** the `!heap_it->second.freed` check at line 608 should return an `EvalResult::error(...)` when the entry is freed, not fall through to `return std::nullopt`.
+3. **Default constructors not invoked for `new MyStruct()`** — When `new MyStruct()` is called with no arguments, default member initializers are applied but a user-defined default constructor body is not executed. Only structs with explicit constructor arguments go through the full constructor materialization path.
+4. **`new`/`delete` not handled in the const-dispatch path** — `evaluate_expression_with_bindings_dispatch` (the const-bindings path) does not handle `NewExpressionNode` / `DeleteExpressionNode`; it falls through to `evaluate()` without bindings, so constructor arguments or delete operands referencing local variables would fail to resolve. In practice, `new`/`delete` with side effects only appears in the mutable path.
+5. **Constructor arguments evaluated via const bindings** — `evaluate_new_expression` receives bindings as `const std::unordered_map*`, so side-effecting constructor arguments like `new int(++x)` would produce an error rather than a wrong result.
+6. **Heap keys permanently interned in `StringTable`** — Each `alloc_heap_slot()` call interns a synthetic key (e.g., `@new_0`) into the global `StringTable`. These persist for the lifetime of the compiler process even after the constexpr evaluation completes.
+7. **Arrow member access on heap structs bypasses type validation** — The heap arrow-access path looks up member names directly in `object_member_bindings` without checking `object_type_index.is_valid()`, unlike the non-heap path.
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
@@ -921,6 +931,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
+  - ⚠️ **Compound assignments don't apply unsigned type-width truncation** — The increment/decrement handler (`++`/`--`) explicitly truncates results to the declared unsigned type's width using `apply_uint_type_mask`. The compound assignment handler (`apply_op_to` lambda) does not perform this truncation. For example, `unsigned char x = 200; x += 100;` should wrap to `(300 & 0xFF) = 44`, but without truncation the stored value would be 300. This is a pre-existing issue for `+=`, `-=`, `*=`, `/=`, `%=` (the old code also lacked truncation), now extended to the new bitwise operators.
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
@@ -929,6 +940,8 @@ Potential areas for enhancement (in order of complexity):
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
 - ✅ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** *(Implemented)* — Both the top-level path (`static_assert`, constexpr variable initializers) and the bindings-aware path (constexpr function bodies) now short-circuit correctly. The `is_speculative` flag in `EvaluationContext` is set to `true` during template-argument disambiguation so that speculative evaluation does not change parse behavior.
+  - ⚠️ **`is_speculative` disables short-circuit globally** — The flag is set on the `EvaluationContext` and applies to all sub-expressions (including nested function calls). This means expressions like `constexpr bool x = false && some_complex_call()` evaluated speculatively will eagerly evaluate `some_complex_call()`, potentially producing spurious errors. This is acceptable since speculative evaluation returns `nullopt` on failure anyway.
+  - ⚠️ **`is_speculative` only affects the top-level path** — The bindings-aware paths (`evaluate_expression_with_bindings`, `evaluate_expression_with_bindings_dispatch`) always short-circuit regardless of the flag. This is correct because `try_evaluate_constant_expression` only uses the top-level evaluator for template-argument disambiguation.
 - ✅ **Dynamic allocation in constexpr (`new` / `delete`)** *(Implemented)* — See the section above.
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
@@ -968,7 +981,7 @@ Potential areas for enhancement (in order of complexity):
 8. **Small structs are safe** - structs smaller than a machine word (e.g., a 3-byte
    `{unsigned char r, g, b}`) can be returned from constexpr functions to both
    compile-time and runtime variables correctly.
-9. **Avoid `new` / `delete` and `throw` expressions in constexpr code** for now
+9. **`new` / `delete` is supported in constexpr (C++20)** — all heap allocations must be freed before the constant expression returns. Arrow member writes (`p->x = 10`) on heap structs are not yet supported; use constructor arguments instead. Avoid `throw` expressions in constexpr code.
 
 ### For Contributors
 
@@ -1104,13 +1117,20 @@ struct Point {
     }
 };
 
-// Bad: Dynamic allocation in constexpr
+// Good: Dynamic allocation in constexpr (C++20) — all allocations must be freed
 constexpr int f() {
     int* p = new int(42);
+    int v = *p;
     delete p;
-    return 42;
+    return v;
 }
-static_assert(f() == 42);  // Dynamic allocation not supported
+static_assert(f() == 42);  // ✅ Supported (all memory freed before return)
+
+// Bad: Leaking allocation in constexpr — will be rejected
+// constexpr int leak() {
+//     int* p = new int(42);
+//     return *p;  // ❌ forgot delete p — ill-formed per C++20
+// }
 
 // Unsupported pointer forms — only pointer-to-member remains unsupported:
 // - Pointer-to-member: obj.*pmf  ❌
@@ -1152,3 +1172,8 @@ struct CaptureExample {
 - `tests/test_constexpr_member_func.cpp` - Member function constexpr tests
 - `tests/test_constexpr_struct_runtime_assign_ret0.cpp` - Struct return from constexpr functions (incl. sub-word structs)
 - `tests/test_constexpr_const_char_ptr_ret0.cpp` - `const char*` / string-literal support in constexpr
+- `tests/test_constexpr_new_delete_ret0.cpp` - Constexpr `new`/`delete` (scalar, array, struct, loops)
+- `tests/test_constexpr_new_leak_fail.cpp` - Constexpr heap leak detection (expected failure)
+- `tests/test_constexpr_new_array_toolarge_fail.cpp` - Constexpr array size limit (expected failure)
+- `tests/test_constexpr_short_circuit_ret0.cpp` - Short-circuit `&&`/`||` in constexpr
+- `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` - Bitwise compound assignments in constexpr
