@@ -602,7 +602,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	// For arrow member access (p->x) on a heap-allocated struct, dereference the
 	// pointer first to get the struct's member bindings from the constexpr heap.
 	if (member_access.is_arrow() && object_result->pointer_to_var.isValid()) {
-		std::string heap_key(StringTable::getStringView(object_result->pointer_to_var));
+		StringHandle heap_key = object_result->pointer_to_var;
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {
 			const EvalResult& heap_obj = heap_it->second.value;
@@ -1239,8 +1239,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		std::string_view op = bin_op.op();
 		
 		// Handle assignment operators specially (they modify bindings)
-		if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
-		    op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") {
+		if (op == "=" || isCompoundAssignmentOp(op)) {
 
 			// Helper: apply the assignment/compound-assignment operator to a target slot.
 			// Modifies `target` in place and returns the resulting value.
@@ -1324,7 +1323,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (!ptr_result.pointer_to_var.isValid()) {
 							return EvalResult::error("Dereference assignment on non-pointer in constant expression");
 						}
-						std::string heap_key(StringTable::getStringView(ptr_result.pointer_to_var));
+						StringHandle heap_key = ptr_result.pointer_to_var;
 						auto heap_it = context.constexpr_heap.find(heap_key);
 						if (heap_it == context.constexpr_heap.end()) {
 							return EvalResult::error("Dereference assignment: pointer does not refer to a constexpr heap object");
@@ -1369,7 +1368,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 					// Case 1: arr_result is a pointer into the constexpr heap (new int[n])
 					if (arr_result.pointer_to_var.isValid()) {
-						std::string heap_key(StringTable::getStringView(arr_result.pointer_to_var));
+						StringHandle heap_key = arr_result.pointer_to_var;
 						int64_t base_offset = arr_result.pointer_offset;
 						auto heap_it = context.constexpr_heap.find(heap_key);
 						if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {

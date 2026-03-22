@@ -382,7 +382,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset) {
 	// Check the constexpr heap first (for new-expressions inside constexpr functions).
 	{
-		std::string heap_key(var_name);
+		StringHandle heap_key = StringTable::getOrInternStringHandle(var_name);
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
@@ -496,12 +496,13 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 
 	// Check the constexpr heap first (for new-expressions inside constexpr functions).
 	{
-		std::string heap_key(var_name);
+		// pointer_to_var is already an interned StringHandle — use it directly.
+		StringHandle heap_key = ptr.pointer_to_var;
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-					heap_key + "' has already been deleted");
+					std::string(var_name) + "' has already been deleted");
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -1385,7 +1386,7 @@ EvalResult Evaluator::evaluate_new_expression(
 		for (int64_t i = 0; i < n; ++i) {
 			array_result.array_elements.push_back(make_default_init(type_spec));
 		}
-		std::string heap_key = context.alloc_heap_slot();
+		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = { std::move(array_result), false, true };
 		return EvalResult::from_pointer(heap_key);
 	}
@@ -1448,7 +1449,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			}
 		}
 
-		std::string heap_key = context.alloc_heap_slot();
+		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = { std::move(object_result), false, false };
 		return EvalResult::from_pointer(heap_key);
 	}
@@ -1483,7 +1484,7 @@ EvalResult Evaluator::evaluate_new_expression(
 		return EvalResult::error("new-expression: fundamental types can only be constructed with 0 or 1 argument");
 	}
 
-	std::string heap_key = context.alloc_heap_slot();
+	StringHandle heap_key = context.alloc_heap_slot();
 	context.constexpr_heap[heap_key] = { std::move(init_val), false, false };
 	return EvalResult::from_pointer(heap_key);
 }
@@ -1509,14 +1510,15 @@ EvalResult Evaluator::evaluate_delete_expression(
 		return EvalResult::error("delete-expression: operand is not a pointer in constant expression");
 	}
 
-	std::string heap_key(StringTable::getStringView(ptr_result.pointer_to_var));
+	StringHandle heap_key = ptr_result.pointer_to_var;
 	auto heap_it = context.constexpr_heap.find(heap_key);
 	if (heap_it == context.constexpr_heap.end()) {
 		return EvalResult::error("delete-expression: pointer does not refer to a constexpr heap allocation "
 			"(only memory allocated with `new` in a constexpr context can be deleted at compile time)");
 	}
 	if (heap_it->second.freed) {
-		return EvalResult::error("delete-expression: double-free in constant expression: '" + heap_key + "'");
+		return EvalResult::error("delete-expression: double-free in constant expression: '" +
+			std::string(StringTable::getStringView(heap_key)) + "'");
 	}
 	if (del_expr.is_array() != heap_it->second.is_array) {
 		return EvalResult::error(del_expr.is_array()

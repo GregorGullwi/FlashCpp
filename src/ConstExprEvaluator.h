@@ -4,6 +4,8 @@
 #include "TemplateRegistry.h"  // For gTemplateRegistry
 #include "TypeTraitEvaluator.h"  // For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
+#include "IROperandHelpers.h"  // For isCompoundAssignmentOp / kCompoundOpTable
+#include "StringBuilder.h"  // For StringBuilder (heap key construction)
 #include "Log.h"  // For FLASH_LOG
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
@@ -132,6 +134,12 @@ struct EvalResult {
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
 		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}};
+		return r;
+	}
+
+	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
+	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}};
 		return r;
 	}
 
@@ -387,12 +395,13 @@ struct EvaluationContext {
 		bool freed = false;
 		bool is_array = false;
 	};
-	std::unordered_map<std::string, ConstexprHeapEntry> constexpr_heap;
+	std::unordered_map<StringHandle, ConstexprHeapEntry, StringHash, StringEqual> constexpr_heap;
 	size_t next_heap_id = 0;
 
-	// Allocate a fresh synthetic heap key and return it.
-	std::string alloc_heap_slot() {
-		return "@new_" + std::to_string(next_heap_id++);
+	// Allocate a fresh synthetic heap key, intern it, and return its StringHandle.
+	StringHandle alloc_heap_slot() {
+		return StringTable::getOrInternStringHandle(
+			StringBuilder().append("@new_"sv).append(static_cast<uint64_t>(next_heap_id++)).commit());
 	}
 
 	// Constructor requires symbol table to prevent missing it
