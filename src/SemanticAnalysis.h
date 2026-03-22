@@ -160,6 +160,10 @@ private:
 	bool tryAnnotateConversion(const ASTNode& expr_node,
 		CanonicalTypeId target_type_id,
 		CanonicalTypeId expr_type_id = {});
+	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
+		CanonicalTypeId target_type_id,
+		const char* context_description,
+		CanonicalTypeId expr_type_id = {});
 
 	// Try to annotate a return expression with implicit cast info when the
 	// expression type differs from the declared function return type.

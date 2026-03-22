@@ -2438,6 +2438,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 							}
 						}
 					}
+				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
+					ci.selected_constructor &&
+					from_desc.base_type != Type::Struct) {
+					Type from_t = from_desc.base_type;
+					if (from_t == Type::Enum && from_t != arg_result.type)
+						from_t = arg_result.type;
+					if (from_t != param_base_type) {
+						arg_result = generateTypeConversion(arg_result, from_t, param_base_type, source_token);
+					}
+					sema_applied = true;
 				} else if (from_t != Type::Struct && to_t != Type::Struct) {
 					// Sema may annotate as Type::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
@@ -2462,4 +2472,152 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		return arg_result;
+	}
+
+	std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const ConstructorDeclarationNode& selected_ctor,
+		const Token& source_token,
+		bool use_return_slot) {
+		if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+			return std::nullopt;
+		}
+		if (target_type.type_index().value >= gTypeInfo.size()) {
+			return std::nullopt;
+		}
+
+		const TypeInfo& target_type_info = gTypeInfo[target_type.type_index().value];
+		const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
+		if (!target_struct_info) {
+			return std::nullopt;
+		}
+
+		int actual_size_bits = static_cast<int>(target_type.size_in_bits());
+		if (target_struct_info->total_size > 0) {
+			actual_size_bits = static_cast<int>(target_struct_info->total_size * 8);
+		}
+
+		TempVar result_var = var_counter.next();
+		ConstructorCallOp ctor_op;
+		ctor_op.struct_name = target_type_info.name();
+		ctor_op.object = result_var;
+		ctor_op.use_return_slot = use_return_slot;
+
+		const auto& ctor_params = selected_ctor.parameter_nodes();
+		if (ctor_params.empty() || !ctor_params[0].is<DeclarationNode>()) {
+			return std::nullopt;
+		}
+
+		const ASTNode& param_type_node = ctor_params[0].as<DeclarationNode>().type_node();
+		if (!param_type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
+
+		TypedValue init_arg;
+		if (source_expr.is<ExpressionNode>() &&
+			std::holds_alternative<IdentifierNode>(source_expr.as<ExpressionNode>()) &&
+			(param_type.is_reference() || param_type.is_rvalue_reference())) {
+			const auto& identifier = std::get<IdentifierNode>(source_expr.as<ExpressionNode>());
+			const std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
+			const DeclarationNode* source_decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+			if (source_decl) {
+				const auto& source_type = source_decl->type_node().as<TypeSpecifierNode>();
+				if (source_type.is_reference() || source_type.is_rvalue_reference()) {
+					init_arg = toTypedValue(source_result);
+				} else {
+					TempVar addr_var = emitAddressOf(
+						source_type.type(),
+						static_cast<int>(source_type.size_in_bits()),
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+						source_token);
+					init_arg.type = source_type.type();
+					init_arg.ir_type = toIrType(source_type.type());
+					init_arg.size_in_bits = SizeInBits{64};
+					init_arg.value = addr_var;
+					init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+					init_arg.type_index = source_type.type_index();
+				}
+			} else {
+				init_arg = toTypedValue(source_result);
+			}
+		} else {
+			init_arg = toTypedValue(source_result);
+		}
+
+		init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+		if (param_type.is_pointer() && !param_type.pointer_levels().empty()) {
+			if (!init_arg.is_reference()) {
+				init_arg.cv_qualifier = param_type.cv_qualifier();
+			}
+		}
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			init_arg.cv_qualifier = param_type.cv_qualifier();
+		}
+		if (param_type.is_rvalue_reference()) {
+			init_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+		} else if (param_type.is_reference()) {
+			init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+		}
+		if (param_type.type() == Type::Struct && param_type.type_index().is_valid()) {
+			init_arg.type_index = param_type.type_index();
+		}
+
+		ctor_op.arguments.push_back(std::move(init_arg));
+		if (selected_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
+			fillInConstructorDefaultArguments(ctor_op, selected_ctor, ctor_op.arguments.size());
+		}
+
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
+		setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
+
+		return makeExprResult(
+			Type::Struct,
+			SizeInBits{actual_size_bits},
+			IrOperand{result_var},
+			target_type.type_index());
+	}
+
+	std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const Token& source_token,
+		bool use_return_slot) {
+		if (!sema_ || !source_expr.is<ExpressionNode>() ||
+			target_type.type() != Type::Struct ||
+			target_type.is_reference() ||
+			target_type.is_rvalue_reference()) {
+			return std::nullopt;
+		}
+
+		const auto slot = sema_->getSlot(&source_expr.as<ExpressionNode>());
+		if (!slot.has_value() || !slot->has_cast()) {
+			return std::nullopt;
+		}
+
+		const ImplicitCastInfo& cast_info = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+		if (cast_info.cast_kind != StandardConversionKind::UserDefined || !cast_info.selected_constructor) {
+			return std::nullopt;
+		}
+
+		const CanonicalTypeDesc& source_desc = sema_->typeContext().get(cast_info.source_type_id);
+		const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
+		if (source_desc.base_type == Type::Struct ||
+			target_desc.base_type != Type::Struct ||
+			target_desc.type_index != target_type.type_index()) {
+			return std::nullopt;
+		}
+
+		return materializeSelectedConvertingConstructor(
+			source_result,
+			source_expr,
+			target_type,
+			*cast_info.selected_constructor,
+			source_token,
+			use_return_slot);
 	}

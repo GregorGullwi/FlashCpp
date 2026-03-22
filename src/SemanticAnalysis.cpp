@@ -1718,8 +1718,6 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// before the normal traversal (which just counts).
 			if (ctx.current_function_return_type_id) {
 				tryAnnotateReturnConversion(*expr, ctx);
-				diagnoseScopedEnumConversion(*expr, *ctx.current_function_return_type_id,
-					" in return statement");
 			}
 			normalizeExpression(*expr, ctx);
 		}
@@ -1755,8 +1753,11 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
-				tryAnnotateConversion(*init, decl_type_id);
-				diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
+				if (!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
+						" in variable initialization")) {
+					tryAnnotateConversion(*init, decl_type_id);
+					diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
+				}
 			}
 			normalizeExpression(*init, ctx);
 		}
@@ -3007,11 +3008,139 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	return true;
 }
 
+bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
+	CanonicalTypeId target_type_id,
+	const char* context_description,
+	CanonicalTypeId expr_type_id) {
+	if (!target_type_id) return false;
+	if (!expr_node.is<ExpressionNode>()) return false;
+
+	if (!expr_type_id) expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id || expr_type_id == target_type_id) return false;
+
+	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+
+	if (to_desc.base_type != Type::Struct || !to_desc.type_index.is_valid()) return false;
+	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
+	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
+	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None) return false;
+	if (from_desc.base_type == Type::Struct || from_desc.base_type == Type::UserDefined ||
+		from_desc.base_type == Type::Invalid || isPlaceholderAutoType(from_desc.base_type)) {
+		return false;
+	}
+	if (to_desc.type_index.value >= gTypeInfo.size()) return false;
+
+	const StructTypeInfo* struct_info = gTypeInfo[to_desc.type_index.value].getStructInfo();
+	if (!struct_info || !struct_info->hasAnyConstructor()) return false;
+
+	auto arg_type_opt = buildOverloadResolutionArgType(expr_node, nullptr);
+	if (!arg_type_opt.has_value()) return false;
+
+	const TypeSpecifierNode& arg_type = *arg_type_opt;
+	const ConstructorDeclarationNode* best_non_explicit = nullptr;
+	const ConstructorDeclarationNode* best_any = nullptr;
+	ConversionRank best_non_explicit_rank = ConversionRank::NoMatch;
+	ConversionRank best_any_rank = ConversionRank::NoMatch;
+	bool ambiguous_non_explicit = false;
+	bool found_explicit_viable = false;
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+
+		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+		if (isImplicitCopyOrMoveConstructorCandidate(*struct_info, ctor_decl)) {
+			continue;
+		}
+
+		const auto& parameters = ctor_decl.parameter_nodes();
+		if (parameters.empty() || countMinRequiredArgs(ctor_decl) > 1) {
+			continue;
+		}
+		if (!parameters[0].is<DeclarationNode>()) continue;
+
+		const ASTNode& param_type_node = parameters[0].as<DeclarationNode>().type_node();
+		if (!param_type_node.is<TypeSpecifierNode>()) continue;
+		const auto& param_type = param_type_node.as<TypeSpecifierNode>();
+
+		const TypeConversionResult conversion = can_convert_type(arg_type, param_type);
+		if (!conversion.is_valid) continue;
+
+		if (!best_any || conversion.rank < best_any_rank) {
+			best_any = &ctor_decl;
+			best_any_rank = conversion.rank;
+		}
+
+		if (ctor_decl.is_explicit()) {
+			found_explicit_viable = true;
+			continue;
+		}
+
+		if (!best_non_explicit || conversion.rank < best_non_explicit_rank) {
+			best_non_explicit = &ctor_decl;
+			best_non_explicit_rank = conversion.rank;
+			ambiguous_non_explicit = false;
+		} else if (conversion.rank == best_non_explicit_rank) {
+			ambiguous_non_explicit = true;
+		}
+	}
+
+	if (ambiguous_non_explicit) {
+		throw CompileError("Ambiguous constructor call");
+	}
+	if (!best_non_explicit) {
+		if (found_explicit_viable || best_any) {
+			throw CompileError("Cannot use copy initialization with explicit constructor");
+		}
+		return false;
+	}
+
+	const auto& selected_params = best_non_explicit->parameter_nodes();
+	if (selected_params.empty() || !selected_params[0].is<DeclarationNode>()) return false;
+	const ASTNode& selected_param_type_node = selected_params[0].as<DeclarationNode>().type_node();
+	if (!selected_param_type_node.is<TypeSpecifierNode>()) return false;
+
+	const CanonicalTypeId param_type_id = canonicalizeType(selected_param_type_node.as<TypeSpecifierNode>());
+	if (!param_type_id) return false;
+
+	diagnoseScopedEnumConversion(expr_node, param_type_id, context_description, expr_type_id);
+
+	ImplicitCastInfo cast_info;
+	cast_info.source_type_id = expr_type_id;
+	cast_info.target_type_id = target_type_id;
+	cast_info.cast_kind = StandardConversionKind::UserDefined;
+	cast_info.value_category_after = ValueCategory::PRValue;
+	cast_info.selected_constructor = best_non_explicit;
+
+	const CastInfoIndex idx = allocateCastInfo(cast_info);
+
+	SemanticSlot slot;
+	slot.type_id = target_type_id;
+	slot.cast_info_index = idx;
+	slot.value_category = ValueCategory::PRValue;
+
+	const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+	setSlot(key, slot);
+	stats_.slots_filled++;
+
+	FLASH_LOG(General, Debug,
+		"SemanticAnalysis: annotated copy-init converting constructor for target struct type index ",
+		to_desc.type_index.value);
+	return true;
+}
+
 // --- Return conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
 	if (!ctx.current_function_return_type_id) return;
-	tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
+	if (!tryAnnotateCopyInitConvertingConstructor(expr_node, *ctx.current_function_return_type_id,
+			" in return statement")) {
+		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
+		diagnoseScopedEnumConversion(expr_node, *ctx.current_function_return_type_id,
+			" in return statement");
+	}
 }
 
 // --- Binary operand conversion annotation ---
@@ -3534,14 +3663,19 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (!param_node.is<DeclarationNode>()) continue;
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) continue;
 
-		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 		// Quick exit when both types are inferable and already identical (no cast needed).
 		// tryAnnotateConversion will re-infer if arg_type_id is invalid, so no information is lost.
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
-		tryAnnotateConversion(arg, param_type_id);
-		diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
+		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
+				" in function argument", arg_type_id)) {
+			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+			diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
+		}
 	}
 }
 
@@ -3571,8 +3705,11 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 
-		tryAnnotateConversion(arg, param_type_id);
-		diagnoseScopedEnumConversion(arg, param_type_id, " in member function argument");
+		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
+				" in member function argument", arg_type_id)) {
+			tryAnnotateConversion(arg, param_type_id, arg_type_id);
+			diagnoseScopedEnumConversion(arg, param_type_id, " in member function argument");
+		}
 	}
 }
 

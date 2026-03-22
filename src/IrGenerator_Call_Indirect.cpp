@@ -1458,7 +1458,12 @@
 							// Regular pass by value
 							ExprResult arg_result = visitExpressionNode(argument.as<ExpressionNode>());
 							if (param_type) {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+										arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result = *materialized;
+								} else {
+									arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								}
 							}
 							call_op.args.push_back(toTypedValue(arg_result));
 						}
@@ -1488,7 +1493,12 @@
 							// Regular pass by value
 							ExprResult arg_result = visitExpressionNode(argument.as<ExpressionNode>());
 							if (param_type) {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+										arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result = *materialized;
+								} else {
+									arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								}
 							}
 							call_op.args.push_back(toTypedValue(arg_result));
 						}
@@ -1496,7 +1506,12 @@
 						// Unknown symbol type - fall back to visitExpressionNode
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+									argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result = *materialized;
+							} else {
+								argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							}
 						}
 						call_op.args.push_back(toTypedValue(argument_result));
 					}
@@ -1566,7 +1581,12 @@
 					} else {
 						// Parameter doesn't expect a reference - pass through as-is
 						if (param_type) {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+									argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result = *materialized;
+							} else {
+								argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							}
 						}
 						call_op.args.push_back(toTypedValue(argument_result));
 					}

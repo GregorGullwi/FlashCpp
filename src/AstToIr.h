@@ -196,6 +196,19 @@ private:
 	// ExprResult. param_type must not be null.
 	ExprResult applyConstructorArgConversion(ExprResult arg_result, const ASTNode& arg_expr,
 		const TypeSpecifierNode& param_type, const Token& source_token);
+	std::optional<ExprResult> materializeSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const ConstructorDeclarationNode& selected_ctor,
+		const Token& source_token,
+		bool use_return_slot = false);
+	std::optional<ExprResult> tryMaterializeSemaSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const Token& source_token,
+		bool use_return_slot = false);
 	// Read the sema-annotated conversion target type for an expression node.
 	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
 	Type getSemaAnnotatedTargetType(const ASTNode& node) const;

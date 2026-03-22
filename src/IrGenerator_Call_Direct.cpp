@@ -1084,9 +1084,18 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
 
+			bool materialized_selected_ctor = false;
+			if (param_type) {
+				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+						argumentIrOperands, argument, *param_type, functionCallNode.called_from())) {
+					argumentIrOperands = *materialized;
+					materialized_selected_ctor = true;
+				}
+			}
+
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
-			if (param_type) {
+			if (param_type && !materialized_selected_ctor) {
 				Type arg_type = argumentIrOperands.type;
 				Type param_base_type = param_type->type();
 

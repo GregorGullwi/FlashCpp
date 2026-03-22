@@ -68,14 +68,13 @@ two-phase lookup violation.
 **Workaround**: avoid introducing a named local in the affected template body;
 route the value through a helper call or another expression form instead.
 
-## Converting constructors outside copy-initialization are still incomplete
+## Some converting-constructor cases are still incomplete
 
-Implicit primitive-to-struct conversion through a single-argument constructor is
-not fully materialized in all contexts yet.
-
-Copy-initialization paths still rely on codegen-owned constructor materialization,
-and some other contexts can behave as if the source value's raw bits were passed
-through instead of invoking the converting constructor:
+The sema-selected non-struct → struct converting-constructor path now covers
+variable copy-initialization, free-function arguments, member-call arguments,
+and return expressions. The remaining gap is broader converting-constructor
+coverage that still goes through older codegen-only paths, especially
+struct-source/struct-destination cases:
 
 ```cpp
 struct Box {
@@ -83,20 +82,20 @@ struct Box {
     Box(int v) : value(v) {}
 };
 
-int take(Box b) { return b.value; }
+Box wrap(Box b) { return b; }
 
 int main() {
-    return take(7);   // should construct Box(7)
+    Box src{7};
+    return wrap(src).value;   // same-type / struct-source cases are still separate
 }
 ```
 
-Investigation during the implicit-cast sema follow-up found that free-function
-arguments, member-call arguments, and return conversions still lack complete
-sema-owned converting-constructor materialization. This is separate from the
-already-fixed struct-source conversion-operator case.
+Reference binding, temporary materialization, and lifetime extension are also
+still handled outside this slice.
 
-**Workaround**: spell the construction explicitly at the affected call/return
-site (for example `take(Box{7})` or `return Box{x};`).
+**Workaround**: spell the construction explicitly when you run into a remaining
+struct-source case, or route through a helper that names the desired object
+construction directly.
 
 ## Unscoped enum enumerator access through type aliases
 

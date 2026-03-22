@@ -235,15 +235,28 @@
 				// Get the current function's return type
 				Type return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
+				TypeSpecifierNode return_type_spec(
+					return_type,
+					current_function_return_type_index_,
+					return_size,
+					node.return_token());
+				const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
 
 				// Check whether the semantic pass has already computed a cast annotation.
 				// When present for a non-struct conversion, apply it and skip the local policy.
 				// When present as UserDefined, the source is a struct with a conversion operator.
 				bool sema_applied_conversion = false;
+				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
+						operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
+					operands = *materialized;
+					expr_type = operands.type;
+					expr_size = operands.size_in_bits.value;
+					sema_applied_conversion = true;
+				}
 				if (sema_ && expr_opt->is<ExpressionNode>()) {
 					const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
 					auto slot = sema_->getSlot(key);
-					if (slot.has_value() && slot->has_cast()) {
+					if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
 						const Type annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
