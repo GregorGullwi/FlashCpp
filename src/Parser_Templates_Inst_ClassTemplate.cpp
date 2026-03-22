@@ -1350,8 +1350,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.is_final
 				);
 			} else {
-				FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				DeclarationNode& orig_decl = orig_func.decl_node();
+				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& orig_decl = orig_func.decl_node();
 				
 				// Substitute return type if it uses a template parameter
 				// For partial specializations like Container<T*>, the return type T* needs substitution
@@ -1423,17 +1423,75 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Copy pointer levels and reference qualifier from the original
 					new_return_type.copy_indirection_from(orig_return_type);
-					
-					// Update the declaration node with the new type
-					orig_decl.set_type_node(emplace_node<TypeSpecifierNode>(new_return_type));
 				}
-				
-				// Add the function to the struct info (with substituted return type if needed)
-				// Phase 7B: Intern function name and use StringHandle overload
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(
+					substituted_return_type,
+					substituted_return_type_index,
+					(orig_return_type.pointer_depth() > 0 || orig_return_type.is_reference() || orig_return_type.is_rvalue_reference())
+						? 64
+						: static_cast<int>(get_type_size_bits(substituted_return_type)),
+					orig_decl.identifier_token(),
+					orig_return_type.cv_qualifier()
+				);
+				substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
+
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					substituted_return_node,
+					orig_decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref,
+					instantiated_name
+				);
+				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args);
+
+				for (const auto& param : orig_func.parameter_nodes()) {
+					if (!param.is<DeclarationNode>()) {
+						new_func_ref.add_parameter_node(param);
+						continue;
+					}
+
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+					auto [param_type, param_type_index] = substitute_template_parameter(
+						param_type_spec, template_params, template_args
+					);
+
+					TypeSpecifierNode substituted_param_type(
+						param_type,
+						param_type_spec.qualifier(),
+						get_type_size_bits(param_type),
+						param_decl.identifier_token(),
+						param_type_spec.cv_qualifier()
+					);
+					substituted_param_type.set_type_index(param_type_index);
+					for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+						substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+					}
+					substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+
+					auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+					auto substituted_param_decl = emplace_node<DeclarationNode>(
+						substituted_param_type_node,
+						param_decl.identifier_token()
+					);
+					if (param_decl.has_default_value()) {
+						substituted_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+					}
+					new_func_ref.add_parameter_node(substituted_param_decl);
+				}
+
+				copy_function_properties(new_func_ref, orig_func);
+				if (orig_func.get_definition().has_value()) {
+					new_func_ref.set_definition(*orig_func.get_definition());
+				}
+
+				// Add the function to the struct info (with substituted signature)
 				StringHandle func_name_handle = orig_decl.identifier_token().handle();
 				struct_info->addMemberFunction(
 					func_name_handle,
-					mem_func.function_declaration,
+					new_func_node,
 					mem_func.access,
 					mem_func.is_virtual,
 					mem_func.is_pure_virtual,
@@ -2147,16 +2205,71 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 			} else {
 				FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				auto new_func_node = emplace_node<FunctionDeclarationNode>(
-					orig_func.decl_node(),  // Reuse declaration
-					instantiated_name  // Set correct parent struct name
+				const DeclarationNode& orig_decl = orig_func.decl_node();
+				const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+
+				auto [return_type, return_type_index] = substitute_template_parameter(
+					orig_return_type, template_params, template_args_for_pattern
+				);
+
+				TypeSpecifierNode substituted_return_type(
+					return_type,
+					orig_return_type.qualifier(),
+					get_type_size_bits(return_type),
+					orig_decl.identifier_token(),
+					orig_return_type.cv_qualifier()
+				);
+				substituted_return_type.set_type_index(return_type_index);
+				for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					substituted_return_node, orig_decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref,
+					instantiated_name
 				);
 				
 				// Copy all parameters and definition
-				FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
+				FunctionDeclarationNode& new_func = new_func_ref;
 				setOuterTemplateBindingsFromParams(new_func, template_params, template_args_for_pattern);
 				for (const auto& param : orig_func.parameter_nodes()) {
-					new_func.add_parameter_node(param);
+					if (!param.is<DeclarationNode>()) {
+						new_func.add_parameter_node(param);
+						continue;
+					}
+
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+					auto [param_type, param_type_index] = substitute_template_parameter(
+						param_type_spec, template_params, template_args_for_pattern
+					);
+
+					TypeSpecifierNode substituted_param_type(
+						param_type,
+						param_type_spec.qualifier(),
+						get_type_size_bits(param_type),
+						param_decl.identifier_token(),
+						param_type_spec.cv_qualifier()
+					);
+					substituted_param_type.set_type_index(param_type_index);
+					for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+						substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+					}
+					substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+
+					auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+					auto substituted_param_decl = emplace_node<DeclarationNode>(
+						substituted_param_type_node, param_decl.identifier_token()
+					);
+					if (param_decl.has_default_value()) {
+						substituted_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+					}
+					new_func.add_parameter_node(substituted_param_decl);
 				}
 				std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
 				for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
