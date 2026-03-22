@@ -1312,23 +1312,11 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		}
 	}
 	
-	// Handle struct types with brace-initialization arguments (aggregate initialization).
-	// This handles cases like Pt{3, 7} where multiple arguments represent member initializers.
+	// Handle struct types with arguments: delegate to materialize_constructor_object_value
+	// which first attempts user-defined constructor matching and falls back to aggregate
+	// initialization only when no matching constructor is found.
 	if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
-		if (!type_spec.type_index().is_valid() || type_spec.type_index().value >= gTypeInfo.size()) {
-			return EvalResult::error("Invalid struct type index in constructor call for constant evaluation");
-		}
-		const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
-		if (!struct_info) {
-			return EvalResult::error("Type is not a struct in constructor call for constant evaluation");
-		}
-		// Convert arguments to InitializerListNode for aggregate initialization
-		InitializerListNode init_list;
-		for (const auto& arg : args) {
-			init_list.add_initializer(arg);
-		}
-		return materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context);
+		return materialize_constructor_object_value(ctor_call, context);
 	}
 
 	// For basic type conversions with 1 argument: Type(value)

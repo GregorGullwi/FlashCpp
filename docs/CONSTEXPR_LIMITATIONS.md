@@ -499,6 +499,55 @@ struct Container {
 };
 ```
 
+### ✅ Multi-Dimensional Arrays in Constexpr (NEW)
+
+Multi-dimensional array initialization and element access are now supported in constexpr:
+
+```cpp
+// Global constexpr 2D array with nested-brace init
+constexpr int grid[2][3] = {{1,2,3},{4,5,6}};
+static_assert(grid[0][0] == 1);  // ✅ Works
+static_assert(grid[1][2] == 6);  // ✅ Works
+
+// In constexpr functions: init, loop reads, and element assignment
+constexpr int mat_sum() {
+    int mat[2][3] = {{1,2,3},{4,5,6}};
+    int sum = 0;
+    for (int i = 0; i < 2; i++)
+        for (int j = 0; j < 3; j++)
+            sum += mat[i][j];
+    return sum;
+}
+static_assert(mat_sum() == 21);  // ✅ Works
+
+// Scalar brace-elision: {1} → mat[0][0]=1, rest zero (C++20 rule)
+constexpr int mat_brace_elide() {
+    int mat[2][3] = {1};
+    return mat[0][0];  // 1
+}
+static_assert(mat_brace_elide() == 1);  // ✅ Works
+
+// Subscript assignment: mat[i][j] = value
+constexpr int mat_assign() {
+    int mat[2][3] = {0};
+    mat[0][1] = 5;
+    mat[1][2] = 10;
+    return mat[0][1] + mat[1][2];
+}
+static_assert(mat_assign() == 15);  // ✅ Works
+```
+
+**Supported forms:**
+- `int arr[M][N] = {{…},{…}}` nested brace-init at global scope and inside constexpr functions
+- `arr[i][j]` double-subscript reads in loops and direct expressions
+- `arr[i][j] = value` subscript assignment in constexpr function bodies
+- Scalar brace-elision (`{v}` places `v` at `[0][0]`, zero-fills remaining elements)
+- Zero-init (`{0}`) for entire multi-dimensional array
+
+**Current limitations:**
+- 3D or higher array forms are not yet supported
+- Fully-flattened brace-elision (`int arr[2][3] = {1, 2, 3, 4, 5, 6}` without inner braces) is not yet supported; use nested braces instead
+
 ### ⚠️ Array Access Has Partial Support
 
 Several array-related constexpr forms are supported in simple/supported shapes:
@@ -987,11 +1036,13 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **`*this` dereference in constexpr member function bodies** *(Implemented)* — `*this` can now be evaluated as an expression inside a constexpr member function, producing an object `EvalResult` with the current member state. Enables passing the current object to another member function (e.g., `dot(*this)`), or using it as an argument in nested calls.
 - ✅ **Default constructor invocation for uninitialized local struct variables in constexpr functions** *(Implemented)* — Declaring a local struct variable without an explicit initializer (e.g., `Counter c;`) now invokes the default constructor, including constructors with a body. Both member-initializer-list and constructor-body styles work. Zero-fill with default member initializers is applied when no default constructor exists.
 - ✅ **Void mutating member function calls on local constexpr structs** *(Implemented)* — Calling a `void`-returning non-const member function on a local struct variable (e.g., `c.increment()`) now correctly mutates the local object and writes the updated member values back. Repeated calls accumulate correctly, and parameterized void methods (e.g., `c.add(5)`) also work.
+- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), and `{0}` zero-init are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
+- ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` double-subscript reads, `arr[i][j] = value` subscript assignment, scalar brace-elision (`{v}` places `v` at `[0][0]` and zero-fills the rest per C++20), and zero-init (`{0}`) are all now supported in constexpr evaluation.
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
 - ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
   - ✅ **Compound assignments now apply unsigned type-width truncation** *(Implemented)* — The `apply_op_to` lambda now truncates results to the declared unsigned type's width using `apply_uint_type_mask`, matching the behavior of the `++`/`--` handler. For example, `unsigned char x = 200; x += 100;` now correctly wraps to 44. This applies to all compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`).

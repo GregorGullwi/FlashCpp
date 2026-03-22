@@ -29,4 +29,14 @@ constexpr int mat_assign() {
 }
 static_assert(mat_assign() == 15);
 
+// Scalar brace-elision: {1} seeds [0][0], rest zero-filled (C++20 rule)
+constexpr int mat_brace_elide() {
+    int mat[2][3] = {1};
+    if (mat[0][0] != 1) return 1;
+    if (mat[0][1] != 0) return 2;
+    if (mat[1][0] != 0) return 3;
+    return 0;
+}
+static_assert(mat_brace_elide() == 0);
+
 int main() { return 0; }

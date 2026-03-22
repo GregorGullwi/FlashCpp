@@ -1525,16 +1525,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							int64_t outer_idx = outer_idx_result.as_int();
 
 							// Extract base array name from the innermost identifier
-							std::string_view base_name;
-							const ASTNode& base_expr = inner_sub->array_expr();
-							if (base_expr.is<IdentifierNode>()) {
-								base_name = base_expr.as<IdentifierNode>().name();
-							} else if (base_expr.is<ExpressionNode>()) {
-								const ExpressionNode& be = base_expr.as<ExpressionNode>();
-								if (const auto* id_ptr = std::get_if<IdentifierNode>(&be)) {
-									base_name = id_ptr->name();
-								}
-							}
+							std::string_view base_name = getIdentifierNameFromAstNode(inner_sub->array_expr());
 
 							if (!base_name.empty()) {
 								EvalResult* base_bound = findMutableBindingValue(base_name, bindings, context);
@@ -4501,9 +4492,27 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 					initializer.as<InitializerListNode>(),
 					context, bindings);
 			} else {
-				// Scalar initializer (brace-elision, e.g. {0} for int[2][3]):
-				// zero-initialise the inner array.
-				elem = make_zero_array_for_dims(inner_dims);
+				// Scalar initializer with brace-elision (e.g. {1} for int[2][3]):
+				// per C++20, the scalar seeds the first element of the inner array;
+				// remaining inner elements are zero-initialised.
+				// Evaluate the scalar, start with a fully zero-initialised inner array,
+				// then place the scalar at the first (innermost) element.
+				EvalResult scalar_result = bindings
+					? evaluate_expression_with_bindings_const(initializer, *bindings, context)
+					: evaluate(initializer, context);
+				if (!scalar_result.success()) {
+					elem = std::move(scalar_result);
+				} else {
+					elem = make_zero_array_for_dims(inner_dims);
+					// Walk down the [0] chain to place the scalar at the deepest first element.
+					EvalResult* target = &elem;
+					while (target->is_array && !target->array_elements.empty() && target->array_elements[0].is_array) {
+						target = &target->array_elements[0];
+					}
+					if (target->is_array && !target->array_elements.empty()) {
+						target->array_elements[0] = std::move(scalar_result);
+					}
+				}
 			}
 		} else {
 			// Missing initializer: zero-initialise the entire inner array.
