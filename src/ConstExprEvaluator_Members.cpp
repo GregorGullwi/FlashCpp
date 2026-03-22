@@ -601,7 +601,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 
 	// For arrow member access (p->x) on a heap-allocated struct, dereference the
 	// pointer first to get the struct's member bindings from the constexpr heap.
-	if (member_access.is_arrow() && object_result->pointer_to_var.isValid()) {
+	if (member_access.is_arrow() && object_result->pointer_to_var.isValid() &&
+	    !context.constexpr_heap.empty()) {
 		StringHandle heap_key = object_result->pointer_to_var;
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {

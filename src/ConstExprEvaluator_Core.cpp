@@ -381,7 +381,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 // When offset == 0 and the variable is an array, element [0] is returned.
 EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset) {
 	// Check the constexpr heap first (for new-expressions inside constexpr functions).
-	{
+	// Guard with empty() so the common (no-heap) path avoids any lookup overhead.
+	if (!context.constexpr_heap.empty()) {
 		StringHandle heap_key = StringTable::getOrInternStringHandle(var_name);
 		auto heap_it = context.constexpr_heap.find(heap_key);
 		if (heap_it != context.constexpr_heap.end()) {
@@ -495,7 +496,8 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	int64_t offset = ptr.pointer_offset;
 
 	// Check the constexpr heap first (for new-expressions inside constexpr functions).
-	{
+	// Guard with empty() so the common (no-heap) path avoids any lookup overhead.
+	if (!context.constexpr_heap.empty()) {
 		// pointer_to_var is already an interned StringHandle — use it directly.
 		StringHandle heap_key = ptr.pointer_to_var;
 		auto heap_it = context.constexpr_heap.find(heap_key);
@@ -1380,6 +1382,9 @@ EvalResult Evaluator::evaluate_new_expression(
 		int64_t n = size_result.as_int();
 		if (n < 0) {
 			return EvalResult::error("new[]: negative array size in constant expression");
+		}
+		if (static_cast<size_t>(n) > context.max_steps) {
+			return EvalResult::error("new[]: array size exceeds constexpr evaluation limit");
 		}
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
@@ -3111,6 +3116,13 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	restore_template_bindings();
+	// Per C++20 [expr.const]/p5, any allocation made with `new` during a
+	// constant expression must be freed before the constant expression ends.
+	// Check this at the outermost function call (depth returning to 0).
+	if (result.success() && context.current_depth == 0 && context.has_unfreed_heap_allocations()) {
+		return EvalResult::error("constexpr evaluation: memory allocated with 'new' was not freed "
+			"before the end of the constant expression (C++20 [expr.const]/p5)");
+	}
 	return result;
 }
 

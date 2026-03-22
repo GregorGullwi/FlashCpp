@@ -404,6 +404,16 @@ struct EvaluationContext {
 			StringBuilder().append("@new_"sv).append(static_cast<uint64_t>(next_heap_id++)).commit());
 	}
 
+	// Returns true iff any allocation that was made with `new` during this
+	// constant expression evaluation has not yet been freed with `delete`.
+	// Per C++20 [expr.const]/p5 this makes the expression ill-formed.
+	bool has_unfreed_heap_allocations() const {
+		for (const auto& [key, entry] : constexpr_heap) {
+			if (!entry.freed) return true;
+		}
+		return false;
+	}
+
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}
