@@ -1241,6 +1241,21 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		// Handle assignment operators specially (they modify bindings)
 		if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" ||
 		    op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") {
+
+			// Helper: apply the assignment/compound-assignment operator to a target slot.
+			// Modifies `target` in place and returns the resulting value.
+			auto apply_op_to = [&](EvalResult& target, const EvalResult& rhs) -> EvalResult {
+				if (op == "=") {
+					target = rhs;
+					return rhs;
+				}
+				// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
+				std::string_view base_op = op.substr(0, op.size() - 1);
+				EvalResult new_val = apply_binary_op(target, rhs, base_op, &context, &bindings);
+				if (!new_val.success()) return new_val;
+				target = new_val;
+				return new_val;
+			};
 			// Get the left-hand side variable name
 			const ASTNode& lhs = bin_op.get_lhs();
 			if (lhs.is<ExpressionNode>()) {
@@ -1291,39 +1306,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							}
 						return rhs_result;
 					} else {
-						// Compound assignment - get current value first
-							if (!target_binding) {
+						// Compound assignment - use apply_op_to helper
+						if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
-							EvalResult current = *target_binding;
-						
-						// Apply the operation
-						EvalResult new_value;
-						if (op == "+=") {
-							new_value = apply_binary_op(current, rhs_result, "+", &context, &bindings);
-						} else if (op == "-=") {
-							new_value = apply_binary_op(current, rhs_result, "-", &context, &bindings);
-						} else if (op == "*=") {
-							new_value = apply_binary_op(current, rhs_result, "*", &context, &bindings);
-						} else if (op == "/=") {
-							new_value = apply_binary_op(current, rhs_result, "/", &context, &bindings);
-						} else if (op == "%=") {
-							new_value = apply_binary_op(current, rhs_result, "%", &context, &bindings);
-						} else if (op == "&=") {
-							new_value = apply_binary_op(current, rhs_result, "&", &context, &bindings);
-						} else if (op == "|=") {
-							new_value = apply_binary_op(current, rhs_result, "|", &context, &bindings);
-						} else if (op == "^=") {
-							new_value = apply_binary_op(current, rhs_result, "^", &context, &bindings);
-						} else if (op == "<<=") {
-							new_value = apply_binary_op(current, rhs_result, "<<", &context, &bindings);
-						} else if (op == ">>=") {
-							new_value = apply_binary_op(current, rhs_result, ">>", &context, &bindings);
-						}
-						
-						if (!new_value.success()) return new_value;
-							*target_binding = new_value;
-						return new_value;
+						return apply_op_to(*target_binding, rhs_result);
 					}
 				}
 
@@ -1357,31 +1344,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
 								return EvalResult::error("Array index out of bounds in constexpr dereference assignment");
 							}
-							if (op == "=") {
-								heap_val.array_elements[static_cast<size_t>(offset)] = rhs_result;
-							} else {
-								std::string_view base_op = op.substr(0, op.size() - 1); // strip '='
-								EvalResult current = heap_val.array_elements[static_cast<size_t>(offset)];
-								EvalResult new_val = apply_binary_op(current, rhs_result, base_op, &context, &bindings);
-								if (!new_val.success()) return new_val;
-								heap_val.array_elements[static_cast<size_t>(offset)] = new_val;
-								return new_val;
-							}
+							return apply_op_to(heap_val.array_elements[static_cast<size_t>(offset)], rhs_result);
 						} else {
 							if (offset != 0) {
 								return EvalResult::error("Non-zero pointer offset on non-array heap object in constexpr assignment");
 							}
-							if (op == "=") {
-								heap_val = rhs_result;
-							} else {
-								std::string_view base_op = op.substr(0, op.size() - 1);
-								EvalResult new_val = apply_binary_op(heap_val, rhs_result, base_op, &context, &bindings);
-								if (!new_val.success()) return new_val;
-								heap_val = new_val;
-								return new_val;
-							}
+							return apply_op_to(heap_val, rhs_result);
 						}
-						return rhs_result;
 					}
 				}
 
@@ -1410,17 +1379,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 								if (final_idx < 0 || static_cast<size_t>(final_idx) >= heap_val.array_elements.size()) {
 									return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
 								}
-								if (op == "=") {
-									heap_val.array_elements[static_cast<size_t>(final_idx)] = rhs_result;
-								} else {
-									std::string_view base_op = op.substr(0, op.size() - 1);
-									EvalResult current = heap_val.array_elements[static_cast<size_t>(final_idx)];
-									EvalResult new_val = apply_binary_op(current, rhs_result, base_op, &context, &bindings);
-									if (!new_val.success()) return new_val;
-									heap_val.array_elements[static_cast<size_t>(final_idx)] = new_val;
-									return new_val;
-								}
-								return rhs_result;
+								return apply_op_to(heap_val.array_elements[static_cast<size_t>(final_idx)], rhs_result);
 							}
 						}
 					}
@@ -1433,17 +1392,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (idx < 0 || static_cast<size_t>(idx) >= bound->array_elements.size()) {
 								return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
 							}
-							if (op == "=") {
-								bound->array_elements[static_cast<size_t>(idx)] = rhs_result;
-							} else {
-								std::string_view base_op = op.substr(0, op.size() - 1);
-								EvalResult current = bound->array_elements[static_cast<size_t>(idx)];
-								EvalResult new_val = apply_binary_op(current, rhs_result, base_op, &context, &bindings);
-								if (!new_val.success()) return new_val;
-								bound->array_elements[static_cast<size_t>(idx)] = new_val;
-								return new_val;
-							}
-							return rhs_result;
+							return apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
 						}
 					}
 					return EvalResult::error("Subscript assignment target is not a constexpr heap array or local array");

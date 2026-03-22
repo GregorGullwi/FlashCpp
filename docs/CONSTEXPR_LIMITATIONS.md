@@ -742,9 +742,9 @@ The code-generator now rounds the register store up to the next power-of-two
 granularity so every byte of the struct is present before the struct-copy code
 reads it field by field.
 
-### ❌ Dynamic Allocation in Constexpr (`new` / `delete`)
+### ✅ Dynamic Allocation in Constexpr (`new` / `delete`)  *(Implemented)*
 
-`new`, `new[]`, `delete`, and `delete[]` should currently be treated as unsupported in constexpr evaluation.
+`new`, `new[]`, `delete`, and `delete[]` are now supported inside constexpr function bodies when all allocations are freed before the constant expression ends (C++20 [expr.const]/p5).
 
 ```cpp
 constexpr int f() {
@@ -754,12 +754,19 @@ constexpr int f() {
     return v;
 }
 
-static_assert(f() == 42);  // ❌ Not currently supported
+static_assert(f() == 42);  // ✅ Supported
 ```
 
-**Reason:** The parser has AST nodes for these expressions, but the constexpr evaluator does not currently implement `NewExpressionNode` / `DeleteExpressionNode` handling.
+The following patterns are supported:
+- Scalar `new T(args)` / `new T()` / `new T` and `delete p`
+- Array `new T[n]` and `delete[] p`
+- Struct/class allocation with constructor: `new MyStruct(args)` and `delete p`
+- Dereference assignment through pointer: `*p = value`
+- Subscript assignment on heap array: `arr[i] = value`
+- Arrow member access on heap struct: `p->member`
+- Multiple allocations, loops with new/delete
 
-**Workaround:** Avoid dynamic allocation in constexpr code for now; prefer direct objects, aggregates, and fixed-size arrays.
+**Requirement:** All heap allocations must be freed before the constant expression returns (C++20 does not yet enforce this at compile time in FlashCpp, but the heap is local to the evaluation).
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
@@ -913,6 +920,7 @@ Potential areas for enhancement (in order of complexity):
 - ⚠️ Inferred array size parsing in richer contexts beyond straightforward local array cases (`int arr[] = {1,2,3}`)
 - ⚠️ Fold expressions / pack expansions require template instantiation context
 - ✅ Range-based for loops over objects with `constexpr begin()`/`end()` member functions are now supported. The iterator methods must return a member array (which the evaluator iterates) or a pointer (`&data[0]` / `&data[N]` style). Template structs with `constexpr begin()`/`end()` are also supported. Nested range-for loops and `break`/`continue` work correctly inside these loops.
+- ✅ **Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) in constexpr function bodies** *(Implemented)* — All five operators now work correctly in constexpr function bodies, including inside loops and XOR-swap idioms.
 - ⚠️ Unsigned wrapping arithmetic: when the declared type cannot be determined (e.g. some template-dependent expressions), the result may fall back to 64-bit storage. Direct identifiers, literals, casts, and most common arithmetic chains all produce correctly-widthed results.
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
@@ -920,8 +928,8 @@ Potential areas for enhancement (in order of complexity):
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
-- ⚠️ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** — The bindings-aware evaluation paths (inside constexpr function bodies) already short-circuit correctly (`ConstExprEvaluator_Members.cpp`). However, the top-level path used by `static_assert` and constexpr variable initializers (`ConstExprEvaluator_Core.cpp:evaluate_binary_operator`) eagerly evaluates both sides. Adding short-circuit there causes a regression: `try_evaluate_constant_expression` is used speculatively by the parser to disambiguate `<` (comparison vs template-argument-list). With short-circuit, expressions like `41.5 || non_constexpr_var` succeed (returning `true`), which falsely convinces the heuristic that `<` starts template arguments, breaking parsing of `if (p.a < 41.5 || p.a > 42.5)`. **Fix requires:** coordinating with the template disambiguation logic so that speculative evaluation does not change observable parse behavior when short-circuit is enabled.
-- ❌ Dynamic allocation in constexpr (`new` / `delete`)
+- ✅ **Short-circuit `&&` / `||` in top-level `evaluate_binary_operator`** *(Implemented)* — Both the top-level path (`static_assert`, constexpr variable initializers) and the bindings-aware path (constexpr function bodies) now short-circuit correctly. The `is_speculative` flag in `EvaluationContext` is set to `true` during template-argument disambiguation so that speculative evaluation does not change parse behavior.
+- ✅ **Dynamic allocation in constexpr (`new` / `delete`)** *(Implemented)* — See the section above.
 - ❌ Rich capture aliasing/object semantics in constexpr lambdas beyond:
   - straightforward by-reference locals
   - straightforward identifier-based by-reference init-capture aliases
