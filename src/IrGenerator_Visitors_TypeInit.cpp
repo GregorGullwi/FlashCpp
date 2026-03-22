@@ -615,9 +615,32 @@
 									static_member.type_index.value < gTypeInfo.size()) {
 									if (const StructTypeInfo* static_struct_info = gTypeInfo[static_member.type_index.value].getStructInfo()) {
 										op.init_data.resize(static_struct_info->total_size, 0);
-										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type) -> unsigned long long {
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
 											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
+												if (target_type == Type::Float) {
+													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+													ctx.storage_duration = ConstExpr::StorageDuration::Static;
+													ctx.parser = parser_;
+													auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+													if (eval_result.success()) {
+														float f = static_cast<float>(eval_result.as_double());
+														uint32_t f_bits;
+														std::memcpy(&f_bits, &f, sizeof(float));
+														return f_bits;
+													}
+												} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+													ctx.storage_duration = ConstExpr::StorageDuration::Static;
+													ctx.parser = parser_;
+													auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+													if (eval_result.success()) {
+														double d = eval_result.as_double();
+														unsigned long long bits;
+														std::memcpy(&bits, &d, sizeof(double));
+														return bits;
+													}
+												}
 												return leaf_value;
 											}
 											return 0;
