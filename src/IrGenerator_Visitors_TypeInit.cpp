@@ -652,8 +652,25 @@
 										zero_initialize();
 									}
 								} else {
-									FLASH_LOG(Codegen, Debug, "Static member initializer list for non-struct member '", qualified_name, "', zero-initializing");
-									zero_initialize();
+									// Non-struct InitializerListNode (e.g., static constexpr int x{42}).
+									// Extract the single element and evaluate as a scalar.
+									const auto& init_list = static_member.initializer->as<InitializerListNode>();
+									if (init_list.size() == 1) {
+										unsigned long long evaluated_value = 0;
+										if (evaluate_static_initializer(init_list.initializers()[0], evaluated_value, struct_info)) {
+											append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+											FLASH_LOG(Codegen, Debug, "Evaluated scalar brace initializer for static member '", qualified_name, "' = ", evaluated_value);
+										} else {
+											FLASH_LOG(Codegen, Debug, "Failed to evaluate scalar brace initializer for static member '", qualified_name, "', zero-initializing");
+											zero_initialize();
+										}
+									} else if (init_list.size() == 0) {
+										FLASH_LOG(Codegen, Debug, "Empty brace initializer for non-struct static member '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									} else {
+										FLASH_LOG(Codegen, Debug, "Multi-element initializer list for non-struct static member '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									}
 								}
 							} else if (!static_member.initializer->is<ExpressionNode>()) {
 								FLASH_LOG(Codegen, Debug, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
