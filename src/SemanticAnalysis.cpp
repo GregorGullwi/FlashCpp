@@ -2852,12 +2852,44 @@ static bool structHasConversionOperatorTo(
 	for (const auto& mf : struct_info->member_functions) {
 		const std::string_view mf_name = StringTable::getStringView(mf.getName());
 		// Direct match: "operator int", "operator float", "operator bool", etc.
-		if (mf_name.size() == kOpPrefix.size() + target_name.size() &&
-			mf_name.substr(0, kOpPrefix.size()) == kOpPrefix &&
-			mf_name.substr(kOpPrefix.size()) == target_name)
+		// C++20 starts_with avoids the redundant explicit size check (Gemini Phase 5 review).
+		if (mf_name.starts_with(kOpPrefix) && mf_name.substr(kOpPrefix.size()) == target_name)
 			return true;
-		// Fallback: operator may resolve to target via a type alias.
-		if (mf_name == kUserDefinedOperator) return true;
+		// Fallback: "operator user_defined" — a typedef-aliased conversion operator.
+		// Mirrors AstToIr::findConversionOperator: verify return type matches target before
+		// accepting, to avoid spurious annotations for unrelated type-aliased operators
+		// (Devin Phase 5 review: return-type verification for operator user_defined).
+		if (mf_name == kUserDefinedOperator) {
+			if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+			const auto& func_decl = mf.function_decl.as<FunctionDeclarationNode>();
+			const auto& return_type_node = func_decl.decl_node().type_node();
+			if (!return_type_node.is<TypeSpecifierNode>()) continue;
+			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
+			Type resolved_type = type_spec.type();
+			// Resolve UserDefined type aliases through gTypeInfo chain (same as codegen).
+			if (resolved_type == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
+				TypeIndex current_idx = type_spec.type_index();
+				int max_depth = 10;
+				while (resolved_type == Type::UserDefined && current_idx.value < gTypeInfo.size() && max_depth-- > 0) {
+					const TypeInfo& alias_info = gTypeInfo[current_idx.value];
+					if (alias_info.type_ != Type::Void && alias_info.type_ != Type::UserDefined) {
+						resolved_type = alias_info.type_;
+						break;
+					} else if (alias_info.type_ == Type::UserDefined && alias_info.type_index_ != current_idx) {
+						current_idx = alias_info.type_index_;
+					} else {
+						break;
+					}
+				}
+			}
+			if (resolved_type == to_desc.base_type) return true;
+			// Size-based fallback for still-unresolved UserDefined return types.
+			if (resolved_type == Type::UserDefined) {
+				const int expected_size = get_type_size_bits(to_desc.base_type);
+				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
+					return true;
+			}
+		}
 	}
 
 	// Recurse into non-deferred base classes (inherited conversion operators).
