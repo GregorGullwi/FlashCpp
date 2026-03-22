@@ -609,7 +609,70 @@
 							FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
 							zero_initialize();
 						} else if (op.is_initialized) {
-							if (!static_member.initializer->is<ExpressionNode>()) {
+							if (static_member.initializer->is<InitializerListNode>()) {
+								if (static_member.type == Type::Struct &&
+									static_member.type_index.is_valid() &&
+									static_member.type_index.value < gTypeInfo.size()) {
+									if (const StructTypeInfo* static_struct_info = gTypeInfo[static_member.type_index.value].getStructInfo()) {
+										op.init_data.resize(static_struct_info->total_size, 0);
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
+											unsigned long long leaf_value = 0;
+											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
+												if (target_type == Type::Float) {
+													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+													ctx.storage_duration = ConstExpr::StorageDuration::Static;
+													ctx.parser = parser_;
+													auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+													if (eval_result.success()) {
+														float f = static_cast<float>(eval_result.as_double());
+														uint32_t f_bits;
+														std::memcpy(&f_bits, &f, sizeof(float));
+														return f_bits;
+													}
+												} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+													ctx.storage_duration = ConstExpr::StorageDuration::Static;
+													ctx.parser = parser_;
+													auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+													if (eval_result.success()) {
+														double d = eval_result.as_double();
+														unsigned long long bits;
+														std::memcpy(&bits, &d, sizeof(double));
+														return bits;
+													}
+												}
+												return leaf_value;
+											}
+											return 0;
+										};
+										fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
+										FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "'");
+									} else {
+										FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									}
+								} else {
+									// Non-struct InitializerListNode (e.g., static constexpr int x{42}).
+									// Extract the single element and evaluate as a scalar.
+									const auto& init_list = static_member.initializer->as<InitializerListNode>();
+									if (init_list.size() == 1) {
+										unsigned long long evaluated_value = 0;
+										if (evaluate_static_initializer(init_list.initializers()[0], evaluated_value, struct_info)) {
+											append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+											FLASH_LOG(Codegen, Debug, "Evaluated scalar brace initializer for static member '", qualified_name, "' = ", evaluated_value);
+										} else {
+											FLASH_LOG(Codegen, Debug, "Failed to evaluate scalar brace initializer for static member '", qualified_name, "', zero-initializing");
+											zero_initialize();
+										}
+									} else if (init_list.size() == 0) {
+										FLASH_LOG(Codegen, Debug, "Empty brace initializer for non-struct static member '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									} else {
+										FLASH_LOG(Codegen, Debug, "Multi-element initializer list for non-struct static member '", qualified_name, "', zero-initializing");
+										zero_initialize();
+									}
+								}
+							} else if (!static_member.initializer->is<ExpressionNode>()) {
 								FLASH_LOG(Codegen, Debug, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
 								zero_initialize();
 							} else {

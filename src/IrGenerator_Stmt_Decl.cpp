@@ -293,65 +293,6 @@ namespace {
 
 					op.is_initialized = true;
 
-					// Recursive helper to fill init_data from a struct + InitializerListNode.
-					// Handles nested structs and bitfields by recursing with the member's byte offset as base.
-					// Shared by both single-struct and array-of-structs initialization.
-					constexpr size_t kFillStructMaxDepth = 64;
-					// Use the "generic self" pattern for a recursive lambda without std::function overhead.
-					// Call sites pass the lambda itself as the first argument: fillStructData(fillStructData, ...).
-					auto fillStructData = [&](auto& self, const StructTypeInfo* sinfo, const InitializerListNode& ilist, size_t base_offset, size_t depth) -> void {
-						if (depth >= kFillStructMaxDepth) {
-							FLASH_LOG(Codegen, Warning, "fillStructData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
-							return;
-						}
-						size_t pos_idx = 0;
-						for (size_t i = 0; i < ilist.size(); ++i) {
-							StringHandle mname;
-							if (ilist.is_designated(i)) {
-								mname = ilist.member_name(i);
-							} else if (pos_idx < sinfo->members.size()) {
-								mname = sinfo->members[pos_idx].getName();
-								pos_idx++;
-							} else {
-								break;
-							}
-							for (const auto& member : sinfo->members) {
-								if (member.getName() != mname) continue;
-								size_t abs_offset = base_offset + member.offset;
-								const ASTNode& elem_init = ilist.initializers()[i];
-								if (elem_init.is<InitializerListNode>() &&
-									isIrStructType(toIrType(member.type)) &&
-									member.type_index.value < gTypeInfo.size()) {
-									// Nested struct: recurse
-									const StructTypeInfo* nested = gTypeInfo[member.type_index.value].getStructInfo();
-									if (nested) {
-										self(self, nested, elem_init.as<InitializerListNode>(), abs_offset, depth + 1);
-									}
-								} else if (member.bitfield_width.has_value()) {
-									unsigned long long value = evalToValue(elem_init, member.type);
-									size_t width = *member.bitfield_width;
-									size_t bit_offset = member.bitfield_bit_offset;
-									unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
-									value &= mask;
-									unsigned long long existing = 0;
-									for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
-										existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(op.init_data[abs_offset + b])) << (b * 8));
-									}
-									existing |= (value << bit_offset);
-									for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
-										op.init_data[abs_offset + b] = static_cast<char>((existing >> (b * 8)) & 0xFF);
-									}
-								} else {
-									unsigned long long value = evalToValue(elem_init, member.type);
-									for (size_t b = 0; b < member.size && (abs_offset + b) < op.init_data.size(); ++b) {
-										op.init_data[abs_offset + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
-									}
-								}
-								break;
-							}
-						}
-					};
-
 					// Check if this is struct aggregate initialization (vs. array element initialization)
 					if (type_node.type() == Type::Struct && !decl.is_array() && !type_node.is_array()
 						&& type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
@@ -359,7 +300,7 @@ namespace {
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
-							fillStructData(fillStructData, struct_info_ptr, init_list, 0, 0);
+							fillAggregateInitData(op.init_data, *struct_info_ptr, init_list, evalToValue);
 						} else {
 							// Fallback: array-like behavior
 							op.element_count = initializers.size();
@@ -381,9 +322,12 @@ namespace {
 								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 									const ASTNode& elem_init = initializers[elem_i];
 									if (elem_init.is<InitializerListNode>()) {
-										// Reuse fillStructData for correct bitfield + nested-struct handling
-										fillStructData(fillStructData, elem_struct, elem_init.as<InitializerListNode>(),
-											elem_i * elem_struct->total_size, 0);
+										fillAggregateInitData(
+											op.init_data,
+											*elem_struct,
+											elem_init.as<InitializerListNode>(),
+											evalToValue,
+											elem_i * elem_struct->total_size);
 									} else {
 										unsigned long long value = evalToValue(elem_init, type_node.type());
 										size_t byte_off = elem_i * elem_struct->total_size;

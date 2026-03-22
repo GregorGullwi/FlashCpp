@@ -2057,14 +2057,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			false  // is_class
 		);
 		StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
-		InlineVector<StringHandle, 4> outer_template_param_names;
-		outer_template_param_names.reserve(template_params.size());
-		for (const auto& template_param : template_params) {
-			if (template_param.is<TemplateParameterNode>()) {
-				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-			}
-		}
-		instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
+		setOuterTemplateBindingsFromParams(instantiated_struct_ref, template_params, template_args_for_pattern);
 		
 		// Copy data members
 		for (const auto& member_decl : pattern_struct.members()) {
@@ -2121,7 +2114,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name,  // Set correct parent struct name
 					orig_ctor.name()    // Constructor name (same as template name)
 				);
-				new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
+				setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_pattern);
 				
 				// Copy parameters
 				for (const auto& param : orig_ctor.parameter_nodes()) {
@@ -2161,7 +2154,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy all parameters and definition
 				FunctionDeclarationNode& new_func = new_func_node.as<FunctionDeclarationNode>();
-				new_func.set_outer_template_bindings(outer_template_param_names, template_args_for_pattern);
+				setOuterTemplateBindingsFromParams(new_func, template_params, template_args_for_pattern);
 				for (const auto& param : orig_func.parameter_nodes()) {
 					new_func.add_parameter_node(param);
 				}
@@ -4413,14 +4406,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.is_union()
 			);
 			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
-			InlineVector<StringHandle, 4> nested_outer_template_param_names;
-			nested_outer_template_param_names.reserve(template_params.size());
-			for (const auto& template_param : template_params) {
-				if (template_param.is<TemplateParameterNode>()) {
-					nested_outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-				}
-			}
-			instantiated_nested_struct_ref.set_outer_template_bindings(nested_outer_template_param_names, template_args_to_use);
+			setOuterTemplateBindingsFromParams(instantiated_nested_struct_ref, template_params, template_args_to_use);
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
@@ -4891,14 +4877,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		false  // is_class
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
-	InlineVector<StringHandle, 4> outer_template_param_names;
-	outer_template_param_names.reserve(template_params.size());
-	for (const auto& template_param : template_params) {
-		if (template_param.is<TemplateParameterNode>()) {
-			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-		}
-	}
-	instantiated_struct_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+	setOuterTemplateBindingsFromParams(instantiated_struct_ref, template_params, template_args_to_use);
 
 	for (const auto& member_decl : class_decl.members()) {
 		ASTNode substituted_member_decl = substituteTemplateParameters(
@@ -5054,7 +5033,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
@@ -5147,12 +5126,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(decl.identifier_token().value());
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
-				for (const auto& tp : template_params) {
-					if (tp.is<TemplateParameterNode>()) {
-						outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
-					}
-				}
-				outer_binding.param_args = template_args_to_use;
+				collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
 				gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 				
 				// Skip to next function - body will be instantiated on-demand
@@ -5192,7 +5166,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name
 				);
-				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
 
 				// Substitute and copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5544,7 +5518,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						instantiated_name
 					);
-					new_ctor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
 					
 					// Substitute and copy parameters
 					for (const auto& param : ctor_decl.parameter_nodes()) {
@@ -5668,7 +5642,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						specialized_dtor_name
 					);
-					new_dtor_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+					setOuterTemplateBindingsFromParams(new_dtor_ref, template_params, template_args_to_use);
 					
 					// Copy noexcept properties from the original destructor declaration.
 					// DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
@@ -5765,7 +5739,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_return_type, decl_node.identifier_token());
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_decl_ref);
-				new_func_ref.set_outer_template_bindings(outer_template_param_names, template_args_to_use);
+				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
 				
 				// Copy parameter nodes with outer template parameter substitution
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5835,12 +5809,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register outer template parameter bindings
 				{
 					OuterTemplateBinding outer_binding;
-					for (const auto& tp : template_params) {
-						if (tp.is<TemplateParameterNode>()) {
-							outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
-						}
-					}
-					outer_binding.param_args = template_args_to_use;
+					collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
@@ -5864,12 +5833,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register outer template parameter bindings
 				{
 					OuterTemplateBinding outer_binding;
-					for (const auto& tp : template_params) {
-						if (tp.is<TemplateParameterNode>()) {
-							outer_binding.param_names.push_back(tp.as<TemplateParameterNode>().nameHandle());
-						}
-					}
-					outer_binding.param_args = template_args_to_use;
+					collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}

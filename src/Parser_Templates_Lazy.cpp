@@ -267,14 +267,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref, lazy_info.instantiated_class_name
 	);
-	InlineVector<StringHandle, 4> outer_template_param_names;
-	outer_template_param_names.reserve(lazy_info.template_params.size());
-	for (const auto& template_param : lazy_info.template_params) {
-		if (template_param.is<TemplateParameterNode>()) {
-			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-		}
-	}
-	new_func_ref.set_outer_template_bindings(outer_template_param_names, lazy_info.template_args);
+	setOuterTemplateBindingsFromParams(new_func_ref, lazy_info.template_params, lazy_info.template_args);
 
 	// Substitute and copy parameters
 	for (const auto& param : func_decl.parameter_nodes()) {

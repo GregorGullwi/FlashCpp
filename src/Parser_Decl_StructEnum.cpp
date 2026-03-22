@@ -1459,11 +1459,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				continue;
 			}
 			
+			if (!type_and_name_result.node().has_value()) {
+				return ParseResult::error("Expected static member declaration", current_token_);
+			}
+			DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+			TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
 			// Check for initialization (static data member)
 			std::optional<ASTNode> init_expr_opt;
 			if (peek() == "="_tok) {
-				advance(); // consume '='
-				
 				// Push struct context so static member references can be resolved
 				// This enables expressions like `!is_signed` to find `is_signed` as a static member
 				TypeIndex struct_type_index{};
@@ -1473,42 +1477,37 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
 				
-				// Parse the initializer expression
-				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				// Parse initializer while preserving brace-init lists for aggregate/static object members.
+				auto init_result = parse_copy_initialization(decl, type_spec);
 				
 				// Pop context after parsing
 				member_function_context_stack_.pop_back();
 				
-				if (init_result.is_error()) {
-					return init_result;
+				if (!init_result.has_value()) {
+					return ParseResult::error("Failed to parse initializer expression", current_token_);
 				}
-				init_expr_opt = init_result.node();
+				init_expr_opt = *init_result;
 			} else if (peek() == "{"_tok) {
 				// Brace initialization: static constexpr int x{42};
-				advance(); // consume '{'
-				
-				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+
+				TypeIndex struct_type_index{};
+				auto type_it = gTypesByName.find(qualified_struct_name);
+				if (type_it != gTypesByName.end()) {
+					struct_type_index = type_it->second->type_index_;
+				}
+				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				ParseResult init_result = parse_brace_initializer(type_spec);
+				member_function_context_stack_.pop_back();
 				if (init_result.is_error()) {
 					return init_result;
 				}
 				init_expr_opt = init_result.node();
-				
-				if (!consume("}"_tok)) {
-					return ParseResult::error("Expected '}' after brace initializer", current_token_);
-				}
 			}
 
 			// Expect semicolon
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after static member declaration", current_token_);
 			}
-
-			// Get the declaration and type specifier
-			if (!type_and_name_result.node().has_value()) {
-				return ParseResult::error("Expected static member declaration", current_token_);
-			}
-			const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 			// Register static member in struct info
 			// Calculate size and alignment for the static member (handles pointers/references correctly)
@@ -4484,5 +4483,4 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
 	}
 }
-
 

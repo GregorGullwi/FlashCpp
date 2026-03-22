@@ -520,16 +520,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		
 		auto var_decl_node = emplace_node<VariableDeclarationNode>(decl_node, init_expr, StorageClass::None);
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
-		InlineVector<StringHandle, 4> outer_template_param_names;
-		outer_template_param_names.reserve(spec_params.size());
-		for (const auto& template_param : spec_params) {
-			if (template_param.is<TemplateParameterNode>()) {
-				outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-			}
-		}
-		if (!outer_template_param_names.empty()) {
-			var_decl_node.as<VariableDeclarationNode>().set_outer_template_bindings(outer_template_param_names, converted_args);
-		}
+		setOuterTemplateBindingsFromParams(var_decl_node.as<VariableDeclarationNode>(), spec_params, converted_args);
 		gSymbolTable.insertGlobal(persistent_name, var_decl_node);
 		ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
 		return var_decl_node;
@@ -771,16 +762,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	);
 	// Mark as constexpr to match the template pattern
 	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
-	InlineVector<StringHandle, 4> outer_template_param_names;
-	outer_template_param_names.reserve(template_params.size());
-	for (const auto& template_param : template_params) {
-		if (template_param.is<TemplateParameterNode>()) {
-			outer_template_param_names.push_back(template_param.as<TemplateParameterNode>().nameHandle());
-		}
-	}
-	if (!outer_template_param_names.empty()) {
-		instantiated_var_decl.as<VariableDeclarationNode>().set_outer_template_bindings(outer_template_param_names, resolved_args);
-	}
+	setOuterTemplateBindingsFromParams(instantiated_var_decl.as<VariableDeclarationNode>(), template_params, resolved_args);
 	
 	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
 	// This allows constexpr evaluation to find and evaluate the variable

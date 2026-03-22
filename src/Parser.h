@@ -16,6 +16,7 @@
 #include <string_view>
 #include <source_location>
 #include <functional>
+#include <type_traits>
 
 #include "AstNodeTypes.h"
 #include "Lexer.h"
@@ -833,6 +834,43 @@ private:
             InlineVector<TemplateParamSubstitution, 4>& subs,
             const std::vector<ASTNode>& template_params,
             const std::vector<TemplateTypeArg>& template_args);
+		// Build outer-template binding data from the AST template parameter list so
+		// parameter names and args stay index-aligned even if the parameter list
+		// ever stops being a pure TemplateParameterNode sequence.
+		template<typename ArgContainer, typename OutArgContainer>
+		void collectOuterTemplateBindings(
+			const InlineVector<ASTNode, 4>& template_params,
+			const ArgContainer& template_args,
+			InlineVector<StringHandle, 4>& out_param_names,
+			OutArgContainer& out_args) const {
+			const size_t pair_count = std::min(template_params.size(), template_args.size());
+			out_param_names.clear();
+			out_args.clear();
+			out_param_names.reserve(pair_count);
+			out_args.reserve(pair_count);
+
+			for (size_t i = 0; i < pair_count; ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				out_param_names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
+				out_args.push_back(template_args[i]);
+			}
+		}
+		template<typename NodeT, typename ArgContainer>
+		void setOuterTemplateBindingsFromParams(
+			NodeT& node,
+			const InlineVector<ASTNode, 4>& template_params,
+			const ArgContainer& template_args) {
+			InlineVector<StringHandle, 4> outer_template_param_names;
+			std::vector<std::decay_t<decltype(template_args[0])>> filtered_template_args;
+			collectOuterTemplateBindings(template_params, template_args, outer_template_param_names, filtered_template_args);
+
+			if (!outer_template_param_names.empty()) {
+				node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
+			}
+		}
         std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
