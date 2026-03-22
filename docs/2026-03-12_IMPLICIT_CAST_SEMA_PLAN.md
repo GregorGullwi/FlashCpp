@@ -1310,6 +1310,43 @@ primitive types to member functions (e.g., `int` → `double` parameter).
 
 **Test result:** 1674 pass, 98 expected-fail (was 1673/98 before this phase).
 
+### Phase 21 ✅: User-defined conversion operator sema migration
+
+**Goal:** Migrate user-defined conversion operator (`operator T()`) resolution from
+codegen-owned ad-hoc logic to sema ownership. Consolidate three identical
+call-generation blocks (return, variable-init, function-arg) into a single shared
+helper. Annotate struct→primitive conversions in sema using `StandardConversionKind::UserDefined`.
+
+**Implementation:**
+- `src/SemanticAnalysis.cpp` (`tryAnnotateConversion`): Extended to also annotate
+  struct→primitive conversions with `StandardConversionKind::UserDefined`. Changed
+  the `is_non_primitive` guard to allow `Type::Struct` as source when the target is
+  not `Type::Struct`. Allowed `ConversionRank::UserDefined` through when source is
+  `Type::Struct` (conversion operator) while still rejecting it for non-struct sources
+  (converting constructors, handled separately).
+- `src/AstToIr.h`: Declared shared helper
+  `emitConversionOperatorCall(source, source_type_info, conv_op, target_type,
+  target_type_index, target_size_bits, token)` → `std::optional<ExprResult>`.
+- `src/IrGenerator_MemberAccess.cpp`: Implemented `AstToIr::emitConversionOperatorCall`
+  immediately after `findConversionOperator`. Consolidates the mangled-name lookup,
+  `AddressOfOp`/TempVar `this` argument construction, and `CallOp` emission that were
+  previously duplicated across three files.
+- `src/IrGenerator_Visitors_Namespace.cpp` (return-statement path): Extended sema
+  annotation check to handle `UserDefined` kind — looks up struct info, calls
+  `findConversionOperator`, and calls `emitConversionOperatorCall`. Replaced the
+  inline 80-line duplicated call-generation block with the shared helper call.
+- `src/IrGenerator_Stmt_Decl.cpp` (variable-init path): Same restructuring; new
+  sema-annotation check added before the existing fallback, both using
+  `emitConversionOperatorCall`. Replaced 120-line duplicated block.
+- `src/IrGenerator_Call_Direct.cpp` (function-arg path): Replaced 80-line duplicated
+  block with `emitConversionOperatorCall`. Removed now-unused `arg_size` local variable.
+- `tests/test_conv_op_sema_return_varinit_ret42.cpp`: New test covering `operator int()`
+  and `operator double()` in both return and variable-init contexts.
+- `tests/test_conv_op_inherited_ret42.cpp`: New test covering inherited conversion
+  operators (`Derived : Base` where `Base` has `operator int()`).
+
+**Test result:** 1679 pass, 98 expected-fail (was 1677/98 before this phase).
+
 ### Parallel rollout guidance
 
 This plan is a good candidate to run partially in parallel with fleet work, but only if the work is split by **infrastructure ownership** versus **language-policy ownership**.

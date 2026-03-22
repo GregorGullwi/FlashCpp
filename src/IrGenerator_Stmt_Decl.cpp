@@ -1309,118 +1309,54 @@ namespace {
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
 						Type init_type = init_operands.type;
-						int init_size = init_operands.size_in_bits.value;
-						TypeIndex init_type_index {};  // Will be set below if type_index is available
-
-						// Extract type_index if available (4th element in init_operands)
-						if (init_operands.type_index.is_valid()) {
-							init_type_index = init_operands.type_index;
-						}
+						TypeIndex init_type_index = init_operands.type_index;
+						const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
 						// Check if source and target types differ and source is a struct
 						bool need_conversion = (init_type != type_node.type()) ||
 						(init_type == Type::Struct && init_type_index != type_node.type_index());
 
-						if (need_conversion && init_type == Type::Struct && init_type_index.value < gTypeInfo.size()) {
-							const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
-							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-
-							// Look for a conversion operator to the target type
-							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, type_node.type(), type_node.type_index());
-
-							if (conv_op) {
-								FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
-									StringTable::getStringView(source_type_info.name()),
-									" to target type");
-
-								// Generate call to the conversion operator
-								// The conversion operator is a const member function taking no parameters
-								TempVar result_var = var_counter.next();
-
-								// Get the source variable value
-								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
-									using T = std::decay_t<decltype(arg)>;
-									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-									std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-										return arg;
-									} else {
-										return 0ULL;
-									}
-								}, init_operands.value);
-
-								// Build the mangled name for the conversion operator
-								StringHandle struct_name_handle = source_type_info.name();
-								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-
-								// Generate the call using CallOp (member function call)
-								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
-									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
-									std::string_view mangled_name;
-									if (func_decl.has_mangled_name()) {
-										mangled_name = func_decl.mangled_name();
-									} else {
-										// Generate mangled name for the conversion operator
-										// Use the function's parent struct name, not the source type name,
-										// because the conversion operator may be inherited from a base class
-										// and we need to call the version defined in the base class.
-										std::string_view operator_struct_name = func_decl.parent_struct_name();
-										if (operator_struct_name.empty()) {
-											operator_struct_name = struct_name;
+						bool conv_op_applied = false;
+						if (need_conversion && init_type == Type::Struct) {
+							// First check for a sema-annotated user-defined conversion
+							if (sema_ && init_node.is<ExpressionNode>()) {
+								const void* key = &init_node.as<ExpressionNode>();
+								const auto slot = sema_->getSlot(key);
+								if (slot.has_value() && slot->has_cast()) {
+									const ImplicitCastInfo& cast_info =
+										sema_->castInfoTable()[slot->cast_info_index.value - 1];
+									if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
+										TypeIndex source_type_index = sema_->typeContext().get(cast_info.source_type_id).type_index;
+										if (source_type_index.is_valid() && source_type_index.value < gTypeInfo.size()) {
+											const TypeInfo& src_info = gTypeInfo[source_type_index.value];
+											const StructMemberFunction* conv_op = findConversionOperator(
+												src_info.getStructInfo(), type_node.type(), type_node.type_index());
+											if (conv_op) {
+												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
+													StringTable::getStringView(src_info.name()), " to target type");
+												if (auto result = emitConversionOperatorCall(init_operands, src_info, *conv_op,
+														type_node.type(), type_node.type_index(), target_size, decl.identifier_token())) {
+													init_operands = *result;
+													conv_op_applied = true;
+												}
+											}
 										}
-										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 									}
+								}
+							}
 
-									CallOp call_op;
-									call_op.result = result_var;
-									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-									call_op.return_type = type_node.type();
-									call_op.return_size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
-									call_op.return_type_index = type_node.type_index();
-									call_op.is_member_function = true;
-									call_op.is_variadic = false;
-
-									// For member function calls, first argument is 'this' pointer
-									// We need to pass the address of the source object
-									if (std::holds_alternative<StringHandle>(source_value)) {
-										// It's a variable - take its address
-										TempVar this_ptr = var_counter.next();
-										AddressOfOp addr_op;
-										addr_op.result = this_ptr;
-										addr_op.operand.type = init_type;
-										addr_op.operand.ir_type = toIrType(init_type);
-										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
-										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
-										addr_op.operand.value = std::get<StringHandle>(source_value);
-										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-										// Add 'this' as first argument
-										TypedValue this_arg;
-										this_arg.type = init_type;
-										this_arg.ir_type = toIrType(init_type);
-										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
-										this_arg.value = this_ptr;
-										this_arg.type_index = TypeIndex{init_type_index};
-										call_op.args.push_back(std::move(this_arg));
-									} else if (std::holds_alternative<TempVar>(source_value)) {
-										// It's already a temporary - it might be an address or value
-										// For conversion operators, we need the address
-										// ASSUMPTION: For struct types, TempVars at this point in variable initialization
-										// represent the address of the object (not the object value itself).
-										// This is because visitExpressionNode returns addresses for struct identifiers.
-										TypedValue this_arg;
-										this_arg.type = init_type;
-										this_arg.ir_type = toIrType(init_type);
-										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
-										this_arg.value = std::get<TempVar>(source_value);
-										this_arg.type_index = TypeIndex{init_type_index};
-										call_op.args.push_back(std::move(this_arg));
-									}
-
-									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), decl.identifier_token()));
-
-									// Replace init_operands with the result of the conversion
-									init_operands = makeExprResult(type_node.type(), SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())}, IrOperand{result_var});
+							// Fallback: no sema annotation — search for a conversion operator directly
+							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < gTypeInfo.size()) {
+								const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
+								const StructMemberFunction* conv_op = findConversionOperator(
+									source_type_info.getStructInfo(), type_node.type(), type_node.type_index());
+								if (conv_op) {
+									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
+										StringTable::getStringView(source_type_info.name()),
+										" to target type");
+									if (auto result = emitConversionOperatorCall(init_operands, source_type_info, *conv_op,
+											type_node.type(), type_node.type_index(), target_size, decl.identifier_token()))
+										init_operands = *result;
 								}
 							}
 						}

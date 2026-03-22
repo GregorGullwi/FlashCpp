@@ -238,6 +238,7 @@
 
 				// Check whether the semantic pass has already computed a cast annotation.
 				// When present for a non-struct conversion, apply it and skip the local policy.
+				// When present as UserDefined, the source is a struct with a conversion operator.
 				bool sema_applied_conversion = false;
 				if (sema_ && expr_opt->is<ExpressionNode>()) {
 					const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
@@ -245,9 +246,30 @@
 					if (slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
+						const Type annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-						if (from_type != Type::Struct && to_type != Type::Struct) {
+						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+							annotated_source_type == Type::Struct) {
+							// Sema annotated a user-defined conversion operator call
+							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
+							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
+								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
+								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const StructMemberFunction* conv_op = findConversionOperator(
+									src_struct_info, return_type, ret_type_idx);
+								if (conv_op) {
+									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
+										StringTable::getStringView(src_type_info.name()), " to return type");
+									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
+											return_type, ret_type_idx, return_size, node.return_token())) {
+										operands = *result;
+										sema_applied_conversion = true;
+									}
+								}
+							}
+						} else if (annotated_source_type != Type::Struct && to_type != Type::Struct) {
+							Type from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
 							if (from_type == Type::Enum && from_type != operands.type)
@@ -262,7 +284,7 @@
 				// context, so the operand now represents the address-producing glvalue.
 				// Do not run ordinary value conversion against the ABI-sized return slot.
 				if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
-					// Check for user-defined conversion operator
+					// Check for user-defined conversion operator (fallback when sema did not run)
 					// If expr is a struct type with a conversion operator to return_type, call it
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
@@ -270,97 +292,19 @@
 						if (expr_type_index.is_valid() && expr_type_index.value < gTypeInfo.size()) {
 							const TypeInfo& source_type_info = gTypeInfo[expr_type_index.value];
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, TypeIndex{});
+								source_struct_info, return_type, ret_type_idx);
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
 									StringTable::getStringView(source_type_info.name()),
 									" to return type");
-
-								// Generate call to the conversion operator
-								TempVar result_var = var_counter.next();
-
-								// Get the source variable value
-								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
-									using T = std::decay_t<decltype(arg)>;
-									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-									std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-										return arg;
-									} else {
-										return 0ULL;
-									}
-								}, operands.value);
-
-								// Build the mangled name for the conversion operator
-								StringHandle struct_name_handle = source_type_info.name();
-								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-
-								// Generate the call using CallOp (member function call)
-								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
-									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
-									std::string_view mangled_name;
-									if (func_decl.has_mangled_name()) {
-										mangled_name = func_decl.mangled_name();
-									} else {
-										// Generate mangled name for the conversion operator
-										// Use the function's parent struct name, not the source type name,
-										// because the conversion operator may be inherited from a base class
-										// and we need to call the version defined in the base class.
-										std::string_view operator_struct_name = func_decl.parent_struct_name();
-										if (operator_struct_name.empty()) {
-											operator_struct_name = struct_name;
-										}
-										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
-									}
-
-									CallOp call_op;
-									call_op.result = result_var;
-									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-									call_op.return_type = return_type;
-									call_op.return_size_in_bits = SizeInBits{return_size};
-									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
-									call_op.is_member_function = true;
-									call_op.is_variadic = false;
-
-									// For member function calls, first argument is 'this' pointer
-									if (std::holds_alternative<StringHandle>(source_value)) {
-										// It's a variable - take its address
-										TempVar this_ptr = var_counter.next();
-										AddressOfOp addr_op;
-										addr_op.result = this_ptr;
-										addr_op.operand.type = expr_type;
-										addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(expr_size)};
-										addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
-										addr_op.operand.value = std::get<StringHandle>(source_value);
-										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-										// Add 'this' as first argument
-										TypedValue this_arg;
-										this_arg.type = expr_type;
-										this_arg.size_in_bits = SizeInBits{64};  // Pointer size
-										this_arg.value = this_ptr;
-										this_arg.type_index = TypeIndex{expr_type_index};
-										call_op.args.push_back(std::move(this_arg));
-									} else if (std::holds_alternative<TempVar>(source_value)) {
-										// It's already a temporary
-										// ASSUMPTION: For struct types, TempVars at this point
-										// represent the address of the object (not the object value itself).
-										TypedValue this_arg;
-										this_arg.type = expr_type;
-										this_arg.size_in_bits = SizeInBits{64};  // Pointer size for 'this'
-										this_arg.value = std::get<TempVar>(source_value);
-										this_arg.type_index = TypeIndex{expr_type_index};
-										call_op.args.push_back(std::move(this_arg));
-									}
-
-									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
-
-									// Replace operands with the result of the conversion
-									operands = makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var});
-								}
+								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
+										return_type, ret_type_idx, return_size, node.return_token()))
+									operands = *result;
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
 								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
