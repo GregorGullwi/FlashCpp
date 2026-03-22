@@ -605,10 +605,23 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	    !context.constexpr_heap.empty()) {
 		StringHandle heap_key = object_result->pointer_to_var;
 		auto heap_it = context.constexpr_heap.find(heap_key);
-		if (heap_it != context.constexpr_heap.end() && !heap_it->second.freed) {
+		if (heap_it != context.constexpr_heap.end()) {
+			if (heap_it->second.freed) {
+				return EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression");
+			}
 			const EvalResult& heap_obj = heap_it->second.value;
-			auto member_it = heap_obj.object_member_bindings.find(member_access.member_name());
-			if (member_it != heap_obj.object_member_bindings.end()) {
+			int64_t offset = object_result->pointer_offset;
+			const EvalResult* target_obj = &heap_obj;
+			if (heap_obj.is_array) {
+				if (offset < 0 || static_cast<size_t>(offset) >= heap_obj.array_elements.size()) {
+					return EvalResult::error("Arrow member access: pointer offset out of bounds for heap struct array");
+				}
+				target_obj = &heap_obj.array_elements[static_cast<size_t>(offset)];
+			} else if (offset != 0) {
+				return EvalResult::error("Arrow member access: non-zero pointer offset on non-array heap object");
+			}
+			auto member_it = target_obj->object_member_bindings.find(member_access.member_name());
+			if (member_it != target_obj->object_member_bindings.end()) {
 				return member_it->second;
 			}
 		}
@@ -1253,6 +1266,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				std::string_view base_op = op.substr(0, op.size() - 1);
 				EvalResult new_val = apply_binary_op(target, rhs, base_op, &context, &bindings);
 				if (!new_val.success()) return new_val;
+				// Apply unsigned type-width truncation to match C++ assignment-conversion
+				// semantics. For unsigned integer types, the stored result must wrap at
+				// the declared type's width, regardless of any integer promotion during
+				// binary arithmetic. apply_uint_type_mask handles the 64-bit case by
+				// returning the value unmodified (masking with all-ones is a no-op).
+				if (target.exact_type.has_value() &&
+				    is_unsigned_integer_type(target.exact_type->type())) {
+					new_val = EvalResult::from_uint(apply_uint_type_mask(new_val.as_uint_raw(), target.exact_type));
+					new_val.set_exact_type(*target.exact_type);
+				}
 				target = new_val;
 				return new_val;
 			};
@@ -1351,6 +1374,57 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							}
 							return apply_op_to(heap_val, rhs_result);
 						}
+					}
+				}
+
+				// Handle arrow member assignment: p->member = value  (C++20 constexpr heap)
+				// LHS is MemberAccessNode with is_arrow() == true.
+				if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+					const auto& ma = std::get<MemberAccessNode>(lhs_expr);
+					if (ma.is_arrow()) {
+						// Evaluate the pointer object on the left side
+						auto ptr_result = evaluate_expression_with_bindings(ma.object(), bindings, context);
+						if (!ptr_result.success()) return ptr_result;
+						if (!ptr_result.pointer_to_var.isValid()) {
+							return EvalResult::error("Arrow assignment: left-hand side is not a pointer to a constexpr heap object");
+						}
+						StringHandle heap_key = ptr_result.pointer_to_var;
+						auto heap_it = context.constexpr_heap.find(heap_key);
+						if (heap_it == context.constexpr_heap.end()) {
+							return EvalResult::error("Arrow assignment: pointer does not refer to a constexpr heap object");
+						}
+						if (heap_it->second.freed) {
+							return EvalResult::error("Arrow assignment: use after free in constant expression");
+						}
+						// Evaluate the RHS
+						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+						if (!rhs_result.success()) return rhs_result;
+						// Update the member in the heap object
+						auto& heap_val = heap_it->second.value;
+						int64_t offset = ptr_result.pointer_offset;
+						EvalResult* member_slot = nullptr;
+						if (heap_val.is_array) {
+							// Arrow on an element of a heap struct array
+							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
+								return EvalResult::error("Arrow assignment: pointer offset out of bounds for heap struct array");
+							}
+							auto& elem = heap_val.array_elements[static_cast<size_t>(offset)];
+							auto m_it = elem.object_member_bindings.find(ma.member_name());
+							if (m_it == elem.object_member_bindings.end()) {
+								return EvalResult::error("Arrow assignment: member not found in heap struct array element: " + std::string(ma.member_name()));
+							}
+							member_slot = &m_it->second;
+						} else {
+							if (offset != 0) {
+								return EvalResult::error("Arrow assignment: non-zero pointer offset on non-array heap object in constexpr assignment");
+							}
+							auto m_it = heap_val.object_member_bindings.find(ma.member_name());
+							if (m_it == heap_val.object_member_bindings.end()) {
+								return EvalResult::error("Arrow assignment: member not found in heap struct: " + std::string(ma.member_name()));
+							}
+							member_slot = &m_it->second;
+						}
+						return apply_op_to(*member_slot, rhs_result);
 					}
 				}
 
