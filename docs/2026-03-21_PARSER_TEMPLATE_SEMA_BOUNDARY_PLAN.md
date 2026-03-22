@@ -232,6 +232,47 @@ checks:
   sema-owned contexts (where the pre-sema boundary check already guarantees
   they are absent)
 
+## Phase 5 progress
+
+Phase 5 improves sema annotation accuracy and makes the `TemplateParameterReferenceNode`
+unresolved path observable, continuing the boundary plan's goal of making cross-phase
+ownership explicit:
+
+- `structHasConversionOperatorTo()` added as a static helper before
+  `tryAnnotateConversion()` in `SemanticAnalysis.cpp`: verifies that a
+  user-defined conversion operator actually exists in the source struct (or any
+  of its non-deferred base classes, recursively up to depth 8) before emitting
+  a `UserDefined` sema annotation; this closes Phase 21 item 2 ("optimistic
+  `UserDefined` annotation without operator existence check") from the implicit-cast
+  plan and makes `slots_filled` stats reflect actual sema annotation coverage
+  rather than optimistic structural guesses
+- the helper uses `string_view` comparison only (no new string interning) and
+  mirrors the `findConversionOperator` workaround for type-aliased
+  `"operator user_defined"` member functions in inherited and template contexts
+- `is_non_primitive` local lambda in `tryAnnotateConversion()` renamed to
+  `is_non_primitive_target` to clarify that it exclusively guards the *target*
+  type; closes Phase 21 item 4
+- `inferExpressionType(TemplateParameterReferenceNode)` now emits a
+  `FLASH_LOG(Templates, Debug, ...)` message when `lookupLocalType` returns empty,
+  making unresolved template-parameter references observable in debug output; after
+  Phase 3's outer-template binding seeding work, an empty result here indicates
+  either a not-yet-migrated context or a legitimately unsupported template form —
+  the log is the first step in the Workstream 2 audit the plan calls for
+- Phase 21 item 7 ("dead `pointer_depth` ternary in `IrGenerator_Call_Direct.cpp`")
+  investigated: the ternary at the noted location uses `type_node.pointer_depth()`
+  (the *argument's* pointer depth), not `param_type->pointer_depth()`; the
+  enclosing guard ensures the parameter has no pointer depth, but the argument may
+  still be a pointer type; this ternary is correct and not dead — no change needed
+- `tests/test_conv_op_sema_phase5_ret42.cpp`: regression test covering direct
+  and inherited conversion operators (struct→int via `operator int()`, struct→double
+  via `operator double()`, and an inherited conversion operator) after the Phase 5
+  existence-check guard
+- `tests/test_conv_op_no_conv_op_ret0.cpp`: regression test confirming that structs
+  without conversion operators pass through sema correctly without spurious
+  `UserDefined` annotation attempts
+
+**Test result:** 1685 pass, 98 expected-fail (was 1683/98 before this phase).
+
 
 ### Workstream 1: make post-parse AST legality explicit
 
@@ -388,6 +429,17 @@ Current narrow follow-up after the nested-class slice:
 - reduce codegen defensive handling to assertion-only paths if appropriate
   **(implemented: codegen fold/pack handlers reduced to InternalError
   assertions; noexcept check also converted)**
+
+### Phase 5: sema annotation accuracy + boundary observability
+
+- improve accuracy of `UserDefined` sema annotations by verifying conversion
+  operator existence before annotating **(implemented: `structHasConversionOperatorTo`
+  in `SemanticAnalysis.cpp`; closes implicit-cast plan Phase 21 items 2 and 4)**
+- add observable debug logging for unresolved `TemplateParameterReferenceNode`
+  cases in `inferExpressionType` **(implemented: FLASH_LOG at Templates/Debug level;
+  begins Workstream 2 audit of surviving template-reference paths)**
+- investigate and document Phase 21 item 7 (dead `pointer_depth` ternary)
+  **(investigated: ternary is correct, not dead; no change needed)**
 
 ## Exit criteria
 
