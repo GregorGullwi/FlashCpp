@@ -3629,16 +3629,9 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	}, source.value);
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
-		// Named variable — take its address
-		TempVar this_ptr = var_counter.next();
-		AddressOfOp addr_op;
-		addr_op.result = this_ptr;
-		addr_op.operand.type = source.type;
-		addr_op.operand.ir_type = toIrType(source.type);
-		addr_op.operand.size_in_bits = source.size_in_bits;
-		addr_op.operand.pointer_depth = PointerDepth{};
-		addr_op.operand.value = std::get<StringHandle>(source_value);
-		ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+		// Named variable — take its address using the shared emitAddressOf helper
+		TempVar this_ptr = emitAddressOf(source.type, source.size_in_bits.value,
+			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
 		this_arg.type = source.type;
