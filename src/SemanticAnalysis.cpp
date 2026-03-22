@@ -2026,6 +2026,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.member_pointer(), ctx);
 			}
 			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+				tryAnnotateMemberFunctionCallArgConversions(e);
 				normalizeExpression(e.object(), ctx);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
@@ -3407,6 +3408,37 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
 		tryAnnotateConversion(arg, param_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
+	}
+}
+
+void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node) {
+	const FunctionDeclarationNode& func_decl = call_node.function_declaration();
+	if (func_decl.is_variadic()) return;
+
+	const auto& arguments = call_node.arguments();
+	const auto& param_nodes = func_decl.parameter_nodes();
+
+	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size()) return;
+
+	for (size_t i = 0; i < arguments.size(); ++i) {
+		const ASTNode& arg = arguments[i];
+		if (!arg.is<ExpressionNode>()) continue;
+
+		const ASTNode& param_node = param_nodes[i];
+		if (!param_node.is<DeclarationNode>()) continue;
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+
+		// Skip reference/rvalue-reference parameters: no implicit arithmetic conversion for binding.
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) continue;
+
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
+
+		tryAnnotateConversion(arg, param_type_id);
+		diagnoseScopedEnumConversion(arg, param_type_id, " in member function argument");
 	}
 }
 
