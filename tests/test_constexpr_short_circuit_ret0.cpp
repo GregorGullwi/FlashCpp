@@ -23,7 +23,7 @@ static_assert(null_ptr == nullptr || *valid_ptr == 42);
 
 // Chained short-circuit
 static_assert(true || false || false);
-static_assert(false && false && true);  // false && ... = false immediately
+static_assert(!(false && false && true));  // false && ... = false immediately
 
 // --- constexpr function bodies ---
 

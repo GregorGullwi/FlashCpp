@@ -3531,6 +3531,20 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 	
 	// Handle block statements (nested blocks)
 	if (stmt_node.is<BlockNode>()) {
+		const BlockNode& block = stmt_node.as<BlockNode>();
+		// Comma-separated declaration lists (int a = 7, b = 13;) are parsed
+		// into a synthetic BlockNode with is_synthetic_decl_list() == true.
+		// They must be evaluated in the CURRENT scope — do not create a child
+		// scope, because the variables need to remain visible after the block.
+		if (block.is_synthetic_decl_list()) {
+			for (const auto& sub_stmt : block.get_statements()) {
+				auto result = evaluate_statement_with_bindings(sub_stmt, bindings, context);
+				if (!isStatementExecutedWithoutReturn(result)) {
+					return result;
+				}
+			}
+			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+		}
 		return evaluate_block_with_bindings(
 			stmt_node,
 			bindings,
