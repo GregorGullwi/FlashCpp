@@ -1102,7 +1102,29 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
 						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-						if (from_type != Type::Struct && to_type != Type::Struct) {
+						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+							from_type == Type::Struct) {
+							// Sema annotated a user-defined conversion operator call
+							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
+							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
+								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+								const StructMemberFunction* conv_op = findConversionOperator(
+									src_type_info.getStructInfo(), param_base_type, param_type->type_index());
+								if (conv_op) {
+									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
+										StringTable::getStringView(src_type_info.name()), " to parameter type");
+									const int param_size = static_cast<int>(param_type->size_in_bits());
+									if (auto result = emitConversionOperatorCall(argumentIrOperands, src_type_info, *conv_op,
+											param_base_type, param_type->type_index(), param_size,
+											functionCallNode.called_from())) {
+										argumentIrOperands = *result;
+										arg_type = argumentIrOperands.type;
+										arg_type_index = argumentIrOperands.type_index;
+										sema_applied_arg_conversion = true;
+									}
+								}
+							}
+						} else if (from_type != Type::Struct && to_type != Type::Struct) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
 							if (from_type == Type::Enum && from_type != argumentIrOperands.type)
@@ -1217,7 +1239,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
 						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
-						const int param_size = param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits());
+						const int param_size = static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
 						const StructMemberFunction* conv_op = findConversionOperator(
