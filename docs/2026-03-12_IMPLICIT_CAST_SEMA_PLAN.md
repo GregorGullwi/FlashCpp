@@ -1337,24 +1337,91 @@ helper. Annotate struct→primitive conversions in sema using `StandardConversio
 
 **Phase 21 investigation items:**
 
-1. **Function-arg path does not consume sema `UserDefined` annotation.** `IrGenerator_Call_Direct.cpp:1097-1115` only handles `from_type != Type::Struct` standard conversions — it ignores `UserDefined` annotations and re-discovers the conversion operator via fallback lookup. Correct today; blocks future fallback removal. Phase 22+ should add the `UserDefined` branch here.
+1. ✅ **Function-arg path does not consume sema `UserDefined` annotation.** *(fixed in Phase 22)* `IrGenerator_Call_Direct.cpp` extended the sema annotation check to handle `StandardConversionKind::UserDefined` — looks up struct info via `source_type_id`, calls `findConversionOperator`, and calls `emitConversionOperatorCall`, setting `sema_applied_arg_conversion = true`. The fallback block remains for when sema is absent (template specializations, etc.).
 2. ✅ **Optimistic `UserDefined` annotation without operator existence check.** *(fixed in Phase 5)* `buildConversionPlan(Type::Struct, primitive)` returns `UserDefined` unconditionally without verifying a conversion operator exists. Codegen handles this safely via `findConversionOperator` null check, but `slots_filled` stats overcount. Fixed by adding `structHasConversionOperatorTo()` helper in `SemanticAnalysis.cpp` that verifies operator existence (including inherited operators up to depth 8) before emitting the `UserDefined` annotation.
-3. **`emitConversionOperatorCall` missing assertion for non-struct source values.** If the source value is a literal (`unsigned long long`/`double`), neither the `StringHandle` nor `TempVar` branch matches, emitting a zero-arg `CallOp`. Unreachable for struct sources in practice; add an assertion to catch future misuse.
+3. ✅ **`emitConversionOperatorCall` missing assertion for non-struct source values.** *(fixed in Phase 21)* The `else { throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar"); }` branch in `IrGenerator_MemberAccess.cpp` covers non-`StringHandle`/non-`TempVar` values (including `unsigned long long` and `double` literals), throwing instead of silently emitting a zero-arg `CallOp`.
 4. ✅ **`is_non_primitive` / `is_unresolved_type` lambda naming.** *(fixed in Phase 5)* Two nearly-identical lambdas with subtly different membership (only `is_non_primitive` includes `Type::Struct`). Renamed `is_non_primitive` → `is_non_primitive_target` to clarify that this lambda exclusively guards the target type.
-5. **`Struct→FunctionPointer` annotation now permitted.** Harmless (codegen's `findConversionOperator` returns nullptr), but creates spurious `UserDefined` slots for rare cases.
-6. **`ir_type` now set on `this` arg.** Correctness improvement over old code (which left it default-initialized). Subtle behavioral change for downstream IR consumers.
+5. ✅ **`Struct→FunctionPointer` annotation now permitted.** *(fixed in Phase 5)* `structHasConversionOperatorTo` in `SemanticAnalysis.cpp` calls `getTypeName(to_desc.base_type)` for non-struct targets. `getTypeName(Type::FunctionPointer)` returns `""` (empty), so the helper returns `false` immediately — preventing spurious `UserDefined` slots for `Struct→FunctionPointer` pairs.
+6. ✅ **`ir_type` now set on `this` arg.** *(done in Phase 21)* `emitConversionOperatorCall` sets `this_arg.ir_type = toIrType(source.type)` on both the `StringHandle` (address-of) and `TempVar` branches. The old duplicated code left `ir_type` default-initialized.
 7. ✅ **Dead `pointer_depth` ternary in `IrGenerator_Call_Direct.cpp:1220`.** *(investigated in Phase 5, no change needed)* The ternary in the current codebase at the "Regular variable - pass by value" else-branch checks `type_node.pointer_depth()` (the *argument's* pointer depth), not `param_type->pointer_depth()`. The enclosing guard ensures the parameter has no pointer depth, but the argument variable may itself be a pointer type; the ternary correctly uses 64 bits in that case. Not dead.
 
-### Known limitations (current, as of Phase 21)
+### Phase 22 ✅: Function-arg UserDefined sema annotation consumption
 
-- User-defined `operator bool()` / converting constructors remain in codegen.
+**Goal:** Consume sema `UserDefined` annotations in the function-argument codegen path,
+matching the pattern established in Phase 21 for the return-statement and variable-init
+paths. This was Phase 21 investigation item 1.
+
+**Implementation:**
+- `src/IrGenerator_Call_Direct.cpp` (`generateFunctionCallIr`): Extended the sema
+  annotation check (inside the `if (sema_ && argument.is<ExpressionNode>())` block) to
+  handle `cast_kind == StandardConversionKind::UserDefined && from_type == Type::Struct`.
+  Looks up `source_type_idx` from `cast_info.source_type_id`, retrieves `TypeInfo`,
+  calls `findConversionOperator(src_type_info.getStructInfo(), param_base_type,
+  param_type->type_index())`, then calls `emitConversionOperatorCall` and sets
+  `sema_applied_arg_conversion = true`. The existing fallback block at lines 1238–1257
+  remains for when sema is absent (template specializations, callee unresolved at
+  sema time, etc.).
+- `tests/test_conv_op_sema_funcarg_ret42.cpp`: New test covering `operator int()`,
+  `operator double()`, and `operator long long()` through the function-argument path,
+  verifying that sema-owned `UserDefined` annotations drive the conversion operator call.
+
+**Test result:** 1683 pass, 98 expected-fail (was 1679/98 before this phase).
+
+### Phase 23 ✅: `operator bool()` contextual conversion via sema UserDefined annotation
+
+**Goal:** Fix `applyConditionBoolConversion` to actually call `operator bool()` when
+a struct is used in a contextual-bool position (`if`, `while`, `for`, `do/while`,
+ternary condition, logical `!`). Previously it relied on the backend TEST instruction
+testing raw struct bits, which gives accidentally-correct results only when the struct's
+first-member int value matches the logical bool (e.g., `Flag{0}` → false, `Flag{1}` →
+true). A struct like `Flag{0xDEAD}` where `operator bool()` returns `value == 42`
+would be incorrectly truthy.
+
+**Root cause:** `applyConditionBoolConversion` checked `BooleanConversion` and
+`PointerConversion` sema annotation kinds, but not `UserDefined` (the kind emitted
+by sema for struct → bool via `operator bool()`).
+
+**Implementation:**
+- `src/IrGenerator_Expr_Conversions.cpp` (`applyConditionBoolConversion`):
+  Added a `UserDefined && from_desc.base_type == Type::Struct` branch in the sema
+  annotation check: looks up `TypeInfo` via `source_type_id.type_index`, calls
+  `findConversionOperator(..., Type::Bool, TypeIndex{})`, and calls
+  `emitConversionOperatorCall` (target type: `Type::Bool`, target size: 8 bits).
+  Sets `sema_applied_bool_conv = true` immediately when `UserDefined && Type::Struct` is
+  detected (before the `findConversionOperator` call) to suppress a redundant duplicate
+  lookup in the fallback path. Sema has already verified operator existence via
+  `structHasConversionOperatorTo`, so the lookup should always succeed.
+  Added a matching fallback path (after the floating-point fallback) for the case
+  where sema is absent: checks `condition.type == Type::Struct` and attempts
+  `findConversionOperator(..., Type::Bool, TypeIndex{})`.
+- `tests/test_conv_op_bool_contextual_ret0.cpp`: New test with `Flag{0xDEAD}` whose
+  raw bits are truthy but `operator bool()` returns false. Covers `if`, `while`,
+  ternary, and logical `!` contextual-bool sites. Also covers `BoxedDouble` whose
+  `operator bool()` compares against a threshold.
+
+**Test result:** 1686 pass, 98 expected-fail (was 1685/98 before this phase).
+
+### Phase 23 investigation items:
+
+1. **`applyConstructorArgConversion` skips UserDefined annotations.** The sema path
+   in `IrGenerator_Expr_Conversions.cpp` checks `from_t != Type::Struct && to_t != Type::Struct`,
+   explicitly excluding Struct→primitive conversions from the sema-driven path. If a constructor
+   takes a primitive type and is passed a struct with `operator T()`, the codegen fallback handles
+   it. Correct today; blocks future fallback removal.
+2. **Integer → bool annotations in contextual bool not emitting explicit IR.** Sema annotates
+   `BooleanConversion` for int/char → bool but `applyConditionBoolConversion` returns `condition`
+   unchanged, relying on backend TEST. Correct for integers (TEST handles zero correctly); no
+   code change needed unless backend semantics change.
+
+### Known limitations (current, as of Phase 23)
+
+- Converting constructors (primitive → struct via single-arg ctor) remain in codegen.
+- `applyConstructorArgConversion` skips UserDefined (Struct→primitive) annotations (Phase 23 item 1).
 - Reference binding, temporary materialization, lifetime extension remain in codegen.
 - Integer → bool contextual-bool sema annotations consumed but no explicit IR emitted (backend TEST handles correctly; annotation documents semantic intent only).
 - `inferExpressionType` parser fallback may be slower than direct scope-stack lookup for hot paths.
 - `inferExpressionType` does not handle `PackExpansionExprNode` (normally expanded during template substitution).
 - Broader parser/template-substitution/sema boundary cleanup tracked in `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`.
-- Function-arg codegen path does not consume sema `UserDefined` annotations (item 1 above).
-- Sema optimistically annotates `UserDefined` without verifying operator existence (item 2 above). *(fixed in Phase 5)*
 
 ### Parallel rollout guidance
 
