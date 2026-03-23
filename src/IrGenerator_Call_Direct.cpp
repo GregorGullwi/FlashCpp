@@ -85,7 +85,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index(), PointerDepth{});
 }
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -247,10 +247,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var});  // 64 bits for return value
+					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
 				}
 			}
 
@@ -420,7 +420,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
@@ -954,12 +954,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (ret_type == Type::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
-				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)});
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{});
 			}
 			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
-				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits});
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{});
 			}
 
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
@@ -970,7 +970,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			}
 
 			// Scalar integer / bool / enum
-			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)});
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{});
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)
@@ -1608,5 +1608,5 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			SizeInBits{result_size},
 			IrOperand{ret_var},
 			type_index_result
-		);
+		, PointerDepth{});
 	}

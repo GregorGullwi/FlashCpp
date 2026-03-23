@@ -2513,7 +2513,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		SizeInBits{static_cast<int>(init_list_size_bits)},
 		IrOperand{init_list_name},
 		TypeIndex{init_list_type_index}
-	);
+	, PointerDepth{});
 }
 
 
@@ -2684,7 +2684,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				SizeInBits{actual_size_bits},
 				IrOperand{ret_var},
 				TypeIndex{result_type_index}
-			);
+			, PointerDepth{});
 		}
 	}
 
@@ -2796,5 +2796,5 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		SizeInBits{actual_size_bits},
 		IrOperand{ret_var},
 		TypeIndex{result_type_index}
-	);
+	, PointerDepth{});
 }

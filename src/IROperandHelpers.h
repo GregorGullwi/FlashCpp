@@ -117,15 +117,7 @@ inline ExprResult makeExprResultImpl(
 	};
 }
 
-inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), TypeIndex{}, PointerDepth{});
-}
-
-inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, PointerDepth{});
-}
-
-// Requires PointerDepth to prevent accidental type_index/pointer_depth argument swap.
+// All five arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
 }
