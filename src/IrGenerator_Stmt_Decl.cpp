@@ -2049,10 +2049,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								const Type referred_type = param_is_ref ? param_type->type() : Type::Void;
 								if (param_is_ref && referred_type != Type::Struct && init_operands.type != referred_type) {
 									init_arg = materializeConvertedReferenceArgument(init_operands, *param_type, decl.identifier_token());
+								} else if (param_type) {
+									init_arg = buildConstructorArgumentValue(
+										init_operands,
+										init_node,
+										param_type,
+										decl.identifier_token());
 								} else {
 								// Check if initializer is an identifier (variable)
-								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>()) &&
-									(!param_type || param_type->is_reference() || param_type->is_rvalue_reference())) {
+								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
 									const auto& identifier = std::get<IdentifierNode>(init_node.as<ExpressionNode>());
 									std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 

@@ -307,6 +307,38 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	TypedValue value;
 	bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
 
+	auto makeReferenceAddressValue = [&](TempVar address_temp) {
+		value.type = argument_result.type;
+		value.ir_type = argument_result.ir_type;
+		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+		value.value = address_temp;
+		value.type_index = argument_result.type_index;
+	};
+
+	auto materializeReferenceTemporary = [&](const TypedValue& source_value) {
+		TempVar temp_var = var_counter.next();
+		AssignmentOp assign_op;
+		assign_op.result = temp_var;
+		assign_op.lhs = makeTypedValue(source_value.type, source_value.size_in_bits, temp_var, source_value.type_index);
+		assign_op.rhs = source_value;
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
+
+		TempVar addr_var = emitAddressOf(source_value.type, source_value.size_in_bits.value, IrValue(temp_var), token);
+		makeReferenceAddressValue(addr_var);
+	};
+
+	auto tempAlreadyHoldsAddress = [&](TempVar temp_var) {
+		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+		if (metadata_storage.hasMetadata(temp_var)) {
+			const TempVarMetadata metadata = metadata_storage.getMetadata(temp_var);
+			if (metadata.category == ValueCategory::LValue || metadata.category == ValueCategory::XValue) {
+				return true;
+			}
+		}
+
+		return argument_result.size_in_bits == SizeInBits{64} && argument_result.type == Type::Struct;
+	};
+
 	if (param_is_ref &&
 		argument.is<ExpressionNode>() &&
 		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
@@ -345,11 +377,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		} else {
 			value = toTypedValue(argument_result);
 		}
-	} else {
-		value = toTypedValue(argument_result);
-	}
-
-	if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
+	} else if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
 		const TempVar& arg_temp = std::get<TempVar>(argument_result.value);
 		if (auto lvalue_info = getTempVarLValueInfo(arg_temp);
 			lvalue_info.has_value() &&
@@ -372,12 +400,23 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 			setTempVarMetadata(address_temp, std::move(address_meta));
 
-			value.type = argument_result.type;
-			value.ir_type = argument_result.ir_type;
-			value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-			value.value = address_temp;
-			value.type_index = argument_result.type_index;
+			makeReferenceAddressValue(address_temp);
+		} else if (tempAlreadyHoldsAddress(arg_temp)) {
+			value = toTypedValue(argument_result);
+		} else {
+			TempVar addr_var = emitAddressOf(
+				argument_result.type,
+				argument_result.size_in_bits.value,
+				IrValue(arg_temp),
+				token);
+			makeReferenceAddressValue(addr_var);
 		}
+	} else if (param_is_ref && (
+		std::holds_alternative<unsigned long long>(argument_result.value) ||
+		std::holds_alternative<double>(argument_result.value))) {
+		materializeReferenceTemporary(toTypedValue(argument_result));
+	} else {
+		value = toTypedValue(argument_result);
 	}
 
 	if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
