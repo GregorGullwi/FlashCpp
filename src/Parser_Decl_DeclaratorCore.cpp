@@ -1237,6 +1237,29 @@ bool Parser::looks_like_function_parameters()
 		// For identifiers, we need to check if it's a known type
 		if (token_type == Token::Type::Identifier) {
 			StringHandle id_handle = StringTable::getOrInternStringHandle(token_value);
+
+			// A current non-type template parameter (e.g. N in `Box box(N);`) is an
+			// expression argument, not an unnamed parameter type, so prefer direct-init.
+			bool is_current_template_param = false;
+			for (StringHandle param_name : current_template_param_names_) {
+				if (param_name == id_handle) {
+					is_current_template_param = true;
+					break;
+				}
+			}
+			if (is_current_template_param) {
+				bool is_type_template_param = false;
+				for (const auto& subst : template_param_substitutions_) {
+					if (subst.param_name == id_handle) {
+						is_type_template_param = subst.is_type_param;
+						break;
+					}
+				}
+				if (!is_type_template_param) {
+					restore_token_position(saved);
+					return false;
+				}
+			}
 			
 			// Check if this identifier is a known type in the type registry
 			auto type_iter = gTypesByName.find(id_handle);

@@ -926,6 +926,24 @@ ASTNode Parser::substituteTemplateParameters(
 
 		return node;
 
+	} else if (node.is<InitializerListNode>()) {
+		const InitializerListNode& init_list = node.as<InitializerListNode>();
+		auto new_init_list = emplace_node<InitializerListNode>();
+		InitializerListNode& new_init_list_ref = new_init_list.as<InitializerListNode>();
+
+		for (size_t i = 0; i < init_list.initializers().size(); ++i) {
+			ASTNode substituted_init = substituteTemplateParameters(
+				init_list.initializers()[i], template_params, template_args
+			);
+			if (init_list.is_designated(i)) {
+				new_init_list_ref.add_designated_initializer(init_list.member_name(i), substituted_init);
+			} else {
+				new_init_list_ref.add_initializer(substituted_init);
+			}
+		}
+
+		return new_init_list;
+
 	} else if (node.is<BlockNode>()) {
 		// Handle block nodes by substituting in all statements
 		const BlockNode& block = node.as<BlockNode>();

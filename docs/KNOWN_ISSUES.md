@@ -14,35 +14,6 @@ validated.
   constexpr evaluator recursion guard works, but the parser can still fail first on
   sufficiently deep source expressions.
 
-## Local variable uses can misbind inside function templates
-
-Local variables declared inside a function template body can later be rejected as
-if they were unresolved non-dependent names:
-
-```cpp
-struct Box {
-    int value;
-    Box(int);
-};
-
-template<int N>
-int f() {
-    Box box(N);
-    return box.value; // can fail: "'box' was not declared before the template definition"
-}
-```
-
-Observed while writing a constructor-overload regression: FlashCpp emitted
-`error: non-dependent name 'box' was not declared before the template definition
-(C++20 [temp.res]/9)` even though `box` is a local declared earlier in the same
-template definition.
-
-This appears to be a template-body local-scope/binding bug rather than a real
-two-phase lookup violation.
-
-**Workaround**: avoid introducing a named local in the affected template body;
-route the value through a helper call or another expression form instead.
-
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 
 When `&x` is evaluated where `x` is a local constexpr variable (in bindings),
