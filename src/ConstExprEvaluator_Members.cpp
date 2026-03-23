@@ -4307,8 +4307,7 @@ EvalResult Evaluator::materialize_aggregate_object_value(
 EvalResult Evaluator::materialize_constructor_object_value(
 	const ConstructorCallNode& ctor_call,
 	EvaluationContext& context,
-	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-	bool ignore_default_initializer_errors) {
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	const ASTNode& type_node = ctor_call.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Constructor call without valid type specifier");

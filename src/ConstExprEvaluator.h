@@ -477,8 +477,7 @@ public:
 		static EvalResult materialize_constructor_object_value(
 			const ConstructorCallNode& ctor_call,
 			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
-			bool ignore_default_initializer_errors = false);
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_array_value(
 			Type element_type,
 			TypeIndex element_type_index,
