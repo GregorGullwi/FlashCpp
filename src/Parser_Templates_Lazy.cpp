@@ -260,6 +260,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
+	// Invariant: fn_identifier_token.handle() == effectiveLookupName(lazy_info.identity).
+	// This is asserted below after finalization (Slice 5).
 	// Slice 4: use the canonical instantiated lookup name (from identity) as the
 	// function identifier token so the emitted body matches the stub's registered name.
 	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
@@ -457,6 +459,20 @@ if (param_decl.has_default_value()) {
 		// This is essential so that FunctionCallNode can carry the correct mangled name
 		// and codegen can resolve the correct function for each template instantiation
 		compute_and_set_mangled_name(new_func_ref);
+	}
+
+	// Slice 5: assert that the emitted body's name matches the canonical identity name.
+	{
+		StringHandle expected = effectiveLookupName(lazy_info.identity);
+		StringHandle actual   = new_func_ref.decl_node().identifier_token().handle();
+		if (actual != expected) {
+			FLASH_LOG_FORMAT(Templates, Warning,
+				"Slice 5 identity assertion: emitted body name '{}' != expected '{}' for {}::{}",
+				StringTable::getStringView(actual),
+				StringTable::getStringView(expected),
+				StringTable::getStringView(lazy_info.identity.instantiated_owner_name),
+				StringTable::getStringView(expected));
+		}
 	}
 
 	StringBuilder qualified_name_builder;

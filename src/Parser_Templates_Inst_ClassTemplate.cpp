@@ -6616,6 +6616,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			ConstructorDeclarationNode* target_ctor = nullptr;
 			DestructorDeclarationNode* target_dtor = nullptr;
 
+			// Invariant (Slice 3+): every DeferredTemplateMemberBody has a valid
+			// original_member_node that was inserted into source_member_to_stub during
+			// stub creation.  Identity-map lookup must always succeed here.
+			// Slice 5: the fallback name scan has been removed.
+
 			// Slice 3: try identity-map lookup first (source-member → instantiated stub).
 			{
 				const void* src_key = astNodeKey(deferred.identity.original_member_node);
@@ -6633,39 +6638,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			// Fallback: scan by name (legacy path, loud warning so we notice misses).
-			if (!target_func && !target_ctor && !target_dtor) {
-				FLASH_LOG(Templates, Warning, "Slice 3: identity-map miss for '",
-				          deferred.identity.original_lookup_name, "' in ", instantiated_name,
-				          "; falling back to name scan");
-				for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-					if (deferred.identity.kind == DeferredMemberIdentity::Kind::Constructor && mem_func.is_constructor) {
-						if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
-							auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
-							if (ctor.name() == deferred.identity.original_lookup_name) {
-								target_ctor = &ctor;
-								break;
-							}
-						}
-					} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Destructor && mem_func.is_destructor) {
-						if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
-							target_dtor = &mem_func.function_declaration.as<DestructorDeclarationNode>();
-							break;
-						}
-					} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Function) {
-						if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-							auto& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-							const auto& decl = func.decl_node();
-							if (decl.identifier_token().value() == deferred.identity.original_lookup_name &&
-							    mem_func.is_const() == deferred.identity.is_const_method) {
-								target_func = &func;
-								break;
-							}
-						}
-					}
-				}
-			}
-			
 			if (!target_func && !target_ctor && !target_dtor) {
 				FLASH_LOG(Templates, Error, "Could not find member function ", deferred.identity.original_lookup_name, 
 				          " in instantiated struct ", instantiated_name);
