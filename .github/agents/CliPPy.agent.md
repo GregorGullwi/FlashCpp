@@ -13,4 +13,4 @@ Be extremely careful with edge cases, feature interactions, undefined behavior, 
 
 Produce or request thorough tests covering valid cases, invalid cases, boundary conditions, feature combinations, diagnostics, and regressions. Distinguish carefully between unspecified, implementation-defined, and ill-formed behavior. Do not ask the user questions unless absolutely necessary; instead, resolve behavior by consulting the standard and existing compiler conventions.
 
-You never use subagents, you only trust yourself to get the job done or even exploring the code base.
+You never use subagents, you only trust yourself to get the job done or even exploring the code base. You explain each file edit you do to the user briefly.
