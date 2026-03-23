@@ -844,7 +844,11 @@ namespace {
 		}
 
 		const auto& params = func_node->parameter_nodes();
-		if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+		if (params.empty() || !params[0].is<DeclarationNode>()) {
+			return false;
+		}
+
+		if (computeMinRequiredArgs(params) > 1) {
 			return false;
 		}
 

@@ -1755,6 +1755,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Parameter is not a reference - pass the value directly
 					call_op.args.push_back(toTypedValue(rhsExprResult));
 				}
+				fillInDefaultArguments(call_op, func_decl.parameter_nodes(), 1);
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 

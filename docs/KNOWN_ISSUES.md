@@ -120,18 +120,6 @@ also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
 
-## Assignment operator finders: `params.size() == 1` guard not relaxed
-
-`findCopyAssignmentOperator()` and `findMoveAssignmentOperator()` in
-`AstNodeTypes.cpp` still use `params.size() == 1` in their slow-path loops.
-Assignment operators with trailing default arguments (e.g.
-`Foo& operator=(const Foo&, int = 0)`) are extremely rare in practice and are
-not recognized by these helpers. If such operators are ever used, the slow path
-will fail to match and the operator will not be found. The same applies to the
-assignment operator refinement in `Parser_Decl_StructEnum.cpp:2806`.
-(Note: the deleted assignment operator detection at `Parser_Decl_StructEnum.cpp:2155`
-was fixed to use `computeMinRequiredArgs(params) <= 1` in the post-Phase-18 cleanup.)
-
 ## Boolean negation + struct member access in chained if-statements
 
 A pre-existing codegen bug causes incorrect results when `!obj.bool_member` is
