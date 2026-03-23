@@ -664,10 +664,20 @@ private:
 	// Helper to find a conversion operator in a struct that converts to the target type
 	// Returns nullptr if no suitable conversion operator is found
 	// Searches the struct and its base classes for "operator target_type()"
+	// source_is_const: true when the source object is const-qualified; prefers const overloads and
+	//                  refuses to call non-const ones when set.
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
 		Type target_type,
-		TypeIndex target_type_index = TypeIndex{}) const;
+		TypeIndex target_type_index = TypeIndex{},
+		bool source_is_const = false) const;
+
+	// Determine whether an initializer expression node yields a const-qualified object.
+	// Returns true for:
+	//  - a ConstCastNode whose target type has the 'const' CV-qualifier
+	//  - an IdentifierNode that resolves (in symbol_table) to a const-typed VariableDeclarationNode
+	// Used to pick the correct const/non-const conversion-operator overload.
+	bool isExprConstQualified(const ASTNode& expr_node) const;
 
 	// Emit a call to a user-defined conversion operator and return the converted ExprResult.
 	// Returns nullopt if conv_op has no valid FunctionDeclarationNode (should not happen in practice).

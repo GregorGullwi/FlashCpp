@@ -1413,7 +1413,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										if (source_type_index.is_valid() && source_type_index.value < gTypeInfo.size()) {
 											const TypeInfo& src_info = gTypeInfo[source_type_index.value];
 											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info.getStructInfo(), type_node.type(), type_node.type_index());
+												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
+												isExprConstQualified(init_node));
 											if (conv_op) {
 												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
 													StringTable::getStringView(src_info.name()), " to target type");
@@ -1432,7 +1433,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < gTypeInfo.size()) {
 								const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
 								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info.getStructInfo(), type_node.type(), type_node.type_index());
+									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
+									isExprConstQualified(init_node));
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
 										StringTable::getStringView(source_type_info.name()),

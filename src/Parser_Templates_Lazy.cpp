@@ -452,6 +452,8 @@ if (param_decl.has_default_value()) {
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
+	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 
 	if (new_func_ref.get_definition().has_value()) {
 		finalize_function_after_definition(new_func_ref);
@@ -504,7 +506,8 @@ if (param_decl.has_default_value()) {
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
-				if (member_func.getName() == effectiveLookupName(lazy_info.identity)) {
+				if (member_func.getName() == effectiveLookupName(lazy_info.identity) &&
+				    member_func.is_const() == lazy_info.identity.is_const_method) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
 					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");

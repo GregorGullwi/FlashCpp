@@ -3436,6 +3436,44 @@ const StructMember*& out_member) const {
 }
 
 
+// Determine whether an expression node yields a const-qualified object.
+// Returns true for:
+//   - a ConstCastNode whose target type has the 'const' CV-qualifier
+//   - an IdentifierNode resolved (via symbol_table) to a const-typed VariableDeclarationNode
+bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
+	if (!expr_node.is<ExpressionNode>()) return false;
+	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+
+	// const_cast<const T&>(x) — target type is const
+	if (std::holds_alternative<ConstCastNode>(expr)) {
+		const ConstCastNode& cc = std::get<ConstCastNode>(expr);
+		if (cc.target_type().is<TypeSpecifierNode>()) {
+			return cc.target_type().as<TypeSpecifierNode>().is_const();
+		}
+		return false;
+	}
+
+	// IdentifierNode — look up in symbol_table, check if the declaration is const
+	if (std::holds_alternative<IdentifierNode>(expr)) {
+		const IdentifierNode& id = std::get<IdentifierNode>(expr);
+		const auto sym = symbol_table.lookup(id.name());
+		if (!sym.has_value()) return false;
+		if (sym->is<VariableDeclarationNode>()) {
+			const auto& var_decl = sym->as<VariableDeclarationNode>();
+			const auto& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			return type_spec.is_const();
+		}
+		if (sym->is<DeclarationNode>()) {
+			const auto& decl = sym->as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				return decl.type_node().as<TypeSpecifierNode>().is_const();
+			}
+		}
+		return false;
+	}
+
+	return false;
+}
 
 // Helper to find a conversion operator in a struct that converts to the target type
 // Returns nullptr if no suitable conversion operator is found
@@ -3443,7 +3481,8 @@ const StructMember*& out_member) const {
 const StructMemberFunction* AstToIr::findConversionOperator(
 	const StructTypeInfo* struct_info,
 	Type target_type,
-	TypeIndex target_type_index) const {
+	TypeIndex target_type_index,
+	bool source_is_const) const {
 
 	if (!struct_info) return nullptr;
 
@@ -3465,19 +3504,35 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	std::string_view operator_name = sb.commit();
 	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
 
-	// Search member functions for the conversion operator
+	// CV-aware lookup:
+	//   Pass 1 – exact match: const source → const op; non-const source → non-const op.
+	//   Pass 2 – fallback: non-const source may call const op; const source cannot call non-const op.
+	const StructMemberFunction* fallback_const_op = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.getName() == operator_name_handle) {
-			return &member_func;
+			if (source_is_const) {
+				// const source: only const operators are viable; pick first const match
+				if (member_func.is_const()) return &member_func;
+			} else {
+				// non-const source: prefer non-const; remember const as fallback
+				if (!member_func.is_const()) return &member_func;
+				if (!fallback_const_op) fallback_const_op = &member_func;
+			}
 		}
 	}
+	// Fallback: non-const source with only const overloads
+	if (fallback_const_op) return fallback_const_op;
 
 	// WORKAROUND: Also look for "operator user_defined" which may be a conversion operator
 	// that was created with a typedef that wasn't resolved during template instantiation
 	// Check if the return type matches the target type
 	StringHandle user_defined_handle = StringTable::getOrInternStringHandle("operator user_defined");
+	const StructMemberFunction* fallback_user_defined = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.getName() == user_defined_handle) {
+			// CV qualification check (same logic as primary search above)
+			if (source_is_const && !member_func.is_const()) continue;
+
 			// Check if this function's return type matches our target
 			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -3509,9 +3564,13 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					}
 
 					if (resolved_type == target_type) {
-						// Found a match!
-						FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
-						return &member_func;
+						// Prefer non-const match for non-const source; const for const source
+						if (source_is_const ? member_func.is_const() : !member_func.is_const()) {
+							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
+							return &member_func;
+						}
+						if (!fallback_user_defined) fallback_user_defined = &member_func;
+						continue;
 					}
 
 					// FALLBACK: If the return type is still UserDefined (couldn't resolve via gTypeInfo),
@@ -3524,9 +3583,12 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
-							FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-							type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
-							return &member_func;
+							if (source_is_const ? member_func.is_const() : !member_func.is_const()) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
+								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								return &member_func;
+							}
+							if (!fallback_user_defined) fallback_user_defined = &member_func;
 						}
 						// Note: We intentionally don't have a permissive fallback here because it would match
 						// conversion operators from pattern templates that don't have generated code, leading
@@ -3536,7 +3598,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			}
 		}
 	}
-
+	if (fallback_user_defined) return fallback_user_defined;
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.type_index.value < gTypeInfo.size()) {
@@ -3544,7 +3606,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			if (base_type_info.isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(
-					base_struct_info, target_type, target_type_index);
+					base_struct_info, target_type, target_type_index, source_is_const);
 				if (result) return result;
 			}
 		}
@@ -3578,14 +3640,15 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		const auto& init_func = conv_op.function_decl.as<FunctionDeclarationNode>();
 		if (!init_func.get_definition().has_value()) {
 			StringHandle canonical_name = conv_op.getName();
+			const bool conv_is_const = conv_op.is_const();
 			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-					source_type_info.name(), canonical_name)) {
+					source_type_info.name(), canonical_name, conv_is_const)) {
 				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-					source_type_info.name(), canonical_name);
+					source_type_info.name(), canonical_name, conv_is_const);
 				if (lazy_info_opt.has_value()) {
 					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
 					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-						source_type_info.name(), canonical_name);
+						source_type_info.name(), canonical_name, conv_is_const);
 					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
 					if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 						DeferredMemberFunctionInfo deferred_info;

@@ -5289,6 +5289,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Copy function properties but DO NOT set definition. Delay mangling until
 				// a body/finalized signature exists to avoid caching stale self-type encodings.
 				copy_function_properties(new_func_ref, func_decl);
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
 
 				// Add the signature-only function to the instantiated struct
 				if (mem_func.is_operator_overload()) {
@@ -5526,6 +5527,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Copy function specifiers from original
 				copy_function_properties(new_func_ref, func_decl);
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				if (new_func_ref.get_definition().has_value()) {
 					finalize_function_after_definition(new_func_ref);
 				}
@@ -5675,6 +5677,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Copy other function properties
 				copy_function_properties(new_func_ref, func_decl);
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				if (new_func_ref.get_definition().has_value()) {
 					finalize_function_after_definition(new_func_ref);
 				}
@@ -6007,6 +6010,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy function specifiers
 				copy_function_properties(new_func_ref, func_decl);
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				if (func_decl.get_definition().has_value())
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())
