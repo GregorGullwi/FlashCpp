@@ -624,7 +624,9 @@
 			return_type_node,
 			param_types,
 			false,  // not variadic
-			lambda_info.closure_type_name
+			lambda_info.closure_type_name,
+			{},     // namespace_path
+			!lambda_info.is_mutable  // const operator() unless mutable lambda
 		);
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
@@ -765,7 +767,9 @@
 			return_type_node,
 			param_types,
 			false,  // not variadic
-			""  // not a member function
+			"",     // not a member function
+			{},     // namespace_path
+			false   // free function, never const
 		);
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
@@ -932,7 +936,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 
 	// Generate mangled name
 	std::string_view mangled = generateMangledNameForCall(
-		invoke_name, return_type_node, param_type_nodes, false, "");
+		invoke_name, return_type_node, param_type_nodes, false, "", {}, false);
 
 	// Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();

@@ -409,7 +409,7 @@ inline void generateItaniumMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
-	bool is_const_method = false
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -830,7 +830,7 @@ inline void generateItaniumMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
-	bool is_const_method = false
+	bool is_const_method
 ) {
 	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;

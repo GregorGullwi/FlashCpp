@@ -566,6 +566,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				auto lazy_info = lazy_registry.getLazyMemberInfoAny(inst_name_handle, member_handle);
 				if (lazy_info.has_value()) {
 					parser_.instantiateLazyMemberFunction(*lazy_info);
+					lazy_registry.markInstantiated(inst_name_handle, member_handle, lazy_info->identity.is_const_method);
 				}
 			}
 			

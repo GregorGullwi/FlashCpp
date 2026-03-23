@@ -451,7 +451,9 @@
 			sig.return_type,
 			sig.param_types,
 			false,
-			""
+			"",   // not a member function
+			{},   // namespace_path
+			false // free function, never const
 		);
 
 		TempVar func_addr_var = var_counter.next();
@@ -2364,7 +2366,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), Type::Bool, TypeIndex{});
+							src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
 								StringTable::getStringView(src_type_info.name()), " to bool");
@@ -2390,7 +2392,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (cond_type_idx.is_valid() && cond_type_idx.value < gTypeInfo.size()) {
 				const TypeInfo& src_type_info = gTypeInfo[cond_type_idx.value];
 				const StructMemberFunction* conv_op = findConversionOperator(
-					src_type_info.getStructInfo(), Type::Bool, TypeIndex{});
+					src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
 				if (conv_op) {
 					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
 						StringTable::getStringView(src_type_info.name()), " to bool");
@@ -2428,7 +2430,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), param_base_type, param_type.type_index());
+							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), false);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
 								StringTable::getStringView(src_type_info.name()), " to parameter type");

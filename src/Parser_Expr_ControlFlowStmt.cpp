@@ -1366,6 +1366,10 @@ ParseResult Parser::parse_lambda_expression() {
     );
     FunctionDeclarationNode& operator_call_func = operator_call_func_node.as<FunctionDeclarationNode>();
 
+    // Non-mutable lambdas have a const operator() per C++20 [expr.prim.lambda.closure] p4
+    operator_call_func.set_is_const_member_function(!is_mutable);
+    operator_call_func.set_is_volatile_member_function(false);
+
     // Add parameters from lambda to operator()
     for (const auto& param : lambda.parameters()) {
         operator_call_func.add_parameter_node(param);
@@ -1380,6 +1384,7 @@ ParseResult Parser::parse_lambda_expression() {
         false,  // not destructor
         OverloadableOperator::Call  // operator kind
     );
+    operator_call_member.cv_qualifier = is_mutable ? CVQualifier::None : CVQualifier::Const;
 
     closure_struct_info->member_functions.push_back(operator_call_member);
 

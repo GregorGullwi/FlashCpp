@@ -414,7 +414,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						return_type_node,
 						arg_types,
 						false,
-						closure_type_name
+						closure_type_name,
+						{},     // namespace_path
+						!current_lambda_context_.is_mutable  // const unless mutable lambda
 					);
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 
@@ -1132,7 +1134,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_base_type, param_type->type_index());
+									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), false);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
@@ -1266,7 +1268,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 						// Look for a conversion operator to the parameter type
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_base_type, param_type->type_index());
+							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), false);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",

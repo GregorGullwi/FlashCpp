@@ -273,7 +273,7 @@
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
 								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, return_type, ret_type_idx);
+									src_struct_info, return_type, ret_type_idx, false);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");
@@ -312,7 +312,7 @@
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, ret_type_idx);
+								source_struct_info, return_type, ret_type_idx, false);
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",

@@ -201,7 +201,9 @@
 					return_type_node,
 					param_types,
 					false,  // not variadic
-					""  // not a member function
+					"",     // not a member function
+					{},     // namespace_path
+					false   // free function, never const
 				);
 
 				call_op.function_name = StringTable::getOrInternStringHandle(mangled);

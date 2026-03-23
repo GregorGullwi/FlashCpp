@@ -239,8 +239,8 @@ private:
 		ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}, bool is_const_method = false);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}, bool is_const_method = false);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
 	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override = "", const std::vector<std::string>& namespace_path = {});
 	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
 	ExprResult generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
@@ -669,8 +669,8 @@ private:
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
 		Type target_type,
-		TypeIndex target_type_index = TypeIndex{},
-		bool source_is_const = false) const;
+		TypeIndex target_type_index,
+		bool source_is_const) const;
 
 	// Determine whether an initializer expression node yields a const-qualified object.
 	// Returns true for:
