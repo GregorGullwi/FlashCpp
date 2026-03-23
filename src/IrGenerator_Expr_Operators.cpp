@@ -1794,7 +1794,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					false, // not variadic
 					struct_name,
 					empty_namespace,
-					Linkage::CPlusPlus
+					Linkage::CPlusPlus,
+					member_func.is_const()
 				);
 
 				// Generate the call to the operator overload
