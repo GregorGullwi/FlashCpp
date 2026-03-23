@@ -3374,14 +3374,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								// Prefer a matching user-defined constructor over aggregate init.
 								// FlashCpp generates implicit default/copy constructors for every struct,
 								// so we check for non-implicit constructors to identify user-defined ones.
-								bool has_user_defined_ctor = false;
-								for (const auto& func : struct_info->member_functions) {
-									if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) continue;
-									if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-										has_user_defined_ctor = true;
-										break;
-									}
-								}
+								bool has_user_defined_ctor = struct_info->hasUserDefinedConstructor();
 								if (has_user_defined_ctor) {
 									ChunkedVector<ASTNode> ctor_args;
 									for (const auto& arg : init_list.initializers()) {
