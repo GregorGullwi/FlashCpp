@@ -602,6 +602,9 @@ private:
 	bool resolveMemberAccessType(const MemberAccessNode& member_access,
 	const StructTypeInfo*& out_struct_info,
 	const StructMember*& out_member) const;
+	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
+	std::optional<bool> getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const;
+	bool isSameTypeXValueSource(const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) const;
 
 	// Helper function to handle assignment using lvalue metadata
 	// Queries LValueInfo::Kind and routes to appropriate store instruction
@@ -842,6 +845,10 @@ private:
 	// Cache parameter reference info by mangled function name to aid call-site lowering
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
+	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
+		const ASTNode& argument,
+		const TypeSpecifierNode* param_type,
+		const Token& token);
 	void fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx);
 
 	// Collected lambdas for deferred generation

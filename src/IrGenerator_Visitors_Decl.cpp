@@ -2699,7 +2699,11 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 		}
 
-		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+		ExpressionContext arg_context = ExpressionContext::Load;
+		if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+			arg_context = ExpressionContext::LValueAddress;
+		}
+		ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 
 		// Apply sema-annotated or standard implicit conversion for this argument.
 		if (param_type) {
@@ -2708,73 +2712,11 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		}
 
 		// argumentIrOperands = [type, size, value]
-		{
-			TypedValue tv;
-
-			// Check if parameter expects a reference and argument is an identifier
-			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
-			std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
-				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-					const auto& arg_decl = symbol->as<DeclarationNode>();
-					const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
-
-					if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
-						// Argument is already a reference - just pass it through
-						tv = toTypedValue(argumentIrOperands);
-					} else {
-						// Argument is a value - take its address
-						TempVar addr_var = var_counter.next();
-						AddressOfOp addr_op;
-						addr_op.result = addr_var;
-						addr_op.operand.type = arg_type.type();
-						addr_op.operand.ir_type = toIrType(arg_type.type());
-						addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
-						addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
-						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
-
-						// Create TypedValue with the address
-						tv.type = arg_type.type();
-						tv.ir_type = toIrType(arg_type.type());
-						tv.size_in_bits = SizeInBits{64};  // Pointer size
-						tv.value = addr_var;
-						tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
-						tv.cv_qualifier = param_type->cv_qualifier();  // Set CV qualifier from parameter
-					}
-				} else {
-					// Not a simple identifier or not found - use as-is
-					tv = toTypedValue(argumentIrOperands);
-				}
-			} else {
-				// Not a reference parameter or not an identifier - use as-is
-				tv = toTypedValue(argumentIrOperands);
-			}
-
-			// If we have parameter type information, use it to set pointer depth and CV qualifiers
-			if (param_type) {
-				tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
-				// For pointer types, also extract CV qualifiers from pointer levels
-				if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
-					// Use CV qualifier from the first pointer level (T* const -> const)
-					// For now, we'll use the main CV qualifier
-					if (!tv.is_reference()) {
-						tv.cv_qualifier = param_type->cv_qualifier();
-					}
-				}
-				// For reference types, use the CV qualifier
-				if (param_type->is_reference() || param_type->is_rvalue_reference()) {
-					tv.cv_qualifier = param_type->cv_qualifier();
-				}
-				// Also update type_index if it's a struct type
-				if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
-					tv.type_index = param_type->type_index();
-				}
-			}
-
-			ctor_op.arguments.push_back(std::move(tv));
-		}
+		ctor_op.arguments.push_back(buildConstructorArgumentValue(
+			argumentIrOperands,
+			argument,
+			param_type,
+			constructorCallNode.called_from()));
 		arg_index++;
 	});
 

@@ -45,14 +45,6 @@ also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
 
-## Boolean negation + struct member access in chained if-statements
-
-A pre-existing codegen bug causes incorrect results when `!obj.bool_member` is
-used in an `if` statement preceding another `if` that reads a different member
-of the same struct. The workaround is to use `int` flags instead of `bool`
-members, or avoid chaining `if (!obj.bool_field)` with subsequent member
-accesses. Observed during copy/move constructor regression testing.
-
 ## Direct member access on prvalue struct temporaries can crash at runtime
 
 Accessing a struct member directly from a prvalue temporary can compile and link

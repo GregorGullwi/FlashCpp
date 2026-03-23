@@ -299,6 +299,107 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	}
 }
 
+TypedValue AstToIr::buildConstructorArgumentValue(
+	const ExprResult& argument_result,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const Token& token) {
+	TypedValue value;
+	bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
+
+	if (param_is_ref &&
+		argument.is<ExpressionNode>() &&
+		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+		const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+		std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+
+		const DeclarationNode* arg_decl = nullptr;
+		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+			arg_decl = &symbol->as<DeclarationNode>();
+		} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+			arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
+		}
+
+		if (arg_decl) {
+			const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+			if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
+				value = toTypedValue(argument_result);
+			} else {
+				TempVar addr_var = var_counter.next();
+				AddressOfOp addr_op;
+				addr_op.result = addr_var;
+				addr_op.operand.type = arg_type.type();
+				addr_op.operand.ir_type = toIrType(arg_type.type());
+				addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
+				addr_op.operand.pointer_depth = PointerDepth{};
+				addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
+
+				value.type = arg_type.type();
+				value.ir_type = toIrType(arg_type.type());
+				value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+				value.value = addr_var;
+				value.ref_qualifier = ReferenceQualifier::LValueReference;
+				value.type_index = arg_type.type_index();
+			}
+		} else {
+			value = toTypedValue(argument_result);
+		}
+	} else {
+		value = toTypedValue(argument_result);
+	}
+
+	if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
+		const TempVar& arg_temp = std::get<TempVar>(argument_result.value);
+		if (auto lvalue_info = getTempVarLValueInfo(arg_temp);
+			lvalue_info.has_value() &&
+			lvalue_info->kind == LValueInfo::Kind::Member &&
+			std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			TempVar address_temp = var_counter.next();
+			AddressOfMemberOp addr_member_op;
+			addr_member_op.result = address_temp;
+			addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
+			addr_member_op.member_offset = lvalue_info->offset;
+			addr_member_op.member_type = argument_result.type;
+			addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
+
+			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
+			TempVarMetadata address_meta = TempVarMetadata::makeReference(
+				argument_result.type,
+				argument_result.size_in_bits,
+				category);
+			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
+			setTempVarMetadata(address_temp, std::move(address_meta));
+
+			value.type = argument_result.type;
+			value.ir_type = argument_result.ir_type;
+			value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+			value.value = address_temp;
+			value.type_index = argument_result.type_index;
+		}
+	}
+
+	if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
+		const TempVar& arg_temp = std::get<TempVar>(argument_result.value);
+		if (isTempVarXValue(arg_temp)) {
+			value.ref_qualifier = ReferenceQualifier::RValueReference;
+		} else if (isTempVarLValue(arg_temp)) {
+			value.ref_qualifier = ReferenceQualifier::LValueReference;
+		}
+	}
+
+	if (param_type) {
+		ReferenceQualifier arg_ref_qualifier = value.ref_qualifier;
+		applyTypeNodeMetadata(value, *param_type);
+		if (arg_ref_qualifier != ReferenceQualifier::None) {
+			value.ref_qualifier = arg_ref_qualifier;
+		}
+	}
+
+	return value;
+}
+
 void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx) {
 	for (size_t i = arg_idx; i < param_nodes.size(); ++i) {
 		if (!param_nodes[i].is<DeclarationNode>()) continue;
