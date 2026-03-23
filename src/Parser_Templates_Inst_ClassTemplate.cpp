@@ -5198,6 +5198,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type, return_type_index
 				);
 
+				// Save the effective lookup name before moving lazy_info, since
+				// effectiveLookupName accesses lazy_info.identity which will be
+				// in a moved-from state after registerLazyMember.
+				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
+
 				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
 				
 				FLASH_LOG(Templates, Debug, "Registered lazy member function: ", 
@@ -5302,7 +5307,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 						mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
-					StringHandle func_name_handle = effectiveLookupName(lazy_info.identity);
+					StringHandle func_name_handle = effective_name;
 					struct_info_ptr->addMemberFunction(
 						func_name_handle,
 						new_func_node,
@@ -5321,7 +5326,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
 					.append("::")
-					.append(effectiveLookupName(lazy_info.identity));
+					.append(effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
 				collectOuterTemplateBindings(template_params, template_args_to_use, outer_binding.param_names, outer_binding.param_args);
