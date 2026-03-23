@@ -342,3 +342,23 @@ If this work is resumed, the best first implementation slice is:
 
 That slice should address the current conversion-operator failures directly while
 keeping the change bounded.
+
+### Slice 6: const/non-const conversion operator overload disambiguation
+
+The current `LazyMemberInstantiationRegistry` uses `"class::func_name"` as the key
+without encoding constness.  When a class template has both `operator T() const` and
+`operator T()`, both map to the same key (`"LazyWrapper$hash::operator int"`), so only
+the last registration is kept and both stubs are materialized from the same
+`LazyMemberFunctionInfo`.
+
+Required changes:
+- Encode constness in the registry key:
+  `"class::func_name"` → `"class::func_name"` (non-const) / `"class::func_name$const"` (const)
+- Update `registerLazyMember`, `needsInstantiation`, `getLazyMemberInfo`, and
+  `markInstantiated` in `TemplateRegistry_Lazy.h` to accept or derive a `bool is_const`
+  flag from `DeferredMemberIdentity::is_const_method`.
+- Update all call sites that currently pass only class name + function name.
+- Update `emitConversionOperatorCall` in `IrGenerator_MemberAccess.cpp` to pass
+  `conv_op.is_const()` to all registry lookups.
+- Update stub-creation in `Parser_Templates_Inst_ClassTemplate.cpp` to register lazy stubs
+  under the const-aware key.
