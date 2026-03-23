@@ -2118,7 +2118,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
 
-			// Propagate noexcept specifier to the function declaration node
+			// Propagate cv-qualifiers and noexcept to the function declaration node immediately
+			// so that all downstream code (codegen, mangling, propagateAstProperties) sees
+			// the correct flags without requiring a separate post-registration patch.
+			member_func_ref.set_is_const_member_function(member_quals.is_const());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)

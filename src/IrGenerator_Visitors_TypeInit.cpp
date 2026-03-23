@@ -1178,7 +1178,8 @@
 						false,  // not variadic
 						class_name,  // struct_name
 						empty_namespace_path,
-						Linkage::CPlusPlus
+						Linkage::CPlusPlus,
+						false  // constructors are never const
 					));
 				} else {
 					assert(false && "Unhandled name mangling type");

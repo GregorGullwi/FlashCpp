@@ -5009,7 +5009,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return specs_result;
 				}
 
-				// Propagate noexcept specifier to the function declaration node
+				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
+				member_func_ref.set_is_const_member_function(member_quals.is_const());
 				if (func_specs.is_noexcept) {
 					member_func_ref.set_noexcept(true);
 					if (func_specs.noexcept_expr)
@@ -5376,7 +5377,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return specs_result;
 			}
 
-			// Propagate noexcept specifier to the function declaration node
+			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
+			member_func_ref.set_is_const_member_function(member_quals.is_const());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)

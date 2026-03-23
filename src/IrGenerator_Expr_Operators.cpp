@@ -1318,7 +1318,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								false, // not variadic
 								struct_name,
 								empty_namespace,
-								Linkage::CPlusPlus
+								Linkage::CPlusPlus,
+								member_func.is_const()
 							);
 
 							TempVar result_var = var_counter.next();
@@ -1688,7 +1689,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					false, // not variadic
 					"",    // no struct (free function)
 					namespace_path,
-					Linkage::CPlusPlus
+					Linkage::CPlusPlus,
+					false  // free function, never const
 				);
 
 				TempVar result_var = var_counter.next();

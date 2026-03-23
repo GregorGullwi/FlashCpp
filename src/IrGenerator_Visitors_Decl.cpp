@@ -1322,7 +1322,7 @@
 				TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 					ctor_function_name, return_type, node.parameter_nodes(),
-					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false));
 			} else {
 				assert(false && "Unhandled name mangling type");
 			}

@@ -960,7 +960,8 @@
 							false,
 							struct_name,
 							empty_namespace,
-							Linkage::CPlusPlus
+							Linkage::CPlusPlus,
+							func_decl.is_const_member_function()
 						);
 
 						// Generate the call to operator->()

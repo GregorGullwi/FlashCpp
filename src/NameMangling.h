@@ -859,11 +859,11 @@ inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus,
-	bool is_const_method = false
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method
 ) {
 	StringBuilder builder;
 	
@@ -963,11 +963,11 @@ inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus,
-	bool is_const_method = false
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method
 ) {
 	StringBuilder builder;
 	
@@ -1095,7 +1095,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, false);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1169,7 +1169,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, false);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1180,8 +1180,8 @@ inline MangledName generateMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string>& namespace_path,
-	Linkage linkage = Linkage::CPlusPlus,
-	bool is_const_method = false
+	Linkage linkage,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
@@ -1199,8 +1199,8 @@ inline MangledName generateMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string>& namespace_path,
-	Linkage linkage = Linkage::CPlusPlus,
-	bool is_const_method = false
+	Linkage linkage,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
@@ -1390,7 +1390,7 @@ inline MangledName generateMangledNameFromNode(
 		
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
-		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
 		// Use MSVC-style constructor mangling
 		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
@@ -1424,7 +1424,7 @@ inline MangledName generateMangledNameFromNode(
 		
 		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},
-		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
 		// Use MSVC-style destructor mangling
 		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);

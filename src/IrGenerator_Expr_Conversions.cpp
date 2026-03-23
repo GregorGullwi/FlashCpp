@@ -515,7 +515,8 @@
 								false, // not variadic
 								struct_name,
 								empty_namespace,
-								Linkage::CPlusPlus
+								Linkage::CPlusPlus,
+								member_func.is_const()
 							);
 
 							// Generate the call
@@ -1703,7 +1704,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	auto op_func_name = StringBuilder().append("operator").append(overloadableOperatorToString(op_kind)).commit();
 	auto mangled_name = NameMangling::generateMangledName(
 		op_func_name, return_type, param_types, false,
-		struct_name, empty_namespace, Linkage::CPlusPlus
+		struct_name, empty_namespace, Linkage::CPlusPlus,
+		member_func.is_const()
 	);
 
 	TempVar ret_var = var_counter.next();
