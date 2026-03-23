@@ -53,7 +53,16 @@ public:
 		if (is_const) key_builder.append("$const");
 		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
-		return lazy_members_.find(handle) != lazy_members_.end();
+		if (lazy_members_.find(handle) != lazy_members_.end()) return true;
+		// Fallback: old call sites pass is_const=false; if no plain key exists, also try
+		// the $const key so that const-only methods (no non-const overload) are still found.
+		if (!is_const) {
+			StringBuilder const_key_builder;
+			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
+			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
+			return lazy_members_.find(const_handle) != lazy_members_.end();
+		}
+		return false;
 	}
 	
 	// Get lazy member info for instantiation
@@ -68,6 +77,16 @@ public:
 		if (it != lazy_members_.end()) {
 			return it->second;
 		}
+		// Fallback: old call sites pass is_const=false; check $const key for const-only methods.
+		if (!is_const) {
+			StringBuilder const_key_builder;
+			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
+			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
+			auto const_it = lazy_members_.find(const_handle);
+			if (const_it != lazy_members_.end()) {
+				return const_it->second;
+			}
+		}
 		return std::nullopt;
 	}
 	
@@ -79,7 +98,18 @@ public:
 		if (is_const) key_builder.append("$const");
 		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
-		lazy_members_.erase(handle);
+		size_t erased = lazy_members_.erase(handle);
+		// Fallback: old call sites pass is_const=false; if the plain key was not present
+		// (const-only method), also erase the $const entry.
+		// When BOTH const and non-const overloads exist, the plain key IS present and is
+		// erased above; the $const key must NOT be touched here so the const body can still
+		// be generated later.
+		if (!is_const && erased == 0) {
+			StringBuilder const_key_builder;
+			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
+			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
+			lazy_members_.erase(const_handle);
+		}
 	}
 	
 	// Clear all lazy members (for testing)

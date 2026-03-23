@@ -1281,7 +1281,8 @@
 						param_types,
 						func_for_mangling->is_variadic(),
 						struct_name_view,
-						namespace_for_mangling
+						namespace_for_mangling,
+						func_for_mangling->is_const_member_function()
 					);
 					function_name = StringTable::getOrInternStringHandle(mangled);
 				}

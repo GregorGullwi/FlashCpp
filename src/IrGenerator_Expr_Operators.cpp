@@ -2031,7 +2031,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								resolved_return_type_node,
 								param_types,
 								false, // not variadic
-								StringTable::getStringView(type_info.name())
+								StringTable::getStringView(type_info.name()),
+								{}, // namespace_path
+								func_decl.is_const_member_function()
 							);
 
 							// Create the call operation
@@ -2921,12 +2923,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 	}
 
-	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path) {
-		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path).view();
+	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method) {
+		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method).view();
 	}
 
-	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path) {
-		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path).view();
+	std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method) {
+		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method).view();
 	}
 
 	std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path) {
@@ -2980,14 +2982,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TypeSpecifierNode resolved_return_type_copy = return_type;
 					resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
 					return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
-						func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
+						func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+						func_node.is_const_member_function()).view();
 				}
 			}
 		}
 
 		// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
+			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+			func_node.is_const_member_function()).view();
 	}
 
 	std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
