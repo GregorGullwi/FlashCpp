@@ -53,18 +53,15 @@ public:
 		if (is_const) key_builder.append("$const");
 		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
-		if (lazy_members_.find(handle) != lazy_members_.end()) return true;
-		// Fallback: old call sites pass is_const=false; if no plain key exists, also try
-		// the $const key so that const-only methods (no non-const overload) are still found.
-		if (!is_const) {
-			StringBuilder const_key_builder;
-			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
-			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
-			return lazy_members_.find(const_handle) != lazy_members_.end();
-		}
-		return false;
+		return lazy_members_.find(handle) != lazy_members_.end();
 	}
-	
+
+	// Check either the non-const or const variant — for call sites that don't yet know is_const.
+	bool needsInstantiationAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		return needsInstantiation(instantiated_class_name, member_function_name, false)
+		    || needsInstantiation(instantiated_class_name, member_function_name, true);
+	}
+
 	// Get lazy member info for instantiation
 	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
@@ -77,19 +74,17 @@ public:
 		if (it != lazy_members_.end()) {
 			return it->second;
 		}
-		// Fallback: old call sites pass is_const=false; check $const key for const-only methods.
-		if (!is_const) {
-			StringBuilder const_key_builder;
-			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
-			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
-			auto const_it = lazy_members_.find(const_handle);
-			if (const_it != lazy_members_.end()) {
-				return const_it->second;
-			}
-		}
 		return std::nullopt;
 	}
-	
+
+	// Get lazy member info without knowing is_const — tries non-const first, then const.
+	// For call sites that haven't yet determined which overload they need.
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfoAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		auto info = getLazyMemberInfo(instantiated_class_name, member_function_name, false);
+		if (!info) info = getLazyMemberInfo(instantiated_class_name, member_function_name, true);
+		return info;
+	}
+
 	// Mark a member function as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
@@ -98,18 +93,7 @@ public:
 		if (is_const) key_builder.append("$const");
 		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
-		size_t erased = lazy_members_.erase(handle);
-		// Fallback: old call sites pass is_const=false; if the plain key was not present
-		// (const-only method), also erase the $const entry.
-		// When BOTH const and non-const overloads exist, the plain key IS present and is
-		// erased above; the $const key must NOT be touched here so the const body can still
-		// be generated later.
-		if (!is_const && erased == 0) {
-			StringBuilder const_key_builder;
-			const_key_builder.append(instantiated_class_name).append("::").append(member_function_name).append("$const");
-			auto const_handle = StringTable::getOrInternStringHandle(const_key_builder.commit());
-			lazy_members_.erase(const_handle);
-		}
+		lazy_members_.erase(handle);
 	}
 	
 	// Clear all lazy members (for testing)

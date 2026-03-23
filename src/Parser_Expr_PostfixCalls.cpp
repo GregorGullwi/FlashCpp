@@ -815,14 +815,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						auto class_type_it = gTypesByName.find(class_name_handle);
 						if (class_type_it != gTypesByName.end() && class_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = final_identifier.handle();
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, member_name_handle);
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, member_name_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, member_name_handle);
 								if (lazy_info_opt.has_value()) {
 									auto instantiated_func = instantiateLazyMemberFunction(*lazy_info_opt);
 									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 										qualified_symbol = instantiated_func;
 										decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
-										LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle);
+										LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, member_name_handle, lazy_info_opt->identity.is_const_method);
 									}
 								}
 							}
@@ -1375,11 +1375,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 					
 					// Check if this function needs lazy instantiation
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, func_name_handle)) {
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, func_name_handle)) {
 						FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
 						
 						// Get the lazy member info
-						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, func_name_handle);
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, func_name_handle);
 						if (lazy_info_opt.has_value()) {
 							const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
 							
@@ -1393,7 +1393,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							instantiating_lazy_member_ = false;
 							
 							// Mark as instantiated
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle);
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle, lazy_info.identity.is_const_method);
 							
 							FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
 						}

@@ -2122,6 +2122,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// so that all downstream code (codegen, mangling, propagateAstProperties) sees
 			// the correct flags without requiring a separate post-registration patch.
 			member_func_ref.set_is_const_member_function(member_quals.is_const());
+			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)
@@ -2813,8 +2814,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// propagateAstProperties can derive cv_qualifier automatically.
 			{
 				ASTNode fn_node = func_decl.function_declaration;
-				if (auto* fn = get_function_decl_node_mut(fn_node))
+				if (auto* fn = get_function_decl_node_mut(fn_node)) {
 					fn->set_is_const_member_function(func_decl.is_const());
+					fn->set_is_volatile_member_function(func_decl.is_volatile());
+				}
 			}
 			// Operator overload
 			struct_info->addOperatorOverload(
@@ -2858,12 +2861,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				continue;
 			}
 
-			// Set is_const_member_function on the node before registering so
+			// Set is_const/volatile_member_function on the node before registering so
 			// propagateAstProperties can derive cv_qualifier automatically.
 			{
 				ASTNode fn_node = func_decl.function_declaration;
-				if (auto* fn = get_function_decl_node_mut(fn_node))
+				if (auto* fn = get_function_decl_node_mut(fn_node)) {
 					fn->set_is_const_member_function(func_decl.is_const());
+					fn->set_is_volatile_member_function(func_decl.is_volatile());
+				}
 			}
 			// Add member function to struct type info
 			struct_info->addMemberFunction(

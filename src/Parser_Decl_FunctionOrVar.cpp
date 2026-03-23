@@ -474,9 +474,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			FLASH_LOG(Parser, Debug, "No matching in-class declaration for '", class_name.view(), "::", function_name_token.value(), 
 			          "' - creating new member function entry");
 			
-			// Note: const qualification is handled by the member function's StructMemberFunction entry
-			// Set is_const_member_function on the node so propagateAstProperties derives cv_qualifier.
+			// Note: const/volatile qualification is handled by the member function's StructMemberFunction entry
+			// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
 			func_ref.set_is_const_member_function(member_quals.is_const());
+			func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
 				AccessSpecifier::Public,
 				/*is_virtual=*/false,

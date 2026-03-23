@@ -212,13 +212,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			}
 			if (!ctor->get_definition().has_value() && parser_) {
 				StringHandle ctor_name = ctor->name();
-				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name)) {
-					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name);
+				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name, false)) {
+					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name, false);
 					if (lazy_info_opt.has_value()) {
 						auto instantiated_ctor = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
 						if (instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
 							ctor = &instantiated_ctor->as<ConstructorDeclarationNode>();
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name);
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name, false);
 						}
 					}
 				}

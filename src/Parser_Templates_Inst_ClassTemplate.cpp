@@ -1534,6 +1534,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				copy_function_properties(new_func_ref, orig_func);
 				// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (orig_func.get_definition().has_value()) {
 					new_func_ref.set_definition(*orig_func.get_definition());
 				}
@@ -5294,6 +5295,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// a body/finalized signature exists to avoid caching stale self-type encodings.
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 
 				// Add the signature-only function to the instantiated struct
 				if (mem_func.is_operator_overload()) {
@@ -5529,6 +5531,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Copy function specifiers from original
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (new_func_ref.get_definition().has_value()) {
 					finalize_function_after_definition(new_func_ref);
 				}
@@ -5676,6 +5679,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Copy other function properties
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (new_func_ref.get_definition().has_value()) {
 					finalize_function_after_definition(new_func_ref);
 				}
@@ -6006,6 +6010,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Copy function specifiers
 				copy_function_properties(new_func_ref, func_decl);
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
+				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (func_decl.get_definition().has_value())
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())

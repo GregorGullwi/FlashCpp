@@ -415,10 +415,10 @@
 						const auto& func_call = std::get<FunctionCallNode>(expr);
 						StringHandle func_name_handle = func_call.function_declaration().identifier_token().handle();
 
-						if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_info->name, func_name_handle)) {
-							if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_info->name, func_name_handle)) {
+						if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_info->name, func_name_handle)) {
+							if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_info->name, func_name_handle)) {
 								parser_->instantiateLazyMemberFunction(*lazy_info);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_info->name, func_name_handle);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_info->name, func_name_handle, lazy_info->identity.is_const_method);
 							}
 						}
 

@@ -837,11 +837,11 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						if (!matched_func_decl && parser_) {
 							StringHandle struct_name_handle = direct_type_info->name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name_handle, member_handle)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_name_handle, member_handle);
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_name_handle, member_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_name_handle, member_handle);
 								if (lazy_info_opt.has_value()) {
 									auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle);
+									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
 									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 										const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
 										if (fd.parameter_nodes().size() == direct_expected_param_count) {

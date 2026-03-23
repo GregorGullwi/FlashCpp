@@ -454,6 +454,7 @@ if (param_decl.has_default_value()) {
 	copy_function_properties(new_func_ref, func_decl);
 	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
+	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
 
 	if (new_func_ref.get_definition().has_value()) {
 		finalize_function_after_definition(new_func_ref);

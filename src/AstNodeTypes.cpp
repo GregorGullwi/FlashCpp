@@ -698,10 +698,16 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
     if (const auto* fn = get_function_decl_node(mf.function_decl)) {
         mf.is_noexcept = fn->is_noexcept();
-        // Auto-derive cv_qualifier from the stored is_const_member_function_ flag.
-        // All parse and instantiation paths must call set_is_const_member_function()
-        // on the FunctionDeclarationNode before calling addMemberFunction / addOperatorOverload.
-        mf.cv_qualifier = fn->is_const_member_function() ? CVQualifier::Const : CVQualifier::None;
+        // Auto-derive cv_qualifier from the stored const/volatile member function flags.
+        // All parse and instantiation paths must call set_is_const_member_function() and
+        // set_is_volatile_member_function() on the FunctionDeclarationNode before calling
+        // addMemberFunction / addOperatorOverload.
+        const bool is_c = fn->is_const_member_function();
+        const bool is_v = fn->is_volatile_member_function();
+        if (is_c && is_v) mf.cv_qualifier = CVQualifier::ConstVolatile;
+        else if (is_c) mf.cv_qualifier = CVQualifier::Const;
+        else if (is_v) mf.cv_qualifier = CVQualifier::Volatile;
+        else mf.cv_qualifier = CVQualifier::None;
     } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
         const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
         mf.is_noexcept = ctor.is_noexcept();

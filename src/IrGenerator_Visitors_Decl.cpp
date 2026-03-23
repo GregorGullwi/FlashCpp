@@ -1022,7 +1022,7 @@
 							// deferred lazy instantiation so the body gets generated.
 							if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
 								StringHandle member_handle = fn.decl_node().identifier_token().handle();
-								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle)) {
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, fn.is_const_member_function())) {
 									DeferredMemberFunctionInfo deferred_info;
 									deferred_info.struct_name = current_struct_name_;
 									deferred_info.function_node = func_decl;

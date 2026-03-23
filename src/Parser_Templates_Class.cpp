@@ -2196,6 +2196,7 @@ ParseResult Parser::parse_template_declaration() {
 						StringHandle func_name_handle = decl_node.identifier_token().handle();
 						// Set is_const_member_function on the node so propagateAstProperties derives cv_qualifier.
 						member_func_ref.set_is_const_member_function(member_quals.is_const());
+						member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
 							current_access,
 							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
@@ -5011,6 +5012,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
 				member_func_ref.set_is_const_member_function(member_quals.is_const());
+				member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 				if (func_specs.is_noexcept) {
 					member_func_ref.set_noexcept(true);
 					if (func_specs.noexcept_expr)
@@ -5379,6 +5381,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
 			member_func_ref.set_is_const_member_function(member_quals.is_const());
+			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)
