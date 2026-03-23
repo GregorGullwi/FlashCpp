@@ -2365,8 +2365,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					TypeIndex source_type_idx = from_desc.type_index;
 					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
+							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
+							src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
 								StringTable::getStringView(src_type_info.name()), " to bool");
@@ -2429,8 +2431,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					TypeIndex source_type_idx = from_desc.type_index;
 					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
+							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), false);
+							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
 								StringTable::getStringView(src_type_info.name()), " to parameter type");

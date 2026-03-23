@@ -272,8 +272,10 @@
 								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
 								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
+									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, return_type, ret_type_idx, false);
+									src_struct_info, return_type, ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");

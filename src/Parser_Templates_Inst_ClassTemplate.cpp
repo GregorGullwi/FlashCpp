@@ -28,11 +28,8 @@ static StringHandle computeInstantiatedLookupName(
 				// Try primitive type first
 				std::string_view type_name = getTypeName(substituted_return_type);
 				if (!type_name.empty()) {
-					std::string canonical;
-					canonical.reserve(9 + type_name.size());
-					canonical = "operator ";
-					canonical += type_name;
-					return StringTable::getOrInternStringHandle(canonical);
+					return StringTable::getOrInternStringHandle(
+						StringBuilder().append("operator ").append(type_name).commit());
 				}
 				// User-defined type (struct/enum)
 				if (substituted_return_type == Type::Struct && substituted_return_type_index.is_valid()
@@ -40,11 +37,8 @@ static StringHandle computeInstantiatedLookupName(
 					std::string_view udt_name = StringTable::getStringView(
 						gTypeInfo[substituted_return_type_index.value].name());
 					if (!udt_name.empty()) {
-						std::string canonical;
-						canonical.reserve(9 + udt_name.size());
-						canonical = "operator ";
-						canonical += udt_name;
-						return StringTable::getOrInternStringHandle(canonical);
+						return StringTable::getOrInternStringHandle(
+							StringBuilder().append("operator ").append(udt_name).commit());
 					}
 				}
 			}

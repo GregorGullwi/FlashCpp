@@ -651,7 +651,8 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -663,6 +664,7 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
+		if (is_const_method) output += 'K';
 		
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -741,7 +743,8 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -753,6 +756,7 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
+		if (is_const_method) output += 'K';
 		
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -1062,9 +1066,10 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1076,7 +1081,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
-		                                           non_type_template_args, is_variadic, struct_name, namespace_path);
+		                                           non_type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -1095,7 +1100,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, false);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1106,7 +1111,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path
+	const std::vector<std::string>& namespace_path,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
@@ -1114,7 +1120,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		ns_views.push_back(ns);
 	}
 	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, 
-	                                           non_type_template_args, is_variadic, struct_name, ns_views);
+	                                           non_type_template_args, is_variadic, struct_name, ns_views, is_const_method);
 }
 
 // Generate mangled name with TYPE template arguments (e.g., sum<int>, sum<int, int>)
@@ -1124,9 +1130,10 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1138,7 +1145,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTypeTemplateArgs(builder, func_name, return_type, param_types,
-		                                               type_template_args, is_variadic, struct_name, namespace_path);
+		                                               type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -1169,7 +1176,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, false);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)

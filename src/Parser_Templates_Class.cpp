@@ -4306,7 +4306,7 @@ if (struct_type_info.getStructInfo()) {
 				
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, spec_non_type_args, 
-					func_for_mangling.is_variadic(), "", ns_path);
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
@@ -4324,7 +4324,7 @@ if (struct_type_info.getStructInfo()) {
 				
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
 					func_base_name, return_type, param_types, spec_template_args, 
-					func_for_mangling.is_variadic(), "", ns_path);
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else {
 				// Regular specialization without any template args (shouldn't happen but fallback)
 				specialization_mangled_name = 

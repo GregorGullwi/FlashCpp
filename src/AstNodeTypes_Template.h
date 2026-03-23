@@ -683,6 +683,19 @@ struct StructMemberFunctionDecl {
 	// Convenience accessor for operator symbol string (for logging/mangling)
 	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
 
+	// Return the identifier name from the underlying function declaration AST node.
+	// For regular functions this is the lexical name; for conversion-operator stubs
+	// created during template instantiation this is the original template name.
+	StringHandle getName() const {
+		if (const FunctionDeclarationNode* fn = get_function_decl_node(function_declaration))
+			return fn->decl_node().identifier_token().handle();
+		if (function_declaration.is<ConstructorDeclarationNode>())
+			return function_declaration.as<ConstructorDeclarationNode>().name();
+		if (function_declaration.is<DestructorDeclarationNode>())
+			return function_declaration.as<DestructorDeclarationNode>().name();
+		return StringHandle{};
+	}
+
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
 	                         OverloadableOperator op_kind = OverloadableOperator::None)
 		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),

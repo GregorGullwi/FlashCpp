@@ -1133,8 +1133,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
+									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), false);
+									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
@@ -1267,8 +1269,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						const int param_size = static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
+						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), false);
+							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",

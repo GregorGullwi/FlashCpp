@@ -260,7 +260,8 @@
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 				func_decl.identifier_token().value(), return_type, param_types,
 				node.non_type_template_args(), node.is_variadic(),
-				struct_name_for_function, namespace_for_mangling);
+				struct_name_for_function, namespace_for_mangling,
+				node.is_const_member_function());
 			mangled_name = mangled.view();
 		} else {
 			// Generate mangled name using the FunctionDeclarationNode overload
@@ -1021,7 +1022,7 @@
 							// If the function was skipped (lazy stub - no body yet), queue it for
 							// deferred lazy instantiation so the body gets generated.
 							if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
-								StringHandle member_handle = fn.decl_node().identifier_token().handle();
+								StringHandle member_handle = member_func.getName();
 								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, fn.is_const_member_function())) {
 									DeferredMemberFunctionInfo deferred_info;
 									deferred_info.struct_name = current_struct_name_;
