@@ -27,3 +27,4 @@ x64/
 src/*.pch
 *.result
 a.out
+package-lock.json
