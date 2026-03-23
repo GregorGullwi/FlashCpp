@@ -477,8 +477,7 @@ public:
 		static EvalResult materialize_constructor_object_value(
 			const ConstructorCallNode& ctor_call,
 			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
-			bool ignore_default_initializer_errors = false);
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_array_value(
 			Type element_type,
 			TypeIndex element_type_index,
@@ -520,6 +519,17 @@ public:
 			std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 			std::string_view member_name,
 			EvaluationContext& context);
+		// Attempt to materialize a struct object by finding and invoking a matching
+		// user-defined constructor with the given arguments.  Returns std::nullopt when
+		// no matching constructor exists (caller may fall back to aggregate init).
+		// Returns an EvalResult (success or error) when a constructor candidate was found
+		// and materialization was attempted.
+		static std::optional<EvalResult> try_materialize_struct_from_ctor_args(
+			const StructTypeInfo* struct_info,
+			TypeIndex type_index,
+			const ChunkedVector<ASTNode>& args,
+			EvaluationContext& context,
+			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult evaluate_member_array_subscript(
 			const MemberAccessNode& member_access,
 			size_t index,

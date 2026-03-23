@@ -1421,46 +1421,57 @@ EvalResult Evaluator::evaluate_new_expression(
 			return EvalResult::error("new-expression: type is not a struct/class");
 		}
 
-		// Copy args into a ChunkedVector<ASTNode> (default template params) to satisfy
-		// the existing API (NewExpressionNode uses different ChunkedVector template params).
-		ChunkedVector<ASTNode> args_copy;
-		for (const auto& arg : ctor_args) {
-			args_copy.push_back(arg);
-		}
-
 		EvalResult object_result = EvalResult::from_int(0LL);
 		object_result.object_type_index = type_index;
 
 		if (!ctor_args.empty()) {
-			const ConstructorDeclarationNode* matching_ctor =
-				find_matching_constructor(struct_info, args_copy, context, bindings);
-			if (!matching_ctor) {
+			// Copy args into a ChunkedVector<ASTNode> to satisfy the existing API
+			// (NewExpressionNode uses different ChunkedVector template params).
+			ChunkedVector<ASTNode> args_copy;
+			for (const auto& arg : ctor_args) {
+				args_copy.push_back(arg);
+			}
+			auto ctor_result = try_materialize_struct_from_ctor_args(
+				struct_info, type_index, args_copy, context, bindings);
+			if (!ctor_result.has_value()) {
 				return EvalResult::error("new-expression: no matching constructor found for struct type");
 			}
-			std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
-			auto bind_result = bind_evaluated_arguments(
-				matching_ctor->parameter_nodes(),
-				args_copy,
-				ctor_param_bindings,
-				context,
-				"Invalid parameter in constexpr new-expression",
-				bindings,
-				true);
-			if (!bind_result.success()) return bind_result;
-			auto materialize_result = materialize_members_from_constructor(
-				struct_info, *matching_ctor, ctor_param_bindings,
-				object_result.object_member_bindings, context, false);
-			if (!materialize_result.success()) return materialize_result;
+			if (!ctor_result->success()) {
+				return *ctor_result;
+			}
+			object_result = std::move(*ctor_result);
 		} else {
-			// Default/aggregate initialization: apply default member initializers.
-			for (const auto& member : struct_info->members) {
-				std::string_view mname = StringTable::getStringView(member.getName());
-				if (member.default_initializer.has_value()) {
-					auto def_result = evaluate(*member.default_initializer, context);
-					object_result.object_member_bindings[mname] =
-						def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+			// Default initialization with empty args: new T or new T().
+			// Per C++20, a type with user-defined constructors is not an aggregate,
+			// so we must try the default constructor first and reject aggregate init
+			// if the type has user-defined constructors but no default constructor.
+			bool has_user_defined_ctor = struct_info->hasUserDefinedConstructor();
+			if (has_user_defined_ctor) {
+				ChunkedVector<ASTNode> empty_args;
+				auto ctor_result = try_materialize_struct_from_ctor_args(
+					struct_info, type_index, empty_args, context, bindings);
+				if (ctor_result.has_value()) {
+					if (!ctor_result->success()) {
+						return *ctor_result;
+					}
+					object_result = std::move(*ctor_result);
 				} else {
-					object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+					return EvalResult::error(
+						"new-expression: no matching default constructor for '" +
+						std::string(StringTable::getStringView(struct_info->getName())) +
+						"' (type has user-defined constructors and is not an aggregate)");
+				}
+			} else {
+				// True aggregate or implicit-only constructors: apply default member initializers.
+				for (const auto& member : struct_info->members) {
+					std::string_view mname = StringTable::getStringView(member.getName());
+					if (member.default_initializer.has_value()) {
+						auto def_result = evaluate(*member.default_initializer, context);
+						object_result.object_member_bindings[mname] =
+							def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+					} else {
+						object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+					}
 				}
 			}
 		}
@@ -3359,6 +3370,39 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								// Block-scope `Type o(a, b)` is parsed as InitializerListNode{a, b}.
+								// Prefer a matching user-defined constructor over aggregate init.
+								// FlashCpp generates implicit default/copy constructors for every struct,
+								// so we check for non-implicit constructors to identify user-defined ones.
+								bool has_user_defined_ctor = struct_info->hasUserDefinedConstructor();
+								if (has_user_defined_ctor) {
+									ChunkedVector<ASTNode> ctor_args;
+									for (const auto& arg : init_list.initializers()) {
+										ctor_args.push_back(arg);
+									}
+									auto ctor_result = try_materialize_struct_from_ctor_args(
+										struct_info, type_spec.type_index(), ctor_args, context, &bindings);
+									if (ctor_result.has_value()) {
+										if (!ctor_result->success()) {
+											return *ctor_result;
+										}
+										maybe_set_binding_result_exact_type(*ctor_result, decl, &init_expr, context);
+										declaration_bindings[var_name] = std::move(*ctor_result);
+										return EvalResult::error("Statement executed (not a return)");
+									}
+									// No matching constructor found for a type with user-defined
+									// constructors: report a clear diagnostic instead of silently
+									// trying aggregate initialization, which would produce a confusing
+									// error or silently incorrect binding.
+									// Per C++20, a type with user-defined constructors is not an
+									// aggregate, so aggregate init is ill-formed regardless of
+									// whether the init list is empty or not.
+									return EvalResult::error(
+										"No matching constructor for '" +
+										std::string(StringTable::getStringView(struct_info->getName())) +
+										"' with " + std::to_string(init_list.size()) +
+										" argument(s) in constexpr evaluation");
+								}
 								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 								if (!object_result.success()) {
 									return object_result;

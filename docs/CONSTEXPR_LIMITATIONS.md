@@ -146,7 +146,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-This also includes straightforward local member-array reads such as `obj.data[1]`. Nested local aggregate reads such as `obj.inner.value` work when the outer object is aggregate-initialized (brace-init), but **not** when it is constructor-initialized — see the [Nested Member Access on Local Constructor-Initialized Objects](#-nested-member-access-on-local-constructor-initialized-objects-does-not-work-inside-constexpr-function-bodies) limitation below.
+Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
@@ -576,9 +576,9 @@ static_assert(h() == 10); // ✅ Works
 
 When a ternary expression used as a struct initializer fails for a specific reason (e.g., undefined variable in a branch), the evaluator may produce a generic "requires a struct initializer" error instead of the actual evaluation failure message. This is because the fallback evaluation path in `resolve_constexpr_member_source_from_initializer` (`src/ConstExprEvaluator_Members.cpp:3341-3357`) silently discards the specific error when the result has empty `object_member_bindings`.
 
-### ⚠️ Nested Member Access on Local Constructor-Initialized Objects Does Not Work Inside Constexpr Function Bodies
+### ✅ Nested Member Access on Local Constructor-Initialized Objects (FIXED)
 
-When a local struct variable is constructed via a **user-defined constructor** inside a constexpr function body, **nested member access** (`o.inner.x`) fails. Single-level access (`o.x`) works because it goes through the bindings-aware evaluator (`try_evaluate_bound_member_access`), but two-level nested access (`o.inner.x`) takes a different code path through `evaluate_nested_member_access` → `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`), which only searches the **symbol table** — not `context.local_bindings` where local variables in constexpr function bodies live.
+Nested member access (`o.inner.x`) on local struct variables constructed via a **user-defined constructor** inside a constexpr function body is now supported. Both single-level (`o.x`) and two-level (`o.inner.x`) nested access work correctly.
 
 ```cpp
 struct Inner { int x; int y; };
@@ -589,41 +589,20 @@ struct Outer {
 
 constexpr int test() {
     Outer o(3, 7);
-    return o.inner.x + o.inner.y;  // ⚠️ Fails: "Undefined variable in nested member access: o"
-}
-static_assert(test() == 10);  // ⚠️ Fails
-```
-
-**Note:** This also affects constructor member initializer lists that initialize aggregate sub-structs using constructor parameters (e.g., `: inner{a, b}`), since the nested access is the failing step.
-
-**What works:** Nested member access on **global** constexpr objects (looked up in the symbol table) works fine. Single-level member access on local objects also works. Nested access on local **aggregate-initialized** objects (brace-init, no user-defined constructor) works when the bindings-aware evaluator resolves both levels from `object_member_bindings`.
-
-**Root cause:** `resolve_constexpr_object_source` (`src/ConstExprEvaluator_Members.cpp:3458`) does not check `context.local_bindings`. The fix would involve making that function (or `evaluate_nested_member_access`) also look up the base object in `context.local_bindings` and use its `object_member_bindings` to resolve intermediate members.
-
-**Workaround:** Avoid nested member access on locally-constructed objects. Instead, access the intermediate member first and use single-level access:
-
-```cpp
-constexpr int test_workaround() {
-    Outer o(3, 7);
-    // Instead of o.inner.x, extract inner first:
-    int x = o.inner.x;  // ⚠️ Still fails (same nested access)
-    // True workaround: use aggregate init instead of a user-defined constructor
-    return x;
-}
-```
-
-Or use aggregate structs (no user-defined constructor) where nested access through the bindings-aware path works:
-
-```cpp
-struct Inner { int x; int y; };
-struct Outer { Inner inner; };  // aggregate, no constructor
-
-constexpr int test() {
-    Outer o{{3, 7}};            // aggregate brace-init
     return o.inner.x + o.inner.y;  // ✅ Works
 }
 static_assert(test() == 10);  // ✅ Works
 ```
+
+**Root cause and fix:** At block scope, `Outer o(3, 7)` was parsed as `InitializerListNode{3, 7}` (by `parse_direct_initialization`), which triggered the aggregate-init path. The aggregate path mapped the literal `3` directly to the `inner` struct member, producing a scalar EvalResult without struct type info. When the nested member access `o.inner.x` then looked up `inner`, its EvalResult had no valid `object_type_index`, causing the bindings-aware evaluator to fall through to the non-bindings path, which only searches the symbol table.
+
+The fix (`src/ConstExprEvaluator_Core.cpp`, `evaluate_statement_with_bindings`) detects when an `InitializerListNode` initializer is used for a struct type that has a matching user-defined constructor. In that case, it uses the constructor path (`find_matching_constructor` + `bind_evaluated_arguments` + `materialize_members_from_constructor`), ensuring the member EvalResults have correct struct type info and `object_member_bindings` populated. Per C++20, a type with user-defined constructors is not an aggregate, so when no matching constructor is found the evaluator emits a clear diagnostic instead of falling through to aggregate initialization.
+
+**Also supported:**
+- Assigning a nested struct member to a local variable, then accessing its fields: `Inner inner = o.inner; return inner.x;`
+- Mixed primitive and struct members: `cfg.version + cfg.offset.x`
+- Multiple local constructor-initialized objects in the same function body
+- Constructor bodies with extra computed fields alongside nested struct members
 
 ### ⚠️ Array Access Has Partial Support
 
@@ -953,11 +932,12 @@ The following patterns are supported:
 
 1. ✅ **Arrow member write (`p->member = value`) now supported** — Assignment and compound-assignment through arrow access on heap-allocated structs is now implemented. The LHS assignment handler now recognizes `p->member` forms in addition to plain identifiers, `this->member`, `*ptr`, and `arr[i]`.
 2. ✅ **Use-after-free on arrow access now produces a clear "use after free" diagnostic** — `try_evaluate_bound_member_access` now returns `EvalResult::error("Arrow member access on freed heap pointer: use after free in constant expression")` when the heap entry is freed, rather than silently returning `std::nullopt`.
-3. **Default constructors not invoked for `new MyStruct()`** — When `new MyStruct()` is called with no arguments, default member initializers are applied but a user-defined default constructor body is not executed. Only structs with explicit constructor arguments go through the full constructor materialization path.
+3. ✅ **Default constructors now invoked for `new MyStruct()` on non-aggregate types** *(Fixed)* — When `new MyStruct()` is called with no arguments and the type has user-defined constructors, the evaluator now tries to find and invoke a matching default constructor via `try_materialize_struct_from_ctor_args`. If no default constructor exists, a clear error is emitted instead of silently falling through to aggregate/zero initialization. For true aggregates (no user-defined constructors), the previous default-member-initializer / zero-init behavior is preserved.
 4. **`new`/`delete` not handled in the const-dispatch path** — `evaluate_expression_with_bindings_dispatch` (the const-bindings path) does not handle `NewExpressionNode` / `DeleteExpressionNode`; it falls through to `evaluate()` without bindings, so constructor arguments or delete operands referencing local variables would fail to resolve. In practice, `new`/`delete` with side effects only appears in the mutable path.
 5. **Constructor arguments evaluated via const bindings** — `evaluate_new_expression` receives bindings as `const std::unordered_map*`, so side-effecting constructor arguments like `new int(++x)` would produce an error rather than a wrong result.
 6. **Heap keys permanently interned in `StringTable`** — Each `alloc_heap_slot()` call interns a synthetic key (e.g., `@new_0`) into the global `StringTable`. These persist for the lifetime of the compiler process even after the constexpr evaluation completes.
 7. **Arrow member access on heap structs bypasses type validation** — The heap arrow-access path looks up member names directly in `object_member_bindings` without checking `object_type_index.is_valid()`, unlike the non-heap path.
+8. ⚠️ **`new T` (default-init) zero-initializes aggregate members instead of leaving them indeterminate** — Per the C++ standard, `new T` performs **default initialization**, which for aggregates without default member initializers leaves members with indeterminate values. Reading such members is undefined behavior and must be rejected in constexpr evaluation. FlashCpp currently zero-initializes all members unconditionally in the `new`-expression aggregate path (`evaluate_new_expression`, empty-args `else` branch), which silently accepts programs that the standard considers ill-formed. The correct fix would be to track "indeterminate" state per member and reject reads of uninitialized members during constexpr evaluation. Note that `new T{}` (value-init) and `new T()` (value-init) **should** zero-initialize — only plain `new T` without parentheses/braces should leave members indeterminate. **TODO:** Distinguish default-init (`new T`) from value-init (`new T{}` / `new T()`) in the evaluator and reject reads of indeterminate members.
 
 ### ⚠️ Constexpr Lambdas Have Remaining Capture Limits
 
@@ -1081,7 +1061,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ Multi-statement constexpr free functions (`return`, local vars, `if`, `for`, `while`, `switch`)
 - ✅ Multi-statement constexpr lambdas and callable/operator() bodies in supported shapes
 - ✅ Nested member access (e.g., `obj.inner.value`)
-- ✅ Direct and nested member reads from local aggregate constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`) — note: nested access (`obj.inner.value`) only works for aggregate-initialized (brace-init) local objects; constructor-initialized local objects fail nested access because `resolve_constexpr_object_source` does not check `context.local_bindings` (see limitation above)
+- ✅ Direct and nested member reads from local constexpr objects inside constexpr functions (e.g., `obj.value`, `obj.inner.value`) — both aggregate-initialized (brace-init) and constructor-initialized local objects now work for nested access (see "Nested Member Access on Local Constructor-Initialized Objects" fix below)
 - ✅ Direct/member array subscript support in current supported shapes, including straightforward local aggregate object reads like `obj.data[1]`
 - ✅ Straightforward inferred-size local arrays in constexpr functions, including simple scalar reads and simple aggregate-array element member reads
 - ✅ Straightforward local aggregate-array element reads in constexpr functions, including nested/member-array compositions like `items[i].inner.value` and `items[i].data[0]`
@@ -1116,6 +1096,7 @@ Potential areas for enhancement (in order of complexity):
 - ✅ **Multi-dimensional array initialization and element access** *(Implemented)* — `int arr[M][N] = {{…},{…}}` nested-brace init, `arr[i][j]` reads in loops, `arr[i][j] = v` subscript assignment, scalar brace-elision (`{v}` seeds `[0][0]`, zero-fills the rest per C++20), `{0}` zero-init, and fully-flattened brace-elision (`{1,2,3,4,5,6}` for `int[2][3]`) are all supported at global constexpr scope and inside constexpr function bodies. User-defined constructors are now correctly preferred over aggregate initialization when both are available.
 - ✅ **Aggregate initialization inside constexpr functions uses local bindings** *(Implemented)* — Aggregate structs (no user-defined constructor) can now be initialized with brace-init inside constexpr function bodies using local variables or function parameters as arguments (e.g., `Pt p{a, b}` where `a` and `b` are in scope).
 - ✅ **Ternary operator returning struct types** *(Implemented)* — `constexpr Pt p = (cond ? Pt{3,7} : Pt{1,2})` now works at global scope and inside constexpr functions. Struct-typed `ConstructorCallNode` expressions are routed through `materialize_constructor_object_value` (with aggregate-init fallback), and the member resolution path gained a generic expression fallback for initializers that aren't constructor calls or initializer lists. See "Ternary Struct Initializer Error Propagation" in the limitations section for the remaining edge case.
+- ✅ **Nested member access on local constructor-initialized objects** *(Implemented)* — `o.inner.x` now works inside constexpr function bodies when `o` is a local variable constructed via a user-defined constructor (e.g., `Outer o(3, 7)` where `Outer::inner` is of a struct type). Root cause: `parse_direct_initialization` stores block-scope `Type o(a, b)` as `InitializerListNode{a, b}`, which previously triggered the aggregate-init path. The fix adds a constructor-detection step in `evaluate_statement_with_bindings`: if a matching user-defined constructor exists for the struct type, the constructor evaluation path (`bind_evaluated_arguments` + `materialize_members_from_constructor`) is used, producing correctly-typed member EvalResults that the bindings-aware nested-member-access path can traverse.
 
 ### Medium
 - ⚠️ Constexpr free function calls (basic support exists)
@@ -1128,6 +1109,16 @@ Potential areas for enhancement (in order of complexity):
   - Increment/decrement operators (`++` / `--`) now correctly wrap at the declared type's width (e.g. `unsigned int x = UINT_MAX; x++;` wraps to `0`; `unsigned char x = 255; ++x;` wraps to `0`).
 - ⚠️ Shift-count validation now uses the promoted left-operand width for direct identifiers, literals, casts, chained shift results, and arithmetic-produced operands (e.g. `(1u + 1u) << 40` is correctly rejected).
   - Some template-dependent or complex intermediate expressions may still fall back to the evaluator's 64-bit storage width when `exact_type` is unavailable.
+
+### Medium-Hard
+- ⚠️ **Enforce C++20 aggregate-initialization rules** — In C++20, a type with any user-declared constructor is **not** an aggregate ([dcl.init.aggr]/1, [P1008R1](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1008r1.pdf)). FlashCpp currently silently falls back to aggregate (direct member) initialization when no matching constructor is found, both in the constexpr evaluator (`materialize_aggregate_object_value` fallback in `src/ConstExprEvaluator_Core.cpp`) and in the IR code-generation path (`src/CodeGen.h`, `visitVariableDeclarationNode`). The `IsAggregate` type trait (`src/TypeTraitEvaluator.h:251-275`) already correctly detects non-aggregate types (checking `!ctor.is_implicit()`), but this detection is only used for the `__is_aggregate` intrinsic, not for validating initialization syntax. **TODO:** Add a semantic analysis check (ideally in the parser or a pre-codegen validation pass) that rejects aggregate initialization of non-aggregate types with a proper compile error diagnostic. This should be enforced consistently across all initialization paths: constexpr evaluation, IR code generation, and any future initialization handling. The `IsAggregate` logic in `TypeTraitEvaluator.h` can be reused or extracted into a shared helper.
+- ⚠️ **Consolidate remaining find→bind→materialize call sites onto `try_materialize_struct_from_ctor_args`** — The shared helper `try_materialize_struct_from_ctor_args` (`src/ConstExprEvaluator_Members.cpp`) centralizes the `find_matching_constructor` → `bind_evaluated_arguments` → `materialize_members_from_constructor` sequence. Three call sites already use it (`evaluate_new_expression`, `evaluate_statement_with_bindings` InitializerListNode path, and `materialize_constructor_object_value`). Two remaining sites still inline the same pattern:
+  1. **`evaluate_callable_object`** (`src/ConstExprEvaluator_Core.cpp:2023-2054`) — materializes a functor's constructor state before dispatching `operator()`. The constructor materialization is one step in a longer pipeline (find ctor → bind ctor args → materialize members → bind `operator()` args → evaluate body), so extracting only the first three steps would still leave most of the code in place.
+  2. **`extract_object_members`** (`src/ConstExprEvaluator_Members.cpp:4948-5069`) — extracts member bindings from a `ConstructorCallNode` initializer for member function dispatch. It has extra type-resolution fallback logic (trying `declared_type_index` when the `ConstructorCallNode`'s own type index fails) that the helper doesn't handle.
+
+  Both sites could delegate to `try_materialize_struct_from_ctor_args` with minor API adjustments (the helper currently takes `ChunkedVector<ASTNode>&` args; `ConstructorCallNode::arguments()` already returns a compatible type). The main blocker is that both sites need the intermediate `ctor_param_bindings` or `member_bindings` map for subsequent steps, while the helper returns a fully-materialized `EvalResult` with the member bindings baked into `object_member_bindings`. A future refactor could either (a) add a variant that returns the intermediate maps, or (b) extract the member bindings back out of the returned `EvalResult::object_member_bindings`.
+- ⚠️ **`find_matching_constructor` matches implicit constructors, bypassing `hasUserDefinedConstructor()` guards** — Several code paths check `hasUserDefinedConstructor()` to enforce C++20 non-aggregate rules (e.g., `evaluate_new_expression` at `src/ConstExprEvaluator_Core.cpp:1448` and `evaluate_statement_with_bindings` at `src/ConstExprEvaluator_Core.cpp:3377`). When the check is true, they call `try_materialize_struct_from_ctor_args` and expect `std::nullopt` if no user-defined constructor matches. However, `find_matching_constructor` (`src/ConstExprEvaluator_Members.cpp:229`) calls `getConstructorsByParameterCount(n, false)` — the `false` means implicit constructors (default, copy, move) are **not** skipped. For a type like `struct NoDflt { int v; constexpr NoDflt(int a, int b) : v(a+b) {} };`, `new NoDflt` with 0 args will find the parser-generated implicit default constructor, `try_materialize_struct_from_ctor_args` returns a non-nullopt result, and the intended "no matching default constructor" error at line 1459 is never reached. The object is silently constructed through the implicit default constructor with zero-initialized members. **Impact:** `new NoDflt` and `NoDflt n{}` (where `NoDflt` has no user-defined default constructor) may silently succeed instead of producing a diagnostic. The `_fail` tests (`test_constexpr_new_nodefault_ctor_fail.cpp`, `test_constexpr_empty_brace_nodefault_ctor_fail.cpp`) currently pass because downstream member access on the zero-initialized object produces a different error, but they would break if that downstream path ever returns 0 gracefully. **TODO:** Either (a) pass `skip_implicit=true` to `getConstructorsByParameterCount` inside `find_matching_constructor` when called from a `hasUserDefinedConstructor()` guard context, or (b) add a `skip_implicit` parameter to `try_materialize_struct_from_ctor_args` that is forwarded through to `find_matching_constructor`.
+- ⚠️ **`return {x, y}` in struct-returning constexpr functions unconditionally uses aggregate init** — The return-statement handler in `evaluate_statement_with_bindings` (`src/ConstExprEvaluator_Core.cpp:3271-3296`) handles `return {x, y, ...}` for struct-returning functions by unconditionally calling `bind_members_from_initializer_list` (aggregate initialization). It does not check whether the return type has user-defined constructors. Per C++20 [dcl.init.list]/3, `return {a, b}` for a non-aggregate type should perform list-initialization, which considers constructors — not direct member binding. This means `return {a, b}` and `Type o(a, b); return o;` can produce different results when the type has a user-defined constructor that reorders or transforms its arguments. The variable-declaration path (`src/ConstExprEvaluator_Core.cpp:3373-3405`) and the `new`-expression path (`src/ConstExprEvaluator_Core.cpp:1443-1476`) both correctly route through constructor matching for non-aggregate types, but the `return` path was not updated. **Workaround:** Use an explicit local variable: `Type result(a, b); return result;` instead of `return {a, b};`. **TODO:** Add a `hasUserDefinedConstructor()` check in the return-statement `InitializerListNode` handler and route through `try_materialize_struct_from_ctor_args` when the return type is not an aggregate, mirroring the variable-declaration fix.
 
 ### Hard
 - ⚠️ Complex constructor body statement execution involving complex aliasing or non-trivial call chains (simple assignments, conditionals, loops, and switch now work)
@@ -1374,3 +1365,7 @@ struct CaptureExample {
 - `tests/test_constexpr_this_deref_ret0.cpp` - `*this` dereference in constexpr member function bodies (`dot(*this)`, `scale` chaining)
 - `tests/test_constexpr_multidim_array_ret0.cpp` - Multi-dimensional array init, reads, subscript assignment, and brace-elision in constexpr
 - `tests/test_constexpr_ternary_struct_ret0.cpp` - Ternary operator returning struct types in constexpr (global and function-returned)
+- `tests/test_constexpr_nested_member_ctor_local_ret0.cpp` - Nested member access on local constructor-initialized objects in constexpr functions
+- `tests/test_constexpr_empty_brace_nodefault_ctor_fail.cpp` - Empty-brace init rejected for non-aggregate types without default constructor (expected failure)
+- `tests/test_constexpr_new_nodefault_ctor_fail.cpp` - `new` on non-aggregate type without default constructor rejected (expected failure)
+- `tests/test_constexpr_new_with_default_ctor_ret0.cpp` - `new` with user-defined default constructor correctly invokes constructor
