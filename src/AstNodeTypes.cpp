@@ -701,10 +701,7 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
         // Auto-derive cv_qualifier from the stored is_const_member_function_ flag.
         // All parse and instantiation paths must call set_is_const_member_function()
         // on the FunctionDeclarationNode before calling addMemberFunction / addOperatorOverload.
-        CVQualifier cv = CVQualifier::None;
-        if (fn->is_const_member_function())
-            cv = static_cast<CVQualifier>(static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Const));
-        mf.cv_qualifier = cv;
+        mf.cv_qualifier = fn->is_const_member_function() ? CVQualifier::Const : CVQualifier::None;
     } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
         const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
         mf.is_noexcept = ctor.is_noexcept();

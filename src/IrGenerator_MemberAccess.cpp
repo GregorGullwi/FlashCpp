@@ -3566,7 +3566,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 
 					if (resolved_type == target_type) {
 						// Prefer non-const match for non-const source; const for const source
-						if (source_is_const ? member_func.is_const() : !member_func.is_const()) {
+						if (source_is_const == member_func.is_const()) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
 							return &member_func;
 						}
@@ -3584,7 +3584,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
-							if (source_is_const ? member_func.is_const() : !member_func.is_const()) {
+							if (source_is_const == member_func.is_const()) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
 								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
 								return &member_func;
