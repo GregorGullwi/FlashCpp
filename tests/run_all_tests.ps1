@@ -17,7 +17,7 @@ $requestedTestNames = @(
 
 # Default to number of logical processors
 if ($Jobs -le 0) {
-	$Jobs = [Environment]::ProcessorCount
+	$Jobs = [Environment]::ProcessorCount - 1
 	if ($Jobs -le 0) { $Jobs = 4 }
 }
 
