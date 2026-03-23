@@ -1470,6 +1470,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 					}
 					substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+					if (param_type_spec.has_function_signature()) {
+						substituted_param_type.set_function_signature(param_type_spec.function_signature());
+					}
 
 					auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 					auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -2261,6 +2264,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 					}
 					substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+					if (param_type_spec.has_function_signature()) {
+						substituted_param_type.set_function_signature(param_type_spec.function_signature());
+					}
 
 					auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 					auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -5173,6 +5179,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						if (param_type_spec.has_function_signature()) {
+							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						}
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -5307,6 +5316,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						if (param_type_spec.has_function_signature()) {
+							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						}
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -5566,6 +5578,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						if (param_type_spec.has_function_signature()) {
+							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						}
 
 						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto [param_decl_node, param_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -5659,6 +5674,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 							}
 							substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+							if (param_type_spec.has_function_signature()) {
+								substituted_param_type.set_function_signature(param_type_spec.function_signature());
+							}
 
 							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 							auto substituted_param_decl = emplace_node<DeclarationNode>(

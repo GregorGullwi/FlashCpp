@@ -376,6 +376,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
+			if (param_type_spec.has_function_signature()) {
+				substituted_param_type_spec.set_function_signature(param_type_spec.function_signature());
+			}
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
