@@ -7,11 +7,10 @@ Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workfl
 - Use `tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality
 
 ## Build, Test, and Development Commands
-- You are most likely running in a powershell, plan your calls accordingly.
+- You are most likely running in a powershell (pwsh), plan your calls accordingly.
 - Path to the Windows SDK is "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\"
-- `.\build_flashcpp.bat` — invokes MSBuild to produce `x64\Debug\FlashCpp.exe`; run it whenever you change compiler sources.
+- `.\build_flashcpp.bat` — invokes MSBuild to produce `x64\Debug\FlashCppMSVC.exe`; run it whenever you change compiler sources.
 - To test an individual file in the test folder, you can use `"./tests/run_all_tests.ps1 [test_name].cpp"`
-- Visual Studio IDE — open `FlashCpp.sln`, select `x64/Debug`, and build when you need MSVC debugging.
 - Use `link.bat` to link with all required libraries — build with FlashCpp, link via MSVC, and run quick regression checks.
 - If you call link.exe manually, ensure you include all necessary libraries: `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\link.exe" /ENTRY:mainCRTStartup /LIBPATH:"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\lib\x64" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64" /LIBPATH:"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\ucrt\x64"`
 
