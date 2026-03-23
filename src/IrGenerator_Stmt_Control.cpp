@@ -112,6 +112,8 @@
 		}
 		// C++20 [stmt.select]: contextual bool conversion.
 		condition_result = applyConditionBoolConversion(condition_result, cond_node, Token());
+		// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
+		emitAndClearFullExpressionTempDestructors();
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
@@ -188,6 +190,8 @@
 			ExprResult condition_result = visitExpressionNode(node.get_condition()->as<ExpressionNode>());
 			// C++20 [stmt.for]: contextual bool conversion.
 			condition_result = applyConditionBoolConversion(condition_result, *node.get_condition(), Token());
+			// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
+			emitAndClearFullExpressionTempDestructors();
 
 			// Generate conditional branch: if true goto body, else goto end
 			CondBranchOp cond_branch;
@@ -211,6 +215,8 @@
 		// Execute update/increment expression (if present)
 		if (node.has_update()) {
 			visitExpressionNode(node.get_update_expression()->as<ExpressionNode>());
+			// C++20 [class.temporary]/4: flush temporaries from the increment full-expression.
+			emitAndClearFullExpressionTempDestructors();
 		}
 
 		// Branch back to loop start
@@ -256,6 +262,8 @@
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 		// C++20 [stmt.while]: contextual bool conversion.
 		condition_result = applyConditionBoolConversion(condition_result, node.get_condition(), Token());
+		// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
+		emitAndClearFullExpressionTempDestructors();
 
 		// Generate conditional branch: if true goto body, else goto end
 		CondBranchOp cond_branch;
@@ -319,6 +327,8 @@
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 		// C++20 [stmt.do]: contextual bool conversion.
 		condition_result = applyConditionBoolConversion(condition_result, node.get_condition(), Token());
+		// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
+		emitAndClearFullExpressionTempDestructors();
 
 		// Generate conditional branch: if true goto start, else goto end
 		CondBranchOp cond_branch;
@@ -344,6 +354,8 @@
 
 		// Evaluate the switch condition
 		ExprResult condition_result = visitExpressionNode(node.get_condition().as<ExpressionNode>());
+		// C++20 [class.temporary]/4: flush temporaries bound in the condition full-expression.
+		emitAndClearFullExpressionTempDestructors();
 
 		// Get the condition type and value
 		Type condition_type = condition_result.type;

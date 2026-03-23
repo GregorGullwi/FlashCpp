@@ -2601,6 +2601,34 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return materializeTemporaryAndTakeAddress(arg_result);
 	}
 
+	TypedValue AstToIr::materializeConvertedReferenceArgument(
+		ExprResult source_result,
+		const TypeSpecifierNode& ref_param_type,
+		const Token& source_token) {
+		const Type referred_type = ref_param_type.type();
+		// Convert the source value to the referred-to type.
+		ExprResult converted = generateTypeConversion(source_result, source_result.type, referred_type, source_token);
+		const int ref_type_bits = get_type_size_bits(referred_type);
+		// Materialize the converted value into a stack temporary.
+		TempVar conv_temp = var_counter.next();
+		AssignmentOp assign_op;
+		assign_op.result = conv_temp;
+		assign_op.lhs = makeTypedValue(referred_type, SizeInBits{ref_type_bits}, conv_temp);
+		assign_op.rhs = toTypedValue(converted);
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
+		// Take the address of the temporary and return it as the reference argument.
+		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
+		TypedValue result;
+		result.type = referred_type;
+		result.ir_type = toIrType(referred_type);
+		result.size_in_bits = SizeInBits{64};
+		result.value = addr_var;
+		result.ref_qualifier = ref_param_type.is_rvalue_reference()
+			? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+		result.cv_qualifier = ref_param_type.cv_qualifier();
+		return result;
+	}
+
 	std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 		ExprResult source_result,
 		const ASTNode& source_expr,
@@ -2645,10 +2673,21 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
 
+		// When the converting constructor takes its first parameter by (const) reference and the
+		// source type differs from the referenced type (e.g. int→const double&), applyConstructorArgConversion
+		// returns early without converting.  We must convert the value ourselves, materialize it into
+		// a temporary, and pass its address — exactly as if the source had been a prvalue of the
+		// referred-to type.
+		// Struct types are excluded because they have their own converting-constructor path and
+		// require separate copy/move construction logic rather than a simple scalar conversion.
 		TypedValue init_arg;
-		if (source_expr.is<ExpressionNode>() &&
+		const bool param_is_ref = param_type.is_reference() || param_type.is_rvalue_reference();
+		const Type referred_type = param_is_ref ? param_type.type() : Type::Void;
+		if (param_is_ref && referred_type != Type::Struct && source_result.type != referred_type) {
+			init_arg = materializeConvertedReferenceArgument(source_result, param_type, source_token);
+		} else if (source_expr.is<ExpressionNode>() &&
 			std::holds_alternative<IdentifierNode>(source_expr.as<ExpressionNode>()) &&
-			(param_type.is_reference() || param_type.is_rvalue_reference())) {
+			param_is_ref) {
 			const auto& identifier = std::get<IdentifierNode>(source_expr.as<ExpressionNode>());
 			const std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 			const DeclarationNode* source_decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;

@@ -1428,13 +1428,16 @@
 					sema_ref_binding = sema_->getMemberFunctionCallRefBinding(&memberFunctionCallNode, arg_index);
 				}
 
+				// Evaluate the argument expression once when sema ref-binding is active so that
+				// the result can be reused in the fallback path without double evaluation.
+				std::optional<ExprResult> sema_evaluated_arg;
 				if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 					ExpressionContext arg_context = sema_ref_binding->binds_directly()
 						? ExpressionContext::LValueAddress
 						: ExpressionContext::Load;
-					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+					sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 					if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
-							argument_result, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
+							*sema_evaluated_arg, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
 						TypedValue typed_arg = toTypedValue(*sema_bound_arg);
 						typed_arg.cv_qualifier = param_type->cv_qualifier();
 						typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
@@ -1482,8 +1485,10 @@
 									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							}
 						} else {
-							// Regular pass by value
-							ExprResult arg_result = visitExpressionNode(argument.as<ExpressionNode>());
+							// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
+							ExprResult arg_result = sema_evaluated_arg
+								? *sema_evaluated_arg
+								: visitExpressionNode(argument.as<ExpressionNode>());
 							if (param_type) {
 								if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 										arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
@@ -1518,8 +1523,10 @@
 									IrValue(addr_var), ReferenceQualifier::LValueReference));
 							}
 						} else {
-							// Regular pass by value
-							ExprResult arg_result = visitExpressionNode(argument.as<ExpressionNode>());
+							// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
+							ExprResult arg_result = sema_evaluated_arg
+								? *sema_evaluated_arg
+								: visitExpressionNode(argument.as<ExpressionNode>());
 							if (param_type) {
 								if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 										arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
@@ -1532,7 +1539,9 @@
 						}
 					} else {
 						// Unknown symbol type - fall back to visitExpressionNode
-						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+						ExprResult argument_result = sema_evaluated_arg
+							? *sema_evaluated_arg
+							: visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
 							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 									argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
@@ -1545,8 +1554,11 @@
 					}
 				}
 				else {
-					// Not an identifier - call visitExpressionNode to get the value
-					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+					// Not an identifier - reuse the already-evaluated result when sema
+					// ref-binding ran but returned nullopt to avoid double expression evaluation.
+					ExprResult argument_result = sema_evaluated_arg
+						? *sema_evaluated_arg
+						: visitExpressionNode(argument.as<ExpressionNode>());
 
 					// Check if parameter expects a reference and argument is a literal
 					if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
