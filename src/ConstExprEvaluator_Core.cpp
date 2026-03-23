@@ -1445,14 +1445,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			// Per C++20, a type with user-defined constructors is not an aggregate,
 			// so we must try the default constructor first and reject aggregate init
 			// if the type has user-defined constructors but no default constructor.
-			bool has_user_defined_ctor = false;
-			for (const auto& func : struct_info->member_functions) {
-				if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) continue;
-				if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-					has_user_defined_ctor = true;
-					break;
-				}
-			}
+			bool has_user_defined_ctor = struct_info->hasUserDefinedConstructor();
 			if (has_user_defined_ctor) {
 				ChunkedVector<ASTNode> empty_args;
 				auto ctor_result = try_materialize_struct_from_ctor_args(
