@@ -3440,29 +3440,30 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		for (const auto& delayed : delayed_function_bodies_) {
 			DeferredTemplateMemberBody deferred;
 			
-			// Get function name for matching during instantiation
-			StringHandle func_name;
-			bool is_const_method = false;
-			if (delayed.is_constructor && delayed.ctor_node) {
-				func_name = delayed.ctor_node->name();
-			} else if (delayed.is_destructor && delayed.dtor_node) {
-				func_name = delayed.dtor_node->name();
-			} else if (delayed.func_node) {
-				const auto& decl = delayed.func_node->decl_node();
-				func_name = decl.identifier_token().handle();
-				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
-				// We'll match by name only for now
+			// Populate identity from the delayed function body
+			{
+				auto& id = deferred.identity;
+				if (delayed.is_constructor && delayed.ctor_node) {
+					id.kind = DeferredMemberIdentity::Kind::Constructor;
+					id.original_lookup_name = delayed.ctor_node->name();
+					id.original_member_node = ASTNode(delayed.ctor_node);
+				} else if (delayed.is_destructor && delayed.dtor_node) {
+					id.kind = DeferredMemberIdentity::Kind::Destructor;
+					id.original_lookup_name = delayed.dtor_node->name();
+					id.original_member_node = ASTNode(delayed.dtor_node);
+				} else if (delayed.func_node) {
+					id.kind = DeferredMemberIdentity::Kind::Function;
+					const auto& decl = delayed.func_node->decl_node();
+					id.original_lookup_name = decl.identifier_token().handle();
+					id.original_member_node = ASTNode(delayed.func_node);
+					// is_const is stored in StructMemberFunctionDecl, not FunctionDeclarationNode
+				}
+				id.template_owner_name = delayed.struct_name;
 			}
-			
-			deferred.function_name = func_name;
 			deferred.body_start = delayed.body_start;
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
-			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
 			deferred.struct_type_index = delayed.struct_type_index.value;
-			deferred.is_constructor = delayed.is_constructor;
-			deferred.is_destructor = delayed.is_destructor;
-			deferred.is_const_method = is_const_method;
 			deferred.template_param_names = delayed.template_param_names;
 			pending_template_deferred_bodies_.push_back(std::move(deferred));
 		}

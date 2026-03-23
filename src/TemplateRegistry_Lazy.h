@@ -13,20 +13,14 @@ static StringHandle normalizeClassName(StringHandle handle) {
 }
 
 struct LazyMemberFunctionInfo {
-	StringHandle class_template_name;          // Original template name (e.g., "vector")
-	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
-	StringHandle member_function_name;         // Member function name
-	ASTNode original_function_node;            // Original function from template
-	InlineVector<ASTNode, 4> template_params;      // Template parameters from class template
+	DeferredMemberIdentity identity;
+	InlineVector<ASTNode, 4> template_params;       // Template parameters from class template
 	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
-	AccessSpecifier access;                    // Access specifier (public/private/protected)
-	bool is_virtual;                           // Virtual function flag
-	bool is_pure_virtual;                      // Pure virtual flag
-	bool is_override;                          // Override flag
-	bool is_final;                             // Final flag
-	bool is_const_method;                      // Const member function flag
-	bool is_constructor;                       // Constructor flag
-	bool is_destructor;                        // Destructor flag
+	AccessSpecifier access;                     // Access specifier (public/private/protected)
+	bool is_virtual = false;                    // Virtual function flag
+	bool is_pure_virtual = false;               // Pure virtual flag
+	bool is_override = false;                   // Override flag
+	bool is_final = false;                      // Final flag
 };
 
 // Registry for tracking uninstantiated template member functions
@@ -41,12 +35,13 @@ public:
 	// Register a member function for lazy instantiation
 	// Key format: "instantiated_class_name::member_function_name"
 	void registerLazyMember(LazyMemberFunctionInfo info) {
-		StringHandle normalized_class = normalizeClassName(info.instantiated_class_name);
+		StringHandle normalized_class = normalizeClassName(info.identity.instantiated_owner_name);
+		StringHandle lookup_name = effectiveLookupName(info.identity);
 		StringBuilder key_builder;
 		std::string_view key = key_builder
 			.append(normalized_class)
 			.append("::")
-			.append(info.member_function_name)
+			.append(lookup_name)
 			.commit();
 		
 		lazy_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);

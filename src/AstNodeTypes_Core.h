@@ -24,21 +24,6 @@
 // Matches Parser::SaveHandle typedef in Parser.h
 using SaveHandle = size_t;
 
-// Deferred template member function body information
-// Used to store template member function bodies for parsing during instantiation
-struct DeferredTemplateMemberBody {
-	StringHandle function_name;           // Name of the function (for matching during instantiation)
-	StringHandle struct_name;             // Name of the struct (from token, persistent)
-	SaveHandle body_start;                // Handle to saved position at '{'
-	SaveHandle initializer_list_start;    // Handle to saved position at ':' for constructor initializer list
-	size_t struct_type_index;             // Type index (will be 0 for templates during definition)
-	bool has_initializer_list;            // True if constructor has an initializer list
-	bool is_constructor;                  // Special handling for constructors
-	bool is_destructor;                   // Special handling for destructors
-	bool is_const_method;                 // True if this is a const member function
-	InlineVector<StringHandle, 4> template_param_names; // Template parameter names (copied, not views)
-};
-
 // Forward declarations
 struct TemplateTypeArg;
 

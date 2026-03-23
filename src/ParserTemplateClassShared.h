@@ -25,10 +25,21 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	const TArgs& template_args)
 {
 	LazyMemberFunctionInfo lazy_mem_info;
-	lazy_mem_info.class_template_name = class_template_name;
-	lazy_mem_info.instantiated_class_name = qualified_name;
-	lazy_mem_info.member_function_name = member_function_name;
-	lazy_mem_info.original_function_node = mem_func.function_declaration;
+	auto& id = lazy_mem_info.identity;
+	id.original_member_node = mem_func.function_declaration;
+	id.template_owner_name = class_template_name;
+	id.instantiated_owner_name = qualified_name;
+	id.original_lookup_name = member_function_name;
+	id.operator_kind = mem_func.operator_kind;
+	id.is_operator = mem_func.is_operator_overload();
+	id.is_const_method = mem_func.is_const();
+	id.cv_qualifier = mem_func.cv_qualifier;
+	if (is_constructor)
+		id.kind = DeferredMemberIdentity::Kind::Constructor;
+	else if (is_destructor)
+		id.kind = DeferredMemberIdentity::Kind::Destructor;
+	else
+		id.kind = DeferredMemberIdentity::Kind::Function;
 	appendLazyTemplateSequence(lazy_mem_info.template_params, template_params);
 	appendLazyTemplateSequence(lazy_mem_info.template_args, template_args);
 	lazy_mem_info.access = mem_func.access;
@@ -36,9 +47,6 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;
 	lazy_mem_info.is_override = mem_func.is_override;
 	lazy_mem_info.is_final = mem_func.is_final;
-	lazy_mem_info.is_const_method = mem_func.is_const();
-	lazy_mem_info.is_constructor = is_constructor;
-	lazy_mem_info.is_destructor = is_destructor;
 	return lazy_mem_info;
 }
 

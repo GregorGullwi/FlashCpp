@@ -404,6 +404,51 @@ inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
 }
 
 
+// Identity record that travels with every deferred/lazy template member.
+// Slice 1 populates the source-side fields; Slice 2 fills instantiated_lookup_name.
+struct DeferredMemberIdentity {
+	enum class Kind : uint8_t {
+		Function,
+		Constructor,
+		Destructor,
+	};
+
+	Kind kind = Kind::Function;
+
+	ASTNode original_member_node;              // authoritative source declaration
+	StringHandle template_owner_name;          // e.g. integral_constant
+	StringHandle instantiated_owner_name;      // e.g. integral_constant$hash
+
+	StringHandle original_lookup_name;         // parsed spelling: operator value_type / operator T
+	StringHandle instantiated_lookup_name;     // canonical spelling: operator int / operator float (0 = same as original)
+
+	OverloadableOperator operator_kind = OverloadableOperator::None;  // valid when operator overload
+	bool is_operator = false;
+	bool is_const_method = false;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+	uint16_t parameter_count = 0;
+};
+
+// Return the effective lookup name from an identity:
+// uses instantiated_lookup_name when it is set, otherwise original_lookup_name.
+inline StringHandle effectiveLookupName(const DeferredMemberIdentity& id) {
+	return (id.instantiated_lookup_name.handle != 0)
+		? id.instantiated_lookup_name
+		: id.original_lookup_name;
+}
+
+// Deferred template member function body information.
+// Stores a deferred member body for parsing during class-template instantiation.
+struct DeferredTemplateMemberBody {
+	DeferredMemberIdentity identity;
+	SaveHandle body_start;                    // Handle to saved position at '{'
+	SaveHandle initializer_list_start;        // Handle to saved position at ':' for ctor initializer list
+	size_t struct_type_index;                 // Type index (0 during template definition)
+	bool has_initializer_list;                // True if constructor has an initializer list
+	InlineVector<StringHandle, 4> template_param_names; // Template parameter names
+};
+
 /// Helper function to get the C++ name string for a Type
 /// Returns the string used in C++ source code (e.g., "int", "unsigned long")
 /// Returns empty string_view for non-primitive types
