@@ -220,6 +220,13 @@ private:
 		const TypeSpecifierNode& target_type,
 		const Token& source_token,
 		bool use_return_slot = false);
+	/// Convert a scalar source value to the referred-to type of a const/rvalue-reference
+	/// parameter and materialize it into a stack temporary, returning the address as a TypedValue.
+	/// Precondition: ref_param_type.is_reference() || ref_param_type.is_rvalue_reference()
+	TypedValue materializeConvertedReferenceArgument(
+		ExprResult source_result,
+		const TypeSpecifierNode& ref_param_type,
+		const Token& source_token);
 	// Read the sema-annotated conversion target type for an expression node.
 	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
 	Type getSemaAnnotatedTargetType(const ASTNode& node) const;

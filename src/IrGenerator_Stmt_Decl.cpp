@@ -2032,6 +2032,16 @@ namespace {
 
 								const TypeSpecifierNode* param_type = sema_selected_param_type;
 
+								// When the converting constructor takes its first parameter by (const) reference
+								// and the source type differs from the referred-to type (e.g. int->const double&),
+								// applyConstructorArgConversion returns early. Struct types are excluded because
+								// they use a separate converting-constructor path. For scalars, use the shared
+								// helper to convert, materialize, and pass the address.
+								const bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
+								const Type referred_type = param_is_ref ? param_type->type() : Type::Void;
+								if (param_is_ref && referred_type != Type::Struct && init_operands.type != referred_type) {
+									init_arg = materializeConvertedReferenceArgument(init_operands, *param_type, decl.identifier_token());
+								} else {
 								// Check if initializer is an identifier (variable)
 								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>()) &&
 									(!param_type || param_type->is_reference() || param_type->is_rvalue_reference())) {
@@ -2080,6 +2090,7 @@ namespace {
 									// Not an identifier (e.g., temporary, expression result) - use as-is
 									init_arg = toTypedValue(init_operands);
 								}
+								} // end else (no ref-type mismatch)
 
 								if (param_type) {
 									init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
