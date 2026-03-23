@@ -110,6 +110,29 @@ void AstToIr::registerVariableWithDestructor(const std::string& var_name, const 
 	}
 }
 
+void AstToIr::registerFullExpressionTempDestructor(StringHandle struct_name,
+	std::variant<StringHandle, TempVar> object,
+	bool object_is_pointer) {
+	pending_full_expression_temp_dtors_.push_back(FullExpressionTempDestructorInfo{
+		struct_name,
+		std::move(object),
+		object_is_pointer
+	});
+}
+
+void AstToIr::emitAndClearFullExpressionTempDestructors() {
+	for (auto it = pending_full_expression_temp_dtors_.rbegin();
+		it != pending_full_expression_temp_dtors_.rend();
+		++it) {
+		DestructorCallOp dtor_op;
+		dtor_op.struct_name = it->struct_name;
+		dtor_op.object = it->object;
+		dtor_op.object_is_pointer = it->object_is_pointer;
+		ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
+	}
+	pending_full_expression_temp_dtors_.clear();
+}
+
 
 
 void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {

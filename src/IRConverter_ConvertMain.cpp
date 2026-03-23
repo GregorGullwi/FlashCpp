@@ -2203,6 +2203,19 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 								handled_by_typed_payload = true;
 							}
 						}
+						// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
+						// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
+						// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
+						// incomplete/void members; treat those as 64-bit pointers as well.
+						else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
+							if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
+								auto temp_var = std::get<TempVar>(member_load_op->result.value);
+								const int raw_size = member_load_op->result.size_in_bits.value;
+								const int result_size = (raw_size > 0 && raw_size <= 64) ? raw_size : 64;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = result_size;
+								handled_by_typed_payload = true;
+							}
+						}
 						// Add more payload types here as they produce TempVars
 					} catch (const std::exception& e) {
 						FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ",
@@ -5209,14 +5222,11 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 		}
 
 		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer, TempVars from heap_alloc, and pointer variables from delete
-		bool object_is_pointer = false;
-		if (std::holds_alternative<TempVar>(dtor_op.object)) {
-			// TempVars are always pointers in destructor calls (from heap_free)
-			object_is_pointer = true;
-		} else if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
+		// This includes 'this' pointer, heap pointers, and any frontend-marked pointer temp.
+		bool object_is_pointer = dtor_op.object_is_pointer;
+		if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
 			StringHandle obj_handle = *string_ptr;
-			object_is_pointer = dtor_op.object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)

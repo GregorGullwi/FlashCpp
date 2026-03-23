@@ -1,18 +1,18 @@
 # Parser / Template-Substitution / Sema Boundary Plan
 
+> **Status (2026-03-22 follow-up):** The sema-owned boundary hardening work in this plan is largely complete. `SemanticAnalysis.cpp` no longer relies on direct `parser_.get_expression_type(...)` calls, and surviving fold/pack nodes on the sema-owned surface are treated as boundary violations. The remaining related work is narrower and mainly parser/template-substitution owned, including pack-expansion creation-site audits and other pre-sema boundary guarantees.
+
 ## Problem
 
 FlashCpp already runs template instantiation during parsing and runs semantic
 analysis after parsing, but the ownership boundary between those phases is still
 blurred.
 
-Today that shows up in two ways:
+Today that mainly shows up in one remaining architectural bucket:
 
 - parser/template-only expression forms such as `FoldExpressionNode` and
   `PackExpansionExprNode` are still visible enough that sema and codegen carry
-  defensive handling for them
-- semantic analysis still relies on `parser_.get_expression_type(...)` in a
-  number of places instead of using sema-owned sources of truth
+  defensive boundary enforcement for them
 
 This is not just a cleanup issue. It makes the pipeline harder to reason about,
 encourages fallback behavior across phase boundaries, and weakens invariants

@@ -74,6 +74,15 @@ namespace {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
 		const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+		auto flushFullExpressionTemps = [this]() {
+			emitAndClearFullExpressionTempDestructors();
+		};
+		struct FullExpressionTempFlushGuard {
+			decltype(flushFullExpressionTemps)& flush;
+			~FullExpressionTempFlushGuard() {
+				flush();
+			}
+		} full_expression_temp_flush_guard{flushFullExpressionTemps};
 		auto prepare_nested_template_ctor = [this](const TypeInfo& type_info_ref, const ConstructorDeclarationNode*& ctor) {
 			std::string_view ctor_struct_name = StringTable::getStringView(type_info_ref.name());
 			bool is_nested_template_ctor = (ctor_struct_name.find("::") != std::string_view::npos) &&
@@ -1897,6 +1906,8 @@ namespace {
 							// Generate copy constructor call or converting constructor call
 							const ASTNode& init_node = *node.initializer();
 							ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+							const ConstructorDeclarationNode* sema_selected_converting_ctor = nullptr;
+							const TypeSpecifierNode* sema_selected_param_type = nullptr;
 
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
@@ -1910,8 +1921,39 @@ namespace {
 								// Check if types differ
 								is_converting_ctor = (init_type != Type::Struct) || (init_type_index != type_node.type_index());
 
+								if (is_converting_ctor && sema_ && init_node.is<ExpressionNode>()) {
+									const void* key = &init_node.as<ExpressionNode>();
+									const auto slot = sema_->getSlot(key);
+									if (slot.has_value() && slot->has_cast()) {
+										const ImplicitCastInfo& cast_info =
+											sema_->castInfoTable()[slot->cast_info_index.value - 1];
+										if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+											cast_info.selected_constructor) {
+											const CanonicalTypeDesc& target_desc =
+												sema_->typeContext().get(cast_info.target_type_id);
+											if (target_desc.base_type == Type::Struct &&
+												target_desc.type_index == type_node.type_index()) {
+												const CanonicalTypeDesc& source_desc =
+													sema_->typeContext().get(cast_info.source_type_id);
+												if (source_desc.base_type != Type::Invalid) {
+													sema_selected_converting_ctor = cast_info.selected_constructor;
+													const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
+													if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
+														const ASTNode& param_type_node =
+															ctor_params[0].as<DeclarationNode>().type_node();
+														if (param_type_node.is<TypeSpecifierNode>()) {
+															sema_selected_param_type =
+																&param_type_node.as<TypeSpecifierNode>();
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+
 								// For converting constructors in copy initialization, check if constructor is explicit
-								if (is_converting_ctor && type_info.struct_info_) {
+								if (is_converting_ctor && !sema_selected_converting_ctor && type_info.struct_info_) {
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 									bool found_matching_ctor = false;
@@ -1981,10 +2023,28 @@ namespace {
 
 							// Add initializer as constructor parameter
 							{
+								if (sema_selected_param_type) {
+									init_operands = applyConstructorArgConversion(
+										init_operands, init_node, *sema_selected_param_type, decl.identifier_token());
+								}
+
 								TypedValue init_arg;
 
+								const TypeSpecifierNode* param_type = sema_selected_param_type;
+
+								// When the converting constructor takes its first parameter by (const) reference
+								// and the source type differs from the referred-to type (e.g. int->const double&),
+								// applyConstructorArgConversion returns early. Struct types are excluded because
+								// they use a separate converting-constructor path. For scalars, use the shared
+								// helper to convert, materialize, and pass the address.
+								const bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
+								const Type referred_type = param_is_ref ? param_type->type() : Type::Void;
+								if (param_is_ref && referred_type != Type::Struct && init_operands.type != referred_type) {
+									init_arg = materializeConvertedReferenceArgument(init_operands, *param_type, decl.identifier_token());
+								} else {
 								// Check if initializer is an identifier (variable)
-								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
+								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>()) &&
+									(!param_type || param_type->is_reference() || param_type->is_rvalue_reference())) {
 									const auto& identifier = std::get<IdentifierNode>(init_node.as<ExpressionNode>());
 									std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 
@@ -2030,13 +2090,34 @@ namespace {
 									// Not an identifier (e.g., temporary, expression result) - use as-is
 									init_arg = toTypedValue(init_operands);
 								}
+								} // end else (no ref-type mismatch)
+
+								if (param_type) {
+									init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
+									if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
+										if (!init_arg.is_reference()) {
+											init_arg.cv_qualifier = param_type->cv_qualifier();
+										}
+									}
+									if (param_type->is_reference() || param_type->is_rvalue_reference()) {
+										init_arg.cv_qualifier = param_type->cv_qualifier();
+									}
+									if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
+										init_arg.type_index = param_type->type_index();
+									}
+								}
 
 								ctor_op.arguments.push_back(std::move(init_arg));
 							}
 
 							// For copy/move ctors with trailing defaults (e.g. Foo(const Foo&, int=0)),
 							// fill in the default arguments so the backend sees the full parameter list.
-							if (type_info.struct_info_ && !is_converting_ctor) {
+							if (sema_selected_converting_ctor) {
+								if (sema_selected_converting_ctor->parameter_nodes().size() > ctor_op.arguments.size()) {
+									fillInConstructorDefaultArguments(
+										ctor_op, *sema_selected_converting_ctor, ctor_op.arguments.size());
+								}
+							} else if (type_info.struct_info_ && !is_converting_ctor) {
 								const bool prefer_move_ctor =
 									isSameTypeXValueSource(parser_, init_node, init_operands, type_node);
 								const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);

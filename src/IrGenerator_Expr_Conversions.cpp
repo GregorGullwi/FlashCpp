@@ -2416,9 +2416,53 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const auto slot = sema_->getSlot(key);
 			if (slot.has_value() && slot->has_cast()) {
 				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-				const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
-				if (from_t != Type::Struct && to_t != Type::Struct) {
+				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
+				const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
+				Type from_t = from_desc.base_type;
+				const Type to_t = to_desc.base_type;
+				if (ci.cast_kind == StandardConversionKind::UserDefined &&
+					from_desc.base_type == Type::Struct) {
+					TypeIndex source_type_idx = from_desc.type_index;
+					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
+						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+						const StructMemberFunction* conv_op = findConversionOperator(
+							src_type_info.getStructInfo(), param_base_type, param_type.type_index());
+						if (conv_op) {
+							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
+								StringTable::getStringView(src_type_info.name()), " to parameter type");
+							const int param_size = static_cast<int>(param_type.size_in_bits());
+							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
+									param_base_type, param_type.type_index(), param_size, source_token)) {
+								arg_result = *result;
+								sema_applied = true;
+							}
+						}
+					}
+				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
+					ci.selected_constructor &&
+					from_desc.base_type != Type::Struct &&
+					param_base_type != Type::Struct) {
+					// Pre-bind conversion: target is the selected constructor's first parameter type,
+					// not the outer param type (which may be the struct being constructed).
+					const auto& ctor_params = ci.selected_constructor->parameter_nodes();
+					if (ctor_params.empty() || !ctor_params[0].is<DeclarationNode>())
+						throw InternalError("applyConstructorArgConversion: selected_constructor has no accessible first parameter");
+					const ASTNode& ptn = ctor_params[0].as<DeclarationNode>().type_node();
+					if (!ptn.is<TypeSpecifierNode>())
+						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
+					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
+					Type ctor_from_t = from_desc.base_type;
+					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.type)
+						ctor_from_t = arg_result.type;
+					if (ctor_from_t != ctor_first_param_type) {
+						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
+					}
+					sema_applied = true;
+				} else if (from_t != Type::Struct && to_t != Type::Struct) {
+					// Sema may annotate as Type::Enum while codegen resolves enum
+					// constants to their underlying type; use actual runtime type.
+					if (from_t == Type::Enum && from_t != arg_result.type)
+						from_t = arg_result.type;
 					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
 				}
@@ -2438,4 +2482,306 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		return arg_result;
+	}
+
+	std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
+		const ASTNode& arg_expr,
+		const TypeSpecifierNode& param_type,
+		const CallArgReferenceBindingInfo* binding_info,
+		const Token& source_token) {
+		if (!binding_info || !binding_info->is_valid()) {
+			return std::nullopt;
+		}
+		if (!param_type.is_reference() && !param_type.is_rvalue_reference()) {
+			return std::nullopt;
+		}
+
+		auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
+			if (value_result.type != Type::Struct || !value_result.type_index.is_valid()) {
+				return;
+			}
+			if (value_result.type_index.value >= gTypeInfo.size()) {
+				return;
+			}
+			const TypeInfo& type_info = gTypeInfo[value_result.type_index.value];
+			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (!struct_info || !struct_info->hasDestructor()) {
+				return;
+			}
+			if (const auto* temp_var = std::get_if<TempVar>(&value_result.value)) {
+				registerFullExpressionTempDestructor(type_info.name(), *temp_var);
+			}
+		};
+
+		auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
+			if (value_result.type == Type::Struct) {
+				if (std::holds_alternative<TempVar>(value_result.value)) {
+					registerStructTempDestructorIfNeeded(value_result);
+					return value_result;
+				}
+			}
+
+			TempVar temp_var = var_counter.next();
+			AssignmentOp assign_op;
+			assign_op.result = temp_var;
+			assign_op.lhs = makeTypedValue(value_result.type, value_result.size_in_bits, temp_var);
+			assign_op.rhs = toTypedValue(value_result);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
+
+			TempVar addr_var = emitAddressOf(value_result.type, value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			return makeExprResult(value_result.type, SizeInBits{64}, IrOperand{addr_var}, value_result.type_index);
+		};
+
+		if (binding_info->binds_directly()) {
+			if (arg_expr.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg_expr.as<ExpressionNode>())) {
+				const auto& identifier = std::get<IdentifierNode>(arg_expr.as<ExpressionNode>());
+				const DeclarationNode* decl = lookupDeclaration(identifier.name());
+				if (decl) {
+					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+						return makeExprResult(
+							type_node.type(),
+							SizeInBits{64},
+							IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
+							type_node.type_index());
+					}
+
+					TempVar addr_var = emitAddressOf(
+						type_node.type(),
+						static_cast<int>(type_node.size_in_bits()),
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+						source_token);
+					return makeExprResult(type_node.type(), SizeInBits{64}, IrOperand{addr_var}, type_node.type_index());
+				}
+			}
+
+			if (std::holds_alternative<TempVar>(arg_result.value)) {
+				TempVar expr_var = std::get<TempVar>(arg_result.value);
+				bool is_already_address = false;
+				auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+				if (metadata_storage.hasMetadata(expr_var)) {
+					TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+					is_already_address = metadata.category == ValueCategory::LValue ||
+						metadata.category == ValueCategory::XValue;
+				}
+				if (is_already_address) {
+					return arg_result;
+				}
+
+				TempVar addr_var = emitAddressOf(
+					arg_result.type,
+					arg_result.size_in_bits.value,
+					IrValue(expr_var),
+					source_token);
+				return makeExprResult(arg_result.type, SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index);
+			}
+
+			return std::nullopt;
+		}
+
+		if (!binding_info->materializes_temporary()) {
+			return std::nullopt;
+		}
+
+		if (binding_info->has_pre_bind_cast()) {
+			const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
+			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
+			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
+			Type from_t = from_desc.base_type;
+			const Type to_t = to_desc.base_type;
+			if (from_t == Type::Enum && from_t != arg_result.type) {
+				from_t = arg_result.type;
+			}
+			if (from_t == Type::Struct || to_t == Type::Struct) {
+				return std::nullopt;
+			}
+			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+		}
+
+		return materializeTemporaryAndTakeAddress(arg_result);
+	}
+
+	TypedValue AstToIr::materializeConvertedReferenceArgument(
+		ExprResult source_result,
+		const TypeSpecifierNode& ref_param_type,
+		const Token& source_token) {
+		const Type referred_type = ref_param_type.type();
+		// Convert the source value to the referred-to type.
+		ExprResult converted = generateTypeConversion(source_result, source_result.type, referred_type, source_token);
+		const int ref_type_bits = get_type_size_bits(referred_type);
+		// Materialize the converted value into a stack temporary.
+		TempVar conv_temp = var_counter.next();
+		AssignmentOp assign_op;
+		assign_op.result = conv_temp;
+		assign_op.lhs = makeTypedValue(referred_type, SizeInBits{ref_type_bits}, conv_temp);
+		assign_op.rhs = toTypedValue(converted);
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
+		// Take the address of the temporary and return it as the reference argument.
+		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
+		TypedValue result;
+		result.type = referred_type;
+		result.ir_type = toIrType(referred_type);
+		result.size_in_bits = SizeInBits{64};
+		result.value = addr_var;
+		result.ref_qualifier = ref_param_type.is_rvalue_reference()
+			? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+		result.cv_qualifier = ref_param_type.cv_qualifier();
+		return result;
+	}
+
+	std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const ConstructorDeclarationNode& selected_ctor,
+		const Token& source_token,
+		bool use_return_slot) {
+		if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+			return std::nullopt;
+		}
+		if (target_type.type_index().value >= gTypeInfo.size()) {
+			return std::nullopt;
+		}
+
+		const TypeInfo& target_type_info = gTypeInfo[target_type.type_index().value];
+		const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
+		if (!target_struct_info) {
+			return std::nullopt;
+		}
+
+		int actual_size_bits = static_cast<int>(target_type.size_in_bits());
+		if (target_struct_info->total_size > 0) {
+			actual_size_bits = static_cast<int>(target_struct_info->total_size * 8);
+		}
+
+		TempVar result_var = var_counter.next();
+		ConstructorCallOp ctor_op;
+		ctor_op.struct_name = target_type_info.name();
+		ctor_op.object = result_var;
+		ctor_op.use_return_slot = use_return_slot;
+
+		const auto& ctor_params = selected_ctor.parameter_nodes();
+		if (ctor_params.empty() || !ctor_params[0].is<DeclarationNode>()) {
+			return std::nullopt;
+		}
+
+		const ASTNode& param_type_node = ctor_params[0].as<DeclarationNode>().type_node();
+		if (!param_type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
+
+		// When the converting constructor takes its first parameter by (const) reference and the
+		// source type differs from the referenced type (e.g. int→const double&), applyConstructorArgConversion
+		// returns early without converting.  We must convert the value ourselves, materialize it into
+		// a temporary, and pass its address — exactly as if the source had been a prvalue of the
+		// referred-to type.
+		// Struct types are excluded because they have their own converting-constructor path and
+		// require separate copy/move construction logic rather than a simple scalar conversion.
+		TypedValue init_arg;
+		const bool param_is_ref = param_type.is_reference() || param_type.is_rvalue_reference();
+		const Type referred_type = param_is_ref ? param_type.type() : Type::Void;
+		if (param_is_ref && referred_type != Type::Struct && source_result.type != referred_type) {
+			init_arg = materializeConvertedReferenceArgument(source_result, param_type, source_token);
+		} else if (source_expr.is<ExpressionNode>() &&
+			std::holds_alternative<IdentifierNode>(source_expr.as<ExpressionNode>()) &&
+			param_is_ref) {
+			const auto& identifier = std::get<IdentifierNode>(source_expr.as<ExpressionNode>());
+			const std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
+			const DeclarationNode* source_decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
+			if (source_decl) {
+				const auto& source_type = source_decl->type_node().as<TypeSpecifierNode>();
+				if (source_type.is_reference() || source_type.is_rvalue_reference()) {
+					init_arg = toTypedValue(source_result);
+				} else {
+					TempVar addr_var = emitAddressOf(
+						source_type.type(),
+						static_cast<int>(source_type.size_in_bits()),
+						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
+						source_token);
+					init_arg.type = source_type.type();
+					init_arg.ir_type = toIrType(source_type.type());
+					init_arg.size_in_bits = SizeInBits{64};
+					init_arg.value = addr_var;
+					init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+					init_arg.type_index = source_type.type_index();
+				}
+			} else {
+				init_arg = toTypedValue(source_result);
+			}
+		} else {
+			init_arg = toTypedValue(source_result);
+		}
+
+		init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+		if (param_type.is_pointer() && !param_type.pointer_levels().empty()) {
+			if (!init_arg.is_reference()) {
+				init_arg.cv_qualifier = param_type.cv_qualifier();
+			}
+		}
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			init_arg.cv_qualifier = param_type.cv_qualifier();
+		}
+		if (param_type.is_rvalue_reference()) {
+			init_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+		} else if (param_type.is_reference()) {
+			init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+		}
+		if (param_type.type() == Type::Struct && param_type.type_index().is_valid()) {
+			init_arg.type_index = param_type.type_index();
+		}
+
+		ctor_op.arguments.push_back(std::move(init_arg));
+		if (selected_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
+			fillInConstructorDefaultArguments(ctor_op, selected_ctor, ctor_op.arguments.size());
+		}
+
+		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
+		setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
+
+		return makeExprResult(
+			Type::Struct,
+			SizeInBits{actual_size_bits},
+			IrOperand{result_var},
+			target_type.type_index());
+	}
+
+	std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(
+		ExprResult source_result,
+		const ASTNode& source_expr,
+		const TypeSpecifierNode& target_type,
+		const Token& source_token,
+		bool use_return_slot) {
+		if (!sema_ || !source_expr.is<ExpressionNode>() ||
+			target_type.type() != Type::Struct ||
+			target_type.is_reference() ||
+			target_type.is_rvalue_reference()) {
+			return std::nullopt;
+		}
+
+		const auto slot = sema_->getSlot(&source_expr.as<ExpressionNode>());
+		if (!slot.has_value() || !slot->has_cast()) {
+			return std::nullopt;
+		}
+
+		const ImplicitCastInfo& cast_info = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+		if (cast_info.cast_kind != StandardConversionKind::UserDefined || !cast_info.selected_constructor) {
+			return std::nullopt;
+		}
+
+		const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
+		if (target_desc.base_type != Type::Struct ||
+			target_desc.type_index != target_type.type_index()) {
+			return std::nullopt;
+		}
+
+		return materializeSelectedConvertingConstructor(
+			source_result,
+			source_expr,
+			target_type,
+			*cast_info.selected_constructor,
+			source_token,
+			use_return_slot);
 	}
