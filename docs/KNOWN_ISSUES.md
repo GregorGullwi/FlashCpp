@@ -43,27 +43,6 @@ two-phase lookup violation.
 **Workaround**: avoid introducing a named local in the affected template body;
 route the value through a helper call or another expression form instead.
 
-## Unscoped enum enumerator access through type aliases
-
-Accessing unscoped enum values using a type alias as the qualifier
-(`Container::AliasStatus::Ok` where `AliasStatus = Status`) does not work.
-The alias `TypeInfo` does not carry an `EnumTypeInfo` (enumerators are only
-tracked on the original enum's `TypeInfo`).
-
-```cpp
-struct Container {
-    enum Status { Ok, Fail };          // unscoped
-    using AliasStatus = Status;
-};
-// Works:    Container::Status::Ok
-// Broken:   Container::AliasStatus::Ok  (no EnumTypeInfo on alias)
-```
-
-Scoped enums (`enum class`) work through aliases because the enumerator lookup
-uses a different code path.
-
-**Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.
-
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 
 When `&x` is evaluated where `x` is a local constexpr variable (in bindings),

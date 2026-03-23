@@ -821,6 +821,11 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
+			if (alias_type_spec.type() == Type::Enum && alias_type_spec.type_index().value < gTypeInfo.size()) {
+				if (const EnumTypeInfo* enum_info = gTypeInfo[alias_type_spec.type_index().value].getEnumInfo()) {
+					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+				}
+			}
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name), 

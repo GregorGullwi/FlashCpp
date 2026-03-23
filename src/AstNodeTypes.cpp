@@ -121,6 +121,11 @@ TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_s
     if (type_spec.has_function_signature()) {
         info.function_signature_ = type_spec.function_signature();
     }
+    if (type_spec.type() == Type::Enum && type_spec.type_index().value < gTypeInfo.size()) {
+        if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().value].getEnumInfo()) {
+            info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+        }
+    }
     gTypesByName.emplace(info.name(), &info);
     return info;
 }

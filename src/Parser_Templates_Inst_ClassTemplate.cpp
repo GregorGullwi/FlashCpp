@@ -4912,6 +4912,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Register the type alias in gTypesByName
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
+		if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
+			if (const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo()) {
+				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+			}
+		}
 		// Use insert_or_assign so that a stale placeholder entry (e.g., from a
 		// prior partial instantiation that pointed at TTT$hash) is overwritten
 		// with the concrete type (e.g., MakeMid$hash).
