@@ -353,7 +353,7 @@ public:
 		// Check if this is a destructor (starts with ~)
 		if (name.size() > 1 && name[0] == '~') {
 			// Delegate to NameMangling implementation which handles MSVC destructor logic correctly
-			// (??1ClassName@@QAE@XZ)
+			// (??1ClassName@@QEAA@XZ)
 			if (!sig.class_name.empty()) {
 				// Verify it matches class name to be safe
 				std::string_view class_short_name = sig.class_name;

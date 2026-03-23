@@ -1279,8 +1279,8 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
-	
+	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
+
 	// Add parameter type codes
 	for (const auto& param_type : param_types) {
 		appendTypeCode(builder, param_type);
@@ -1317,7 +1317,7 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
+	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
 	
 	// Add parameter type codes directly from param nodes
 	for (const auto& param : param_nodes) {
@@ -1359,9 +1359,9 @@ inline MangledName generateMangledNameForDestructor(
 		builder.append(*it);
 	}
 	
-	// @@ = scope terminator, QAE = __thiscall calling convention,
+	// @@ = scope terminator, QEAA = __cdecl x64 calling convention (non-const),
 	// @X = void parameters (no params), Z = end marker
-	builder.append("@@QAE@XZ");
+	builder.append("@@QEAA@XZ");
 	
 	return MangledName(builder.commit());
 }

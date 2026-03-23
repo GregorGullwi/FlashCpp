@@ -307,12 +307,13 @@
 				// Trigger lazy instantiation via the parser so the body becomes available.
 				if (!func.get_definition().has_value() && !func.is_implicit() && parser_) {
 					StringHandle member_handle = func.decl_node().identifier_token().handle();
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle)) {
-						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle);
+					const bool is_const_func = func.is_const_member_function();
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(info.struct_name, member_handle, is_const_func)) {
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, is_const_func);
 						if (lazy_info_opt.has_value()) {
 							auto new_func_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
 							if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, is_const_func);
 								visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
 								current_function_name_ = saved_function;
 								current_namespace_stack_ = saved_namespace;
