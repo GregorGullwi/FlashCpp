@@ -4937,7 +4937,15 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
-				bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference();
+				const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
+				const bool is_reference_param = param_type_spec
+					? (param_type_spec->is_reference() || param_type_spec->is_rvalue_reference())
+					: arg.is_reference();
+				const bool is_float_arg = param_type_spec
+					? (isIrFloatingPointType(toIrType(param_type_spec->type()))
+						&& param_type_spec->pointer_depth() == 0
+						&& !is_reference_param)
+					: (isIrFloatingPointType(arg.effectiveIrType()) && !arg.is_reference());
 				bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
 				const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
@@ -4985,7 +4993,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 						emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
 						regAlloc.release(temp_xmm);
 						stack_arg_count++;
-					} else if (arg.is_reference() || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
+					} else if (is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
 						// Match handleFunctionCall: references and ABI-required by-address
 						// struct arguments must spill their address, not their value.
 						X64Register temp_reg = allocateRegisterWithSpilling();
@@ -5016,21 +5024,19 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
-			Type paramType = arg.type;
-			int paramSize = arg.size_in_bits.value;
-			TypeIndex arg_type_index = arg.type_index;
+			const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
+			Type paramType = param_type_spec ? param_type_spec->type() : arg.type;
+			int paramSize = param_type_spec ? getTypeSpecSizeBits(*param_type_spec) : arg.size_in_bits.value;
 			const IrValue& paramValue = arg.value;
-			bool arg_is_reference = arg.is_reference();
+			bool arg_is_reference = param_type_spec
+				? (param_type_spec->is_reference() || param_type_spec->is_rvalue_reference())
+				: arg.is_reference();
 			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
-			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double) && !arg_is_reference;
-
-			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
-			bool is_same_struct_type = false;
-			if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
-				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
-			}
-			bool is_reference_param = arg_is_reference || (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
+			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double)
+				&& (!param_type_spec || param_type_spec->pointer_depth() == 0)
+				&& !arg_is_reference;
+			bool is_reference_param = arg_is_reference;
 
 			// Determine which register to use based on parameter type
 			if (is_float_arg && float_reg_index < max_float_regs) {
@@ -12891,6 +12897,73 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 
 		// Calculate member size in bytes
 		int member_size_bytes = op.value.size_in_bits.value / 8;
+
+		const bool is_float_pointer_store = is_pointer_access
+			&& !op.is_reference()
+			&& !op.bitfield_width.has_value()
+			&& isIrFloatingPointType(op.value.effectiveIrType());
+		if (is_float_pointer_store) {
+			const bool is_float = (op.value.effectiveIrType() == IrType::Float);
+			X64Register value_xmm = X64Register::Count;
+			bool release_value_xmm = false;
+
+			if (is_literal) {
+				value_xmm = allocateXMMRegisterWithSpilling();
+				release_value_xmm = true;
+
+				X64Register literal_reg = allocateRegisterWithSpilling();
+				uint64_t literal_bits = 0;
+				if (is_float) {
+					float float_value = is_double_literal
+						? static_cast<float>(literal_double_value)
+						: static_cast<float>(literal_value);
+					uint32_t float_bits = 0;
+					std::memcpy(&float_bits, &float_value, sizeof(float_bits));
+					literal_bits = float_bits;
+				} else {
+					double double_value = is_double_literal
+						? literal_double_value
+						: static_cast<double>(literal_value);
+					std::memcpy(&literal_bits, &double_value, sizeof(literal_bits));
+				}
+				emitMovImm64(literal_reg, literal_bits);
+				emitMovqGprToXmm(literal_reg, value_xmm);
+				regAlloc.release(literal_reg);
+			} else {
+				int32_t value_offset = 0;
+				if (is_variable) {
+					auto it = current_scope.variables.find(variable_name);
+					if (it == current_scope.variables.end()) {
+						throw InternalError("Variable not found in scope");
+					}
+					value_offset = it->second.offset;
+				} else {
+					auto value_var = std::get<TempVar>(op.value.value);
+					value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
+				}
+
+				if (auto existing_reg = regAlloc.findRegisterForStackOffset(value_offset);
+					existing_reg.has_value() && existing_reg.value() >= X64Register::XMM0) {
+					value_xmm = existing_reg.value();
+				} else {
+					value_xmm = allocateXMMRegisterWithSpilling();
+					release_value_xmm = true;
+					emitFloatMovFromFrame(value_xmm, value_offset, is_float);
+				}
+			}
+
+			X64Register base_reg = allocateRegisterWithSpilling();
+			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
+			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+				load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+			emitFloatStoreToAddressWithOffset(textSectionData, value_xmm, base_reg, op.offset, is_float);
+			regAlloc.release(base_reg);
+
+			if (release_value_xmm) {
+				regAlloc.release(value_xmm);
+			}
+			return;
+		}
 
 		// Load the value into a register - allocate through register allocator to avoid conflicts
 		X64Register value_reg = allocateRegisterWithSpilling();

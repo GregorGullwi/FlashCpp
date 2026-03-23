@@ -2793,7 +2793,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
 					const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const auto& params = func_node.parameter_nodes();
-					if (params.size() == 1 && params[0].is<DeclarationNode>()) {
+					if (!params.empty() &&
+						computeMinRequiredArgs(params) <= 1 &&
+						params[0].is<DeclarationNode>()) {
 						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 						if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
@@ -4483,4 +4485,3 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
 	}
 }
-

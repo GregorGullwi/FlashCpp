@@ -14,81 +14,6 @@ validated.
   constexpr evaluator recursion guard works, but the parser can still fail first on
   sufficiently deep source expressions.
 
-## Parenthesized declarator form `T(x)[N]` not supported
-
-FlashCpp does not yet parse the *parenthesized declarator* form of a variable
-declaration:
-
-```cpp
-template<typename T>
-void f() {
-    T(x)[3];   // C++20: declares x as T[3] — NOT a cast + subscript expression
-    T(y);      // C++20: declares y as T    — NOT a functional cast
-}
-```
-
-Per C++20 [dcl.ambig.res], when a statement is syntactically ambiguous between
-a declaration and an expression, it shall be treated as a declaration.
-`T(x)[3]` should therefore declare `x` as `T[3]`, but `parse_variable_declaration`
-currently expects a plain identifier directly after the type specifier and does
-not recognise the `(identifier)` declarator syntax.
-
-The disambiguation routing in `parse_statement_or_declaration` is **correct**
-(it no longer misidentifies `[` as an expression-only token), and a `_fail` test
-(`test_tparam_bracket_decl_ambig_fail.cpp`) documents the current parse error.
-The remaining work is to extend `parse_variable_declaration` (and the declarator
-parser) to handle parenthesized declarators as defined in [dcl.decl]/[dcl.paren].
-
-## Local variable uses can misbind inside function templates
-
-Local variables declared inside a function template body can later be rejected as
-if they were unresolved non-dependent names:
-
-```cpp
-struct Box {
-    int value;
-    Box(int);
-};
-
-template<int N>
-int f() {
-    Box box(N);
-    return box.value; // can fail: "'box' was not declared before the template definition"
-}
-```
-
-Observed while writing a constructor-overload regression: FlashCpp emitted
-`error: non-dependent name 'box' was not declared before the template definition
-(C++20 [temp.res]/9)` even though `box` is a local declared earlier in the same
-template definition.
-
-This appears to be a template-body local-scope/binding bug rather than a real
-two-phase lookup violation.
-
-**Workaround**: avoid introducing a named local in the affected template body;
-route the value through a helper call or another expression form instead.
-
-## Unscoped enum enumerator access through type aliases
-
-Accessing unscoped enum values using a type alias as the qualifier
-(`Container::AliasStatus::Ok` where `AliasStatus = Status`) does not work.
-The alias `TypeInfo` does not carry an `EnumTypeInfo` (enumerators are only
-tracked on the original enum's `TypeInfo`).
-
-```cpp
-struct Container {
-    enum Status { Ok, Fail };          // unscoped
-    using AliasStatus = Status;
-};
-// Works:    Container::Status::Ok
-// Broken:   Container::AliasStatus::Ok  (no EnumTypeInfo on alias)
-```
-
-Scoped enums (`enum class`) work through aliases because the enumerator lookup
-uses a different code path.
-
-**Workaround**: use the original enum name (`Container::Status::Ok`) or `enum class`.
-
 ## Constexpr pointer: snapshot semantics vs. live reference semantics
 
 When `&x` is evaluated where `x` is a local constexpr variable (in bindings),
@@ -120,50 +45,21 @@ also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
 
-## Assignment operator finders: `params.size() == 1` guard not relaxed
+## Function-body IR conversion failures can still emit broken object files
 
-`findCopyAssignmentOperator()` and `findMoveAssignmentOperator()` in
-`AstNodeTypes.cpp` still use `params.size() == 1` in their slow-path loops.
-Assignment operators with trailing default arguments (e.g.
-`Foo& operator=(const Foo&, int = 0)`) are extremely rare in practice and are
-not recognized by these helpers. If such operators are ever used, the slow path
-will fail to match and the operator will not be found. The same applies to the
-assignment operator refinement in `Parser_Decl_StructEnum.cpp:2806`.
-(Note: the deleted assignment operator detection at `Parser_Decl_StructEnum.cpp:2155`
-was fixed to use `computeMinRequiredArgs(params) <= 1` in the post-Phase-18 cleanup.)
+When `AstToIr` throws an `InternalError` while lowering a function body,
+`FlashCppMain.cpp` currently logs the failure but can continue emitting an object
+file for the translation unit instead of stopping compilation with a hard error.
+That can turn frontend lowering bugs into misleading runtime mismatches or other
+garbage behavior instead of a clean compile failure.
 
-## Boolean negation + struct member access in chained if-statements
+This was observed while reproducing the now-fixed prvalue member-access bug:
+`main` logged an IR conversion failure for `Box(7).value`, but the compiler
+still produced an object file and the test linked and returned the wrong value.
 
-A pre-existing codegen bug causes incorrect results when `!obj.bool_member` is
-used in an `if` statement preceding another `if` that reads a different member
-of the same struct. The workaround is to use `int` flags instead of `bool`
-members, or avoid chaining `if (!obj.bool_field)` with subsequent member
-accesses. Observed during copy/move constructor regression testing.
-
-## Direct member access on prvalue struct temporaries can crash at runtime
-
-Accessing a struct member directly from a prvalue temporary can compile and link
-but produce a runtime stack overflow in the generated program:
-
-```cpp
-struct Box {
-    int value;
-    Box(int x) : value(x) {}
-};
-
-int f() {
-    return Box(7).value; // observed runtime crash (0xC00000FD)
-}
-```
-
-This was observed while writing a template constructor-overload regression; both
-`Box(N).value` and `Box{N}.value` hit the same nearby failure mode. The symptom
-looks like a temporary-object/member-access codegen bug rather than a semantic
-analysis error.
-
-**Workaround**: avoid direct member access on a prvalue temporary; pass the
-temporary through a helper function or otherwise materialize/access it through a
-different path.
+**Future task**: make function-body IR conversion failures fatal for the current
+translation unit, or otherwise suppress object emission when any required
+top-level node fails IR generation.
 
 ## Nested template static members of struct type can misbehave at runtime
 
@@ -267,49 +163,3 @@ they represent true C++ violations (not evaluator gaps), then the existing enfor
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
 
-
-## Float member store incorrect when using static_cast<float>(double_ref) in constructor
-
-When a constructor takes a `const double&` parameter and assigns
-`this->float_member = static_cast<float>(d)`, the codegen emits the correct
-`cvtsd2ss` conversion but then stores from an uninitialized integer register
-(`r9d`) instead of from the converted XMM result, leaving the member with
-garbage data:
-
-```cpp
-struct FloatTarget {
-    float value;
-    FloatTarget(const double& d) : value(static_cast<float>(d)) {}
-};
-
-int main() {
-    FloatTarget f = 3.14;   // f.value is indeterminate — not 3.14f
-    return f.value > 3.0f ? 0 : 1; // unexpectedly returns 1
-}
-```
-
-The disassembly of the generated constructor body shows a pattern like:
-
-```asm
-movsd  (%rax), %xmm0        ; load *d
-cvtsd2ss %xmm0, %xmm1       ; convert to float -> xmm1
-movss  %xmm1, -0x38(%rbp)   ; store to local temp
-mov    %r9d, (%rdx)          ; BUG: stores r9d (uninitialized) instead of the float
-```
-
-The root cause is in the member-store codegen: after a `double→float` conversion
-expression inside a constructor with a reference-typed parameter, the member write
-incorrectly uses the 5th integer argument register rather than reloading the float
-result from its stack slot or XMM register.
-
-**Workaround**: store the cast result in a local variable first, then assign the
-member from that variable.
-
-```cpp
-FloatTarget(const double& d) {
-    float tmp = static_cast<float>(d);
-    value = tmp; // works correctly
-}
-```
-
-Observed while writing the `test_ctor_const_ref_param_conv_ret0.cpp` regression test.

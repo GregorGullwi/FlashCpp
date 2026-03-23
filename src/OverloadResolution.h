@@ -1473,7 +1473,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
 
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
+			if (params.empty() || !params[0].is<DeclarationNode>()) continue;
+			if (countMinRequiredArgs(member_func.function_decl.as<FunctionDeclarationNode>()) > 1) continue;
 
 			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
 			if (!param_type_node.is<TypeSpecifierNode>()) continue;
@@ -1597,7 +1598,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 			if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
 			const auto& params = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
-			if (params.size() != 1 || !params[0].is<DeclarationNode>()) continue;
+			if (params.empty() || !params[0].is<DeclarationNode>()) continue;
+			if (countMinRequiredArgs(member_func.function_decl.as<FunctionDeclarationNode>()) > 1) continue;
 			const auto& param_type_node = params[0].as<DeclarationNode>().type_node();
 			if (!param_type_node.is<TypeSpecifierNode>()) continue;
 

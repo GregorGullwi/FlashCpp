@@ -1279,8 +1279,8 @@
 			}
 			if (scoped_enum_type_info) {
 				const EnumTypeInfo* enum_info = scoped_enum_type_info->getEnumInfo();
-				if (enum_info && enum_info->is_scoped) {
-					// This is a scoped enum - look up the enumerator value
+				if (enum_info) {
+					// Qualified enum access is valid for both scoped and unscoped enums.
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
 					return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},

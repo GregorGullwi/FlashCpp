@@ -248,7 +248,25 @@ ParseResult Parser::parse_type_and_name() {
             Token class_name_token = peek_info();
             advance(); // consume class name
             
-            if (peek() == "::"_tok) {
+            if (peek() == ")"_tok) {
+                restore_token_position(ptrmf_check_pos);
+                restore_token_position(saved_pos);
+                auto result = parse_declarator(type_spec, Linkage::None);
+                if (!result.is_error()) {
+                    if (auto decl_node = result.node()) {
+                        if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
+                            decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                        } else if (decl_node->is<FunctionDeclarationNode>() && custom_alignment.has_value()) {
+                            DeclarationNode& inner_decl = decl_node->as<FunctionDeclarationNode>().decl_node();
+                            inner_decl.set_custom_alignment(custom_alignment.value());
+                        }
+                    }
+                    discard_saved_token(saved_pos);
+                    discard_saved_token(ptrmf_check_pos);
+                    return result;
+                }
+                restore_token_position(saved_pos);
+            } else if (peek() == "::"_tok) {
                 advance(); // consume '::'
                 
                 if (peek() == "*"_tok) {
@@ -776,6 +794,18 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         parse_calling_convention();
 
+        if (peek().is_identifier()) {
+            Token identifier_token = peek_info();
+            advance();
+
+            if (peek() != ")"_tok) {
+                return ParseResult::error("Expected ')' after parenthesized declarator identifier", current_token_);
+            }
+            advance(); // consume ')'
+
+            return parse_postfix_declarator(base_type, identifier_token, linkage);
+        }
+
         // Expect '*' for function pointer
         if (peek() != "*"_tok) {
             return ParseResult::error("Expected '*' in function pointer declarator", current_token_);
@@ -1040,8 +1070,47 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         base_type = fp_type;
     }
 
+    std::vector<ASTNode> array_dimensions;
+    bool is_unsized_array = false;
+    while (peek() == "["_tok) {
+        advance(); // consume '['
+
+        if (peek() == "]"_tok) {
+            if (array_dimensions.empty()) {
+                is_unsized_array = true;
+            } else {
+                return ParseResult::error("Only the first array dimension can be unsized", current_token_);
+            }
+        } else {
+            auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+            if (size_result.is_error()) {
+                return size_result;
+            }
+            array_dimensions.push_back(*size_result.node());
+        }
+
+        if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator || peek() != "]"_tok) {
+            return ParseResult::error("Expected ']' after array size", current_token_);
+        }
+        advance(); // consume ']'
+    }
+
+    if (!array_dimensions.empty() || is_unsized_array) {
+        base_type.set_array(true);
+    }
+
     // Create and return declaration node
     skip_asm_suffix();
+    if (!array_dimensions.empty()) {
+        return ParseResult::success(
+            emplace_node<DeclarationNode>(
+                emplace_node<TypeSpecifierNode>(base_type),
+                identifier,
+                std::move(array_dimensions)
+            )
+        );
+    }
+
     return ParseResult::success(
         emplace_node<DeclarationNode>(
             emplace_node<TypeSpecifierNode>(base_type),
@@ -1168,6 +1237,29 @@ bool Parser::looks_like_function_parameters()
 		// For identifiers, we need to check if it's a known type
 		if (token_type == Token::Type::Identifier) {
 			StringHandle id_handle = StringTable::getOrInternStringHandle(token_value);
+
+			// A current non-type template parameter (e.g. N in `Box box(N);`) is an
+			// expression argument, not an unnamed parameter type, so prefer direct-init.
+			bool is_current_template_param = false;
+			for (StringHandle param_name : current_template_param_names_) {
+				if (param_name == id_handle) {
+					is_current_template_param = true;
+					break;
+				}
+			}
+			if (is_current_template_param) {
+				bool is_type_template_param = false;
+				for (const auto& subst : template_param_substitutions_) {
+					if (subst.param_name == id_handle) {
+						is_type_template_param = subst.is_type_param;
+						break;
+					}
+				}
+				if (!is_type_template_param) {
+					restore_token_position(saved);
+					return false;
+				}
+			}
 			
 			// Check if this identifier is a known type in the type registry
 			auto type_iter = gTypesByName.find(id_handle);

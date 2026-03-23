@@ -44,30 +44,150 @@ namespace {
 		return false;
 	}
 
-	std::optional<bool> getSameTypeConstructorPreference(Parser* parser, const ASTNode& init_node, const TypeSpecifierNode& target_type) {
-		if (!parser || target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
-			return std::nullopt;
+	bool isDirectObjectPrvalueBase(const ASTNode& node) {
+		if (!node.is<ExpressionNode>()) {
+			return false;
 		}
 
-		if (auto init_type_opt = parser->get_expression_type(init_node); init_type_opt.has_value()) {
-			if (init_type_opt->type() == Type::Struct && init_type_opt->type_index() == target_type.type_index()) {
-				return init_type_opt->is_rvalue_reference();
-			}
-		}
+		return std::visit([](const auto& expr) -> bool {
+			using T = std::decay_t<decltype(expr)>;
+			return std::is_same_v<T, ConstructorCallNode> ||
+				std::is_same_v<T, InitializerListConstructionNode> ||
+				std::is_same_v<T, FunctionCallNode> ||
+				std::is_same_v<T, MemberFunctionCallNode> ||
+				std::is_same_v<T, StaticCastNode> ||
+				std::is_same_v<T, ConstCastNode> ||
+				std::is_same_v<T, ReinterpretCastNode> ||
+				std::is_same_v<T, DynamicCastNode>;
+		}, node.as<ExpressionNode>());
+	}
 
+}
+
+std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
+	if (!arg.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
 
-	bool isSameTypeXValueSource(Parser* parser, const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) {
-		if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser, init_node, target_type); same_type_ctor_preference.has_value()) {
-			return *same_type_ctor_preference;
-		}
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
+		using T = std::decay_t<decltype(inner)>;
 
-		return init_operands.type == Type::Struct
-			&& init_operands.type_index.is_valid()
-			&& init_operands.type_index == target_type.type_index()
-			&& isExprResultXValue(init_operands);
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			const DeclarationNode* decl = lookupDeclaration(inner.name());
+			if (!decl || !decl->type_node().is<TypeSpecifierNode>()) {
+				return std::nullopt;
+			}
+			TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
+			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			return type;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			const StructTypeInfo* struct_info = nullptr;
+			const StructMember* member = nullptr;
+			if (!resolveMemberAccessType(inner, struct_info, member) || !member) {
+				return std::nullopt;
+			}
+
+			TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
+			member_type.set_type_index(member->type_index);
+			if (member->pointer_depth > 0) {
+				member_type.add_pointer_levels(member->pointer_depth);
+			}
+
+			if (member->reference_qualifier != ReferenceQualifier::None) {
+				member_type.set_reference_qualifier(member->reference_qualifier);
+				return member_type;
+			}
+
+			auto object_type_opt = buildCodegenOverloadResolutionArgType(inner.object());
+			if (object_type_opt.has_value()) {
+				if (object_type_opt->is_rvalue_reference()) {
+					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+				} else if (object_type_opt->is_lvalue_reference()) {
+					member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				} else if (isDirectObjectPrvalueBase(inner.object())) {
+					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+				}
+			}
+
+			return member_type;
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+			std::is_same_v<T, ConstCastNode> ||
+			std::is_same_v<T, ReinterpretCastNode> ||
+			std::is_same_v<T, DynamicCastNode>) {
+			const ASTNode& target_type_node = inner.target_type();
+			if (target_type_node.is<TypeSpecifierNode>()) {
+				return target_type_node.as<TypeSpecifierNode>();
+			}
+			return std::nullopt;
+		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			const ASTNode& type_node = inner.type_node();
+			if (type_node.is<TypeSpecifierNode>()) {
+				return type_node.as<TypeSpecifierNode>();
+			}
+			return std::nullopt;
+		} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+			const ASTNode& target_type_node = inner.target_type();
+			if (target_type_node.is<TypeSpecifierNode>()) {
+				return target_type_node.as<TypeSpecifierNode>();
+			}
+			return std::nullopt;
+		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			const ASTNode& return_type_node = inner.function_declaration().type_node();
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				return return_type_node.as<TypeSpecifierNode>();
+			}
+			return std::nullopt;
+		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			const ASTNode& return_type_node = inner.function_declaration().decl_node().type_node();
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				return return_type_node.as<TypeSpecifierNode>();
+			}
+			return std::nullopt;
+		} else {
+			return std::nullopt;
+		}
+	}, expr);
+}
+
+std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
+	if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+		return std::nullopt;
 	}
+
+	auto init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
+	if (!init_type_opt.has_value()) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode init_type = *init_type_opt;
+	const bool is_lvalue_source = init_type.is_lvalue_reference();
+	const bool is_xvalue_source = init_type.is_rvalue_reference();
+	init_type.set_reference_qualifier(ReferenceQualifier::None);
+
+	if (init_type.type() != Type::Struct || init_type.type_index() != target_type.type_index()) {
+		return std::nullopt;
+	}
+
+	if (is_xvalue_source) {
+		return true;
+	}
+	if (is_lvalue_source) {
+		return false;
+	}
+
+	return std::nullopt;
+}
+
+bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) const {
+	if (auto same_type_ctor_preference = getSameTypeConstructorPreference(init_node, target_type); same_type_ctor_preference.has_value()) {
+		return *same_type_ctor_preference;
+	}
+
+	return init_operands.type == Type::Struct
+		&& init_operands.type_index.is_valid()
+		&& init_operands.type_index == target_type.type_index()
+		&& isExprResultXValue(init_operands);
 }
 
 	void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
@@ -915,7 +1035,7 @@ namespace {
 									if (init_expr.is<ExpressionNode>()) {
 										bool init_is_same_struct_type = false;
 										bool prefer_move_ctor = false;
-										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser_, init_expr, type_node); same_type_ctor_preference.has_value()) {
+										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(init_expr, type_node); same_type_ctor_preference.has_value()) {
 											init_is_same_struct_type = true;
 											prefer_move_ctor = *same_type_ctor_preference;
 										} else {
@@ -1033,7 +1153,11 @@ namespace {
 											param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										}
 
-										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+										ExpressionContext init_context = ExpressionContext::Load;
+										if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+											init_context = ExpressionContext::LValueAddress;
+										}
+										ExprResult init_operands = visitExpressionNode(init_expr.as<ExpressionNode>(), init_context);
 
 										// Apply sema-annotated or standard implicit conversion.
 										if (param_type) {
@@ -1041,61 +1165,11 @@ namespace {
 												init_operands, init_expr, *param_type, decl.identifier_token());
 										}
 
-										{
-											TypedValue tv;
-
-											// Check if parameter expects a reference and argument is an identifier
-											bool is_ident = std::holds_alternative<IdentifierNode>(init_expr.as<ExpressionNode>());
-											bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
-
-											if (param_is_ref && is_ident) {
-												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
-												std::optional<ASTNode> arg_symbol = symbol_table.lookup(identifier.name());
-
-												const DeclarationNode* arg_decl = nullptr;
-												if (arg_symbol.has_value() && arg_symbol->is<DeclarationNode>()) {
-													arg_decl = &arg_symbol->as<DeclarationNode>();
-												} else if (arg_symbol.has_value() && arg_symbol->is<VariableDeclarationNode>()) {
-													arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
-												}
-
-												if (arg_decl) {
-													const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-
-													if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
-														// Argument is already a reference - just pass it through
-														tv = toTypedValue(init_operands);
-													} else {
-														// Argument is a value - take its address
-														TempVar addr_var = var_counter.next();
-														AddressOfOp addr_op;
-														addr_op.result = addr_var;
-														addr_op.operand.type = arg_type.type();
-														addr_op.operand.ir_type = toIrType(arg_type.type());
-														addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
-														addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
-														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-														// Create TypedValue with the address
-														tv.type = arg_type.type();
-														tv.ir_type = toIrType(arg_type.type());
-														tv.size_in_bits = SizeInBits{64};  // Pointer size
-														tv.value = addr_var;
-														tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
-														tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
-													}
-												} else {
-													// Not a simple identifier or not found - use as-is
-													tv = toTypedValue(init_operands);
-												}
-											} else {
-												// Not a reference parameter or not an identifier - use as-is
-												tv = toTypedValue(init_operands);
-											}
-
-											ctor_op.arguments.push_back(std::move(tv));
-										}
+										ctor_op.arguments.push_back(buildConstructorArgumentValue(
+											init_operands,
+											init_expr,
+											param_type,
+											decl.identifier_token()));
 									} else {
 										throw InternalError("Initializer must be an ExpressionNode");
 									}
@@ -1452,7 +1526,7 @@ namespace {
 									? gTypeInfo[type_node.type_index().value].getStructInfo()
 									: nullptr;
 							const bool is_same_type_xvalue_init =
-								isSameTypeXValueSource(parser_, init_node, init_operands, type_node);
+								isSameTypeXValueSource(init_node, init_operands, type_node);
 							if (target_struct_info
 								&& is_same_type_xvalue_init) {
 								diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
@@ -1666,7 +1740,7 @@ namespace {
 									bool arg_is_same_struct_type = false;
 									bool prefer_move_ctor = false;
 									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
-										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(parser_, first_arg, type_node); same_type_ctor_preference.has_value()) {
+										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(first_arg, type_node); same_type_ctor_preference.has_value()) {
 											arg_is_same_struct_type = true;
 											prefer_move_ctor = *same_type_ctor_preference;
 										} else {
@@ -1808,83 +1882,17 @@ namespace {
 									param_type = &ctor_params[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 								}
 
-								ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-								// argumentIrOperands = [type, size, value]
-								{
-									TypedValue tv;
-
-									// Check if parameter expects a reference and argument is an identifier
-									if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
-									std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
-										const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-										std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-
-										// Handle both DeclarationNode and VariableDeclarationNode
-										const DeclarationNode* arg_decl = nullptr;
-										if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-											arg_decl = &symbol->as<DeclarationNode>();
-										} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
-											arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
-										}
-
-										if (arg_decl) {
-											const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-
-											if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
-												// Argument is already a reference - just pass it through
-												tv = toTypedValue(argumentIrOperands);
-											} else {
-												// Argument is a value - take its address
-												TempVar addr_var = var_counter.next();
-												AddressOfOp addr_op;
-												addr_op.result = addr_var;
-												addr_op.operand.type = arg_type.type();
-												addr_op.operand.ir_type = toIrType(arg_type.type());
-												addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
-												addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
-												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
-												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
-
-												// Create TypedValue with the address
-												tv.type = arg_type.type();
-												tv.ir_type = toIrType(arg_type.type());
-												tv.size_in_bits = SizeInBits{64};  // Pointer size
-												tv.value = addr_var;
-												tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
-												tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
-											}
-										} else {
-											// Not a simple identifier or not found - use as-is
-											tv = toTypedValue(argumentIrOperands);
-										}
-									} else {
-										// Not a reference parameter or not an identifier - use as-is
-										tv = toTypedValue(argumentIrOperands);
-									}
-
-									// If we have parameter type information, use it to set pointer depth and CV qualifiers
-									if (param_type) {
-										tv.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
-										// For pointer types, also extract CV qualifiers from pointer levels
-										if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
-											// Use CV qualifier from the first pointer level (T* const -> const)
-											// For now, we'll use the main CV qualifier
-											if (!tv.is_reference()) {
-												tv.cv_qualifier = param_type->cv_qualifier();
-											}
-										}
-										// For reference types, use the CV qualifier
-										if (param_type->is_reference() || param_type->is_rvalue_reference()) {
-											tv.cv_qualifier = param_type->cv_qualifier();
-										}
-										// Also update type_index if it's a struct type
-										if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
-											tv.type_index = param_type->type_index();
-										}
-									}
-
-									ctor_op.arguments.push_back(std::move(tv));
+								ExpressionContext arg_context = ExpressionContext::Load;
+								if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+									arg_context = ExpressionContext::LValueAddress;
 								}
+								ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
+								// argumentIrOperands = [type, size, value]
+								ctor_op.arguments.push_back(buildConstructorArgumentValue(
+									argumentIrOperands,
+									argument,
+									param_type,
+									decl.identifier_token()));
 								arg_index++;
 							});
 
@@ -2041,10 +2049,15 @@ namespace {
 								const Type referred_type = param_is_ref ? param_type->type() : Type::Void;
 								if (param_is_ref && referred_type != Type::Struct && init_operands.type != referred_type) {
 									init_arg = materializeConvertedReferenceArgument(init_operands, *param_type, decl.identifier_token());
+								} else if (param_type) {
+									init_arg = buildConstructorArgumentValue(
+										init_operands,
+										init_node,
+										param_type,
+										decl.identifier_token());
 								} else {
 								// Check if initializer is an identifier (variable)
-								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>()) &&
-									(!param_type || param_type->is_reference() || param_type->is_rvalue_reference())) {
+								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
 									const auto& identifier = std::get<IdentifierNode>(init_node.as<ExpressionNode>());
 									std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
 
@@ -2119,7 +2132,7 @@ namespace {
 								}
 							} else if (type_info.struct_info_ && !is_converting_ctor) {
 								const bool prefer_move_ctor =
-									isSameTypeXValueSource(parser_, init_node, init_operands, type_node);
+									isSameTypeXValueSource(init_node, init_operands, type_node);
 								const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
 								if (!is_prvalue_same_type_source) {
 									diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);

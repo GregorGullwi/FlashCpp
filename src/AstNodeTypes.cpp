@@ -121,6 +121,11 @@ TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_s
     if (type_spec.has_function_signature()) {
         info.function_signature_ = type_spec.function_signature();
     }
+    if (type_spec.type() == Type::Enum && type_spec.type_index().value < gTypeInfo.size()) {
+        if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().value].getEnumInfo()) {
+            info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+        }
+    }
     gTypesByName.emplace(info.name(), &info);
     return info;
 }
@@ -844,7 +849,11 @@ namespace {
 		}
 
 		const auto& params = func_node->parameter_nodes();
-		if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+		if (params.empty() || !params[0].is<DeclarationNode>()) {
+			return false;
+		}
+
+		if (computeMinRequiredArgs(params) > 1) {
 			return false;
 		}
 
