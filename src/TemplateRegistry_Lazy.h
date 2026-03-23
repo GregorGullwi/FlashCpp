@@ -46,7 +46,7 @@ public:
 	}
 	
 	// Check if a member function needs lazy instantiation
-	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const = false) const {
+	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
@@ -66,7 +66,7 @@ public:
 	}
 	
 	// Get lazy member info for instantiation
-	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const = false) {
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
@@ -91,7 +91,7 @@ public:
 	}
 	
 	// Mark a member function as instantiated (remove from lazy registry)
-	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const = false) {
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
 		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
