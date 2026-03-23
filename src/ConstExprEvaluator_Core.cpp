@@ -3379,16 +3379,14 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									// constructors: report a clear diagnostic instead of silently
 									// trying aggregate initialization, which would produce a confusing
 									// error or silently incorrect binding.
-									// Exception: empty brace-init (Type o{}) falls through to
-									// aggregate zero-init as a last resort, since the default
-									// constructor (0 args) should already have matched above.
-									if (!init_list.initializers().empty()) {
-										return EvalResult::error(
-											"No matching constructor for '" +
-											std::string(StringTable::getStringView(struct_info->getName())) +
-											"' with " + std::to_string(init_list.size()) +
-											" argument(s) in constexpr evaluation");
-									}
+									// Per C++20, a type with user-defined constructors is not an
+									// aggregate, so aggregate init is ill-formed regardless of
+									// whether the init list is empty or not.
+									return EvalResult::error(
+										"No matching constructor for '" +
+										std::string(StringTable::getStringView(struct_info->getName())) +
+										"' with " + std::to_string(init_list.size()) +
+										" argument(s) in constexpr evaluation");
 								}
 								auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 								if (!object_result.success()) {
