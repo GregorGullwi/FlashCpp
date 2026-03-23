@@ -5095,6 +5095,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		          class_decl.member_functions().size(), " member functions immediately");
 	}
 	
+	// Slice 3: map from original template member node (by raw pointer) to the instantiated stub node.
+	// Used by deferred-body replay to avoid name-based scanning.
+	std::unordered_map<const void*, ASTNode> source_member_to_stub;
+
+	// Extract a stable identity key from an ASTNode (raw pointer of the stored node).
+	auto astNodeKey = [](const ASTNode& n) -> const void* {
+		if (!n.has_value()) return nullptr;
+		if (n.is<FunctionDeclarationNode>())    return &n.as<FunctionDeclarationNode>();
+		if (n.is<ConstructorDeclarationNode>()) return &n.as<ConstructorDeclarationNode>();
+		if (n.is<DestructorDeclarationNode>())  return &n.as<DestructorDeclarationNode>();
+		return nullptr;
+	};
+
 	// Copy member functions from the template
 	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
 
@@ -5304,6 +5317,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!struct_info_ptr->member_functions.empty()) {
 					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
+
+				// Slice 3: record lazy-path stub for identity-map lookup during deferred-body replay.
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;
 
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
@@ -5544,6 +5560,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!struct_info_ptr->member_functions.empty()) {
 					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
+
+				// Slice 3: record eager-with-definition stub for identity-map lookup.
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 				
@@ -5688,6 +5707,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!struct_info_ptr->member_functions.empty()) {
 					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
 				}
+
+				// Slice 3: record no-definition stub for identity-map lookup.
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
@@ -5794,6 +5816,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Also add to struct_info so it can be found during codegen
 					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
+
+					// Slice 3: record constructor-with-definition stub.
+					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_ctor_node;
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ", 
 					          ctor_decl.name(), ": ", e.what());
@@ -5812,6 +5837,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Also add to struct_info so it can be found during codegen
 				struct_info_ptr->addConstructor(mem_func.function_declaration, mem_func.access);
+
+				// Slice 3: record constructor-no-definition stub (same node is reused).
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = mem_func.function_declaration;
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
@@ -5855,6 +5883,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Also add to struct_info so hasDestructor() returns true during codegen
 					struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
+
+					// Slice 3: record destructor-with-definition stub.
+					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_dtor_node;
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for destructor ", 
 					          dtor_decl.name(), ": ", e.what());
@@ -5873,6 +5904,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Also add to struct_info so hasDestructor() returns true during codegen
 				struct_info_ptr->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
+
+				// Slice 3: record destructor-no-definition stub (same node is reused).
+				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = mem_func.function_declaration;
 			}
 		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 			// Member template functions need outer template parameters substituted
@@ -6581,32 +6615,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FunctionDeclarationNode* target_func = nullptr;
 			ConstructorDeclarationNode* target_ctor = nullptr;
 			DestructorDeclarationNode* target_dtor = nullptr;
-			
-			// Search in member_functions() which contains all functions, constructors, and destructors
-			for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-				if (deferred.identity.kind == DeferredMemberIdentity::Kind::Constructor && mem_func.is_constructor) {
-					if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
-						auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
-						if (ctor.name() == deferred.identity.original_lookup_name) {
-							target_ctor = &ctor;
+
+			// Slice 3: try identity-map lookup first (source-member → instantiated stub).
+			{
+				const void* src_key = astNodeKey(deferred.identity.original_member_node);
+				if (src_key) {
+					auto it = source_member_to_stub.find(src_key);
+					if (it != source_member_to_stub.end()) {
+						ASTNode& stub = it->second;
+						if (stub.is<FunctionDeclarationNode>())
+							target_func = &stub.as<FunctionDeclarationNode>();
+						else if (stub.is<ConstructorDeclarationNode>())
+							target_ctor = &stub.as<ConstructorDeclarationNode>();
+						else if (stub.is<DestructorDeclarationNode>())
+							target_dtor = &stub.as<DestructorDeclarationNode>();
+					}
+				}
+			}
+
+			// Fallback: scan by name (legacy path, loud warning so we notice misses).
+			if (!target_func && !target_ctor && !target_dtor) {
+				FLASH_LOG(Templates, Warning, "Slice 3: identity-map miss for '",
+				          deferred.identity.original_lookup_name, "' in ", instantiated_name,
+				          "; falling back to name scan");
+				for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+					if (deferred.identity.kind == DeferredMemberIdentity::Kind::Constructor && mem_func.is_constructor) {
+						if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+							auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+							if (ctor.name() == deferred.identity.original_lookup_name) {
+								target_ctor = &ctor;
+								break;
+							}
+						}
+					} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Destructor && mem_func.is_destructor) {
+						if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
+							target_dtor = &mem_func.function_declaration.as<DestructorDeclarationNode>();
 							break;
 						}
-					}
-				} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Destructor && mem_func.is_destructor) {
-					if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
-						target_dtor = &mem_func.function_declaration.as<DestructorDeclarationNode>();
-						break;
-					}
-				} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Function) {
-					// Regular member function
-					if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-						auto& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-						const auto& decl = func.decl_node();
-						// Match by name and const qualifier
-						if (decl.identifier_token().value() == deferred.identity.original_lookup_name &&
-						    mem_func.is_const() == deferred.identity.is_const_method) {
-							target_func = &func;
-							break;
+					} else if (deferred.identity.kind == DeferredMemberIdentity::Kind::Function) {
+						if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+							auto& func = mem_func.function_declaration.as<FunctionDeclarationNode>();
+							const auto& decl = func.decl_node();
+							if (decl.identifier_token().value() == deferred.identity.original_lookup_name &&
+							    mem_func.is_const() == deferred.identity.is_const_method) {
+								target_func = &func;
+								break;
+							}
 						}
 					}
 				}
