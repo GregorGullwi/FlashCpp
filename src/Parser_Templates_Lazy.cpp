@@ -243,12 +243,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	resolve_self_type(return_type, return_type_index);
 
-	// Create substituted return type node
+	// Create substituted return type node (use the return type's token, not the function identifier)
 	TypeSpecifierNode substituted_return_type(
 		return_type,
 		return_type_spec.qualifier(),
 		get_type_size_bits(return_type),
-		decl.identifier_token()
+		return_type_spec.token()
 	);
 	substituted_return_type.set_type_index(return_type_index);
 
@@ -260,9 +260,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
-	// Create a new function declaration with substituted return type
+	// Slice 4: use the canonical instantiated lookup name (from identity) as the
+	// function identifier token so the emitted body matches the stub's registered name.
+	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
+	Token fn_identifier_token(Token::Type::Identifier,
+		StringTable::getStringView(fn_name_handle),
+		decl.identifier_token().line(), decl.identifier_token().column(),
+		decl.identifier_token().file_index());
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-		substituted_return_node, decl.identifier_token()
+		substituted_return_node, fn_identifier_token
 	);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 		new_func_decl_ref, lazy_info.identity.instantiated_owner_name

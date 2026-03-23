@@ -3568,6 +3568,56 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
 
+	// Slice 4: trigger lazy instantiation of the conversion operator body if it is still a stub.
+	// The lazy registry key is effectiveLookupName (e.g., "operator int" for LazyWrapper<int>),
+	// which equals conv_op.getName().  The stub's identifier_token holds the un-substituted
+	// original name ("operator user_defined"), so we must use conv_op.getName() here.
+	// instantiateLazyMemberFunction() updates conv_op.function_decl in-place so that the
+	// subsequent `func_decl` binding already sees the materialized body.
+	if (parser_) {
+		const auto& init_func = conv_op.function_decl.as<FunctionDeclarationNode>();
+		if (!init_func.get_definition().has_value()) {
+			StringHandle canonical_name = conv_op.getName();
+			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+					source_type_info.name(), canonical_name)) {
+				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+					source_type_info.name(), canonical_name);
+				if (lazy_info_opt.has_value()) {
+					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+						source_type_info.name(), canonical_name);
+					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
+					if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+						DeferredMemberFunctionInfo deferred_info;
+						deferred_info.struct_name = source_type_info.name();
+						deferred_info.function_node = *instantiated_func;
+						// Build namespace stack from the struct's qualified name.
+						std::string_view qualified = StringTable::getStringView(source_type_info.name());
+						size_t ns_end = qualified.rfind("::");
+						if (ns_end != std::string_view::npos) {
+							std::string_view ns_part = qualified.substr(0, ns_end);
+							size_t start = 0;
+							while (start < ns_part.size()) {
+								size_t pos = ns_part.find("::", start);
+								if (pos == std::string_view::npos) {
+									deferred_info.namespace_stack.emplace_back(ns_part.substr(start));
+									break;
+								}
+								deferred_info.namespace_stack.emplace_back(ns_part.substr(start, pos - start));
+								start = pos + 2;
+							}
+						}
+						deferred_member_functions_.push_back(std::move(deferred_info));
+					}
+				}
+			}
+		}
+	}
+
+	// Re-read func_decl: instantiateLazyMemberFunction() may have updated conv_op.function_decl
+	// in-place (replacing the signature-only stub with the materialized body).
+	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
+		return std::nullopt;
 	const auto& func_decl = conv_op.function_decl.as<FunctionDeclarationNode>();
 	std::string_view struct_name = StringTable::getStringView(source_type_info.name());
 
