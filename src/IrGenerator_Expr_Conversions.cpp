@@ -2440,12 +2440,22 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					}
 				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					ci.selected_constructor &&
-					from_desc.base_type != Type::Struct) {
+					from_desc.base_type != Type::Struct &&
+					param_base_type != Type::Struct) {
+					// Pre-bind conversion: target is the selected constructor's first parameter type,
+					// not the outer param type (which may be the struct being constructed).
+					const auto& ctor_params = ci.selected_constructor->parameter_nodes();
+					if (ctor_params.empty() || !ctor_params[0].is<DeclarationNode>())
+						throw InternalError("applyConstructorArgConversion: selected_constructor has no accessible first parameter");
+					const ASTNode& ptn = ctor_params[0].as<DeclarationNode>().type_node();
+					if (!ptn.is<TypeSpecifierNode>())
+						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
+					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
 					Type ctor_from_t = from_desc.base_type;
 					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.type)
 						ctor_from_t = arg_result.type;
-					if (ctor_from_t != param_base_type) {
-						arg_result = generateTypeConversion(arg_result, ctor_from_t, param_base_type, source_token);
+					if (ctor_from_t != ctor_first_param_type) {
+						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 					}
 					sema_applied = true;
 				} else if (from_t != Type::Struct && to_t != Type::Struct) {
