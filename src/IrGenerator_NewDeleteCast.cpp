@@ -676,7 +676,7 @@
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 
 		// Return the xvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, SizeInBits{64}, result_var, TypeIndex{}, PointerDepth{});
+		return makeExprResult(target_type, SizeInBits{64}, result_var, expr_operands.type_index, PointerDepth{});
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
