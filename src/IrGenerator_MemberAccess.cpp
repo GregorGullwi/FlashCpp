@@ -1136,6 +1136,18 @@
 					is_pointer_dereference = true;
 				}
 			}
+			else if (expr) {
+				// Materialize direct object expressions (constructor calls, braced construction,
+				// casts, conditional expressions, etc.) so member access can operate on the
+				// resulting temporary instead of special-casing each AST variant.
+				auto object_result = visitExpressionNode(*expr);
+				if (!extractBaseFromOperands(object_result, base_object, base_type, base_type_index, "object expression")) {
+					throw InternalError(std::string("Failed to extract base from object expression result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
+				}
+				if (is_arrow) {
+					is_pointer_dereference = true;
+				}
+			}
 			else {
 				throw InternalError(std::string("member access on unsupported object expression type for member '") + std::string(memberAccessNode.member_token().value()) + "'" + (expr ? std::string(" (variant index ") + std::to_string(expr->index()) + ")" : " (no expression)"));
 			}
@@ -1289,9 +1301,18 @@
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 
-		// Mark member access as lvalue (Option 2: Value Category Tracking)
-		// obj.member is an lvalue - it designates a specific object member
-		// Use adjusted_offset from member_result to handle inheritance correctly
+		const int member_size_bits = static_cast<int>(member->size * 8);
+		bool member_is_xvalue = false;
+		if (!is_pointer_dereference && std::holds_alternative<TempVar>(base_object)) {
+			const TempVar base_temp = std::get<TempVar>(base_object);
+			const TempVarMetadata base_metadata = getTempVarMetadata(base_temp);
+			member_is_xvalue = base_metadata.category == ValueCategory::XValue
+				|| base_metadata.category == ValueCategory::PRValue;
+		}
+
+		// Track the subobject location so nested member access and reference binding can
+		// recover the materialized temporary address when the base is a prvalue/xvalue.
+		// Use adjusted_offset from member_result to handle inheritance correctly.
 		LValueInfo lvalue_info(
 			LValueInfo::Kind::Member,
 			did_unwrap ? ultimate_base : base_object,
@@ -1302,7 +1323,11 @@
 		lvalue_info.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		lvalue_info.bitfield_width = member->bitfield_width;
 		lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
-		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+		if (member_is_xvalue && !member->is_reference()) {
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type, member_size_bits));
+		} else {
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type, member_size_bits));
+		}
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
@@ -1322,8 +1347,6 @@
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		member_load.bitfield_width = member->bitfield_width;
 		member_load.bitfield_bit_offset = member->bitfield_bit_offset;
-
-		int member_size_bits = static_cast<int>(member->size * 8);
 
 		// When context is LValueAddress, skip the load and return address/metadata only
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
@@ -3370,60 +3393,12 @@ const StructTypeInfo*& out_struct_info,
 const StructMember*& out_member) const {
 	// Get the base object expression
 	const ASTNode& base_node = member_access.object();
-	if (!base_node.is<ExpressionNode>()) {
+	auto base_type_opt = buildCodegenOverloadResolutionArgType(base_node);
+	if (!base_type_opt.has_value()) {
 		return false;
 	}
-
-	const ExpressionNode& base_expr = base_node.as<ExpressionNode>();
-	TypeSpecifierNode base_type;
-
-	if (std::holds_alternative<IdentifierNode>(base_expr)) {
-		// Simple identifier - look it up in the symbol table
-		const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
-		if (base_ident.name() == "this" && current_struct_name_.isValid()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it == gTypesByName.end() || !type_it->second) {
-				return false;
-			}
-			const TypeInfo& type_info = *type_it->second;
-			base_type = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
-		} else {
-			std::optional<ASTNode> symbol = lookupSymbol(base_ident.name());
-			if (!symbol.has_value()) {
-				return false;
-			}
-			const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
-			if (!base_decl) {
-				return false;
-			}
-			base_type = base_decl->type_node().as<TypeSpecifierNode>();
-		}
-	} else if (std::holds_alternative<MemberAccessNode>(base_expr)) {
-		// Nested member access - recursively resolve
-		const MemberAccessNode& nested_access = std::get<MemberAccessNode>(base_expr);
-		const StructTypeInfo* nested_struct_info = nullptr;
-		const StructMember* nested_member = nullptr;
-		if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
-			return false;
-		}
-		if (!nested_member || !isIrStructType(toIrType(nested_member->type))) {
-			return false;
-		}
-		// Get the type info for the nested member's struct type
-		if (nested_member->type_index.value >= gTypeInfo.size()) {
-			return false;
-		}
-		const TypeInfo& nested_type_info = gTypeInfo[nested_member->type_index.value];
-		if (!nested_type_info.isStruct()) {
-			return false;
-		}
-		// Convert size from bytes to bits for TypeSpecifierNode
-		base_type = TypeSpecifierNode(Type::Struct, nested_member->type_index,
-		nested_member->size * 8, Token());  // size in bits
-	} else {
-		// Unsupported base expression type
-		return false;
-	}
+	TypeSpecifierNode base_type = *base_type_opt;
+	base_type.set_reference_qualifier(ReferenceQualifier::None);
 
 	// If the base type is a pointer, dereference it
 	if (base_type.pointer_levels().size() > 0) {

@@ -45,30 +45,21 @@ also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
 
-## Direct member access on prvalue struct temporaries can crash at runtime
+## Function-body IR conversion failures can still emit broken object files
 
-Accessing a struct member directly from a prvalue temporary can compile and link
-but produce a runtime stack overflow in the generated program:
+When `AstToIr` throws an `InternalError` while lowering a function body,
+`FlashCppMain.cpp` currently logs the failure but can continue emitting an object
+file for the translation unit instead of stopping compilation with a hard error.
+That can turn frontend lowering bugs into misleading runtime mismatches or other
+garbage behavior instead of a clean compile failure.
 
-```cpp
-struct Box {
-    int value;
-    Box(int x) : value(x) {}
-};
+This was observed while reproducing the now-fixed prvalue member-access bug:
+`main` logged an IR conversion failure for `Box(7).value`, but the compiler
+still produced an object file and the test linked and returned the wrong value.
 
-int f() {
-    return Box(7).value; // observed runtime crash (0xC00000FD)
-}
-```
-
-This was observed while writing a template constructor-overload regression; both
-`Box(N).value` and `Box{N}.value` hit the same nearby failure mode. The symptom
-looks like a temporary-object/member-access codegen bug rather than a semantic
-analysis error.
-
-**Workaround**: avoid direct member access on a prvalue temporary; pass the
-temporary through a helper function or otherwise materialize/access it through a
-different path.
+**Future task**: make function-body IR conversion failures fatal for the current
+translation unit, or otherwise suppress object emission when any required
+top-level node fails IR generation.
 
 ## Nested template static members of struct type can misbehave at runtime
 

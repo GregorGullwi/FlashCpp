@@ -44,6 +44,24 @@ namespace {
 		return false;
 	}
 
+	bool isDirectObjectPrvalueBase(const ASTNode& node) {
+		if (!node.is<ExpressionNode>()) {
+			return false;
+		}
+
+		return std::visit([](const auto& expr) -> bool {
+			using T = std::decay_t<decltype(expr)>;
+			return std::is_same_v<T, ConstructorCallNode> ||
+				std::is_same_v<T, InitializerListConstructionNode> ||
+				std::is_same_v<T, FunctionCallNode> ||
+				std::is_same_v<T, MemberFunctionCallNode> ||
+				std::is_same_v<T, StaticCastNode> ||
+				std::is_same_v<T, ConstCastNode> ||
+				std::is_same_v<T, ReinterpretCastNode> ||
+				std::is_same_v<T, DynamicCastNode>;
+		}, node.as<ExpressionNode>());
+	}
+
 }
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
@@ -87,6 +105,8 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 				} else if (object_type_opt->is_lvalue_reference()) {
 					member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				} else if (isDirectObjectPrvalueBase(inner.object())) {
+					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 			}
 
