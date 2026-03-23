@@ -1441,15 +1441,44 @@ EvalResult Evaluator::evaluate_new_expression(
 			}
 			object_result = std::move(*ctor_result);
 		} else {
-			// Default/aggregate initialization: apply default member initializers.
-			for (const auto& member : struct_info->members) {
-				std::string_view mname = StringTable::getStringView(member.getName());
-				if (member.default_initializer.has_value()) {
-					auto def_result = evaluate(*member.default_initializer, context);
-					object_result.object_member_bindings[mname] =
-						def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+			// Default initialization with empty args: new T or new T().
+			// Per C++20, a type with user-defined constructors is not an aggregate,
+			// so we must try the default constructor first and reject aggregate init
+			// if the type has user-defined constructors but no default constructor.
+			bool has_user_defined_ctor = false;
+			for (const auto& func : struct_info->member_functions) {
+				if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) continue;
+				if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+					has_user_defined_ctor = true;
+					break;
+				}
+			}
+			if (has_user_defined_ctor) {
+				ChunkedVector<ASTNode> empty_args;
+				auto ctor_result = try_materialize_struct_from_ctor_args(
+					struct_info, type_index, empty_args, context, bindings);
+				if (ctor_result.has_value()) {
+					if (!ctor_result->success()) {
+						return *ctor_result;
+					}
+					object_result = std::move(*ctor_result);
 				} else {
-					object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+					return EvalResult::error(
+						"new-expression: no matching default constructor for '" +
+						std::string(StringTable::getStringView(struct_info->getName())) +
+						"' (type has user-defined constructors and is not an aggregate)");
+				}
+			} else {
+				// True aggregate or implicit-only constructors: apply default member initializers.
+				for (const auto& member : struct_info->members) {
+					std::string_view mname = StringTable::getStringView(member.getName());
+					if (member.default_initializer.has_value()) {
+						auto def_result = evaluate(*member.default_initializer, context);
+						object_result.object_member_bindings[mname] =
+							def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+					} else {
+						object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
+					}
 				}
 			}
 		}
