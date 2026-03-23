@@ -698,8 +698,10 @@
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 
-		// Return the lvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, SizeInBits{64}, result_var);
+		// Return the lvalue with reference semantics (64-bit pointer size).
+		// Preserve the source type_index so downstream conversion-operator lookup
+		// (e.g. int x = const_cast<const T&>(obj)) can find the struct's operators.
+		return makeExprResult(target_type, SizeInBits{64}, result_var, expr_operands.type_index);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
