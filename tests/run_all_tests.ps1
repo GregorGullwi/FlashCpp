@@ -18,7 +18,7 @@ $requestedTestNames = @(
 # Default to number of logical processors
 if ($Jobs -le 0) {
 	$Jobs = [Environment]::ProcessorCount - 1
-	if ($Jobs -le 0) { $Jobs = 4 }
+	if ($Jobs -le 0) { $Jobs = 1 }
 }
 
 # Suppress PowerShell errors from native commands writing to stderr
