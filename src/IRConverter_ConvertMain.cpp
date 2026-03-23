@@ -5027,7 +5027,6 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
 			Type paramType = param_type_spec ? param_type_spec->type() : arg.type;
 			int paramSize = param_type_spec ? getTypeSpecSizeBits(*param_type_spec) : arg.size_in_bits.value;
-			TypeIndex arg_type_index = param_type_spec ? param_type_spec->type_index() : arg.type_index;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = param_type_spec
 				? (param_type_spec->is_reference() || param_type_spec->is_rvalue_reference())
