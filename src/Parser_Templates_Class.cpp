@@ -2194,14 +2194,13 @@ ParseResult Parser::parse_template_declaration() {
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
 					if (struct_info) {
 						StringHandle func_name_handle = decl_node.identifier_token().handle();
+						// Set is_const_member_function on the node so propagateAstProperties derives cv_qualifier.
+						member_func_ref.set_is_const_member_function(member_quals.is_const());
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
 							current_access,
 							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
 							func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
-						// Set const/volatile on the last added member
-						if (!struct_info->member_functions.empty()) {
-							struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
-						}
+						// cv_qualifier is now auto-derived by propagateAstProperties
 					}
 					
 					// Add to AST for code generation

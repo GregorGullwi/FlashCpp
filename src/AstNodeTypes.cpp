@@ -689,13 +689,22 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 	return false;
 }
 
-// Auto-extract is_noexcept, is_const, is_volatile from the AST node stored in a
+// Auto-extract is_noexcept and cv_qualifier from the AST node stored in a
 // StructMemberFunction. This centralises property propagation so that every
 // addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
 // automatically picks up the flags — callers never need to do it manually.
+// All parse and instantiation paths must call set_is_const_member_function()
+// on the FunctionDeclarationNode before calling add*().
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
     if (const auto* fn = get_function_decl_node(mf.function_decl)) {
         mf.is_noexcept = fn->is_noexcept();
+        // Auto-derive cv_qualifier from the stored is_const_member_function_ flag.
+        // All parse and instantiation paths must call set_is_const_member_function()
+        // on the FunctionDeclarationNode before calling addMemberFunction / addOperatorOverload.
+        CVQualifier cv = CVQualifier::None;
+        if (fn->is_const_member_function())
+            cv = static_cast<CVQualifier>(static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Const));
+        mf.cv_qualifier = cv;
     } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
         const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
         mf.is_noexcept = ctor.is_noexcept();
@@ -703,10 +712,6 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
         const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
         mf.is_noexcept = dtor.is_noexcept();
     }
-    // Note: is_const / is_volatile are NOT extracted here.
-    // FunctionDeclarationNode has no CV-qualifier field — those qualifiers
-    // live in MemberQualifiers (parser) or StructMemberFunctionDecl (pattern).
-    // Callers that have that context set them manually after calling add*().
 }
 
 // Helper to check if a parameter's type_index matches this struct's own type_index.

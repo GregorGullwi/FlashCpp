@@ -1532,6 +1532,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				copy_function_properties(new_func_ref, orig_func);
+				// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
+				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				if (orig_func.get_definition().has_value()) {
 					new_func_ref.set_definition(*orig_func.get_definition());
 				}
@@ -1547,10 +1549,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					mem_func.is_override,
 					mem_func.is_final
 				);
-				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
-				if (!struct_info->member_functions.empty()) {
-					struct_info->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-				}
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 			}
 		}
 
@@ -5314,10 +5313,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
-				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-				}
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record lazy-path stub for identity-map lookup during deferred-body replay.
 				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;
@@ -5558,10 +5554,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
-				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-				}
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record eager-with-definition stub for identity-map lookup.
 				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;
@@ -5706,10 +5699,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_final
 					);
 				}
-				// is_noexcept auto-extracted by propagateAstProperties; const/volatile come from pattern
-				if (!struct_info_ptr->member_functions.empty()) {
-					struct_info_ptr->member_functions.back().cv_qualifier = mem_func.cv_qualifier;
-				}
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record no-definition stub for identity-map lookup.
 				source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_func_node;

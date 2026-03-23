@@ -475,17 +475,15 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			          "' - creating new member function entry");
 			
 			// Note: const qualification is handled by the member function's StructMemberFunction entry
-			
+			// Set is_const_member_function on the node so propagateAstProperties derives cv_qualifier.
+			func_ref.set_is_const_member_function(member_quals.is_const());
 			struct_info->addMemberFunction(function_name_token.handle(), func_node,
 				AccessSpecifier::Public,
 				/*is_virtual=*/false,
 				/*is_pure_virtual=*/false,
 				/*is_override=*/false,
 				/*is_final_func=*/false);
-			// Propagate const/volatile qualifiers to the newly added member
-			if (!struct_info->member_functions.empty()) {
-				struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
-			}
+			// cv_qualifier is now auto-derived by propagateAstProperties
 
 			// Check for declaration only (;) or function definition ({)
 			if (consume(";"_tok)) {
