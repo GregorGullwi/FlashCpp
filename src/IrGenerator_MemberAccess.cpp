@@ -3454,23 +3454,47 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 		return false;
 	}
 
+	// Helper lambda: given a symbol, return its TypeSpecifierNode (or nullptr)
+	auto getTypeSpec = [](const ASTNode& sym) -> const TypeSpecifierNode* {
+		if (sym.is<VariableDeclarationNode>()) {
+			const auto& var_decl = sym.as<VariableDeclarationNode>();
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>())
+				return &var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		} else if (sym.is<DeclarationNode>()) {
+			const auto& decl = sym.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>())
+				return &decl.type_node().as<TypeSpecifierNode>();
+		}
+		return nullptr;
+	};
+
 	// IdentifierNode — look up in symbol_table, check if the declaration is const
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
 		const auto sym = symbol_table.lookup(id.name());
 		if (!sym.has_value()) return false;
-		if (sym->is<VariableDeclarationNode>()) {
-			const auto& var_decl = sym->as<VariableDeclarationNode>();
-			const auto& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			return type_spec.is_const();
-		}
-		if (sym->is<DeclarationNode>()) {
-			const auto& decl = sym->as<DeclarationNode>();
-			if (decl.type_node().is<TypeSpecifierNode>()) {
-				return decl.type_node().as<TypeSpecifierNode>().is_const();
+		const TypeSpecifierNode* ts = getTypeSpec(*sym);
+		return ts && ts->is_const();
+	}
+
+	// *ptr — dereference of const T* yields const T
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const UnaryOperatorNode& unary = std::get<UnaryOperatorNode>(expr);
+		if (unary.op() == "*" && unary.is_prefix()) {
+			const ASTNode& operand = unary.get_operand();
+			if (operand.is<ExpressionNode>()) {
+				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+					const IdentifierNode& id = std::get<IdentifierNode>(operand_expr);
+					const auto sym = symbol_table.lookup(id.name());
+					if (sym.has_value()) {
+						const TypeSpecifierNode* ts = getTypeSpec(*sym);
+						if (ts && ts->pointer_depth() >= 1)
+							return ts->is_const();
+					}
+				}
 			}
 		}
-		return false;
 	}
 
 	return false;

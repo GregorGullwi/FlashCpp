@@ -316,13 +316,14 @@ private:
 		Type target_type,
 		int target_size,
 		const Token& token,
-		const char* cast_name = "cast");
+		const char* cast_name);
 	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
-		const char* cast_name = "cast");
+		const char* cast_name);
 	ExprResult generateStaticCastIr(const StaticCastNode& staticCastNode);
 	ExprResult generateTypeidIr(const TypeidNode& typeidNode);
 	ExprResult generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
