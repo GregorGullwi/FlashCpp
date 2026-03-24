@@ -3545,14 +3545,22 @@ EvalResult Evaluator::evaluate_nested_member_access(
 
 			const StructMember* intermediate_member_info = base_struct_info->findMember(intermediate_member);
 			if (!intermediate_member_info) {
-				return EvalResult::error("Intermediate member '" + std::string(intermediate_member) +
-					"' is not defined in the base struct type for nested member access");
+				return EvalResult::error(
+					std::string(StringBuilder()
+						.append("Intermediate member '"sv)
+						.append(intermediate_member)
+						.append("' is not defined in the base struct type for nested member access"sv)
+						.commit()));
 			}
 
 			auto intermediate_member_it = base_result.object_member_bindings.find(intermediate_member);
 			if (intermediate_member_it == base_result.object_member_bindings.end()) {
-				return EvalResult::error("Intermediate member '" + std::string(intermediate_member) +
-					"' has no constexpr value in the evaluated base object for nested member access");
+				return EvalResult::error(
+					std::string(StringBuilder()
+						.append("Intermediate member '"sv)
+						.append(intermediate_member)
+						.append("' has no constexpr value in the evaluated base object for nested member access"sv)
+						.commit()));
 			}
 
 			EvalResult intermediate_result = intermediate_member_it->second;
@@ -3576,7 +3584,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							matching_ctor->parameter_nodes(),
 							ctor_args,
 							ctor_param_bindings,
-							"Invalid parameter node while reconstructing intermediate constexpr struct member for nested member access",
+							"Invalid parameter node while materializing intermediate struct member for nested member access",
 							true);
 						if (!bind_result.success()) {
 							return bind_result;
@@ -3604,8 +3612,12 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return final_member_it->second;
 			}
 
-			return EvalResult::error("Final member '" + std::string(final_member_name) +
-				"' not found in nested member access");
+			return EvalResult::error(
+				std::string(StringBuilder()
+					.append("Final member '"sv)
+					.append(final_member_name)
+					.append("' not found in nested member access"sv)
+					.commit()));
 		}
 		return EvalResult::error("Invalid base expression in nested member access");
 	}
