@@ -6,17 +6,17 @@ This note audits the current TempVar/local-variable IR architecture around refer
 
 Files inspected for this proposal:
 
-- `/home/runner/work/FlashCpp/FlashCpp/src/IRTypes_Registers.h` (`TempVarMetadata`, `ValueCategory`, `LValueInfo`)
-- `/home/runner/work/FlashCpp/FlashCpp/src/IRTypes_Ops.h` (`TypedValue` and all relevant op structs)
-- `/home/runner/work/FlashCpp/FlashCpp/src/IRConverter_ConvertMain.cpp` (especially `handleVariableDecl`, `setIndirectStorageInfo`, `handleArrayAccess`, `handleArrayElementAddress`, `handleMemberLoad`, `handleAddressOf`, `handleAddressOfMember`, `handleComputeAddress`, and call handling)
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Stmt_Decl.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Expr_Primitives.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Expr_Conversions.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Call_Direct.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Call_Indirect.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_MemberAccess.cpp`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IROperandHelpers.h`
-- `/home/runner/work/FlashCpp/FlashCpp/src/IrGenerator_Expr_Operators.cpp`
+- `/src/IRTypes_Registers.h` (`TempVarMetadata`, `ValueCategory`, `LValueInfo`)
+- `/src/IRTypes_Ops.h` (`TypedValue` and all relevant op structs)
+- `/src/IRConverter_ConvertMain.cpp` (especially `handleVariableDecl`, `setIndirectStorageInfo`, `handleArrayAccess`, `handleArrayElementAddress`, `handleMemberLoad`, `handleAddressOf`, `handleAddressOfMember`, `handleComputeAddress`, and call handling)
+- `/src/IrGenerator_Stmt_Decl.cpp`
+- `/src/IrGenerator_Expr_Primitives.cpp`
+- `/src/IrGenerator_Expr_Conversions.cpp`
+- `/src/IrGenerator_Call_Direct.cpp`
+- `/src/IrGenerator_Call_Indirect.cpp`
+- `/src/IrGenerator_MemberAccess.cpp`
+- `/src/IROperandHelpers.h`
+- `/src/IrGenerator_Expr_Operators.cpp`
 
 ## Executive summary
 
