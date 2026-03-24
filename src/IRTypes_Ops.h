@@ -401,7 +401,6 @@ private:
 // 64-bit address.  Used by handleVariableDecl to decide MOV vs LEA without
 // relying on a size/type heuristic.
 enum class ValueStorage : uint8_t {
-	LegacyUnclassified,  // migration sentinel — treat like current heuristic
 	ContainsData,        // slot holds a value; reference binding must LEA or materialise
 	ContainsAddress,     // slot holds address of existing object; reference binding must MOV
 };
@@ -437,9 +436,8 @@ struct TypedValue {
 	}
 
 	// Storage discriminator: records whether `value` holds a data value or a
-	// 64-bit address.  Defaults to LegacyUnclassified to preserve existing
-	// behaviour until all construction sites are annotated (Option A migration).
-	ValueStorage storage = ValueStorage::LegacyUnclassified;
+	// 64-bit address.
+	ValueStorage storage = ValueStorage::ContainsData;
 };
 
 // Helper function to print TypedValue

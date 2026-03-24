@@ -327,24 +327,10 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		makeReferenceAddressValue(addr_var);
 	};
 
-	// Returns true if the TempVar in argument_result already holds a 64-bit address
-	// (i.e., reference binding should MOV, not take the address again).
-	// Checks the explicit ValueStorage field first; falls back to TempVar metadata for
-	// LegacyUnclassified results during the migration to full annotation coverage.
+	// Returns true if argument_result already holds a 64-bit address
+	// (reference binding must MOV, not take the address again).
 	auto tempAlreadyHoldsAddress = [&]() {
-		if (argument_result.storage == ValueStorage::ContainsAddress) return true;
-		if (argument_result.storage == ValueStorage::ContainsData)    return false;
-		// LegacyUnclassified — fall back to TempVar metadata heuristic.
-		if (!std::holds_alternative<TempVar>(argument_result.value)) return false;
-		const TempVar t = std::get<TempVar>(argument_result.value);
-		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-		if (metadata_storage.hasMetadata(t)) {
-			const TempVarMetadata metadata = metadata_storage.getMetadata(t);
-			if (metadata.category == ValueCategory::LValue || metadata.category == ValueCategory::XValue) {
-				return true;
-			}
-		}
-		return argument_result.size_in_bits == SizeInBits{64} && argument_result.type == Type::Struct;
+		return argument_result.storage == ValueStorage::ContainsAddress;
 	};
 
 	if (param_is_ref &&

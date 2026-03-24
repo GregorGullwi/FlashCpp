@@ -86,7 +86,7 @@ struct ExprResult {
 	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
-	ValueStorage storage = ValueStorage::LegacyUnclassified;  // storage discriminator (Option A migration)
+	ValueStorage storage = ValueStorage::ContainsData;  // must be set explicitly at every construction site
 
 	// Returns the effective runtime representation type.
 	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
@@ -136,8 +136,6 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 //
 // These replace direct aggregate initializations like TypedValue{type, size, value}
 // to ensure ir_type is always populated from the semantic type at construction time.
-// This is Phase 4 preparation: once all construction sites use makeTypedValue and
-// all read sites use effectiveIrType(), the semantic `type` field can be removed.
 // ============================================================================
 
 /// Basic TypedValue factory — sets ir_type from semantic type automatically.

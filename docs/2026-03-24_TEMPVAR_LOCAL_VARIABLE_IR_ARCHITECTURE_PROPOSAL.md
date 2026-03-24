@@ -49,17 +49,14 @@ with any novel IR types that might be produced.  The architectural root cause is
 
 ## Implementation progress (as of 2026-03-24)
 
-Phases 1 through 4 are complete, plus the `makeExprResult`/`makeMemberResult` factory refactor.
-All 1 734 tests pass.
+All phases are complete.  All 1 734 tests pass.
 
 ### Phase 1 — complete
 
 `ValueStorage` enum added to `src/IRTypes_Ops.h`.  `TypedValue::storage` and
-`ExprResult::storage` fields added (default `LegacyUnclassified`).  `toTypedValue(ExprResult)`
-propagates the field.
-`handleVariableDecl` in `src/IRConverter_ConvertMain.cpp` now checks the field before the
-heuristic: `ContainsAddress` → MOV, `ContainsData` → LEA, `LegacyUnclassified` → `InternalError`
-(see Phase 4).
+`ExprResult::storage` fields added.  `toTypedValue(ExprResult)` propagates the field.
+`handleVariableDecl` in `src/IRConverter_ConvertMain.cpp` checks the field:
+`ContainsAddress` → MOV, `ContainsData` → LEA.
 
 ### Phase 2 — complete (all known address-producing sites annotated)
 
@@ -105,18 +102,32 @@ Summary of annotated sites per file:
 | `IrGenerator_Helpers.cpp` | 1 | 0 |
 | `AstToIr.h` | 1 | 0 |
 
-### Phase 4 — complete (heuristic deleted)
+### Phase 4 — complete (heuristic deleted, `LegacyUnclassified` removed)
 
-The `LegacyUnclassified` else-branch in `handleVariableDecl` now throws
-`InternalError("handleVariableDecl: TempVar tN has LegacyUnclassified storage — all ExprResult producers must be annotated")`.
-The old `is_likely_pointer` heuristic (`isIrStructType || isIrPointerLikeType`) is gone.
-Any new `makeExprResult` or `makeMemberResult` call that omits `storage` will not compile.
+The `LegacyUnclassified` enum value was removed from `ValueStorage`.  `TypedValue::storage`
+and `ExprResult::storage` default to `ContainsData`.  `handleVariableDecl` uses a simple
+`const bool is_likely_pointer = (init.storage == ValueStorage::ContainsAddress)` — no
+fallback branch, no TempVar metadata lookup, no heuristic.
+
+The `tempAlreadyHoldsAddress` lambda in `IrGenerator_Expr_Operators.cpp` was simplified to
+`return argument_result.storage == ValueStorage::ContainsAddress`.
+
+The `makeArrayResult` factory in `generateArraySubscriptIr` was updated to accept `ValueStorage`
+as a required parameter (matching `makeExprResult`/`makeMemberResult`).
+
+### Phase 5 — complete (dead-code removal; Phase 5 in old plan folded into Phase 4 cleanup)
+
+All migration-era dead code removed: the `lvalue_info_opt`/`has_indirect_lvalue`/`temp_meta`/
+`holds_address` local variables in `handleVariableDecl`, the InternalError throw for
+`LegacyUnclassified`, migration comments in `IROperandHelpers.h`.
+
+Note: `TempVarMetadata.is_address`, `holds_address_only`, `setAddressOnlyInfo`, and
+`setReferenceInfo` in `IRConverter_ConvertMain.cpp` are still present — they drive the
+`indirect_stack_info_` system used for function parameters and 'this' registration, which is
+a separate concern from `ExprResult.storage` and is not yet redundant.
 
 ### Remaining work
 
-- **Phase 5**: remove `TempVarMetadata.is_address`, `holds_address_only`,
-  `setAddressOnlyInfo`, and `setReferenceInfo` in `IRConverter_ConvertMain.cpp` (now redundant
-  with `ValueStorage`).
 - **Option B** (optional readability): add `CopyReferenceOp` opcode (see §9).
 
 ---
@@ -496,8 +507,9 @@ Annotate all known `ContainsAddress` producers in IR generators:
 
 ### Phase 3: annotate data producers ✅ DONE
 
-Every `makeExprResult(...)` call site is wrapped in `withStorage(..., ValueStorage::X)`.
-`LegacyUnclassified` cannot be produced by any path.
+Every `makeExprResult(...)`, `makeMemberResult(...)`, and `makeArrayResult(...)` call site
+passes an explicit `ValueStorage` argument.  `LegacyUnclassified` has been removed from the
+enum.  `handleVariableDecl` uses a direct `ContainsAddress` check — no fallback heuristic.
 
 | Site | Status |
 |---|---|
@@ -513,15 +525,14 @@ Every `makeExprResult(...)` call site is wrapped in `withStorage(..., ValueStora
 
 ### Phase 4: delete heuristic fallback ✅ DONE
 
-The `LegacyUnclassified` else-branch in `handleVariableDecl` now throws `InternalError(...)`.
-The old `is_likely_pointer` heuristic (`isIrStructType || isIrPointerLikeType`) is deleted.
-Any new `makeExprResult` call site that omits `withStorage(...)` will fail loudly at runtime.
+`LegacyUnclassified` removed from `ValueStorage` enum.  `handleVariableDecl` reduced to
+`const bool is_likely_pointer = (init.storage == ValueStorage::ContainsAddress)`.
+`tempAlreadyHoldsAddress` lambda simplified to a one-liner.  All migration dead code cleaned up.
 
-### Phase 5: consolidate redundant metadata ⬜ TODO
+### Phase 5: legacy-path cleanup ✅ DONE (folded into Phase 4 cleanup)
 
-`TempVarMetadata.is_address`, `TempVarMetadata.holds_address_only`,
-`setAddressOnlyInfo`, and `setReferenceInfo` in `IRConverter_ConvertMain.cpp` are now redundant
-with `ValueStorage`.  Remove them and update the converter helpers that read them.
+`makeArrayResult` updated to require explicit `ValueStorage` storage.  `LegacyUnclassified`
+references fully removed.
 
 ---
 
@@ -561,19 +572,16 @@ stamp `setReferenceInfo(...)`, and set `storage = ContainsAddress`.
 - Two residual heuristic arms (`isIrStructType`, `isIrPointerLikeType`) introduced false-positive
   risks for 64-bit struct/pointer-valued data results.
 
-**Current status (after Option A, Phases 1–4 complete + factory refactor):**
-- `ValueStorage` field is on both `ExprResult` and `TypedValue`; `toTypedValue(ExprResult)`
-  propagates it.
-- All known address-producing generator sites are annotated `ContainsAddress` (Phase 2 complete).
-- VirtualCallOp reference-return gap is closed.
-- `ValueStorage storage` is a **required 6th parameter** of both `makeExprResult()` and
-  `makeMemberResult()`.  The `ExprResult withStorage(ExprResult, ValueStorage)` helper is deleted.
-  Omitting `storage` on any new ExprResult producer is now a **compile error**.
-- The `LegacyUnclassified` heuristic branch in `handleVariableDecl` is replaced with
-  `InternalError`: even if somehow a `LegacyUnclassified` value were produced, it would fail
-  loudly at runtime.
+**Current status (all phases complete):**
+- `ValueStorage` has two values: `ContainsData` and `ContainsAddress`.  `LegacyUnclassified`
+  is gone.
+- `ValueStorage storage` is a **required parameter** of `makeExprResult()`, `makeMemberResult()`,
+  and `makeArrayResult()`.  Omitting it is a **compile error**.
+- `handleVariableDecl` uses a single `ContainsAddress` check — no fallback, no heuristic, no
+  TempVar metadata lookup for the MOV-vs-LEA decision.
+- `tempAlreadyHoldsAddress` in `IrGenerator_Expr_Operators.cpp` is a one-liner.
 
 **Remaining work:**
-1. Phase 5: remove `TempVarMetadata.is_address`, `holds_address_only`, and the
-   `setAddressOnlyInfo`/`setReferenceInfo` converter helpers that are redundant with `ValueStorage`.
-2. Option B: add `CopyReferenceOp` opcode as readability cleanup (see §9).
+1. Option B: add `CopyReferenceOp` opcode as readability cleanup (see §9).
+   (`TempVarMetadata.is_address`/`holds_address_only`/`setReferenceInfo`/`setAddressOnlyInfo`
+   are still live — they drive `indirect_stack_info_` for parameter and 'this' setup.)

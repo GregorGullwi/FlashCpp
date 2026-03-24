@@ -136,7 +136,7 @@
 
 	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
-		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{}) -> ExprResult {
+		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
 			result.type = type;
 			result.ir_type = toIrType(type);
@@ -144,6 +144,7 @@
 			result.value = std::move(value);
 			result.type_index = TypeIndex{type_index};
 			result.pointer_depth = pointer_depth;
+			result.storage = storage;
 			return result;
 		};
 
@@ -254,11 +255,11 @@
 				payload.index.value = flat_index;
 
 				if (context == ExpressionContext::LValueAddress) {
-					return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
+					return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 				}
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-				return makeArrayResult(element_type, base_element_size, IrOperand{result_var});
+				return makeArrayResult(element_type, base_element_size, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// This could be a multidimensional array access
@@ -391,12 +392,12 @@
 
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
-						return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index});
+						return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-					return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index});
+					return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}
@@ -487,14 +488,14 @@
 									if (context == ExpressionContext::LValueAddress) {
 										// Don't emit ArrayAccess instruction (no load)
 										// Just return the metadata with the result temp var
-										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index});
+										return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
 									}
 
 									// Create instruction with typed payload (Load context - default)
 									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 									// Return the result with the element type and its type index
-									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index});
+									return makeArrayResult(element_type, element_size_bits, IrOperand{result_var}, TypeIndex{elem_type_index}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
 						}
@@ -740,7 +741,8 @@
 				element_size_bits,
 				result_var,
 				TypeIndex{element_type_index},
-				PointerDepth{element_pointer_depth});
+				PointerDepth{element_pointer_depth},
+				ValueStorage::ContainsAddress);
 		}
 
 		// Create instruction with typed payload (Load context - default)
@@ -751,7 +753,8 @@
 			element_size_bits,
 			result_var,
 			TypeIndex{element_type_index},
-			PointerDepth{element_pointer_depth});
+			PointerDepth{element_pointer_depth},
+			ValueStorage::ContainsData);
 	}
 
 	bool AstToIr::validateAndSetupIdentifierMemberAccess(
