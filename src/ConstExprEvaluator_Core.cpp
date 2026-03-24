@@ -3377,20 +3377,41 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return EvalResult::error("Constexpr function return statement has no expression");
 		}
 
-		// Handle aggregate-initializer return: return {x, y, ...} in a struct-returning function.
+		// Handle brace-init return: return {x, y, ...} in a struct-returning function.
 		// evaluate_expression_with_bindings only accepts ExpressionNode; bypass it here.
 		if (return_expr.value().is<InitializerListNode>() && context.return_type_info) {
 			const StructTypeInfo* si = context.return_type_info->getStructInfo();
 			if (si) {
 				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
-				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
-				// Set the struct type index so downstream member-function chains can identify the type.
+				TypeIndex return_type_index {};
 				for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
 					if (&gTypeInfo[ti] == context.return_type_info) {
-						result.object_type_index = TypeIndex{ti};
+						return_type_index = TypeIndex{ti};
 						break;
 					}
 				}
+
+				if (si->hasUserDefinedConstructor()) {
+					ChunkedVector<ASTNode> ctor_args;
+					for (const auto& arg : init_list.initializers()) {
+						ctor_args.push_back(arg);
+					}
+
+					auto ctor_result = try_materialize_struct_from_ctor_args(
+						si, return_type_index, ctor_args, context, &bindings);
+					if (ctor_result.has_value()) {
+						return *ctor_result;
+					}
+
+					return EvalResult::error(
+						"No matching constructor for '" +
+						std::string(StringTable::getStringView(si->getName())) +
+						"' with " + std::to_string(init_list.size()) +
+						" argument(s) in constexpr evaluation");
+				}
+
+				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
+				result.object_type_index = return_type_index;
 				// Use bind_members_from_initializer_list so that nested InitializerListNodes
 				// (e.g., return {{1,2,3,4}} for an array member) are handled correctly.
 				auto bind_result = bind_members_from_initializer_list(
