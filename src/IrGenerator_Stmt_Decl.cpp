@@ -817,12 +817,22 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								op.init_data.resize(struct_info->total_size, 0);
 								packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, eval_result, 0, 0);
 							} else {
-								unsigned long long value = evalToValue(init_node, type_node.type());
+								unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
 								appendValueAsBytes(op.init_data, value, element_size);
 							}
-						} else {
-							unsigned long long value = evalToValue(init_node, type_node.type());
+						} else if (eval_result.success()) {
+							unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
 							appendValueAsBytes(op.init_data, value, element_size);
+						} else {
+							// Evaluation failed: for constexpr variables this is an error;
+							// for non-constexpr globals, warn and zero-initialize.
+							if (node.is_constexpr() && eval_result.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
+								throw CompileError("constexpr variable '" + std::string(decl.identifier_token().value()) +
+									"' initializer is not a constant expression: " + eval_result.error_message);
+							}
+							FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
+							decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
+							appendValueAsBytes(op.init_data, 0ULL, element_size);
 						}
 					}
 				} else {
