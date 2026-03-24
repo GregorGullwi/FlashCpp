@@ -4488,12 +4488,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					result_offset);
 			}
 
-			// Mark rvalue reference returns in indirect_stack_info_ so they are treated as pointers
-			// This is needed for proper handling when passing rvalue reference results to other functions
+			// Mirror rvalue-reference call results in the stack-side reference map.
+			// T&& results are true references: callers that read the result by value
+			// must dereference the stored pointer, while callers that need the address
+			// itself still load the pointer from the slot.
 			if (call_op.returns_rvalue_reference) {
-				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits.value, true, true, TempVar{0});
+				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits.value, true, false, TempVar{0});
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Marked function call result at offset {} as rvalue reference (holds address)",
+					"Marked function call result at offset {} as rvalue reference",
 					result_offset);
 			}
 
