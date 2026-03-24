@@ -2042,16 +2042,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 								const TypeSpecifierNode* param_type = sema_selected_param_type;
 
-								// When the converting constructor takes its first parameter by (const) reference
-								// and the source type differs from the referred-to type (e.g. int->const double&),
-								// applyConstructorArgConversion returns early. Struct types are excluded because
-								// they use a separate converting-constructor path. For scalars, use the shared
-								// helper to convert, materialize, and pass the address.
-								const bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
-								const Type referred_type = param_is_ref ? param_type->type() : Type::Void;
-								if (param_is_ref && referred_type != Type::Struct && init_operands.type != referred_type) {
-									init_arg = materializeConvertedReferenceArgument(init_operands, *param_type, decl.identifier_token());
-								} else if (param_type) {
+								// applyConstructorArgConversion now performs the pre-bind scalar conversion
+								// for reference parameters (e.g. int→double for const double&). Reuse the
+								// shared constructor-argument helper so identifier, literal, and general
+								// expression sources all get the correct direct-bind vs
+								// temporary-materialization/address-of handling — consistent with
+								// materializeSelectedConvertingConstructor and brace-init call sites.
+								if (param_type) {
 									init_arg = buildConstructorArgumentValue(
 										init_operands,
 										init_node,
