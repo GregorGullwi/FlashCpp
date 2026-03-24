@@ -369,7 +369,7 @@ However, the migration should be designed so omissions are visible. If `ValueSto
 A safe incremental path is:
 
 1. Add `ValueStorage::LegacyUnclassified/ContainsData/ContainsAddress` to `TypedValue`
-2. Default all existing helper-created `TypedValue`s to `ContainsData`
+2. Default all existing helper-created `TypedValue`s to `LegacyUnclassified`
 3. Teach `handleVariableDecl` to:
    - prefer `storage == ContainsAddress` / `ContainsData`
    - temporarily fall back to existing metadata + heuristic only for `LegacyUnclassified`
