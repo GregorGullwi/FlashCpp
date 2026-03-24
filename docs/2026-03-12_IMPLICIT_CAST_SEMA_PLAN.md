@@ -1414,8 +1414,12 @@ by sema for struct → bool via `operator bool()`).
 - `SemanticAnalysis.cpp` no longer relies on `parser_.get_expression_type(...)`; the remaining parser/sema boundary work is narrower than when this plan was first written.
 - Direct/member explicit-argument reference binding now carries sema-owned temporary-materialization decisions through codegen-owned full-expression cleanup: struct temporaries reused for annotated reference binds are destroyed at the end of the surrounding expression/initializer/return full-expression instead of leaking past the call or being destroyed too early. Backend `DestructorCall` lowering now also respects `object_is_pointer` for `TempVar` targets so stack-backed temporary objects can be destroyed correctly.
 - Regression coverage: `tests/test_ref_binding_full_expr_lifetime_direct_call_ret0.cpp`, `tests/test_ref_binding_full_expr_lifetime_member_call_ret0.cpp`.
+- Current verification snapshot (2026-03-24): `make main CXX=clang++` builds successfully, and `bash tests/run_all_tests.sh` reports 1738 compile/link/runtime passes with 105 expected-fail tests and 0 unexpected failures.
 
-### Known limitations (current, post-Phase 23 follow-up)
+### Current status and remaining limitations (post-Phase 23 follow-up)
+
+The ✅ bullets below are closed follow-ups kept here as regression markers. The
+unmarked bullets are the remaining backlog items for this plan.
 
 - Sema-owned `UserDefined` coverage for copy-initialization converting constructors now includes both non-struct → struct and struct → struct sources across variable copy-initialization, free-function arguments, member-function arguments, and return expressions, including copy-init explicit-constructor rejection and selected-constructor tracking for those sites.
 - Selected-constructor materialization is no longer declaration-only: declaration, call, and return sites now consume the same sema-selected converting-constructor metadata for both primitive and struct sources.
@@ -1492,10 +1496,15 @@ That avoids the most dangerous transitional state: semantic analysis annotates o
 
 ### Existing behavior to re-verify
 
+- Current verified Linux snapshot (2026-03-24): `make main CXX=clang++` and `bash tests/run_all_tests.sh` → 1738 pass / 0 fail / 105 expected-fail correct.
 - implicit argument conversions
 - return conversions
 - arithmetic promotions/conversions
+- contextual bool conversions
+- assignment conversion
+- initializer conversion
 - enum conversions and enum identity
+- reference binding / temporary materialization
 - generic lambda tests already mentioned in repo docs
 - ordinary `auto` variable deduction
 - function `auto` return deduction
@@ -1505,10 +1514,8 @@ That avoids the most dangerous transitional state: semantic analysis annotates o
 
 ### New tests to budget
 
-- contextual bool conversions
-- assignment conversion
-- initializer conversion
-- reference binding / temporary materialization
+- broader reference-binding coverage outside direct/member explicit-argument call paths
+- parser/template-substitution boundary regressions if a surviving fold/pack helper reaches sema again
 - ambiguous / no-match overload diagnostics after canonical type comparison cleanup
 - `auto&` / `const auto&` / `auto&&` variable deduction
 - ordinary function `auto` return with multiple return paths
