@@ -3693,7 +3693,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		std::string_view operator_struct_name = func_decl.parent_struct_name();
 		if (operator_struct_name.empty())
 			operator_struct_name = struct_name;
-		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
+		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name, {});
 	}
 
 	TempVar result_var = var_counter.next();

@@ -431,7 +431,7 @@
 											// Use generateMangledNameForCall for consistent mangling across platforms
 											std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 											member_spaceship_mangled = StringTable::getOrInternStringHandle(
-												generateMangledNameForCall(spaceship_func, member_struct_name));
+												generateMangledNameForCall(spaceship_func, member_struct_name, {}));
 										}
 										break;
 									}
@@ -654,7 +654,7 @@
 								const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 								// Use generateMangledNameForCall for consistent mangling across platforms
 								spaceship_mangled = StringTable::getOrInternStringHandle(
-									generateMangledNameForCall(spaceship_func, node.parent_struct_name()));
+									generateMangledNameForCall(spaceship_func, node.parent_struct_name(), {}));
 							}
 							break;
 						}

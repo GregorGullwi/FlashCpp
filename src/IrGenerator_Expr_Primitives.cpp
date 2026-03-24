@@ -1214,7 +1214,7 @@
 
 			// Compute mangled name from the function declaration, respecting linkage
 			// (extern "C" functions must not be mangled)
-			std::string_view mangled = generateMangledNameForCall(func_decl);
+			std::string_view mangled = generateMangledNameForCall(func_decl, "", {});
 
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;

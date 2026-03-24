@@ -632,7 +632,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
 							// Direct function name: int (*fp)(int,int) = add;
 							const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
-							reloc = StringTable::getOrInternStringHandle(generateMangledNameForCall(func_decl));
+							reloc = StringTable::getOrInternStringHandle(generateMangledNameForCall(func_decl, "", {}));
 							FLASH_LOG(Codegen, Debug, "Global function pointer '", decl.identifier_token().value(),
 							"' initialized with function '", target_id.name(), "' -> '", StringTable::getStringView(reloc), "'");
 						} else {

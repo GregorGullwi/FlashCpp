@@ -86,7 +86,6 @@ struct ExprResult {
 	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
-	bool is_const_qualified = false;  // True when the source expression is cv-const (e.g. const T, or const T&)
 
 	// Returns the effective runtime representation type.
 	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
