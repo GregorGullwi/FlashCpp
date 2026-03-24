@@ -342,8 +342,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
 				}
 			};
-			std::function<void(std::vector<char>&, const StructTypeInfo&, const ConstExpr::EvalResult&, size_t)> packStructEvalResultIntoInitData;
-			packStructEvalResultIntoInitData = [&](std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset) {
+			static constexpr size_t kPackStructMaxDepth = 64;
+			std::function<void(std::vector<char>&, const StructTypeInfo&, const ConstExpr::EvalResult&, size_t, size_t)> packStructEvalResultIntoInitData;
+			packStructEvalResultIntoInitData = [&](std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset, size_t depth) {
+				if (depth >= kPackStructMaxDepth) {
+					FLASH_LOG(Codegen, Warning, "packStructEvalResultIntoInitData: recursion depth limit (",
+						kPackStructMaxDepth, ") exceeded, skipping deeper nesting");
+					return;
+				}
 				for (const auto& member : struct_info.members) {
 					std::string_view member_name = StringTable::getStringView(member.getName());
 					auto it = eval_result.object_member_bindings.find(member_name);
@@ -369,7 +375,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										init_data,
 										*elem_struct,
 										member_result.array_elements[elem_i],
-										abs_offset + elem_i * elem_struct->total_size);
+										abs_offset + elem_i * elem_struct->total_size,
+										depth + 1);
 								}
 								continue;
 							}
@@ -399,7 +406,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					if (const TypeInfo* member_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
 						if (const StructTypeInfo* nested_struct = member_type_info->getStructInfo();
 							nested_struct && !member_result.object_member_bindings.empty()) {
-							packStructEvalResultIntoInitData(init_data, *nested_struct, member_result, abs_offset);
+							packStructEvalResultIntoInitData(init_data, *nested_struct, member_result, abs_offset, depth + 1);
 							continue;
 						}
 					}
@@ -809,7 +816,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							const StructTypeInfo* struct_info = struct_type_info ? struct_type_info->getStructInfo() : nullptr;
 							if (struct_info && !eval_result.object_member_bindings.empty()) {
 								op.init_data.resize(struct_info->total_size, 0);
-								packStructEvalResultIntoInitData(op.init_data, *struct_info, eval_result, 0);
+								packStructEvalResultIntoInitData(op.init_data, *struct_info, eval_result, 0, 0);
 							} else {
 								unsigned long long value = evalToValue(init_node, type_node.type());
 								appendValueAsBytes(op.init_data, value, element_size);
