@@ -2069,11 +2069,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// the scalar conversion switch (which correctly errors for struct types).
 		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined ||
 			type_spec.type() == Type::Enum) {
-			if (auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
-				!source_type.has_value() || typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
+			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 				inner_result.set_exact_type(type_spec);
 				return inner_result;
 			}
+			// Source type unavailable or doesn't match — fall through to the
+			// scalar conversion switch which will error for struct/enum types.
 		}
 		// Apply the target-type conversion (mirrors evaluate_expr_node).
 		switch (type_spec.type()) {
