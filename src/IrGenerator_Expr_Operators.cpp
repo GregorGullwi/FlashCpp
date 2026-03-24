@@ -343,7 +343,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		argument.is<ExpressionNode>() &&
 		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 		const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
-		std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+		std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 
 		const DeclarationNode* arg_decl = nullptr;
 		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
