@@ -1577,11 +1577,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Create a new temp var for the address result
 					TempVar addr_temp = var_counter.next();
 
+					// Extract element type/size once for both addr_op and metadata
+					const Type elem_type = std::get<Type>(operands[7]);
+					const int  elem_size = std::get<int>(operands[8]);
+
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.element_type = std::get<Type>(operands[7]);
-					addr_op.element_size_in_bits = std::get<int>(operands[8]);
+					addr_op.element_type = elem_type;
+					addr_op.element_size_in_bits = elem_size;
 					addr_op.array = lv_info.base;
 
 					// Build TypedValue for index from metadata
@@ -1594,8 +1598,6 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
 
 					// Emit the instruction
-					const Type elem_type = std::get<Type>(operands[7]);
-					const int  elem_size = std::get<int>(operands[8]);
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
