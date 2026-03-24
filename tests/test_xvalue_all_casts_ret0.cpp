@@ -93,7 +93,7 @@ int test_dynamic_cast() {
     // Also verify base_value is accessible
     if (derived_rvalue.base_value != 15) return 31;
     
-	return 0;  // Success
+    return 0;  // Success
 }
 
 int test_static_cast_base_rvalue_conv_op() {
@@ -125,13 +125,13 @@ int main() {
     result = test_reinterpret_cast();
     if (result != 0) return result;
     
-	// Test 4: dynamic_cast
-	result = test_dynamic_cast();
-	if (result != 0) return result;
+    // Test 4: dynamic_cast
+    result = test_dynamic_cast();
+    if (result != 0) return result;
 
     // Test 5: cross-type rvalue reference cast preserves target type identity
     result = test_static_cast_base_rvalue_conv_op();
     if (result != 0) return result;
 
-	return 0;  // All tests passed!
+    return 0;  // All tests passed!
 }

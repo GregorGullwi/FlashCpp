@@ -3745,7 +3745,10 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		TempVar current = *source_temp;
 		while (true) {
 			auto lvalue_info = getTempVarLValueInfo(current);
-			if (!lvalue_info.has_value() || lvalue_info->kind != LValueInfo::Kind::Direct || lvalue_info->offset != 0) {
+			const bool has_direct_lvalue = lvalue_info.has_value();
+			const bool is_direct_base = has_direct_lvalue && lvalue_info->kind == LValueInfo::Kind::Direct;
+			const bool has_zero_offset = has_direct_lvalue && lvalue_info->offset == 0;
+			if (!is_direct_base || !has_zero_offset) {
 				break;
 			}
 			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {

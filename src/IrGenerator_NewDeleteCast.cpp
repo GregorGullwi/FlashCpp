@@ -680,6 +680,8 @@
 		// Use the target type's TypeIndex for struct/enum-to-struct/enum casts
 		// (e.g., static_cast<Base&&>(derived)) so downstream conversion-operator
 		// lookup sees the cast target's semantic identity, not the source's.
+		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
+		// source TypeIndex in that case.
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
 		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{});
 	}

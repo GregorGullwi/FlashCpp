@@ -2871,7 +2871,7 @@ static bool structHasConversionOperatorTo(
 	// Determine the expected "operator X" suffix.
 	std::string_view target_name;
 	if (to_desc.type_index.is_valid()) {
-		if (!to_desc.type_index.is_valid() || to_desc.type_index.value >= gTypeInfo.size())
+		if (to_desc.type_index.value >= gTypeInfo.size())
 			return false;
 		target_name = StringTable::getStringView(gTypeInfo[to_desc.type_index.value].name());
 	} else {

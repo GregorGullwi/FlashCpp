@@ -382,7 +382,11 @@ int get_type_size_bits(Type type) {
         case Type::LongDouble:
             return 80;  // x87 extended precision
         case Type::Enum:
-            return 32;  // Default underlying type when enum metadata is unavailable
+            // Fallback only: when code still carries Type::Enum but lost the concrete
+            // enum metadata, assume the common default underlying type (int, 32 bits).
+            // This is expected only for still-buggy dependent/template instantiation paths;
+            // normal enum sizing should come from the enum's TypeIndex/type_size_.
+            return 32;
         case Type::FunctionPointer:
         case Type::MemberFunctionPointer:
         case Type::MemberObjectPointer:
