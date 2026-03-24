@@ -2061,6 +2061,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!inner_result.success()) {
 			return inner_result;
 		}
+		// For struct/user-defined/enum types, a static_cast that only changes cv/ref
+		// qualification (e.g., static_cast<const T&>(obj)) should pass through the
+		// value unchanged — no scalar conversion is needed.  This mirrors the
+		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
+		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined ||
+			type_spec.type() == Type::Enum) {
+			inner_result.set_exact_type(type_spec);
+			return inner_result;
+		}
 		// Apply the target-type conversion (mirrors evaluate_expr_node).
 		switch (type_spec.type()) {
 			case Type::Bool: {
