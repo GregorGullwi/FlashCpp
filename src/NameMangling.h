@@ -408,7 +408,8 @@ inline void generateItaniumMangledName(
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -422,6 +423,8 @@ inline void generateItaniumMangledName(
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
+		// Const member function: emit 'K' CV-qualifier right after 'N' (Itanium ABI §5.1.8)
+		if (is_const_method) output += 'K';
 		
 		// Add namespace parts first (in order)
 		for (const auto& ns : namespace_path) {
@@ -648,7 +651,8 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -660,6 +664,7 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
+		if (is_const_method) output += 'K';
 		
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -738,7 +743,8 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Start with _Z prefix
 	output += "_Z";
@@ -750,6 +756,7 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	if (has_nested_name && !is_std_only) {
 		// Use nested-name encoding: _ZN...E
 		output += 'N';
+		if (is_const_method) output += 'K';
 		
 		// Add namespace parts
 		for (const auto& ns : namespace_path) {
@@ -826,7 +833,8 @@ inline void generateItaniumMangledName(
 	const std::vector<ASTNode>& param_nodes,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string_view>& namespace_path
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;
@@ -838,7 +846,7 @@ inline void generateItaniumMangledName(
 	
 	// Use the main implementation
 	generateItaniumMangledName(output, func_name, return_type, param_types, 
-	                           is_variadic, struct_name, namespace_path);
+	                           is_variadic, struct_name, namespace_path, is_const_method);
 }
 
 // Generate MSVC mangled name for a function
@@ -855,10 +863,11 @@ inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method
 ) {
 	StringBuilder builder;
 	
@@ -878,7 +887,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_types, 
-		                           is_variadic, struct_name, namespace_path);
+		                           is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -908,7 +917,8 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);  // Append the first (outermost) part
 		
-		builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
+		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
+		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
 	} else if (!namespace_path.empty()) {
 		// Namespace-scoped free function: ?name@Namespace@@YA...
 		builder.append(func_name);
@@ -957,10 +967,11 @@ inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
 	const std::vector<ASTNode>& param_nodes,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method
 ) {
 	StringBuilder builder;
 	
@@ -980,7 +991,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_nodes, 
-		                           is_variadic, struct_name, namespace_path);
+		                           is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -1007,7 +1018,8 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);
 		
-		builder.append("@@QA");
+		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
+		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
 	} else if (!namespace_path.empty()) {
 		builder.append(func_name);
 		builder.append('@');
@@ -1054,9 +1066,10 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1068,7 +1081,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
-		                                           non_type_template_args, is_variadic, struct_name, namespace_path);
+		                                           non_type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -1087,7 +1100,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1098,7 +1111,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
 	std::string_view struct_name,
-	const std::vector<std::string>& namespace_path
+	const std::vector<std::string>& namespace_path,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
@@ -1106,7 +1120,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		ns_views.push_back(ns);
 	}
 	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, 
-	                                           non_type_template_args, is_variadic, struct_name, ns_views);
+	                                           non_type_template_args, is_variadic, struct_name, ns_views, is_const_method);
 }
 
 // Generate mangled name with TYPE template arguments (e.g., sum<int>, sum<int, int>)
@@ -1116,9 +1130,10 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
-	bool is_variadic = false,
-	std::string_view struct_name = "",
-	const std::vector<std::string_view>& namespace_path = {}
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	bool is_const_method
 ) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1130,7 +1145,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTypeTemplateArgs(builder, func_name, return_type, param_types,
-		                                               type_template_args, is_variadic, struct_name, namespace_path);
+		                                               type_template_args, is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
@@ -1161,7 +1176,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 
 	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
-	                           is_variadic, struct_name, namespace_path);
+	                           is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1172,14 +1187,15 @@ inline MangledName generateMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string>& namespace_path,
-	Linkage linkage = Linkage::CPlusPlus
+	Linkage linkage,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage);
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1190,14 +1206,15 @@ inline MangledName generateMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string>& namespace_path,
-	Linkage linkage = Linkage::CPlusPlus
+	Linkage linkage,
+	bool is_const_method
 ) {
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method);
 }
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
@@ -1216,7 +1233,8 @@ inline MangledName generateMangledNameFromNode(
 	// Use the overload that accepts parameter nodes directly
 	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), 
-	                           func_node.is_variadic(), struct_name, namespace_path, func_node.linkage());
+	                           func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+	                           func_node.is_const_member_function());
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1268,8 +1286,8 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
-	
+	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
+
 	// Add parameter type codes
 	for (const auto& param_type : param_types) {
 		appendTypeCode(builder, param_type);
@@ -1306,7 +1324,7 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
+	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
 	
 	// Add parameter type codes directly from param nodes
 	for (const auto& param : param_nodes) {
@@ -1348,9 +1366,9 @@ inline MangledName generateMangledNameForDestructor(
 		builder.append(*it);
 	}
 	
-	// @@ = scope terminator, QAE = __thiscall calling convention,
+	// @@ = scope terminator, QEAA = __cdecl x64 calling convention (non-const),
 	// @X = void parameters (no params), Z = end marker
-	builder.append("@@QAE@XZ");
+	builder.append("@@QEAA@XZ");
 	
 	return MangledName(builder.commit());
 }
@@ -1379,7 +1397,7 @@ inline MangledName generateMangledNameFromNode(
 		
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
-		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
 		// Use MSVC-style constructor mangling
 		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
@@ -1413,7 +1431,7 @@ inline MangledName generateMangledNameFromNode(
 		
 		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},
-		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
 		// Use MSVC-style destructor mangling
 		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);

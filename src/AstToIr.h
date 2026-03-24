@@ -239,9 +239,9 @@ private:
 		ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {});
-	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override = "", const std::vector<std::string>& namespace_path = {});
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
+	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path);
 	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
 	ExprResult generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
@@ -315,14 +315,16 @@ private:
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
-		const char* cast_name = "cast");
+		const char* cast_name);
 	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
-		const char* cast_name = "cast");
+		const char* cast_name);
 	ExprResult generateStaticCastIr(const StaticCastNode& staticCastNode);
 	ExprResult generateTypeidIr(const TypeidNode& typeidNode);
 	ExprResult generateDynamicCastIr(const DynamicCastNode& dynamicCastNode);
@@ -406,7 +408,7 @@ private:
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 				value = *ull_val;
 			}
-			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{});
 		}
 
 		// Return default ExprResult if evaluation failed
@@ -664,10 +666,20 @@ private:
 	// Helper to find a conversion operator in a struct that converts to the target type
 	// Returns nullptr if no suitable conversion operator is found
 	// Searches the struct and its base classes for "operator target_type()"
+	// source_is_const: true when the source object is const-qualified; prefers const overloads and
+	//                  refuses to call non-const ones when set.
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
 		Type target_type,
-		TypeIndex target_type_index = TypeIndex{}) const;
+		TypeIndex target_type_index,
+		bool source_is_const) const;
+
+	// Determine whether an initializer expression node yields a const-qualified object.
+	// Returns true for:
+	//  - a ConstCastNode whose target type has the 'const' CV-qualifier
+	//  - an IdentifierNode that resolves (in symbol_table) to a const-typed VariableDeclarationNode
+	// Used to pick the correct const/non-const conversion-operator overload.
+	bool isExprConstQualified(const ASTNode& expr_node) const;
 
 	// Emit a call to a user-defined conversion operator and return the converted ExprResult.
 	// Returns nullopt if conv_op has no valid FunctionDeclarationNode (should not happen in practice).

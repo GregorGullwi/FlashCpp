@@ -1087,14 +1087,14 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		return result;
 	}
 
-	if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+	if (context.parser && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(
 			context.struct_info->name, function_name_handle)) {
-		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(
 			context.struct_info->name, function_name_handle);
 		if (lazy_info_opt.has_value()) {
 			context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
 			LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-				context.struct_info->name, function_name_handle);
+				context.struct_info->name, function_name_handle, lazy_info_opt->identity.is_const_method);
 		}
 	}
 

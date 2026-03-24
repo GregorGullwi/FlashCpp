@@ -85,7 +85,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index());
+	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index(), PointerDepth{});
 }
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -247,10 +247,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var});  // 64 bits for return value
+					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
 				}
 			}
 
@@ -414,13 +414,15 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						return_type_node,
 						arg_types,
 						false,
-						closure_type_name
+						closure_type_name,
+						{},     // namespace_path
+						!current_lambda_context_.is_mutable  // const unless mutable lambda
 					);
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
@@ -837,11 +839,11 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						if (!matched_func_decl && parser_) {
 							StringHandle struct_name_handle = direct_type_info->name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
-							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(struct_name_handle, member_handle)) {
-								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(struct_name_handle, member_handle);
+							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_name_handle, member_handle)) {
+								auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_name_handle, member_handle);
 								if (lazy_info_opt.has_value()) {
 									auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle);
+									LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
 									if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 										const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
 										if (fd.parameter_nodes().size() == direct_expected_param_count) {
@@ -954,12 +956,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (ret_type == Type::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
-				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)});
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{});
 			}
 			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
-				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits});
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{});
 			}
 
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
@@ -970,7 +972,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			}
 
 			// Scalar integer / bool / enum
-			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)});
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{});
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)
@@ -1131,8 +1133,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
 								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
+									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_base_type, param_type->type_index());
+									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
@@ -1265,8 +1269,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						const int param_size = static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
+						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_base_type, param_type->type_index());
+							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
@@ -1608,5 +1613,5 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			SizeInBits{result_size},
 			IrOperand{ret_var},
 			type_index_result
-		);
+		, PointerDepth{});
 	}

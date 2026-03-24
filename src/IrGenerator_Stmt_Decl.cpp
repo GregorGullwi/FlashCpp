@@ -212,13 +212,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			}
 			if (!ctor->get_definition().has_value() && parser_) {
 				StringHandle ctor_name = ctor->name();
-				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name)) {
-					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name);
+				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(type_info_ref.name(), ctor_name, false)) {
+					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name, false);
 					if (lazy_info_opt.has_value()) {
 						auto instantiated_ctor = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
 						if (instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
 							ctor = &instantiated_ctor->as<ConstructorDeclarationNode>();
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name);
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name, false);
 						}
 					}
 				}
@@ -632,7 +632,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
 							// Direct function name: int (*fp)(int,int) = add;
 							const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
-							reloc = StringTable::getOrInternStringHandle(generateMangledNameForCall(func_decl));
+							reloc = StringTable::getOrInternStringHandle(generateMangledNameForCall(func_decl, "", {}));
 							FLASH_LOG(Codegen, Debug, "Global function pointer '", decl.identifier_token().value(),
 							"' initialized with function '", target_id.name(), "' -> '", StringTable::getStringView(reloc), "'");
 						} else {
@@ -1413,7 +1413,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										if (source_type_index.is_valid() && source_type_index.value < gTypeInfo.size()) {
 											const TypeInfo& src_info = gTypeInfo[source_type_index.value];
 											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info.getStructInfo(), type_node.type(), type_node.type_index());
+												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
+												isExprConstQualified(init_node));
 											if (conv_op) {
 												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
 													StringTable::getStringView(src_info.name()), " to target type");
@@ -1432,7 +1433,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < gTypeInfo.size()) {
 								const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
 								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info.getStructInfo(), type_node.type(), type_node.type_index());
+									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
+									isExprConstQualified(init_node));
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
 										StringTable::getStringView(source_type_info.name()),
@@ -2729,7 +2731,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
 						auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 							"get", return_type, param_types, template_args,
-							get_func.is_variadic(), "", current_namespace_stack_);
+							get_func.is_variadic(), "", current_namespace_stack_, false);
 
 						StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 						binding_info.push_back({mangled_handle, element_type});
@@ -2767,7 +2769,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
 								auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 									"get", return_type, param_types, template_args,
-									get_func.is_variadic(), "", current_namespace_stack_);
+									get_func.is_variadic(), "", current_namespace_stack_, false);
 
 								StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
 								binding_info.push_back({mangled_handle, element_type});

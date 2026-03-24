@@ -9,28 +9,28 @@
 
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ", 
-	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
+	          lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));
 	
 	// Constructors/destructors for nested template types are also materialized lazily.
-	if (lazy_info.is_constructor && lazy_info.original_function_node.is<ConstructorDeclarationNode>()) {
-		const ConstructorDeclarationNode& ctor_decl = lazy_info.original_function_node.as<ConstructorDeclarationNode>();
+	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Constructor && lazy_info.identity.original_member_node.is<ConstructorDeclarationNode>()) {
+		const ConstructorDeclarationNode& ctor_decl = lazy_info.identity.original_member_node.as<ConstructorDeclarationNode>();
 		if (!ctor_decl.get_definition().has_value() && !ctor_decl.has_template_body_position()) {
 			FLASH_LOG(Templates, Error, "Lazy constructor has no definition and no deferred body position");
 			return std::nullopt;
 		}
 
-		StringHandle ctor_name_handle = lazy_info.member_function_name;
+		StringHandle ctor_name_handle = effectiveLookupName(lazy_info.identity);
 		std::string_view ctor_name_view = StringTable::getStringView(ctor_name_handle);
 		if (ctor_name_view.empty() || ctor_name_view.find("::") != std::string_view::npos) {
-			std::string_view struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+			std::string_view struct_name = StringTable::getStringView(lazy_info.identity.instantiated_owner_name);
 			if (size_t pos = struct_name.rfind("::"); pos != std::string_view::npos) {
 				ctor_name_handle = StringTable::getOrInternStringHandle(struct_name.substr(pos + 2));
 			} else {
-				ctor_name_handle = lazy_info.instantiated_class_name;
+				ctor_name_handle = lazy_info.identity.instantiated_owner_name;
 			}
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			lazy_info.instantiated_class_name, ctor_name_handle
+			lazy_info.identity.instantiated_owner_name, ctor_name_handle
 		);
 
 		for (const auto& param : ctor_decl.parameter_nodes()) {
@@ -144,21 +144,21 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		return new_ctor_node;
 	}
 
-	if (lazy_info.is_destructor && lazy_info.original_function_node.is<DestructorDeclarationNode>()) {
-		const DestructorDeclarationNode& dtor_decl = lazy_info.original_function_node.as<DestructorDeclarationNode>();
+	if (lazy_info.identity.kind == DeferredMemberIdentity::Kind::Destructor && lazy_info.identity.original_member_node.is<DestructorDeclarationNode>()) {
+		const DestructorDeclarationNode& dtor_decl = lazy_info.identity.original_member_node.as<DestructorDeclarationNode>();
 		if (!dtor_decl.get_definition().has_value()) {
 			FLASH_LOG(Templates, Error, "Lazy destructor has no definition");
 			return std::nullopt;
 		}
 
-		StringHandle dtor_name_handle = lazy_info.member_function_name;
+		StringHandle dtor_name_handle = effectiveLookupName(lazy_info.identity);
 		std::string_view dtor_name_view = StringTable::getStringView(dtor_name_handle);
 		// Normalize destructor name for nested template instantiations:
 		// - empty: missing in lazy registry entry
 		// - qualified: need unqualified "~Class" form
 		// - missing '~': malformed name that must be reconstructed
 		if (dtor_name_view.empty() || dtor_name_view.find("::") != std::string_view::npos || dtor_name_view[0] != '~') {
-			std::string_view struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+			std::string_view struct_name = StringTable::getStringView(lazy_info.identity.instantiated_owner_name);
 			std::string_view simple_name = struct_name;
 			constexpr size_t kScopeResolutionLen = 2; // "::"
 			if (size_t pos = struct_name.rfind("::"); pos != std::string_view::npos) {
@@ -168,7 +168,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 
 		auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-			lazy_info.instantiated_class_name, dtor_name_handle
+			lazy_info.identity.instantiated_owner_name, dtor_name_handle
 		);
 		new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 		new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
@@ -205,12 +205,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	}
 
 	// Get the original function declaration
-	if (!lazy_info.original_function_node.is<FunctionDeclarationNode>()) {
+	if (!lazy_info.identity.original_member_node.is<FunctionDeclarationNode>()) {
 		FLASH_LOG(Templates, Error, "Lazy member function node is not a FunctionDeclarationNode");
 		return std::nullopt;
 	}
 	
-	const FunctionDeclarationNode& func_decl = lazy_info.original_function_node.as<FunctionDeclarationNode>();
+	const FunctionDeclarationNode& func_decl = lazy_info.identity.original_member_node.as<FunctionDeclarationNode>();
 	const DeclarationNode& decl = func_decl.decl_node();
 	
 	if (!func_decl.get_definition().has_value() && !func_decl.has_template_body_position()) {
@@ -231,9 +231,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
 	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
 		if (type == Type::Struct && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-			if (gTypeInfo[type_index.value].name() == lazy_info.class_template_name) {
+			if (gTypeInfo[type_index.value].name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
-				auto it = gTypesByName.find(lazy_info.instantiated_class_name);
+				auto it = gTypesByName.find(lazy_info.identity.instantiated_owner_name);
 				if (it != gTypesByName.end()) {
 					type_index = it->second->type_index_;
 				}
@@ -243,12 +243,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	resolve_self_type(return_type, return_type_index);
 
-	// Create substituted return type node
+	// Create substituted return type node (use the return type's token, not the function identifier)
 	TypeSpecifierNode substituted_return_type(
 		return_type,
 		return_type_spec.qualifier(),
 		get_type_size_bits(return_type),
-		decl.identifier_token()
+		return_type_spec.token()
 	);
 	substituted_return_type.set_type_index(return_type_index);
 
@@ -260,12 +260,20 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
-	// Create a new function declaration with substituted return type
+	// Invariant: fn_identifier_token.handle() == effectiveLookupName(lazy_info.identity).
+	// This is asserted below after finalization (Slice 5).
+	// Slice 4: use the canonical instantiated lookup name (from identity) as the
+	// function identifier token so the emitted body matches the stub's registered name.
+	StringHandle fn_name_handle = effectiveLookupName(lazy_info.identity);
+	Token fn_identifier_token(Token::Type::Identifier,
+		StringTable::getStringView(fn_name_handle),
+		decl.identifier_token().line(), decl.identifier_token().column(),
+		decl.identifier_token().file_index());
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-		substituted_return_node, decl.identifier_token()
+		substituted_return_node, fn_identifier_token
 	);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-		new_func_decl_ref, lazy_info.instantiated_class_name
+		new_func_decl_ref, lazy_info.identity.instantiated_owner_name
 	);
 	setOuterTemplateBindingsFromParams(new_func_ref, lazy_info.template_params, lazy_info.template_args);
 
@@ -415,7 +423,7 @@ if (param_decl.has_default_value()) {
 		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
 		// This is needed for sizeof...(Pack) to work in lazy member function bodies
 		StructParsingContext struct_ctx;
-		struct_ctx.struct_name = StringTable::getStringView(lazy_info.instantiated_class_name);
+		struct_ctx.struct_name = StringTable::getStringView(lazy_info.identity.instantiated_owner_name);
 		struct_ctx.struct_node = nullptr;
 		struct_ctx.local_struct_info = nullptr;
 		struct_parsing_context_stack_.push_back(struct_ctx);
@@ -444,6 +452,9 @@ if (param_decl.has_default_value()) {
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
+	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
+	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));
 
 	if (new_func_ref.get_definition().has_value()) {
 		finalize_function_after_definition(new_func_ref);
@@ -453,10 +464,24 @@ if (param_decl.has_default_value()) {
 		compute_and_set_mangled_name(new_func_ref);
 	}
 
+	// Slice 5: assert that the emitted body's name matches the canonical identity name.
+	{
+		StringHandle expected = effectiveLookupName(lazy_info.identity);
+		StringHandle actual   = new_func_ref.decl_node().identifier_token().handle();
+		if (actual != expected) {
+			FLASH_LOG_FORMAT(Templates, Warning,
+				"Slice 5 identity assertion: emitted body name '{}' != expected '{}' for {}::{}",
+				StringTable::getStringView(actual),
+				StringTable::getStringView(expected),
+				StringTable::getStringView(lazy_info.identity.instantiated_owner_name),
+				StringTable::getStringView(expected));
+		}
+	}
+
 	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(lazy_info.instantiated_class_name))
+	qualified_name_builder.append(StringTable::getStringView(lazy_info.identity.instantiated_owner_name))
 		.append("::")
-		.append(decl.identifier_token().value());
+		.append(effectiveLookupName(lazy_info.identity));
 	StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 	OuterTemplateBinding outer_binding;
 	for (const auto& tp : lazy_info.template_params) {
@@ -475,14 +500,15 @@ if (param_decl.has_default_value()) {
 	
 	// Also update the StructTypeInfo to replace the signature-only function with the full definition
 	// Find the struct in gTypesByName
-	auto struct_it = gTypesByName.find(lazy_info.instantiated_class_name);
+	auto struct_it = gTypesByName.find(lazy_info.identity.instantiated_owner_name);
 	if (struct_it != gTypesByName.end()) {
 		TypeInfo* struct_type_info = struct_it->second;
 		StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
-				if (member_func.getName() == lazy_info.member_function_name) {
+				if (member_func.getName() == effectiveLookupName(lazy_info.identity) &&
+				    member_func.is_const() == lazy_info.identity.is_const_method) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
 					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");
@@ -493,7 +519,7 @@ if (param_decl.has_default_value()) {
 	}
 	
 	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy member function: ", 
-	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
+	          lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));
 	
 	return new_func_node;
 }

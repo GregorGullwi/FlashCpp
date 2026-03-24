@@ -1695,6 +1695,12 @@ public:
 	void set_is_static(bool is_static) { is_static_ = is_static; }
 	bool is_static() const { return is_static_; }
 
+	// Const/volatile member function qualifiers (Itanium 'K'/'V' / MSVC QEBA/QECA)
+	void set_is_const_member_function(bool v) { is_const_member_function_ = v; }
+	bool is_const_member_function() const { return is_const_member_function_; }
+	void set_is_volatile_member_function(bool v) { is_volatile_member_function_ = v; }
+	bool is_volatile_member_function() const { return is_volatile_member_function_; }
+
 	// Deleted function support (= delete)
 	void set_is_deleted(bool deleted) { is_deleted_ = deleted; }
 	bool is_deleted() const { return is_deleted_; }
@@ -1771,6 +1777,8 @@ private:
 	bool is_noexcept_ = false;  // True if function is declared noexcept
 	bool is_deleted_ = false;  // True if function is declared = delete
 	bool is_static_ = false;  // True if function is a static member function (no 'this' pointer)
+	bool is_const_member_function_ = false;  // True if this function is a const member function (K qualifier)
+	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
 	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)

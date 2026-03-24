@@ -273,11 +273,11 @@ ASTNode Parser::substituteTemplateParameters(
 						// Trigger lazy member function instantiation
 						StringHandle inst_handle = StringTable::getOrInternStringHandle(correct_inst_name);
 						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(inst_handle, member_handle)) {
-							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(inst_handle, member_handle);
+						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(inst_handle, member_handle)) {
+							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(inst_handle, member_handle);
 							if (lazy_info_opt.has_value()) {
 								instantiateLazyMemberFunction(*lazy_info_opt);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(inst_handle, member_handle);
+								LazyMemberInstantiationRegistry::getInstance().markInstantiated(inst_handle, member_handle, lazy_info_opt->identity.is_const_method);
 							}
 						}
 						

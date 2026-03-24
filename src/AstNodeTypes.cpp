@@ -381,6 +381,12 @@ int get_type_size_bits(Type type) {
             return 64;
         case Type::LongDouble:
             return 80;  // x87 extended precision
+        case Type::Enum:
+            // Fallback only: when code still carries Type::Enum but lost the concrete
+            // enum metadata, assume the common default underlying type (int, 32 bits).
+            // This is expected only for still-buggy dependent/template instantiation paths;
+            // normal enum sizing should come from the enum's TypeIndex/type_size_.
+            return 32;
         case Type::FunctionPointer:
         case Type::MemberFunctionPointer:
         case Type::MemberObjectPointer:
@@ -689,13 +695,25 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 	return false;
 }
 
-// Auto-extract is_noexcept, is_const, is_volatile from the AST node stored in a
+// Auto-extract is_noexcept and cv_qualifier from the AST node stored in a
 // StructMemberFunction. This centralises property propagation so that every
 // addMemberFunction / addConstructor / addDestructor / addOperatorOverload call
 // automatically picks up the flags — callers never need to do it manually.
+// All parse and instantiation paths must call set_is_const_member_function()
+// on the FunctionDeclarationNode before calling add*().
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
     if (const auto* fn = get_function_decl_node(mf.function_decl)) {
         mf.is_noexcept = fn->is_noexcept();
+        // Auto-derive cv_qualifier from the stored const/volatile member function flags.
+        // All parse and instantiation paths must call set_is_const_member_function() and
+        // set_is_volatile_member_function() on the FunctionDeclarationNode before calling
+        // addMemberFunction / addOperatorOverload.
+        const bool is_c = fn->is_const_member_function();
+        const bool is_v = fn->is_volatile_member_function();
+        if (is_c && is_v) mf.cv_qualifier = CVQualifier::ConstVolatile;
+        else if (is_c) mf.cv_qualifier = CVQualifier::Const;
+        else if (is_v) mf.cv_qualifier = CVQualifier::Volatile;
+        else mf.cv_qualifier = CVQualifier::None;
     } else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
         const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
         mf.is_noexcept = ctor.is_noexcept();
@@ -703,10 +721,6 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
         const auto& dtor = mf.function_decl.as<DestructorDeclarationNode>();
         mf.is_noexcept = dtor.is_noexcept();
     }
-    // Note: is_const / is_volatile are NOT extracted here.
-    // FunctionDeclarationNode has no CV-qualifier field — those qualifiers
-    // live in MemberQualifiers (parser) or StructMemberFunctionDecl (pattern).
-    // Callers that have that context set them manually after calling add*().
 }
 
 // Helper to check if a parameter's type_index matches this struct's own type_index.

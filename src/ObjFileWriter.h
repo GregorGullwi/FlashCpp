@@ -353,7 +353,7 @@ public:
 		// Check if this is a destructor (starts with ~)
 		if (name.size() > 1 && name[0] == '~') {
 			// Delegate to NameMangling implementation which handles MSVC destructor logic correctly
-			// (??1ClassName@@QAE@XZ)
+			// (??1ClassName@@QEAA@XZ)
 			if (!sig.class_name.empty()) {
 				// Verify it matches class name to be safe
 				std::string_view class_short_name = sig.class_name;
@@ -412,13 +412,12 @@ public:
 
 		mangled += "@@";
 
-		// Calling convention - Y for __cdecl (non-member), Q for __thiscall (member)
+		// Calling convention - Y for __cdecl (non-member), Q for member (__cdecl x64)
 		if (!sig.class_name.empty()) {
-			mangled += "Q";  // Member function
 			if (sig.is_const) {
-				mangled += "E";  // const member function
+				mangled += "QEBA";  // const member function (__cdecl x64)
 			} else {
-				mangled += "A";  // non-const member function
+				mangled += "QEAA";  // non-const member function (__cdecl x64)
 			}
 		} else {
 			mangled += "YA";  // Non-member function with __cdecl

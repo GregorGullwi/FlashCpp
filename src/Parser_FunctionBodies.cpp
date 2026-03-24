@@ -532,6 +532,8 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_variadic(src.is_variadic());
 	dest.set_is_deleted(src.is_deleted());
 	dest.set_is_static(src.is_static());
+	dest.set_is_const_member_function(src.is_const_member_function());
+	dest.set_is_volatile_member_function(src.is_volatile_member_function());
 	dest.set_is_implicit(src.is_implicit());
 	dest.set_inline_always(src.is_inline_always());
 	dest.set_linkage(src.linkage());

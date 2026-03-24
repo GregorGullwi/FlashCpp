@@ -7223,7 +7223,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 										std::vector<std::string_view> empty_ns_path;
 										auto vfunc_mangled = NameMangling::generateMangledName(
 											vtable_func_name, vfunc_return_type, vfunc_params, false,
-											owning_struct_name, empty_ns_path, Linkage::CPlusPlus
+											owning_struct_name, empty_ns_path, Linkage::CPlusPlus,
+											func_node.is_const_member_function()
 										);
 										vtable_info.function_symbols[i] = vfunc_mangled.view();
 									}

@@ -435,7 +435,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var});
+		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -660,6 +660,7 @@
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name) {
 
@@ -675,14 +676,21 @@
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 
-		// Return the xvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, SizeInBits{64}, result_var);
+		// Return the xvalue with reference semantics (64-bit pointer size).
+		// Use the target type's TypeIndex for struct/enum-to-struct/enum casts
+		// (e.g., static_cast<Base&&>(derived)) so downstream conversion-operator
+		// lookup sees the cast target's semantic identity, not the source's.
+		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
+		// source TypeIndex in that case.
+		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
+		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{});
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name) {
 
@@ -698,8 +706,12 @@
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 
-		// Return the lvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, SizeInBits{64}, result_var);
+		// Return the lvalue with reference semantics (64-bit pointer size).
+		// Use the target type's TypeIndex for struct-to-struct casts (e.g., static_cast<Base&>(derived))
+		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
+		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
+		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
+		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -738,13 +750,13 @@
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for lvalue reference casts: static_cast<T&>(expr)
 		// This produces an lvalue
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
@@ -756,7 +768,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value);
+			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value, TypeIndex{}, PointerDepth{});
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -766,7 +778,7 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
-				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
+				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{});
 			}
 			return expr_operands;
 		}
@@ -777,7 +789,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{});
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -804,7 +816,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -828,7 +840,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -852,7 +864,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp});
+			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -865,7 +877,7 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -877,12 +889,12 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
+		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -942,7 +954,7 @@
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return makeExprResult(Type::Void, SizeInBits{64}, IrOperand{result_temp});
+		return makeExprResult(Type::Void, SizeInBits{64}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
@@ -1023,7 +1035,7 @@
 		}
 
 		// Return the casted pointer/reference
-		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp});
+		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
@@ -1040,18 +1052,18 @@
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 		}
 
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 		}
 
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value);
+		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1069,12 +1081,12 @@
 
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 
 		// reinterpret_cast reinterprets the bits without conversion

@@ -13,20 +13,14 @@ static StringHandle normalizeClassName(StringHandle handle) {
 }
 
 struct LazyMemberFunctionInfo {
-	StringHandle class_template_name;          // Original template name (e.g., "vector")
-	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
-	StringHandle member_function_name;         // Member function name
-	ASTNode original_function_node;            // Original function from template
-	InlineVector<ASTNode, 4> template_params;      // Template parameters from class template
+	DeferredMemberIdentity identity;
+	InlineVector<ASTNode, 4> template_params;       // Template parameters from class template
 	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
-	AccessSpecifier access;                    // Access specifier (public/private/protected)
-	bool is_virtual;                           // Virtual function flag
-	bool is_pure_virtual;                      // Pure virtual flag
-	bool is_override;                          // Override flag
-	bool is_final;                             // Final flag
-	bool is_const_method;                      // Const member function flag
-	bool is_constructor;                       // Constructor flag
-	bool is_destructor;                        // Destructor flag
+	AccessSpecifier access;                     // Access specifier (public/private/protected)
+	bool is_virtual = false;                    // Virtual function flag
+	bool is_pure_virtual = false;               // Pure virtual flag
+	bool is_override = false;                   // Override flag
+	bool is_final = false;                      // Final flag
 };
 
 // Registry for tracking uninstantiated template member functions
@@ -39,43 +33,42 @@ public:
 	}
 	
 	// Register a member function for lazy instantiation
-	// Key format: "instantiated_class_name::member_function_name"
+	// Key format: "instantiated_class_name::member_function_name[$const]"
 	void registerLazyMember(LazyMemberFunctionInfo info) {
-		StringHandle normalized_class = normalizeClassName(info.instantiated_class_name);
+		StringHandle normalized_class = normalizeClassName(info.identity.instantiated_owner_name);
+		StringHandle lookup_name = effectiveLookupName(info.identity);
 		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(normalized_class)
-			.append("::")
-			.append(info.member_function_name)
-			.commit();
-		
+		key_builder.append(normalized_class).append("::").append(lookup_name);
+		if (info.identity.is_const_method)
+			key_builder.append("$const");
+		std::string_view key = key_builder.commit();
 		lazy_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);
 	}
 	
 	// Check if a member function needs lazy instantiation
-	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_function_name)
-			.commit();  // Changed from preview() to commit()
-		
+		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		if (is_const) key_builder.append("$const");
+		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
 		return lazy_members_.find(handle) != lazy_members_.end();
 	}
-	
+
+	// Check either the non-const or const variant — for call sites that don't yet know is_const.
+	bool needsInstantiationAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		return needsInstantiation(instantiated_class_name, member_function_name, false)
+		    || needsInstantiation(instantiated_class_name, member_function_name, true);
+	}
+
 	// Get lazy member info for instantiation
-	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name) {
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_function_name)
-			.commit();
-		
+		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		if (is_const) key_builder.append("$const");
+		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
 		auto it = lazy_members_.find(handle);
 		if (it != lazy_members_.end()) {
@@ -83,17 +76,22 @@ public:
 		}
 		return std::nullopt;
 	}
-	
+
+	// Get lazy member info without knowing is_const — tries non-const first, then const.
+	// For call sites that haven't yet determined which overload they need.
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfoAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		auto info = getLazyMemberInfo(instantiated_class_name, member_function_name, false);
+		if (!info) info = getLazyMemberInfo(instantiated_class_name, member_function_name, true);
+		return info;
+	}
+
 	// Mark a member function as instantiated (remove from lazy registry)
-	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name) {
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_function_name)
-			.commit();
-		
+		key_builder.append(instantiated_class_name).append("::").append(member_function_name);
+		if (is_const) key_builder.append("$const");
+		std::string_view key = key_builder.commit();
 		auto handle = StringTable::getOrInternStringHandle(key);
 		lazy_members_.erase(handle);
 	}

@@ -960,7 +960,8 @@
 							false,
 							struct_name,
 							empty_namespace,
-							Linkage::CPlusPlus
+							Linkage::CPlusPlus,
+							func_decl.is_const_member_function()
 						);
 
 						// Generate the call to operator->()
@@ -1513,7 +1514,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
 						size_t member_size = lookupStructMemberSize(struct_name, member_name);
 						if (member_size > 0) {
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)});
+							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{});
 						}
 					}
 				}
@@ -1524,7 +1525,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)});
+						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{});
 					}
 				}
 
@@ -1537,7 +1538,7 @@
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 
 					if (param_size_bytes > 0) {
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)});
+						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, TypeIndex{}, PointerDepth{});
 					}
 				}
 			}
@@ -1608,7 +1609,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)});
+						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{});
 					}
 
 					// For regular variables, get the type size from the declaration
@@ -1619,16 +1620,16 @@
 							const TypeInfo& type_info = gTypeInfo[type_index];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && struct_info->total_size > 0) {
-								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)});
+								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, TypeIndex{}, PointerDepth{});
 							}
 							// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
 							if (type_info.type_size_ > 0) {
-								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)});
+								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)}, TypeIndex{}, PointerDepth{});
 							}
 						}
 						// Fallback: use size_in_bits from the type specifier node
 						if (var_type.size_in_bits() > 0) {
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)});
+							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, TypeIndex{}, PointerDepth{});
 						}
 					} else {
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
@@ -1637,7 +1638,7 @@
 							size_bits = get_type_size_bits(var_type.type());
 						}
 						size_in_bytes = size_bits / 8;
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
+						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{});
 					}
 				}
 			}
@@ -1686,7 +1687,7 @@
 									// Otherwise, search for instantiated types (template vs instantiation mismatch)
 									if (direct_member_size > 1) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)});
+										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{});
 									}
 
 									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
@@ -1705,7 +1706,7 @@
 												for (const auto& member : inst_struct_info->members) {
 													if (StringTable::getStringView(member.getName()) == member_name) {
 														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-														return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)});
+														return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, TypeIndex{}, PointerDepth{});
 													}
 												}
 											}
@@ -1715,7 +1716,7 @@
 									// If no instantiation found but direct lookup had a result, use that
 									if (direct_member_size > 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)});
+										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{});
 									}
 								}
 							}
@@ -1797,7 +1798,7 @@
 							}
 
 							// Return the size without generating runtime IR
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
+							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{});
 						}
 
 						fallback_to_ir:
@@ -1817,7 +1818,7 @@
 
 				size_t member_size = lookupStructMemberSize(struct_name, member_name);
 				if (member_size > 0) {
-					return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)});
+					return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{});
 				}
 			}
 
@@ -1849,7 +1850,7 @@
 
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
@@ -1916,7 +1917,7 @@
 								const TypeInfo& type_info = gTypeInfo[type_index];
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
-									return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)});
+									return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, TypeIndex{}, PointerDepth{});
 								}
 							}
 						} else {
@@ -1927,7 +1928,7 @@
 							}
 							size_t size_in_bytes = size_bits / 8;
 							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)});
+							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{});
 						}
 					}
 				}
@@ -1960,7 +1961,7 @@
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{});
 	}
 
 	ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
@@ -1990,7 +1991,7 @@
 			return ExprResult{};
 		}
 
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)});
+		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, TypeIndex{}, PointerDepth{});
 	}
 
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
@@ -2093,7 +2094,7 @@
 					break;
 			}
 			// Return result as a bool constant
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{});
 		}
 
 		// For traits that require type arguments, extract the type information
@@ -3007,10 +3008,10 @@
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Return the enum's declared underlying type
-						return makeExprResult(enum_info->underlying_type, SizeInBits{enum_info->underlying_size}, IrOperand{0ULL});
+						return makeExprResult(enum_info->underlying_type, SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
 					}
 					// Fallback to int if no enum info
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{0ULL});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
 				}
 				// For non-enums, this is an error - return false/0
 				result = false;
@@ -3031,7 +3032,7 @@
 
 		// Return result as a bool constant
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)});
+		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{});
 	}
 
 
@@ -3436,6 +3437,68 @@ const StructMember*& out_member) const {
 }
 
 
+// Determine whether an expression node yields a const-qualified object.
+// Returns true for:
+//   - a ConstCastNode whose target type has the 'const' CV-qualifier
+//   - an IdentifierNode resolved (via symbol_table) to a const-typed VariableDeclarationNode
+bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
+	if (!expr_node.is<ExpressionNode>()) return false;
+	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+
+	// const_cast<const T&>(x) — target type is const
+	if (std::holds_alternative<ConstCastNode>(expr)) {
+		const ConstCastNode& cc = std::get<ConstCastNode>(expr);
+		if (cc.target_type().is<TypeSpecifierNode>()) {
+			return cc.target_type().as<TypeSpecifierNode>().is_const();
+		}
+		return false;
+	}
+
+	// Helper lambda: given a symbol, return its TypeSpecifierNode (or nullptr)
+	auto getTypeSpec = [](const ASTNode& sym) -> const TypeSpecifierNode* {
+		if (sym.is<VariableDeclarationNode>()) {
+			const auto& var_decl = sym.as<VariableDeclarationNode>();
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>())
+				return &var_decl.declaration().type_node().as<TypeSpecifierNode>();
+		} else if (sym.is<DeclarationNode>()) {
+			const auto& decl = sym.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>())
+				return &decl.type_node().as<TypeSpecifierNode>();
+		}
+		return nullptr;
+	};
+
+	// IdentifierNode — look up in symbol_table, check if the declaration is const
+	if (std::holds_alternative<IdentifierNode>(expr)) {
+		const IdentifierNode& id = std::get<IdentifierNode>(expr);
+		const auto sym = symbol_table.lookup(id.name());
+		if (!sym.has_value()) return false;
+		const TypeSpecifierNode* ts = getTypeSpec(*sym);
+		return ts && ts->is_const();
+	}
+
+	// *ptr — dereference of const T* yields const T
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const UnaryOperatorNode& unary = std::get<UnaryOperatorNode>(expr);
+		if (unary.op() == "*" && unary.is_prefix()) {
+			const ASTNode& operand = unary.get_operand();
+			if (operand.is<ExpressionNode>()) {
+				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+					const IdentifierNode& id = std::get<IdentifierNode>(operand_expr);
+					const auto sym = symbol_table.lookup(id.name());
+					if (sym.has_value()) {
+						const TypeSpecifierNode* ts = getTypeSpec(*sym);
+						if (ts && ts->pointer_depth() >= 1)
+							return ts->is_const();
+					}
+				}
+			}
+		}
+	}
+
+	return false;
+}
 
 // Helper to find a conversion operator in a struct that converts to the target type
 // Returns nullptr if no suitable conversion operator is found
@@ -3443,13 +3506,14 @@ const StructMember*& out_member) const {
 const StructMemberFunction* AstToIr::findConversionOperator(
 	const StructTypeInfo* struct_info,
 	Type target_type,
-	TypeIndex target_type_index) const {
+	TypeIndex target_type_index,
+	bool source_is_const) const {
 
 	if (!struct_info) return nullptr;
 
 	// Build the operator name we are looking for (e.g., "operator int")
 	std::string_view target_type_name;
-	if (target_type == Type::Struct && target_type_index.value < gTypeInfo.size()) {
+	if (target_type_index.is_valid() && target_type_index.value < gTypeInfo.size()) {
 		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index.value].name());
 	} else {
 		// For primitive types, use the helper function to get the type name
@@ -3465,19 +3529,35 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	std::string_view operator_name = sb.commit();
 	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
 
-	// Search member functions for the conversion operator
+	// CV-aware lookup:
+	//   Pass 1 – exact match: const source → const op; non-const source → non-const op.
+	//   Pass 2 – fallback: non-const source may call const op; const source cannot call non-const op.
+	const StructMemberFunction* fallback_const_op = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.getName() == operator_name_handle) {
-			return &member_func;
+			if (source_is_const) {
+				// const source: only const operators are viable; pick first const match
+				if (member_func.is_const()) return &member_func;
+			} else {
+				// non-const source: prefer non-const; remember const as fallback
+				if (!member_func.is_const()) return &member_func;
+				if (!fallback_const_op) fallback_const_op = &member_func;
+			}
 		}
 	}
+	// Fallback: non-const source with only const overloads
+	if (fallback_const_op) return fallback_const_op;
 
 	// WORKAROUND: Also look for "operator user_defined" which may be a conversion operator
 	// that was created with a typedef that wasn't resolved during template instantiation
 	// Check if the return type matches the target type
 	StringHandle user_defined_handle = StringTable::getOrInternStringHandle("operator user_defined");
+	const StructMemberFunction* fallback_user_defined = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.getName() == user_defined_handle) {
+			// CV qualification check (same logic as primary search above)
+			if (source_is_const && !member_func.is_const()) continue;
+
 			// Check if this function's return type matches our target
 			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -3509,9 +3589,13 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					}
 
 					if (resolved_type == target_type) {
-						// Found a match!
-						FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
-						return &member_func;
+						// Prefer non-const match for non-const source; const for const source
+						if (source_is_const == member_func.is_const()) {
+							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
+							return &member_func;
+						}
+						if (!fallback_user_defined) fallback_user_defined = &member_func;
+						continue;
 					}
 
 					// FALLBACK: If the return type is still UserDefined (couldn't resolve via gTypeInfo),
@@ -3524,9 +3608,12 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
-							FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-							type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
-							return &member_func;
+							if (source_is_const == member_func.is_const()) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
+								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								return &member_func;
+							}
+							if (!fallback_user_defined) fallback_user_defined = &member_func;
 						}
 						// Note: We intentionally don't have a permissive fallback here because it would match
 						// conversion operators from pattern templates that don't have generated code, leading
@@ -3536,7 +3623,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			}
 		}
 	}
-
+	if (fallback_user_defined) return fallback_user_defined;
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (base_spec.type_index.value < gTypeInfo.size()) {
@@ -3544,7 +3631,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			if (base_type_info.isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(
-					base_struct_info, target_type, target_type_index);
+					base_struct_info, target_type, target_type_index, source_is_const);
 				if (result) return result;
 			}
 		}
@@ -3568,6 +3655,57 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
 
+	// Slice 4: trigger lazy instantiation of the conversion operator body if it is still a stub.
+	// The lazy registry key is effectiveLookupName (e.g., "operator int" for LazyWrapper<int>),
+	// which equals conv_op.getName().  The stub's identifier_token holds the un-substituted
+	// original name ("operator user_defined"), so we must use conv_op.getName() here.
+	// instantiateLazyMemberFunction() updates conv_op.function_decl in-place so that the
+	// subsequent `func_decl` binding already sees the materialized body.
+	if (parser_) {
+		const auto& init_func = conv_op.function_decl.as<FunctionDeclarationNode>();
+		if (!init_func.get_definition().has_value()) {
+			StringHandle canonical_name = conv_op.getName();
+			const bool conv_is_const = conv_op.is_const();
+			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
+					source_type_info.name(), canonical_name, conv_is_const)) {
+				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+					source_type_info.name(), canonical_name, conv_is_const);
+				if (lazy_info_opt.has_value()) {
+					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+						source_type_info.name(), canonical_name, conv_is_const);
+					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
+					if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+						DeferredMemberFunctionInfo deferred_info;
+						deferred_info.struct_name = source_type_info.name();
+						deferred_info.function_node = *instantiated_func;
+						// Build namespace stack from the struct's qualified name.
+						std::string_view qualified = StringTable::getStringView(source_type_info.name());
+						size_t ns_end = qualified.rfind("::");
+						if (ns_end != std::string_view::npos) {
+							std::string_view ns_part = qualified.substr(0, ns_end);
+							size_t start = 0;
+							while (start < ns_part.size()) {
+								size_t pos = ns_part.find("::", start);
+								if (pos == std::string_view::npos) {
+									deferred_info.namespace_stack.emplace_back(ns_part.substr(start));
+									break;
+								}
+								deferred_info.namespace_stack.emplace_back(ns_part.substr(start, pos - start));
+								start = pos + 2;
+							}
+						}
+						deferred_member_functions_.push_back(std::move(deferred_info));
+					}
+				}
+			}
+		}
+	}
+
+	// Re-read func_decl: instantiateLazyMemberFunction() may have updated conv_op.function_decl
+	// in-place (replacing the signature-only stub with the materialized body).
+	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
+		return std::nullopt;
 	const auto& func_decl = conv_op.function_decl.as<FunctionDeclarationNode>();
 	std::string_view struct_name = StringTable::getStringView(source_type_info.name());
 
@@ -3579,7 +3717,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		std::string_view operator_struct_name = func_decl.parent_struct_name();
 		if (operator_struct_name.empty())
 			operator_struct_name = struct_name;
-		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
+		mangled_name = generateMangledNameForCall(func_decl, operator_struct_name, {});
 	}
 
 	TempVar result_var = var_counter.next();
@@ -3602,6 +3740,29 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		else
 			return 0ULL;
 	}, source.value);
+
+	if (const auto* source_temp = std::get_if<TempVar>(&source.value)) {
+		TempVar current = *source_temp;
+		while (true) {
+			auto lvalue_info = getTempVarLValueInfo(current);
+			const bool has_direct_lvalue = lvalue_info.has_value();
+			const bool is_direct_base = has_direct_lvalue && lvalue_info->kind == LValueInfo::Kind::Direct;
+			const bool has_zero_offset = has_direct_lvalue && lvalue_info->offset == 0;
+			if (!is_direct_base || !has_zero_offset) {
+				break;
+			}
+			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
+				source_value = *base_name;
+				break;
+			}
+			if (const auto* base_temp = std::get_if<TempVar>(&lvalue_info->base)) {
+				source_value = *base_temp;
+				current = *base_temp;
+				continue;
+			}
+			break;
+		}
+	}
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
@@ -3630,5 +3791,5 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(target_type, SizeInBits{target_size_bits}, IrOperand{result_var}, target_type_index);
+	return makeExprResult(target_type, SizeInBits{target_size_bits}, IrOperand{result_var}, target_type_index, PointerDepth{});
 }

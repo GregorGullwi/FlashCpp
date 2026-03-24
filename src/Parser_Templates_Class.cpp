@@ -2194,14 +2194,14 @@ ParseResult Parser::parse_template_declaration() {
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
 					if (struct_info) {
 						StringHandle func_name_handle = decl_node.identifier_token().handle();
+						// Set is_const_member_function on the node so propagateAstProperties derives cv_qualifier.
+						member_func_ref.set_is_const_member_function(member_quals.is_const());
+						member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
 							current_access,
 							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
 							func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
-						// Set const/volatile on the last added member
-						if (!struct_info->member_functions.empty()) {
-							struct_info->member_functions.back().cv_qualifier = member_quals.cv_qualifier;
-						}
+						// cv_qualifier is now auto-derived by propagateAstProperties
 					}
 					
 					// Add to AST for code generation
@@ -4306,7 +4306,7 @@ if (struct_type_info.getStructInfo()) {
 				
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, spec_non_type_args, 
-					func_for_mangling.is_variadic(), "", ns_path);
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
@@ -4324,7 +4324,7 @@ if (struct_type_info.getStructInfo()) {
 				
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
 					func_base_name, return_type, param_types, spec_template_args, 
-					func_for_mangling.is_variadic(), "", ns_path);
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else {
 				// Regular specialization without any template args (shouldn't happen but fallback)
 				specialization_mangled_name = 
@@ -5010,7 +5010,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return specs_result;
 				}
 
-				// Propagate noexcept specifier to the function declaration node
+				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
+				member_func_ref.set_is_const_member_function(member_quals.is_const());
+				member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 				if (func_specs.is_noexcept) {
 					member_func_ref.set_noexcept(true);
 					if (func_specs.noexcept_expr)
@@ -5377,7 +5379,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return specs_result;
 			}
 
-			// Propagate noexcept specifier to the function declaration node
+			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
+			member_func_ref.set_is_const_member_function(member_quals.is_const());
+			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)

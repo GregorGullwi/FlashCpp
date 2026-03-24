@@ -2118,7 +2118,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			bool is_defaulted = func_specs.is_defaulted();
 			bool is_deleted = func_specs.is_deleted();
 
-			// Propagate noexcept specifier to the function declaration node
+			// Propagate cv-qualifiers and noexcept to the function declaration node immediately
+			// so that all downstream code (codegen, mangling, propagateAstProperties) sees
+			// the correct flags without requiring a separate post-registration patch.
+			member_func_ref.set_is_const_member_function(member_quals.is_const());
+			member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 			if (func_specs.is_noexcept) {
 				member_func_ref.set_noexcept(true);
 				if (func_specs.noexcept_expr)
@@ -2806,6 +2810,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 			}
 
+			// Set is_const_member_function on the node before registering so
+			// propagateAstProperties can derive cv_qualifier automatically.
+			{
+				ASTNode fn_node = func_decl.function_declaration;
+				if (auto* fn = get_function_decl_node_mut(fn_node)) {
+					fn->set_is_const_member_function(func_decl.is_const());
+					fn->set_is_volatile_member_function(func_decl.is_volatile());
+				}
+			}
 			// Operator overload
 			struct_info->addOperatorOverload(
 				refined_kind,
@@ -2848,6 +2861,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				continue;
 			}
 
+			// Set is_const/volatile_member_function on the node before registering so
+			// propagateAstProperties can derive cv_qualifier automatically.
+			{
+				ASTNode fn_node = func_decl.function_declaration;
+				if (auto* fn = get_function_decl_node_mut(fn_node)) {
+					fn->set_is_const_member_function(func_decl.is_const());
+					fn->set_is_volatile_member_function(func_decl.is_volatile());
+				}
+			}
 			// Add member function to struct type info
 			struct_info->addMemberFunction(
 				func_name_handle,
@@ -2858,12 +2880,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.is_override,
 				func_decl.is_final
 			);
-			// Propagate const/volatile qualifiers and noexcept from the AST node to StructTypeInfo
-			auto& registered_func = struct_info->member_functions.back();
-			registered_func.cv_qualifier = func_decl.cv_qualifier;
-			if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
-				registered_func.is_noexcept = func_decl.function_declaration.as<FunctionDeclarationNode>().is_noexcept();
-			}
+			// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 	}
 }
 
@@ -3440,29 +3457,30 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		for (const auto& delayed : delayed_function_bodies_) {
 			DeferredTemplateMemberBody deferred;
 			
-			// Get function name for matching during instantiation
-			StringHandle func_name;
-			bool is_const_method = false;
-			if (delayed.is_constructor && delayed.ctor_node) {
-				func_name = delayed.ctor_node->name();
-			} else if (delayed.is_destructor && delayed.dtor_node) {
-				func_name = delayed.dtor_node->name();
-			} else if (delayed.func_node) {
-				const auto& decl = delayed.func_node->decl_node();
-				func_name = decl.identifier_token().handle();
-				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
-				// We'll match by name only for now
+			// Populate identity from the delayed function body
+			{
+				auto& id = deferred.identity;
+				if (delayed.is_constructor && delayed.ctor_node) {
+					id.kind = DeferredMemberIdentity::Kind::Constructor;
+					id.original_lookup_name = delayed.ctor_node->name();
+					id.original_member_node = ASTNode(delayed.ctor_node);
+				} else if (delayed.is_destructor && delayed.dtor_node) {
+					id.kind = DeferredMemberIdentity::Kind::Destructor;
+					id.original_lookup_name = delayed.dtor_node->name();
+					id.original_member_node = ASTNode(delayed.dtor_node);
+				} else if (delayed.func_node) {
+					id.kind = DeferredMemberIdentity::Kind::Function;
+					const auto& decl = delayed.func_node->decl_node();
+					id.original_lookup_name = decl.identifier_token().handle();
+					id.original_member_node = ASTNode(delayed.func_node);
+					// is_const is stored in StructMemberFunctionDecl, not FunctionDeclarationNode
+				}
+				id.template_owner_name = delayed.struct_name;
 			}
-			
-			deferred.function_name = func_name;
 			deferred.body_start = delayed.body_start;
 			deferred.initializer_list_start = delayed.initializer_list_start;
 			deferred.has_initializer_list = delayed.has_initializer_list;
-			deferred.struct_name = delayed.struct_name;  // string_view from token (persistent)
 			deferred.struct_type_index = delayed.struct_type_index.value;
-			deferred.is_constructor = delayed.is_constructor;
-			deferred.is_destructor = delayed.is_destructor;
-			deferred.is_const_method = is_const_method;
 			deferred.template_param_names = delayed.template_param_names;
 			pending_template_deferred_bodies_.push_back(std::move(deferred));
 		}

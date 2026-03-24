@@ -30,6 +30,17 @@ public:
     int derived_value = 7;
 };
 
+struct BaseConv {
+    int val;
+    BaseConv(int v) : val(v) {}
+    operator int() const { return val; }
+};
+
+struct DerivedConv : BaseConv {
+    DerivedConv(int v) : BaseConv(v) {}
+    operator int() const { return 99; }
+};
+
 int test_static_cast() {
     int value = 5;
     
@@ -85,6 +96,20 @@ int test_dynamic_cast() {
     return 0;  // Success
 }
 
+int test_static_cast_base_rvalue_conv_op() {
+    DerivedConv derived(10);
+
+    // Cross-type static_cast to rvalue reference should preserve Base identity,
+    // so conversion-operator lookup uses Base::operator int() instead of Derived's.
+    int result = static_cast<BaseConv&&>(move(derived));
+    if (result != 10) return 40;
+
+    int direct = derived;
+    if (direct != 99) return 41;
+
+    return 0;
+}
+
 int main() {
     int result;
     
@@ -103,6 +128,10 @@ int main() {
     // Test 4: dynamic_cast
     result = test_dynamic_cast();
     if (result != 0) return result;
-    
+
+    // Test 5: cross-type rvalue reference cast preserves target type identity
+    result = test_static_cast_base_rvalue_conv_op();
+    if (result != 0) return result;
+
     return 0;  // All tests passed!
 }

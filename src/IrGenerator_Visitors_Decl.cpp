@@ -260,7 +260,8 @@
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 				func_decl.identifier_token().value(), return_type, param_types,
 				node.non_type_template_args(), node.is_variadic(),
-				struct_name_for_function, namespace_for_mangling);
+				struct_name_for_function, namespace_for_mangling,
+				node.is_const_member_function());
 			mangled_name = mangled.view();
 		} else {
 			// Generate mangled name using the FunctionDeclarationNode overload
@@ -430,7 +431,7 @@
 											// Use generateMangledNameForCall for consistent mangling across platforms
 											std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 											member_spaceship_mangled = StringTable::getOrInternStringHandle(
-												generateMangledNameForCall(spaceship_func, member_struct_name));
+												generateMangledNameForCall(spaceship_func, member_struct_name, {}));
 										}
 										break;
 									}
@@ -653,7 +654,7 @@
 								const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 								// Use generateMangledNameForCall for consistent mangling across platforms
 								spaceship_mangled = StringTable::getOrInternStringHandle(
-									generateMangledNameForCall(spaceship_func, node.parent_struct_name()));
+									generateMangledNameForCall(spaceship_func, node.parent_struct_name(), {}));
 							}
 							break;
 						}
@@ -1021,8 +1022,8 @@
 							// If the function was skipped (lazy stub - no body yet), queue it for
 							// deferred lazy instantiation so the body gets generated.
 							if (!fn.get_definition().has_value() && !fn.is_implicit() && parser_) {
-								StringHandle member_handle = fn.decl_node().identifier_token().handle();
-								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle)) {
+								StringHandle member_handle = member_func.getName();
+								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(current_struct_name_, member_handle, fn.is_const_member_function())) {
 									DeferredMemberFunctionInfo deferred_info;
 									deferred_info.struct_name = current_struct_name_;
 									deferred_info.function_node = func_decl;
@@ -1322,7 +1323,7 @@
 				TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 					ctor_function_name, return_type, node.parameter_nodes(),
-					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false));
 			} else {
 				assert(false && "Unhandled name mangling type");
 			}
@@ -2513,7 +2514,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		SizeInBits{static_cast<int>(init_list_size_bits)},
 		IrOperand{init_list_name},
 		TypeIndex{init_list_type_index}
-	);
+	, PointerDepth{});
 }
 
 
@@ -2684,7 +2685,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				SizeInBits{actual_size_bits},
 				IrOperand{ret_var},
 				TypeIndex{result_type_index}
-			);
+			, PointerDepth{});
 		}
 	}
 
@@ -2796,5 +2797,5 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		SizeInBits{actual_size_bits},
 		IrOperand{ret_var},
 		TypeIndex{result_type_index}
-	);
+	, PointerDepth{});
 }

@@ -562,10 +562,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 			StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 			auto& lazy_registry = LazyMemberInstantiationRegistry::getInstance();
-			if (lazy_registry.needsInstantiation(inst_name_handle, member_handle)) {
-				auto lazy_info = lazy_registry.getLazyMemberInfo(inst_name_handle, member_handle);
+			if (lazy_registry.needsInstantiationAny(inst_name_handle, member_handle)) {
+				auto lazy_info = lazy_registry.getLazyMemberInfoAny(inst_name_handle, member_handle);
 				if (lazy_info.has_value()) {
 					parser_.instantiateLazyMemberFunction(*lazy_info);
+					lazy_registry.markInstantiated(inst_name_handle, member_handle, lazy_info->identity.is_const_method);
 				}
 			}
 			
