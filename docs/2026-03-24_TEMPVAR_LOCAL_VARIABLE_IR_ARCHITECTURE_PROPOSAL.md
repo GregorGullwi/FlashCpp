@@ -49,7 +49,7 @@ with any novel IR types that might be produced.  The architectural root cause is
 
 ## Implementation progress (as of 2026-03-24)
 
-Phases 1–6 are complete.  Phase 7 remains pending.  All 1 736 tests pass.
+Phases 1–7 are complete.  All 1 736 tests pass.
 
 ### Phase 1 — complete
 
@@ -128,8 +128,6 @@ a separate concern from `ExprResult.storage` and is not yet redundant.
 
 ### Remaining work
 
-- **Phase 7:** restrict `indirect_stack_info_` writes to named variables / `TempVar{0}` only after
-  auditing all naked `getIndirectStackInfo(offset)` call sites (see §11.2).
 - **Option B** (optional readability): add `CopyReferenceOp` opcode (see §9).
 
 ---
@@ -631,15 +629,16 @@ Coverage now includes:
 
 ---
 
-### 11.2 — Redundancy: dual-tracking for non-zero TempVar `setReferenceInfo` calls
+### 11.2 — Fixed: named-variable and TempVar stack tracking are now split
 
 When `setReferenceInfo(offset, ..., result_var)` or `setAddressOnlyInfo(offset, ..., result_var)`
 is called with a **non-zero** `result_var`, `setIndirectStorageInfo` writes to both:
-1. `indirect_stack_info_[offset]` (by stack offset)
-2. `TempVarMetadata` for `result_var` (via `makeReference`/`makeAddressOnly`)
+1. a **TempVar-only current-function offset map**
+2. a **TempVar-only current-function var-number map**
+3. `TempVarMetadata` for `result_var` (via `makeReference`/`makeAddressOnly`)
 
 `getReferenceInfo(result_var, offset)` always checks TempVar metadata first, so the
-`indirect_stack_info_` entry is a dead backup whenever the caller supplies the TempVar.
+named-variable stack map no longer needs to carry TempVar result slots at all.
 
 Affected call sites (all pass non-zero TempVar):
 
@@ -654,31 +653,27 @@ Affected call sites (all pass non-zero TempVar):
 | `IRConverter_ConvertMain.cpp:13201` | `handleAddressOf` (`setAddressOnlyInfo`) |
 | `IRConverter_ConvertMain.cpp:13309` | `handleAddressOfMember` (`setAddressOnlyInfo`) |
 
-The stack-offset entries are redundant (TempVar always wins), but each entry consumes memory
-and creates a maintenance burden: future changes to `setIndirectStorageInfo` must reason about
-both paths.
+The original Phase 7 sketch assumed that every naked `getIndirectStackInfo(offset)` caller could
+be audited away from TempVar-result offsets.  In practice, a few lowering paths still query by
+offset alone (for example spill-size and stack-copy paths), so the implemented fix keeps a
+**separate TempVar offset map** for the current function while restricting `indirect_stack_info_`
+itself to named variables / `TempVar{0}` only.
 
-**Fix (Phase 7):** In `setIndirectStorageInfo`, only write to `indirect_stack_info_` when
-`temp_var.var_number == 0`.
+**Implemented Phase 7 fix:**
 
 ```cpp
 // Only named variables (params, 'this', declared refs) need the stack-offset map.
-// TempVar results are tracked exclusively via GlobalTempVarMetadataStorage.
 if (temp_var.var_number == 0) {
     indirect_stack_info_[stack_offset] = IndirectStorageInfo{ ... };
+} else {
+    tempvar_indirect_stack_info_[stack_offset] = IndirectStorageInfo{ ... };
+    current_function_tempvar_indirect_info_[temp_var.var_number] = IndirectStorageInfo{ ... };
 }
 ```
 
-**Before implementing:** Audit every `getIndirectStackInfo(offset)` caller (naked offset,
-~25 sites) to confirm none queries a TempVar-based result slot by offset alone.  The critical
-question per site: "is this offset always a named-variable slot, or could it be a TempVar slot?"
-
-Sites known to only access named-variable offsets: assignment LHS/RHS lookups by `StringHandle`
-name, function-parameter registration, 'this' offset.  These are safe.
-
-Sites that might access TempVar offsets: struct-init path at line 6433
-(`getIndirectStackInfo(src_offset)` where `src_offset` came from `getStackOffsetFromTempVar`).
-This site needs per-case analysis before Phase 7 can proceed.
+`clearFunctionTempVarMetadata()` now clears both TempVar current-function maps as well as the
+converter-seeded TempVar metadata entries, so TempVar var-number reuse across functions remains
+safe.
 
 ---
 
@@ -691,11 +686,15 @@ Once both phases are complete, the reference-tracking ownership becomes clean an
 | Reference parameters | `indirect_stack_info_` only (TempVar{0} caller) |
 | `this` pointer | `indirect_stack_info_` only (TempVar{0} caller) |
 | Reference local variable declarations | `indirect_stack_info_` only (TempVar{0} caller) |
-| TempVar results (all op types) | `TempVarMetadata` only |
+| TempVar results queried by var number | `current_function_tempvar_indirect_info_` + `TempVarMetadata` |
+| TempVar results queried by stack offset only | `tempvar_indirect_stack_info_` |
 
-No dual-tracking.  `getReferenceInfo(temp_var, offset)` can be simplified: try TempVar metadata
-for non-zero TempVars, try stack map for named variables.  The current fallback chain (try
-TempVar → try stack map) is only needed while both can hold entries for the same slot.
+The important ownership split is now explicit:
+
+- `indirect_stack_info_` is the **named-variable / TempVar{0}** channel only
+- TempVar result slots live in **current-function TempVar maps**
+- TempVar metadata is still synchronized for converter-created TempVar results and call-return
+  tracking helpers
 
 ---
 

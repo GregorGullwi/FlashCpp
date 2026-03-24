@@ -151,6 +151,10 @@ private:
 
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const;
 
+	// Query only the current-function TempVar result-slot map by stack offset.
+	// Unlike getIndirectStackInfo(), this intentionally excludes named variables / TempVar{0}.
+	std::optional<IndirectStorageInfo> getTempVarIndirectStackInfo(int32_t stack_offset) const;
+
 	bool hasIndirectStackStorage(int32_t stack_offset) const;
 
 	bool shouldImplicitlyDeref(const IndirectStorageInfo& info) const;
@@ -1034,6 +1038,14 @@ private:
 
 	// Track which stack offsets hold indirect storage (references or address-only pointers)
 	std::unordered_map<int32_t, IndirectStorageInfo> indirect_stack_info_;
+	// Track current-function TempVar result slots separately from named variables.
+	// This lets indirect_stack_info_ remain the named-variable / TempVar{0} channel only,
+	// while still supporting the remaining lowering paths that query TempVar slots by offset.
+	std::unordered_map<int32_t, IndirectStorageInfo> tempvar_indirect_stack_info_;
+	// Current-function TempVar reference/address-only info keyed by TempVar number.
+	// This is checked before global TempVar metadata so converter-set current-function facts
+	// win over any stale generator metadata when TempVar numbers are reused across functions.
+	std::unordered_map<size_t, IndirectStorageInfo> current_function_tempvar_indirect_info_;
 	// Track TempVar var_numbers that were given reference/address-only metadata by setIndirectStorageInfo.
 	// These must be cleared at function boundaries alongside indirect_stack_info_ to prevent
 	// stale metadata from polluting later functions (TempVar var_numbers are reused across functions).

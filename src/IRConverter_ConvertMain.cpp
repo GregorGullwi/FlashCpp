@@ -1756,13 +1756,20 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 		bool holds_address_only,
 		TempVar temp_var)  {
 
-		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
+		IndirectStorageInfo info{
 			.value_type = value_type,
 			.ir_type = toIrType(value_type),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
 		};
+
+		if (temp_var.var_number == 0) {
+			indirect_stack_info_[stack_offset] = info;
+		} else {
+			tempvar_indirect_stack_info_[stack_offset] = info;
+			current_function_tempvar_indirect_info_[temp_var.var_number] = info;
+		}
 
 		// Sync TempVar metadata with stack storage info
 		if (temp_var.var_number != 0) {
@@ -1780,6 +1787,8 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::clearFunctionTempVarMetadata()  {
 		indirect_stack_info_.clear();
+		tempvar_indirect_stack_info_.clear();
+		current_function_tempvar_indirect_info_.clear();
 		for (size_t var_num : reference_temp_var_numbers_) {
 			GlobalTempVarMetadataStorage::instance().clearEntry(var_num);
 		}
@@ -1814,6 +1823,21 @@ template<class TWriterClass>
 std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getIndirectStackInfo(int32_t stack_offset) const  {
 		auto it = indirect_stack_info_.find(stack_offset);
 		if (it != indirect_stack_info_.end()) {
+			return it->second;
+		}
+
+		auto tempvar_it = tempvar_indirect_stack_info_.find(stack_offset);
+		if (tempvar_it != tempvar_indirect_stack_info_.end()) {
+			return tempvar_it->second;
+		}
+
+		return std::nullopt;
+	}
+
+template<class TWriterClass>
+std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getTempVarIndirectStackInfo(int32_t stack_offset) const  {
+		auto it = tempvar_indirect_stack_info_.find(stack_offset);
+		if (it != tempvar_indirect_stack_info_.end()) {
 			return it->second;
 		}
 
@@ -1883,8 +1907,13 @@ bool IrToObjConverter<TWriterClass>::hasIndirectStorage(TempVar temp_var, int32_
 
 template<class TWriterClass>
 std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getReferenceInfo(TempVar temp_var, int32_t stack_offset) const  {
-		// Check TempVar metadata first
 		if (temp_var.var_number != 0) {
+			auto current_function_it = current_function_tempvar_indirect_info_.find(temp_var.var_number);
+			if (current_function_it != current_function_tempvar_indirect_info_.end()) {
+				return current_function_it->second;
+			}
+
+			// Check TempVar metadata next
 			if (isTempVarReference(temp_var)) {
 				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
@@ -6218,6 +6247,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		// non-reference declaration that reuses the slot.
 		if (!is_reference) {
 			indirect_stack_info_.erase(var_it->second.offset);
+			tempvar_indirect_stack_info_.erase(var_it->second.offset);
 		}
 
 		// REMOVED: Flawed TempVar linking heuristic
