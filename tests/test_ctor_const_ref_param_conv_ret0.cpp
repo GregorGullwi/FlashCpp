@@ -15,8 +15,17 @@ struct FloatTarget {
     FloatTarget(const float& f) : value(f) {}
 };
 
+struct RValueTarget {
+    double value;
+    RValueTarget(double&& d) : value(d) {}
+};
+
 int takeIntTargetValue(IntTarget target) {
     return target.value;
+}
+
+int takeRValueTargetValue(RValueTarget target) {
+    return static_cast<int>(target.value);
 }
 
 struct TargetReader {
@@ -34,6 +43,10 @@ LongTarget makeLongTargetFromExpr() {
 
 FloatTarget makeFloatTargetFromLiteral() {
     return 7;
+}
+
+RValueTarget makeRValueTargetFromExpr() {
+    return 40 + 2;
 }
 
 int main() {
@@ -71,6 +84,14 @@ int main() {
 
     FloatTarget from_float_literal = makeFloatTargetFromLiteral();
     if (static_cast<int>(from_float_literal.value) != 7) return 12;
+
+    // Rvalue-reference constructor parameters should materialize/bind correctly too.
+    RValueTarget rv = 42;
+    if (static_cast<int>(rv.value) != 42) return 13;
+    if (takeRValueTargetValue(40 + 2) != 42) return 14;
+
+    RValueTarget from_rvalue_expr = makeRValueTargetFromExpr();
+    if (static_cast<int>(from_rvalue_expr.value) != 42) return 15;
 
     return 0;
 }
