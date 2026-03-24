@@ -108,56 +108,6 @@ namespace {
 		}
 	}
 
-	bool typesMatchIgnoringCvImpl(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs, bool compare_reference_qualifier) {
-		if (lhs.type() != rhs.type() ||
-			lhs.type_index() != rhs.type_index() ||
-			lhs.pointer_depth() != rhs.pointer_depth() ||
-			lhs.array_dimensions() != rhs.array_dimensions() ||
-			lhs.has_member_class() != rhs.has_member_class() ||
-			lhs.has_function_signature() != rhs.has_function_signature()) {
-			return false;
-		}
-
-		if (compare_reference_qualifier &&
-			lhs.reference_qualifier() != rhs.reference_qualifier()) {
-			return false;
-		}
-
-		if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
-			return false;
-		}
-
-		if (lhs.has_function_signature()) {
-			const FunctionSignature& lhs_sig = lhs.function_signature();
-			const FunctionSignature& rhs_sig = rhs.function_signature();
-			if (lhs_sig.return_type != rhs_sig.return_type ||
-				lhs_sig.parameter_types != rhs_sig.parameter_types ||
-				lhs_sig.linkage != rhs_sig.linkage ||
-				lhs_sig.class_name != rhs_sig.class_name) {
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		return typesMatchIgnoringCvImpl(lhs, rhs, false);
-	}
-
-	std::optional<TypeSpecifierNode> tryGetExpressionType(
-		const EvalResult& result,
-		const ASTNode& expr,
-		EvaluationContext& context) {
-		if (result.exact_type.has_value()) {
-			return result.exact_type;
-		}
-		if (context.parser) {
-			return context.parser->get_expression_type(expr);
-		}
-		return std::nullopt;
-	}
-
 }
 
 // Main evaluation entry point
@@ -1426,6 +1376,47 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	}
 	
 	return evaluate_expr_node(type_spec, args[0], context, "Unsupported type in constructor call for constant evaluation");
+}
+
+bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	if (lhs.type() != rhs.type() ||
+		lhs.type_index() != rhs.type_index() ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.array_dimensions() != rhs.array_dimensions() ||
+		lhs.has_member_class() != rhs.has_member_class() ||
+		lhs.has_function_signature() != rhs.has_function_signature()) {
+		return false;
+	}
+
+	if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
+		return false;
+	}
+
+	if (lhs.has_function_signature()) {
+		const FunctionSignature& lhs_sig = lhs.function_signature();
+		const FunctionSignature& rhs_sig = rhs.function_signature();
+		if (lhs_sig.return_type != rhs_sig.return_type ||
+			lhs_sig.parameter_types != rhs_sig.parameter_types ||
+			lhs_sig.linkage != rhs_sig.linkage ||
+			lhs_sig.class_name != rhs_sig.class_name) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(
+	const EvalResult& result,
+	const ASTNode& expr,
+	EvaluationContext& context) {
+	if (result.exact_type.has_value()) {
+		return result.exact_type;
+	}
+	if (context.parser) {
+		return context.parser->get_expression_type(expr);
+	}
+	return std::nullopt;
 }
 
 EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {

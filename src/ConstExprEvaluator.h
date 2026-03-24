@@ -829,6 +829,19 @@ private:
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 
+	// Type comparison helpers — shared across Core and Members TUs.
+	// Compares two TypeSpecifierNodes ignoring cv-qualifiers (and optionally
+	// reference qualifiers), checking type(), type_index(), pointer_depth(),
+	// array_dimensions(), member class, and function signatures.
+	static bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs);
+
+	// Try to obtain the source expression's type from an already-evaluated
+	// result (exact_type) or by asking the parser for the AST node's type.
+	static std::optional<TypeSpecifierNode> tryGetExpressionType(
+		const EvalResult& result,
+		const ASTNode& expr,
+		EvaluationContext& context);
+
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);
 	static std::optional<long long> safe_sub(long long a, long long b);

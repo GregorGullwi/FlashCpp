@@ -2117,6 +2117,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!inner_result.success()) {
 			return inner_result;
 		}
+		// Validate that const_cast only changes cv/ref qualification — reject
+		// type-changing casts like const_cast<float*>(&int_value).  Uses the
+		// shared Evaluator::typesMatchIgnoringCvAndRef / tryGetExpressionType.
+		if (auto source_type = tryGetExpressionType(inner_result, const_cast_node->expr(), context);
+			source_type.has_value() &&
+			!typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+			return EvalResult::error(
+				"const_cast in constant expression may only change cv-qualification",
+				EvalErrorType::NotConstantExpression);
+		}
 		// Only update the type metadata — no value conversion needed.
 		inner_result.set_exact_type(type_spec);
 		return inner_result;
