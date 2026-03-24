@@ -1037,10 +1037,14 @@
 				// where p is Point&), the result TempVar holds a pointer to the referenced struct.
 				// Detect this via the LValue metadata and set is_pointer_dereference so the
 				// subsequent MemberAccess instruction dereferences through the pointer.
+				// Two cases:
+				//   - Load context: struct ref member returns Kind::Member with is_pointer_to_member=true
+				//   - LValueAddress context: struct ref member returns Kind::Indirect (pointer loaded)
 				if (!is_pointer_dereference && std::holds_alternative<TempVar>(nested_result.value)) {
 					TempVar nested_temp = std::get<TempVar>(nested_result.value);
 					auto nested_lv = getTempVarLValueInfo(nested_temp);
-					if (nested_lv.has_value() && nested_lv->is_pointer_to_member) {
+					if (nested_lv.has_value() &&
+						(nested_lv->is_pointer_to_member || nested_lv->kind == LValueInfo::Kind::Indirect)) {
 						is_pointer_dereference = true;
 					}
 				}
