@@ -192,6 +192,10 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.value = toIrValue(operands[2]);
 	result.type_index = TypeIndex{};
 	result.pointer_depth = PointerDepth{};
+	// Optional 4th element: storage discriminator (ValueStorage cast to int)
+	if (operands.size() >= 4) {
+		result.storage = static_cast<ValueStorage>(std::get<int>(operands[3]));
+	}
 	
 	return result;
 }

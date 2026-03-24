@@ -49,7 +49,7 @@ with any novel IR types that might be produced.  The architectural root cause is
 
 ## Implementation progress (as of 2026-03-24)
 
-Phases 1, 2, and 3 (partial) have been implemented.  All 1 734 tests pass.
+Phases 1 through 4 are complete.  All 1 734 tests pass.
 
 ### Phase 1 — complete
 
@@ -57,8 +57,8 @@ Phases 1, 2, and 3 (partial) have been implemented.  All 1 734 tests pass.
 `ExprResult::storage` fields added (default `LegacyUnclassified`).  `toTypedValue(ExprResult)`
 propagates the field.  `withStorage(result, storage)` helper added in `src/IROperandHelpers.h`.
 `handleVariableDecl` in `src/IRConverter_ConvertMain.cpp` now checks the field before the
-heuristic: `ContainsAddress` → MOV, `ContainsData` → LEA, `LegacyUnclassified` → existing
-heuristic + debug log.
+heuristic: `ContainsAddress` → MOV, `ContainsData` → LEA, `LegacyUnclassified` → `InternalError`
+(see Phase 4).
 
 ### Phase 2 — complete (all known address-producing sites annotated)
 
@@ -75,31 +75,39 @@ are now marked `ContainsAddress`:
 | `IrGenerator_Call_Indirect.cpp` | reference returns (virtual and non-virtual paths share the same annotation; VirtualCallOp gap from §1C is now closed) |
 | `IrGenerator_MemberAccess.cpp` | reference member LValueAddress path + struct reference member load path |
 
-### Phase 3 — partial (key data producers annotated)
+### Phase 3 — complete (all `makeExprResult` call sites annotated)
 
-All call non-reference returns are `ContainsData`.  Additionally:
+Every `makeExprResult(...)` call site is now wrapped in `withStorage(..., ValueStorage::X)`.
+No `LegacyUnclassified` result can be produced.  Annotated files and approximate counts:
 
-| File | Site |
-|---|---|
-| `IrGenerator_Expr_Primitives.cpp` | `FunctionAddressOp` result |
-| `IrGenerator_NewDeleteCast.cpp` | `HeapAllocOp` / `HeapAllocArrayOp` result |
-| `IrGenerator_Expr_Primitives.cpp` | All `GlobalLoadOp` TempVar results (static locals, globals, static members, namespace-qualified globals) |
-| `IrGenerator_Expr_Operators.cpp` | `GlobalLoadOp` TempVar results (compound-assignment lambda) |
+| File | `ContainsData` sites | `ContainsAddress` sites |
+|---|---|---|
+| `IrGenerator_Expr_Operators.cpp` | 45 | 0 |
+| `IrGenerator_Expr_Conversions.cpp` | 40 | 0 |
+| `IrGenerator_MemberAccess.cpp` | 23 | 0 |
+| `IrGenerator_Expr_Primitives.cpp` | 14 | 2 (FunctionAddressOp, ref-var LValueAddress) |
+| `IrGenerator_NewDeleteCast.cpp` | 12 | 1 (dynamic_cast to reference) |
+| `IrGenerator_Call_Indirect.cpp` | 7 | 0 |
+| `IrGenerator_Call_Direct.cpp` | 8 | 0 |
+| `IrGenerator_Visitors_Decl.cpp` | 3 | 0 |
+| `IrGenerator_Lambdas.cpp` | 2 | 0 |
+| `IrGenerator_Helpers.cpp` | 1 | 0 |
+| `AstToIr.h` | 1 | 0 |
 
-Remaining unannotated (`LegacyUnclassified`) sites (~150) are arithmetic operators, type
-conversions, and minor expression forms.  The metadata-based arms 1–3 in `handleVariableDecl`
-still handle their cases correctly; arm 4 (heuristic) is only reached for paths not yet
-annotated.
+### Phase 4 — complete (heuristic deleted)
+
+The `LegacyUnclassified` else-branch in `handleVariableDecl` now throws
+`InternalError("handleVariableDecl: TempVar tN has LegacyUnclassified storage — all ExprResult producers must be annotated")`.
+The old `is_likely_pointer` heuristic (`isIrStructType || isIrPointerLikeType`) is gone.
+Every new ExprResult producer added to the codebase will fail loudly at runtime if it does
+not set the `storage` field, preventing a return to silent misclassification.
 
 ### Remaining work
 
-- **Phase 3 (remainder)**: annotate arithmetic `BinaryOp` / `UnaryOp` / conversion results and
-  remaining expression-form ExprResults as `ContainsData`.
-- **Phase 4**: once Phase 3 is complete, replace the `LegacyUnclassified` branch with
-  `InternalError` / `assert` and remove the `is_likely_pointer` heuristic variable.
-- **Phase 5**: after Phase 4, remove `TempVarMetadata.is_address`, `holds_address_only`,
+- **Phase 5**: remove `TempVarMetadata.is_address`, `holds_address_only`,
   `setAddressOnlyInfo`, and `setReferenceInfo` in `IRConverter_ConvertMain.cpp` (now redundant
   with `ValueStorage`).
+- **Option B** (optional readability): add `CopyReferenceOp` opcode (see §9).
 
 ---
 
@@ -476,40 +484,34 @@ Annotate all known `ContainsAddress` producers in IR generators:
 | `IrGenerator_MemberAccess.cpp` (struct reference member load, address not yet dereferenced) | ✅ done |
 | `IrGenerator_Expr_Operators.cpp` (`buildConstructorArgumentValue` address paths) | ✅ checks `storage` field before metadata heuristic |
 
-### Phase 3: annotate data producers — partial ✅/⬜
+### Phase 3: annotate data producers ✅ DONE
 
-Mark the key data-valued producers as `ContainsData` so the fallback heuristic is never needed for
-them:
+Every `makeExprResult(...)` call site is wrapped in `withStorage(..., ValueStorage::X)`.
+`LegacyUnclassified` cannot be produced by any path.
 
 | Site | Status |
 |---|---|
-| `CallOp` normal returns | ✅ `ContainsData` |
-| `VirtualCallOp` normal returns | ✅ `ContainsData` |
-| `IndirectCallOp` normal returns | ✅ `ContainsData` |
+| `CallOp` / `VirtualCallOp` / `IndirectCallOp` normal returns | ✅ `ContainsData` |
 | `FunctionAddressOp` result | ✅ `ContainsData` |
 | `HeapAllocOp` / `HeapAllocArrayOp` result | ✅ `ContainsData` |
-| `GlobalLoadOp` TempVar results (all known sites) | ✅ `ContainsData` |
-| arithmetic `BinaryOp` / `UnaryOp` / conversion results (~150 sites) | ⬜ still `LegacyUnclassified` |
-| `PlacementNewOp` result | ⬜ still `LegacyUnclassified` |
+| `GlobalLoadOp` TempVar results | ✅ `ContainsData` |
+| All arithmetic `BinaryOp` / `UnaryOp` / conversion results | ✅ `ContainsData` |
+| All sizeof/alignof/noexcept/literal results | ✅ `ContainsData` |
+| `emitConversionOperatorCall` result | ✅ `ContainsData` |
+| `dynamic_cast` to pointer | ✅ `ContainsData` |
+| `dynamic_cast` to reference | ✅ `ContainsAddress` |
 
-The ~150 remaining `LegacyUnclassified` sites are arithmetic expressions, type conversions,
-and minor forms.  Their metadata (arms 1–3 in `handleVariableDecl`) or the arm 4 heuristic
-continues to handle them correctly because none of those forms produce 64-bit
-`IrType::FunctionPointer` / `IrType::Struct` results that would risk a false positive.
+### Phase 4: delete heuristic fallback ✅ DONE
 
-### Phase 4: delete heuristic fallback ⬜ TODO
+The `LegacyUnclassified` else-branch in `handleVariableDecl` now throws `InternalError(...)`.
+The old `is_likely_pointer` heuristic (`isIrStructType || isIrPointerLikeType`) is deleted.
+Any new `makeExprResult` call site that omits `withStorage(...)` will fail loudly at runtime.
 
-Prerequisites: Phase 3 must be complete (all ~150 remaining sites annotated).
+### Phase 5: consolidate redundant metadata ⬜ TODO
 
-- Replace the `LegacyUnclassified` branch in `handleVariableDecl` with `InternalError` / `assert`
-- Delete `isIrStructType(init_ir)` and `isIrPointerLikeType(init_ir)` arms
-- Delete `is_likely_pointer` variable entirely
-
-### Phase 5: consolidate redundant metadata ⬜ TODO (after Phase 4)
-
-After Phase 4, `TempVarMetadata.is_address`, `TempVarMetadata.holds_address_only`,
-`setAddressOnlyInfo`, and `setReferenceInfo` in `IRConverter_ConvertMain.cpp` are redundant with
-`ValueStorage`.  Remove them and update the converter helpers that read them.
+`TempVarMetadata.is_address`, `TempVarMetadata.holds_address_only`,
+`setAddressOnlyInfo`, and `setReferenceInfo` in `IRConverter_ConvertMain.cpp` are now redundant
+with `ValueStorage`.  Remove them and update the converter helpers that read them.
 
 ---
 
@@ -549,21 +551,19 @@ stamp `setReferenceInfo(...)`, and set `storage = ContainsAddress`.
 - Two residual heuristic arms (`isIrStructType`, `isIrPointerLikeType`) introduced false-positive
   risks for 64-bit struct/pointer-valued data results.
 
-**Current status (after Option A implementation, Phases 1–3 partial):**
+**Current status (after Option A implementation, Phases 1–4 complete):**
 - `ValueStorage` field is on both `ExprResult` and `TypedValue`; `toTypedValue(ExprResult)`
   propagates it.  The `withStorage(...)` helper makes annotation ergonomic.
 - All known address-producing generator sites are annotated `ContainsAddress` (Phase 2 complete).
-- VirtualCallOp reference-return gap is closed — virtual and non-virtual paths share annotation.
-- Key data producers (call returns, `FunctionAddressOp`, `HeapAllocOp`, `GlobalLoadOp`) are
-  annotated `ContainsData`.  The false-positive risk from arm 4 for these types is eliminated.
-- `handleVariableDecl` checks `init.storage` before the heuristic; `LegacyUnclassified` only
-  falls back to the old heuristic with a debug-level log.
-- ~150 arithmetic/conversion expression sites remain `LegacyUnclassified`; they are safe because
-  none produce 64-bit `IrType::Struct` / `IrType::FunctionPointer` results.
+- VirtualCallOp reference-return gap is closed.
+- Every single `makeExprResult(...)` call site is now annotated — no `LegacyUnclassified` result
+  can be produced anywhere in the IR generator.
+- The `LegacyUnclassified` heuristic branch in `handleVariableDecl` is replaced with
+  `InternalError`: any future unannotated site fails loudly instead of silently misfiring.
+- Architecture is now self-enforcing: adding a new IR op without setting `storage` will always
+  produce a runtime error rather than a silent wrong-codegen bug.
 
 **Remaining work:**
-1. Phase 3 remainder: annotate ~150 arithmetic/conversion ExprResult sites as `ContainsData`.
-2. Phase 4: replace `LegacyUnclassified` fallback with `InternalError` assertion.
-3. Phase 5: remove `TempVarMetadata.is_address`, `holds_address_only`, and the
+1. Phase 5: remove `TempVarMetadata.is_address`, `holds_address_only`, and the
    `setAddressOnlyInfo`/`setReferenceInfo` converter helpers that are redundant with `ValueStorage`.
-4. Option B: add `CopyReferenceOp` opcode as readability cleanup (see §9).
+2. Option B: add `CopyReferenceOp` opcode as readability cleanup (see §9).

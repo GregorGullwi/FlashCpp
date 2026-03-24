@@ -10,7 +10,7 @@
 			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				return generateQualifiedIdentifierIr(expr);
 			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{expr.value() ? 1ULL : 0ULL}, TypeIndex{}, PointerDepth{});
+				return withStorage(makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{expr.value() ? 1ULL : 0ULL}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				return generateNumericLiteralIr(expr);
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
@@ -90,7 +90,7 @@
 		if (noexcept_node.expr().is<ExpressionNode>()) {
 			is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
 		}
-		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{is_noexcept ? 1ULL : 0ULL}, TypeIndex{}, PointerDepth{});
+		return withStorage(makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{is_noexcept ? 1ULL : 0ULL}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor) {
@@ -205,12 +205,12 @@
 		TypeIndex member_type_index = ptr_result.type_index;
 
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return makeExprResult(
+		return withStorage(makeExprResult(
 			member_type,
 			SizeInBits{static_cast<int>(member_size)},
 			IrOperand{result_var},
 			member_type_index
-		, PointerDepth{});
+		, PointerDepth{}), ValueStorage::ContainsData);
 	}
 
 	static void requireResolvedCodegenType(Type type, std::string_view context) {
@@ -279,7 +279,7 @@
 			TypeIndex type_index = TypeIndex{},
 			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
-			return makeExprResult(type, SizeInBits{static_cast<int>(size_bits)}, std::move(value), type_index, pointer_depth);
+			return withStorage(makeExprResult(type, SizeInBits{static_cast<int>(size_bits)}, std::move(value), type_index, pointer_depth), ValueStorage::ContainsData);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
@@ -377,7 +377,7 @@
 						}
 
 						// Fallback: return the pointer temp
-						return makeExprResult(member->type, SizeInBits{64}, IrOperand{ptr_temp}, TypeIndex{}, PointerDepth{});
+						return withStorage(makeExprResult(member->type, SizeInBits{64}, IrOperand{ptr_temp}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 					} else {
 						// By-value capture: direct member access
 						TempVar result_temp = var_counter.next();
@@ -457,7 +457,7 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name}, info.type_index, PointerDepth{});
+				return withStorage(makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name}, info.type_index, PointerDepth{}), ValueStorage::ContainsData);
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
@@ -944,7 +944,7 @@
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, TypeIndex{}, PointerDepth{});
+					return withStorage(makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 				}
 
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
@@ -1123,7 +1123,7 @@
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						return makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, TypeIndex{}, PointerDepth{});
+						return withStorage(makeExprResult(type_node.type(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 					}
 
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
@@ -1226,8 +1226,10 @@
 			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
-			// Return the function address as a pointer (64 bits)
-			return withStorage(makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+			// Return the function address as a pointer (64 bits).
+			// The TempVar holds the address of the function → ContainsAddress so that
+			// reference binding (func_ref_t ref = get_value) uses MOV, not LEA.
+			return withStorage(makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsAddress);
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1283,8 +1285,8 @@
 					// Qualified enum access is valid for both scoped and unscoped enums.
 					long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-					return makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
-					static_cast<unsigned long long>(enum_value), TypeIndex{}, PointerDepth{});
+					return withStorage(makeExprResult(enum_info->underlying_type, SizeInBits{static_cast<int>(enum_info->underlying_size)},
+					static_cast<unsigned long long>(enum_value), TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 				}
 			}
 
@@ -1384,7 +1386,7 @@
 							"' from incomplete template instantiation '", owner_name, "'");
 							// Return a placeholder value instead of generating GlobalLoad
 							// This prevents linker errors from undefined references to incomplete instantiations
-							return makeExprResult(Type::Bool, SizeInBits{8}, 0ULL, TypeIndex{}, PointerDepth{});
+							return withStorage(makeExprResult(Type::Bool, SizeInBits{8}, 0ULL, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 						}
 
 						// Determine the correct qualified name to use
@@ -1427,7 +1429,7 @@
 									// true_type -> 1, false_type -> 0
 									bool value = (alias_name == "true_type") ? true : false;
 									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-									return makeExprResult(Type::Bool, SizeInBits{8}, static_cast<unsigned long long>(value), TypeIndex{}, PointerDepth{});
+									return withStorage(makeExprResult(Type::Bool, SizeInBits{8}, static_cast<unsigned long long>(value), TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 								}
 
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
@@ -1561,7 +1563,7 @@
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, TypeIndex{}, PointerDepth{});
+			return withStorage(makeExprResult(Type::Int, SizeInBits{32}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -1602,7 +1604,7 @@
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-				return makeExprResult(type_node.type(), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index, PointerDepth{});
+				return withStorage(makeExprResult(type_node.type(), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index, PointerDepth{}), ValueStorage::ContainsData);
 			}
 		}
 
@@ -1644,7 +1646,7 @@
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return makeExprResult(Type::Function, SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, TypeIndex{}, PointerDepth{});
+			return withStorage(makeExprResult(Type::Function, SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 		}
 
 		// If we get here, the symbol is not a supported type
@@ -1658,9 +1660,9 @@
 		// Check if it's a floating-point type
 		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
-			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{});
+			return withStorage(makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 		} else {
 			// For integer literals, the value is stored as unsigned long long
-			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<unsigned long long>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{});
+			return withStorage(makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<unsigned long long>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 		}
 	}
