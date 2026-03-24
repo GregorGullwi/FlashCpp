@@ -381,6 +381,8 @@ int get_type_size_bits(Type type) {
             return 64;
         case Type::LongDouble:
             return 80;  // x87 extended precision
+        case Type::Enum:
+            return 32;  // Default underlying type when enum metadata is unavailable
         case Type::FunctionPointer:
         case Type::MemberFunctionPointer:
         case Type::MemberObjectPointer:

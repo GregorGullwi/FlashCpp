@@ -315,6 +315,7 @@ private:
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name);
 	ExprResult handleLValueReferenceCast(

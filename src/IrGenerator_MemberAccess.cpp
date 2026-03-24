@@ -3513,7 +3513,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 
 	// Build the operator name we are looking for (e.g., "operator int")
 	std::string_view target_type_name;
-	if (target_type == Type::Struct && target_type_index.value < gTypeInfo.size()) {
+	if (target_type_index.is_valid() && target_type_index.value < gTypeInfo.size()) {
 		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index.value].name());
 	} else {
 		// For primitive types, use the helper function to get the type name
@@ -3740,6 +3740,26 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		else
 			return 0ULL;
 	}, source.value);
+
+	if (const auto* source_temp = std::get_if<TempVar>(&source.value)) {
+		TempVar current = *source_temp;
+		while (true) {
+			auto lvalue_info = getTempVarLValueInfo(current);
+			if (!lvalue_info.has_value() || lvalue_info->kind != LValueInfo::Kind::Direct || lvalue_info->offset != 0) {
+				break;
+			}
+			if (const auto* base_name = std::get_if<StringHandle>(&lvalue_info->base)) {
+				source_value = *base_name;
+				break;
+			}
+			if (const auto* base_temp = std::get_if<TempVar>(&lvalue_info->base)) {
+				source_value = *base_temp;
+				current = *base_temp;
+				continue;
+			}
+			break;
+		}
+	}
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper

@@ -388,11 +388,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	};
 
 	auto get_substituted_type_size_bytes = [&](Type substituted_type, TypeIndex substituted_type_index) -> size_t {
-		if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
+		if (substituted_type_index.is_valid()) {
 			for (const auto& ti : gTypeInfo) {
 				if (ti.type_index_ == substituted_type_index) {
-					if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
-						return struct_info->total_size;
+					if (substituted_type == Type::Struct) {
+						if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
+							return struct_info->total_size;
+						}
+					}
+					if (ti.type_size_ > 0) {
+						return static_cast<size_t>(ti.type_size_) / 8;
 					}
 					break;
 				}
@@ -400,6 +405,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		return get_type_size_bits(substituted_type) / 8;
+	};
+	auto get_substituted_type_size_bits = [&](Type substituted_type, TypeIndex substituted_type_index) -> int {
+		return static_cast<int>(get_substituted_type_size_bytes(substituted_type, substituted_type_index) * 8);
 	};
 	
 	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
@@ -1302,10 +1310,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (member_struct_info && member_struct_info->getStructInfo()) {
 					member_size = member_struct_info->getStructInfo()->total_size;
 				} else {
-					member_size = get_type_size_bits(member_type) / 8;
+					member_size = get_substituted_type_size_bytes(member_type, member_type_index);
 				}
 			} else {
-				member_size = get_type_size_bits(member_type) / 8;
+				member_size = get_substituted_type_size_bytes(member_type, member_type_index);
 			}
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
@@ -1350,7 +1358,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_decl.access,
 				substituted_default_initializer,
 				ref_qual,
-				ref_qual != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
+				ref_qual != ReferenceQualifier::None ? get_substituted_type_size_bits(member_type, member_type_index) : 0,
 				is_array_member,
 				std::move(resolved_array_dimensions),
 				static_cast<int>(ptr_depth),
@@ -1501,7 +1509,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeSpecifierNode substituted_param_type(
 						param_type,
 						param_type_spec.qualifier(),
-						get_type_size_bits(param_type),
+						get_substituted_type_size_bits(param_type, param_type_index),
 						param_decl.identifier_token(),
 						param_type_spec.cv_qualifier()
 					);
@@ -2258,7 +2266,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					orig_return_type.qualifier(),
-					get_type_size_bits(return_type),
+					get_substituted_type_size_bits(return_type, return_type_index),
 					orig_decl.identifier_token(),
 					orig_return_type.cv_qualifier()
 				);
@@ -2295,7 +2303,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeSpecifierNode substituted_param_type(
 						param_type,
 						param_type_spec.qualifier(),
-						get_type_size_bits(param_type),
+						get_substituted_type_size_bits(param_type, param_type_index),
 						param_decl.identifier_token(),
 						param_type_spec.cv_qualifier()
 					);
@@ -5207,7 +5215,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					return_type_spec.qualifier(),
-					get_type_size_bits(return_type),
+					get_substituted_type_size_bits(return_type, return_type_index),
 					decl.identifier_token()
 				);
 				substituted_return_type.set_type_index(return_type_index);
@@ -5243,7 +5251,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeSpecifierNode substituted_param_type(
 							param_type,
 							param_type_spec.qualifier(),
-							get_type_size_bits(param_type),
+							get_substituted_type_size_bits(param_type, param_type_index),
 							param_decl.identifier_token(),
 							param_type_spec.cv_qualifier()
 						);
@@ -5345,7 +5353,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					return_type_spec.qualifier(),
-					get_type_size_bits(return_type),
+					get_substituted_type_size_bits(return_type, return_type_index),
 					decl.identifier_token()
 				);
 				substituted_return_type.set_type_index(return_type_index);
@@ -5382,7 +5390,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeSpecifierNode substituted_param_type(
 							param_type,
 							param_type_spec.qualifier(),
-							get_type_size_bits(param_type),
+							get_substituted_type_size_bits(param_type, param_type_index),
 							param_decl.identifier_token(),
 							param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
 						);
@@ -5611,7 +5619,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					return_type_spec.qualifier(),
-					get_type_size_bits(return_type),
+					get_substituted_type_size_bits(return_type, return_type_index),
 					decl.identifier_token()
 				);
 				substituted_return_type.set_type_index(return_type_index);
@@ -5647,7 +5655,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeSpecifierNode substituted_param_type(
 							param_type,
 							param_type_spec.qualifier(),
-							get_type_size_bits(param_type),
+							get_substituted_type_size_bits(param_type, param_type_index),
 							param_decl.identifier_token()
 						);
 						substituted_param_type.set_type_index(param_type_index);
@@ -5744,7 +5752,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							TypeSpecifierNode substituted_param_type(
 								param_type,
 								param_type_spec.qualifier(),
-								get_type_size_bits(param_type),
+								get_substituted_type_size_bits(param_type, param_type_index),
 								param_decl.identifier_token(),
 								param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
 							);

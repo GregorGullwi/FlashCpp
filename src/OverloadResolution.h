@@ -214,7 +214,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 		
 		// Build the target type name for the operator
 		std::string_view target_type_name;
-		if (target_type == Type::Struct && target_type_index.is_valid() && target_type_index.value < gTypeInfo.size()) {
+		if (target_type_index.is_valid() && target_type_index.value < gTypeInfo.size()) {
 			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index.value].name());
 		} else {
 			// For primitive types, use the helper function to get the type name

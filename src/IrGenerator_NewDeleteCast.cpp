@@ -660,6 +660,7 @@
 		const ExprResult& expr_operands,
 		Type target_type,
 		int target_size,
+		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name) {
 
@@ -675,8 +676,12 @@
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
 
-		// Return the xvalue with reference semantics (64-bit pointer size)
-		return makeExprResult(target_type, SizeInBits{64}, result_var, expr_operands.type_index, PointerDepth{});
+		// Return the xvalue with reference semantics (64-bit pointer size).
+		// Use the target type's TypeIndex for struct/enum-to-struct/enum casts
+		// (e.g., static_cast<Base&&>(derived)) so downstream conversion-operator
+		// lookup sees the cast target's semantic identity, not the source's.
+		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
+		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{});
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
@@ -743,7 +748,7 @@
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for lvalue reference casts: static_cast<T&>(expr)
@@ -1045,7 +1050,7 @@
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 		}
 
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
@@ -1074,7 +1079,7 @@
 
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
