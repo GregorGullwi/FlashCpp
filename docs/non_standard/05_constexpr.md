@@ -80,18 +80,17 @@ exception handling.
 
 ---
 
-### 4.6 Complex Base Expressions in Nested Member Access Not Supported in Constexpr ⚠️ [Partially Known]
+### 4.6 Cast-Result Bases in Nested Member Access Remain Partial in Constexpr ⚠️ [Partially Known]
 
 **Standard:** Arbitrary nesting depth of member access (`a.b.c.d`, including function-call
 result bases) is valid in constant expressions.
 
 **FlashCpp:**
 - `ConstExprEvaluator_Members.cpp:1185` — *"Member access on non-struct constexpr variable not supported"*
-- `ConstExprEvaluator_Members.cpp:1345` — *"Complex base expression in nested member access not supported"*
 
-Simple `a.b.c` chains work; function-result or cast-result bases do not.
+Simple `a.b.c` chains and constexpr function-result bases now work. Cast-result bases may still fail in unsupported shapes.
 
-**Location:** `src/ConstExprEvaluator_Members.cpp:1185, 1345`
+**Location:** `src/ConstExprEvaluator_Members.cpp`
 
 ---
 

@@ -3528,7 +3528,82 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	const IdentifierNode* base_identifier = tryGetIdentifier(base_obj_expr);
 	if (!base_identifier) {
 		if (base_obj_expr.is<ExpressionNode>()) {
-			return EvalResult::error("Complex base expression in nested member access not supported");
+			EvalResult base_result = evaluate(base_obj_expr, context);
+			if (!base_result.success()) {
+				return base_result;
+			}
+
+			if (!base_result.object_type_index.is_valid() ||
+				base_result.object_type_index.value >= gTypeInfo.size()) {
+				return EvalResult::error("Base expression in nested member access is not a struct object");
+			}
+
+			const StructTypeInfo* base_struct_info = gTypeInfo[base_result.object_type_index.value].getStructInfo();
+			if (!base_struct_info) {
+				return EvalResult::error("Base expression in nested member access is not a struct object");
+			}
+
+			const StructMember* intermediate_member_info = base_struct_info->findMember(intermediate_member);
+			if (!intermediate_member_info) {
+				return EvalResult::error("Intermediate member '" + std::string(intermediate_member) +
+					"' not found in nested member access");
+			}
+
+			auto intermediate_member_it = base_result.object_member_bindings.find(intermediate_member);
+			if (intermediate_member_it == base_result.object_member_bindings.end()) {
+				return EvalResult::error("Intermediate member '" + std::string(intermediate_member) +
+					"' not found in nested member access");
+			}
+
+			EvalResult intermediate_result = intermediate_member_it->second;
+			if (!intermediate_result.object_type_index.is_valid() &&
+				intermediate_result.object_member_bindings.empty() &&
+				(intermediate_member_info->type == Type::Struct ||
+				 intermediate_member_info->type == Type::UserDefined) &&
+				intermediate_member_info->type_index.is_valid() &&
+				intermediate_member_info->type_index.value < gTypeInfo.size()) {
+				if (const StructTypeInfo* intermediate_struct_info =
+					gTypeInfo[intermediate_member_info->type_index.value].getStructInfo()) {
+					auto ctor_resolution = resolve_constructor_overload_arity(*intermediate_struct_info, 1, true);
+					const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
+					if (matching_ctor) {
+						std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+						std::vector<EvalResult> ctor_args;
+						ctor_args.push_back(intermediate_result);
+						auto bind_result = bind_pre_evaluated_arguments(
+							matching_ctor->parameter_nodes(),
+							ctor_args,
+							ctor_param_bindings,
+							"Invalid parameter node in constexpr nested member constructor binding",
+							true);
+						if (!bind_result.success()) {
+							return bind_result;
+						}
+
+						EvalResult materialized_result = EvalResult::from_int(0LL);
+						materialized_result.object_type_index = intermediate_member_info->type_index;
+						auto materialize_result = materialize_members_from_constructor(
+							intermediate_struct_info,
+							*matching_ctor,
+							ctor_param_bindings,
+							materialized_result.object_member_bindings,
+							context,
+							false);
+						if (!materialize_result.success()) {
+							return materialize_result;
+						}
+						intermediate_result = std::move(materialized_result);
+					}
+				}
+			}
+
+			auto final_member_it = intermediate_result.object_member_bindings.find(final_member_name);
+			if (final_member_it != intermediate_result.object_member_bindings.end()) {
+				return final_member_it->second;
+			}
+
+			return EvalResult::error("Final member '" + std::string(final_member_name) +
+				"' not found in nested member access");
 		}
 		return EvalResult::error("Invalid base expression in nested member access");
 	}
@@ -3980,7 +4055,6 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const FunctionCallNode& func_call,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	
 	// Get the function declaration to determine return type
 	const DeclarationNode& func_decl_node = func_call.function_declaration();
 	// Convert member_name to StringHandle once for efficient comparison
@@ -4011,7 +4085,7 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	if (!struct_info) {
 		return EvalResult::error("Return type is not a struct");
 	}
-	
+
 	// Use the helper function to look up and evaluate the static member
 	return evaluate_static_member_from_struct(struct_info, type_info, member_name_handle, member_name, context);
 }

@@ -146,7 +146,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects.
+Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects. Nested member access through constexpr function results such as `make_outer().inner.value` now also works.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
