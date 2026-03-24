@@ -25,6 +25,26 @@ unsigned long long AstToIr::evalResultScalarToRaw(const ConstExpr::EvalResult& r
 	return static_cast<unsigned long long>(r.as_int());
 }
 
+void AstToIr::populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
+	call_op.returns_reference =
+		(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+		!return_type.has_function_signature();
+	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+	call_op.referenced_value_size_in_bits = call_op.returns_reference
+		? SizeInBits{getTypeSpecSizeBits(return_type)}
+		: call_op.return_size_in_bits;
+}
+
+void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type) {
+	call_op.returns_reference =
+		(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+		!return_type.has_function_signature();
+	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+	call_op.referenced_value_size_in_bits = call_op.returns_reference
+		? SizeInBits{getTypeSpecSizeBits(return_type)}
+		: call_op.result.size_in_bits;
+}
+
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
 static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
 	if (member_type == Type::Float) {
@@ -1487,15 +1507,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits())};
-		call_op.returns_reference =
-			(return_type.is_reference() || return_type.is_rvalue_reference()) &&
-			!return_type.has_function_signature();
-		call_op.referenced_value_size_in_bits = call_op.returns_reference
-			? SizeInBits{getTypeSpecSizeBits(return_type)}
-			: call_op.return_size_in_bits;
+		populateReferenceReturnInfo(call_op, return_type);
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
-		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
 			Type this_type = Type::Struct;

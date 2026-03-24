@@ -147,6 +147,8 @@ private:
 
 	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var);
 
+	void registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference);
+
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const;
 
 	bool hasIndirectStackStorage(int32_t stack_offset) const;
@@ -1178,4 +1180,3 @@ private:
 	uint32_t current_seh_filter_funclet_offset_ = 0;  // Offset of the most recently emitted filter funclet
 
 }; // End of IrToObjConverter class
-

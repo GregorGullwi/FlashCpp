@@ -1797,6 +1797,20 @@ void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, Ty
 	}
 
 template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
+		if (!returns_reference || value_type == Type::Function) {
+			return;
+		}
+
+		setReferenceInfo(
+			stack_offset,
+			value_type,
+			referenced_value_size_in_bits.value,
+			returns_rvalue_reference,
+			TempVar{0});
+	}
+
+template<class TWriterClass>
 std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getIndirectStackInfo(int32_t stack_offset) const  {
 		auto it = indirect_stack_info_.find(stack_offset);
 		if (it != indirect_stack_info_.end()) {
@@ -4495,12 +4509,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Function references are different: they carry a callable address and must
 			// not be registered as implicitly-dereferenced object references.
 			if (call_op.returns_reference && call_op.return_type != Type::Function) {
-				setReferenceInfo(
+				registerObjectReferenceCallResult(
 					result_offset,
 					call_op.return_type,
-					call_op.referenced_value_size_in_bits.value,
-					call_op.returns_rvalue_reference,
-					TempVar{0});
+					call_op.referenced_value_size_in_bits,
+					call_op.returns_reference,
+					call_op.returns_rvalue_reference);
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Marked function call result at offset {} as reference return",
 					result_offset);
@@ -5483,14 +5497,12 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			);
 		}
 
-		if (op.returns_reference && op.result.type != Type::Function) {
-			setReferenceInfo(
-				result_offset,
-				op.result.type,
-				op.referenced_value_size_in_bits.value,
-				op.returns_rvalue_reference,
-				TempVar{0});
-		}
+		registerObjectReferenceCallResult(
+			result_offset,
+			op.result.type,
+			op.referenced_value_size_in_bits,
+			op.returns_reference,
+			op.returns_rvalue_reference);
 
 		regAlloc.reset();
 	}
