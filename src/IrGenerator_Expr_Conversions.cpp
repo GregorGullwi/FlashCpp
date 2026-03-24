@@ -2409,10 +2409,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 	ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 		const ASTNode& arg_expr, const TypeSpecifierNode& param_type, const Token& source_token) {
-		// Reference and rvalue-reference parameters: pass through unchanged.
-		if (param_type.is_reference() || param_type.is_rvalue_reference())
-			return arg_result;
-
+		// For reference/rvalue-reference parameters, apply any sema-annotated or standard
+		// pre-bind type conversion (e.g. int → const double& needs int→double first).
+		// The *address-of* step for the converted value is handled by buildConstructorArgumentValue.
 		const Type param_base_type = param_type.type();
 		bool sema_applied = false;
 

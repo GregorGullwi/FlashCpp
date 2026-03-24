@@ -1370,6 +1370,28 @@
 				0            // No offset - the pointer points directly to the target
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
+			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+				PointerDepth{member->pointer_depth});
+		}
+
+		// For reference members in Load context (reading the value):
+		// The MemberAccess instruction loaded the stored pointer (the reference address).
+		// Emit a Dereference to read through that pointer and get the actual value, mirroring
+		// the same pattern used for reference identifier variables in IrGenerator_Expr_Primitives.cpp.
+		if (member->is_reference()) {
+			// referenced_size_bits is the size of the pointed-to type (e.g., 32 for int&, 64 for double&).
+			// A zero value indicates missing struct-layout metadata — throw rather than silently use
+			// the pointer size (8 bytes = 64 bits), which would produce incorrect codegen.
+			if (member->referenced_size_bits == 0)
+				throw InternalError("reference member '" + std::string(StringTable::getStringView(member->name)) + "' has referenced_size_bits == 0");
+			int pointee_size_bits = static_cast<int>(member->referenced_size_bits);
+			TempVar deref_var = emitDereference(member->type, 64, 1, IrValue(result_var), Token());
+			// Mark dereferenced value as lvalue via Indirect metadata so that compound
+			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
+			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
+			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info));
+			return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, deref_var, member->type_index,
+				PointerDepth{member->pointer_depth});
 		}
 
 		return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
