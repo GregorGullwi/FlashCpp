@@ -2680,47 +2680,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 		source_result = applyConstructorArgConversion(source_result, source_expr, param_type, source_token);
 
-		// When the converting constructor takes its first parameter by (const) reference and the
-		// source type differs from the referenced type (e.g. int→const double&), applyConstructorArgConversion
-		// returns early without converting.  We must convert the value ourselves, materialize it into
-		// a temporary, and pass its address — exactly as if the source had been a prvalue of the
-		// referred-to type.
-		// Struct types are excluded because they have their own converting-constructor path and
-		// require separate copy/move construction logic rather than a simple scalar conversion.
-		TypedValue init_arg;
-		const bool param_is_ref = param_type.is_reference() || param_type.is_rvalue_reference();
-		const Type referred_type = param_is_ref ? param_type.type() : Type::Void;
-		if (param_is_ref && referred_type != Type::Struct && source_result.type != referred_type) {
-			init_arg = materializeConvertedReferenceArgument(source_result, param_type, source_token);
-		} else if (source_expr.is<ExpressionNode>() &&
-			std::holds_alternative<IdentifierNode>(source_expr.as<ExpressionNode>()) &&
-			param_is_ref) {
-			const auto& identifier = std::get<IdentifierNode>(source_expr.as<ExpressionNode>());
-			const std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
-			const DeclarationNode* source_decl = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
-			if (source_decl) {
-				const auto& source_type = source_decl->type_node().as<TypeSpecifierNode>();
-				if (source_type.is_reference() || source_type.is_rvalue_reference()) {
-					init_arg = toTypedValue(source_result);
-				} else {
-					TempVar addr_var = emitAddressOf(
-						source_type.type(),
-						static_cast<int>(source_type.size_in_bits()),
-						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-						source_token);
-					init_arg.type = source_type.type();
-					init_arg.ir_type = toIrType(source_type.type());
-					init_arg.size_in_bits = SizeInBits{64};
-					init_arg.value = addr_var;
-					init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-					init_arg.type_index = source_type.type_index();
-				}
-			} else {
-				init_arg = toTypedValue(source_result);
-			}
-		} else {
-			init_arg = toTypedValue(source_result);
-		}
+		// applyConstructorArgConversion may already have performed the pre-bind scalar conversion
+		// for reference parameters (e.g. int→double for const double&). Reuse the shared
+		// constructor-argument helper so identifier, literal, and general expression sources all
+		// get the correct direct-bind vs temporary-materialization/address-of handling.
+		TypedValue init_arg = buildConstructorArgumentValue(source_result, source_expr, &param_type, source_token);
 
 		init_arg.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 		if (param_type.is_pointer() && !param_type.pointer_levels().empty()) {
