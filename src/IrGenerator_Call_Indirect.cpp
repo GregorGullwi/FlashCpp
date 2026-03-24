@@ -1434,6 +1434,7 @@
 				// Evaluate the argument expression once when sema ref-binding is active so that
 				// the result can be reused in the fallback path without double evaluation.
 				std::optional<ExprResult> sema_evaluated_arg;
+				bool sema_ref_binding_applied = false;
 				if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 					ExpressionContext arg_context = sema_ref_binding->binds_directly()
 						? ExpressionContext::LValueAddress
@@ -1452,6 +1453,7 @@
 							: ReferenceQualifier::LValueReference;
 						call_op.args.push_back(std::move(typed_arg));
 						arg_index++;
+						sema_ref_binding_applied = true;
 						return;
 					}
 				}
@@ -1471,7 +1473,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 						// Check if parameter expects a reference
-						if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+						if (!sema_ref_binding_applied &&
 							param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -1509,7 +1511,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 						// Check if parameter expects a reference
-						if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+						if (!sema_ref_binding_applied &&
 							param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
@@ -1564,7 +1566,7 @@
 						: visitExpressionNode(argument.as<ExpressionNode>());
 
 					// Check if parameter expects a reference and argument is a literal
-					if ((!sema_ref_binding || !sema_ref_binding->is_valid()) &&
+					if (!sema_ref_binding_applied &&
 						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference, but argument is not an identifier
 						// We need to materialize the value into a temporary and pass its address
