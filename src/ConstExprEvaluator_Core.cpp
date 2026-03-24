@@ -141,10 +141,6 @@ namespace {
 		return true;
 	}
 
-	bool typesMatchIgnoringCvQualifiers(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		return typesMatchIgnoringCvImpl(lhs, rhs, true);
-	}
-
 	bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 		return typesMatchIgnoringCvImpl(lhs, rhs, false);
 	}
