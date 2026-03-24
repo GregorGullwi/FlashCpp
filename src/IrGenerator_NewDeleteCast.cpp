@@ -598,7 +598,15 @@
 		if (const auto* string = std::get_if<StringHandle>(&expr_operands.value)) {
 			base = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&expr_operands.value)) {
-			base = *temp_var;
+			// If the TempVar came from a GlobalLoad (its LValueInfo says Kind::Global),
+			// use the global name directly so generateAddressOfForReference emits
+			// AddressOfOp (RIP-relative LEA) instead of AssignmentOp (copies VALUE, not address).
+			auto lv_info = getTempVarLValueInfo(*temp_var);
+			if (lv_info.has_value() && lv_info->kind == LValueInfo::Kind::Global) {
+				base = std::get<StringHandle>(lv_info->base);
+			} else {
+				base = *temp_var;
+			}
 		} else {
 			FLASH_LOG_FORMAT(Codegen, Warning, "{}: unexpected value type in ExprResult.value", cast_name);
 			base = fallback_var;

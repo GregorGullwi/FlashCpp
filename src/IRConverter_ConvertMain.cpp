@@ -8270,6 +8270,18 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								}
 								default:
 									break;
+								case LValueInfo::Kind::Global: {
+									// Returning a T& or T&& reference to a global: emit RIP-relative LEA
+									StringHandle global_name = std::get<StringHandle>(lv_info.base);
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+									uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+									pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+									if (lv_info.offset != 0) {
+										emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+									}
+									handled_reference_return = true;
+									break;
+								}
 							}
 
 							if (handled_reference_return) {

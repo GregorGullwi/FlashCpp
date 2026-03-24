@@ -224,15 +224,13 @@ guesses when neither is seeded.
   in `src/IrGenerator_Expr_Conversions.cpp:640-663` does **not** call `setTempVarMetadata` — still
   a gap
 
-### 1C. Still not tracked — remaining gaps
+### 1C. Remaining gaps (as of Phase 2 completion)
 
-#### `VirtualCallOp` when the callee returns `T&` or `T&&`
-- IR generation never calls `setTempVarMetadata` on the ret_var after emitting `VirtualCallOp`
-  (`src/IrGenerator_Call_Indirect.cpp:1018-1087`).
-- The non-virtual member-call branch (same file, line 1656-1666) *does* set metadata, but the
-  early-exit `is_virtual_call` branch at line 1018 does not.
-- Status: **gap** — virtual reference returns fall through to the `isIrStructType /
-  isIrPointerLikeType` heuristic in `handleVariableDecl`
+#### `VirtualCallOp` when the callee returns `T&` or `T&&` — **fixed in Phase 2**
+- Both virtual and non-virtual member-call paths now share the same post-call block at
+  `src/IrGenerator_Call_Indirect.cpp:1656-1667` which calls `setTempVarMetadata(makeXValue /
+  makeLValue)` and returns `makeExprResult(..., ContainsAddress)`.
+- Status: **closed** — virtual T&/T&& returns are correctly annotated.
 
 #### `ArrayAccessOp` when `optimize_lea` is true
 - Backend decides at conversion time whether to keep an address or load a value
@@ -585,3 +583,198 @@ stamp `setReferenceInfo(...)`, and set `storage = ContainsAddress`.
 1. Option B: add `CopyReferenceOp` opcode as readability cleanup (see §9).
    (`TempVarMetadata.is_address`/`holds_address_only`/`setReferenceInfo`/`setAddressOnlyInfo`
    are still live — they drive `indirect_stack_info_` for parameter and 'this' setup.)
+2. Phase 6/7: consolidate reference-tracking inconsistencies (see §11).
+
+---
+
+## 11. Remaining inconsistencies in `indirect_stack_info_` / TempVar metadata (Phase 6/7 plan)
+
+Option A (Phases 1–5) cleaned up the IR-generator layer.  Two lower-level inconsistencies
+remain inside the converter's `indirect_stack_info_` / `TempVarMetadata` dual-tracking system
+that could cause bugs as the compiler grows.
+
+---
+
+### 11.1 — Bug risk: T&& call-return `holds_address_only` flag is wrong in the stack map
+
+**Location:** `src/IRConverter_ConvertMain.cpp:4493-4497`
+
+```cpp
+if (call_op.returns_rvalue_reference) {
+    setIndirectStorageInfo(result_offset, ..., is_rvalue_ref=true, holds_address_only=true, TempVar{0});
+}
+```
+
+For T&& (`rvalue reference`) non-virtual call returns, the converter registers the result slot in
+`indirect_stack_info_` with `holds_address_only=true` ("raw pointer, do not implicitly deref").
+
+But the generator's shared post-call block (`IrGenerator_Call_Indirect.cpp:1662-1663`) also calls:
+
+```cpp
+setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, ...))
+```
+
+`makeXValue` sets `is_address=true, holds_address_only=false` — a **true reference** that
+*should* be implicitly dereffed when used as an rvalue.
+
+These two registrations are contradictory:
+
+| Lookup method | Result |
+|---|---|
+| `getReferenceInfo(ret_var, result_offset)` | TempVar checked first → `holds_address_only=false` (correct) |
+| `getIndirectStackInfo(result_offset)` (naked offset) | Stack map only → `holds_address_only=true` (wrong) |
+
+There are ~25 callers of `getIndirectStackInfo(offset)` (naked offset, no TempVar) in the
+converter.  Code paths that query the T&& result slot by offset alone will see
+`holds_address_only=true` and NOT dereference when they should.  For example, the non-reference
+struct-init path at line 6433 would copy the 64-bit pointer value instead of loading the object
+through it.
+
+**Fix (Phase 6):** Remove lines 4493-4497 entirely.
+
+The generator already registers the T&& result in TempVar metadata correctly.  Every code path
+that holds the TempVar can use `getReferenceInfo(ret_var, result_offset)` and get the right
+answer.  The only callers of naked `getIndirectStackInfo(result_offset)` for T&& results would
+then get `nullopt`, which triggers the "not a reference, copy raw value" path — also correct,
+since T&& results are 64-bit addresses and copying the 64-bit value gives the address.
+
+**Before implementing:** add a test that returns T&& from a non-virtual function and then
+initializes both a `T&&` reference variable and a `T` copy variable from that result, to
+confirm the two different code paths produce correct machine code.
+
+---
+
+### 11.2 — Redundancy: dual-tracking for non-zero TempVar `setReferenceInfo` calls
+
+When `setReferenceInfo(offset, ..., result_var)` or `setAddressOnlyInfo(offset, ..., result_var)`
+is called with a **non-zero** `result_var`, `setIndirectStorageInfo` writes to both:
+1. `indirect_stack_info_[offset]` (by stack offset)
+2. `TempVarMetadata` for `result_var` (via `makeReference`/`makeAddressOnly`)
+
+`getReferenceInfo(result_var, offset)` always checks TempVar metadata first, so the
+`indirect_stack_info_` entry is a dead backup whenever the caller supplies the TempVar.
+
+Affected call sites (all pass non-zero TempVar):
+
+| Location | Op |
+|---|---|
+| `IRConverter_ConvertMain.cpp:11827` | `handleArrayAccessOp` `optimize_lea=true` |
+| `IRConverter_ConvertMain.cpp:12481` | `handleMemberLoad` large member (>8 bytes) |
+| `IRConverter_ConvertMain.cpp:12629` | `handleMemberLoad` reference member |
+| `IRConverter_ConvertMain.cpp:14022` | Catch-clause exception reference |
+| `IRConverter_ConvertMain.cpp:14082` | Catch-clause exception reference |
+| `IRConverter_ConvertMain.cpp:14358` | Catch-clause exception reference |
+| `IRConverter_ConvertMain.cpp:13201` | `handleAddressOf` (`setAddressOnlyInfo`) |
+| `IRConverter_ConvertMain.cpp:13309` | `handleAddressOfMember` (`setAddressOnlyInfo`) |
+
+The stack-offset entries are redundant (TempVar always wins), but each entry consumes memory
+and creates a maintenance burden: future changes to `setIndirectStorageInfo` must reason about
+both paths.
+
+**Fix (Phase 7):** In `setIndirectStorageInfo`, only write to `indirect_stack_info_` when
+`temp_var.var_number == 0`.
+
+```cpp
+// Only named variables (params, 'this', declared refs) need the stack-offset map.
+// TempVar results are tracked exclusively via GlobalTempVarMetadataStorage.
+if (temp_var.var_number == 0) {
+    indirect_stack_info_[stack_offset] = IndirectStorageInfo{ ... };
+}
+```
+
+**Before implementing:** Audit every `getIndirectStackInfo(offset)` caller (naked offset,
+~25 sites) to confirm none queries a TempVar-based result slot by offset alone.  The critical
+question per site: "is this offset always a named-variable slot, or could it be a TempVar slot?"
+
+Sites known to only access named-variable offsets: assignment LHS/RHS lookups by `StringHandle`
+name, function-parameter registration, 'this' offset.  These are safe.
+
+Sites that might access TempVar offsets: struct-init path at line 6433
+(`getIndirectStackInfo(src_offset)` where `src_offset` came from `getStackOffsetFromTempVar`).
+This site needs per-case analysis before Phase 7 can proceed.
+
+---
+
+### 11.3 — Final architecture after Phases 6 + 7
+
+Once both phases are complete, the reference-tracking ownership becomes clean and orthogonal:
+
+| What is tracked | How it is tracked |
+|---|---|
+| Reference parameters | `indirect_stack_info_` only (TempVar{0} caller) |
+| `this` pointer | `indirect_stack_info_` only (TempVar{0} caller) |
+| Reference local variable declarations | `indirect_stack_info_` only (TempVar{0} caller) |
+| TempVar results (all op types) | `TempVarMetadata` only |
+
+No dual-tracking.  `getReferenceInfo(temp_var, offset)` can be simplified: try TempVar metadata
+for non-zero TempVars, try stack map for named variables.  The current fallback chain (try
+TempVar → try stack map) is only needed while both can hold entries for the same slot.
+
+---
+
+### 11.4 — Relationship to Option B (`CopyReferenceOp`)
+
+After Phases 6 + 7, the `setReferenceInfo` calls still needed are:
+- `TempVar{0}` calls for parameters/this → stay in `setReferenceInfo`, driven by `FunctionDeclOp`
+- `handleArrayAccessOp` (optimize_lea) → still converter-internal, no IR representation
+- `handleMemberLoad` large member → still converter-internal
+- Catch-clause refs → driven by the catch opcode handler
+
+Option B (`CopyReferenceOp`) would give the remaining TempVar-based reference *copies* a
+dedicated IR opcode.  This would consolidate the scattered `setReferenceInfo(offset, ...,
+result_var)` calls in `handleMemberLoad` / `handleArrayAccess` into a single opcode handler,
+at the cost of adding a new IR instruction type.
+
+---
+
+## 12. Bug discovered and fixed while auditing §11 — `static_cast<T&&>(global)` crash
+
+While adding a regression test for §11.1 (T&& call-return tracking), a runtime crash was
+discovered: a function returning `T&&` where the bound object is a **global variable** produced
+wrong machine code that dereferenced the struct's *value bits* as a pointer, causing SIGSEGV.
+
+### Root cause
+
+Two cooperating functions in `IrGenerator_NewDeleteCast.cpp`:
+
+1. `extractBaseOperand(expr_operands, ...)` — extracts the "base" that `generateAddressOfForReference`
+   should take the address of.  For any `TempVar`-valued `ExprResult`, it returned the TempVar
+   unconditionally.
+
+2. `generateAddressOfForReference(base, ...)` — when `base` is a `TempVar`, assumed "source is
+   TempVar — it already holds an address" and emitted `AssignmentOp(dereference_rhs=false)` to
+   copy the 64-bit pointer from that TempVar.
+
+For `static_cast<Pair&&>(g_pair)`:
+
+- `g_pair` was loaded via `GlobalLoadOp`, putting the struct's **value** (64-bit data) in a
+  TempVar.
+- `extractBaseOperand` returned that TempVar.
+- `generateAddressOfForReference` emitted `AssignmentOp` that copied the 64-bit **value** into
+  the result, treating it as a pointer.
+- `handleReturn` then returned the VALUE bits in RAX, which the caller stored as the T&&
+  reference pointer.  Reading through it → SIGSEGV.
+
+Additionally, `handleReturn`'s switch over `LValueInfo::Kind` lacked a `Global` case, so even
+if the fix above hadn't been applied, the fallback path would return the wrong 64-bit value.
+
+### Fix
+
+1. **`extractBaseOperand`** (`src/IrGenerator_NewDeleteCast.cpp`): when the source TempVar has
+   `LValueInfo::Kind::Global`, return the global name (`StringHandle`) rather than the TempVar.
+   `generateAddressOfForReference` then emits `AddressOfOp(global_name)`, which the converter
+   handles with a RIP-relative LEA, correctly yielding the global's runtime address.
+
+2. **`handleReturn`** (`src/IRConverter_ConvertMain.cpp`): added `case LValueInfo::Kind::Global`
+   to the reference-return switch.  Emits `LEA RAX, [RIP + global_name]` via
+   `emitLeaRipRelative` + `pending_global_relocations_`, so that T& / T&& returns whose
+   LValueInfo resolves to a global are handled even if the generator path didn't go through
+   `generateAddressOfForReference`.
+
+### Test
+
+`tests/test_rval_ref_return_ret0.cpp` — covers:
+- Non-virtual function returning `int&&` by forwarding a T&& parameter
+- Non-virtual function returning `Pair&&` from a global via `static_cast<Pair&&>`
+- Binding the T&& result to a T&& reference variable
+- Mutating the referent through the bound reference and checking object identity
