@@ -1475,7 +1475,7 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 
 	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
 		source_type.has_value() &&
-		!typesMatchIgnoringCvQualifiers(target_type, *source_type)) {
+		!typesMatchIgnoringCvAndRef(target_type, *source_type)) {
 		return EvalResult::error(
 			"const_cast in constant expression may only change cv-qualification",
 			EvalErrorType::NotConstantExpression);
