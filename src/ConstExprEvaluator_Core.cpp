@@ -1398,7 +1398,9 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 		if (lhs_sig.return_type != rhs_sig.return_type ||
 			lhs_sig.parameter_types != rhs_sig.parameter_types ||
 			lhs_sig.linkage != rhs_sig.linkage ||
-			lhs_sig.class_name != rhs_sig.class_name) {
+			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.is_const != rhs_sig.is_const ||
+			lhs_sig.is_volatile != rhs_sig.is_volatile) {
 			return false;
 		}
 	}
