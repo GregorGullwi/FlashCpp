@@ -6240,7 +6240,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						// for int&).  Regular expression results (function call returns,
 						// arithmetic) do not carry this metadata.
 						auto lvalue_info_opt = getTempVarLValueInfo(temp_var);
-						bool has_indirect_lvalue = lvalue_info_opt.has_value() &&
+						bool has_indirect_lvalue = lvalue_info_opt &&
 						                           lvalue_info_opt->kind == LValueInfo::Kind::Indirect;
 
 						// Also check address-only metadata set on addr_temps from

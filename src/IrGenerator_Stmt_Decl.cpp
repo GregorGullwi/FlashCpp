@@ -1594,8 +1594,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
 
 					// Emit the instruction
-					Type elem_type = std::get<Type>(operands[7]);
-					int  elem_size = std::get<int>(operands[8]);
+					const Type elem_type = std::get<Type>(operands[7]);
+					const int  elem_size = std::get<int>(operands[8]);
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
