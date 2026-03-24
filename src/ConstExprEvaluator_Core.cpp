@@ -3324,6 +3324,17 @@ EvalResult Evaluator::bind_evaluated_arguments(
 	return EvalResult::from_bool(true);
 }
 
+// TODO: This function does not bind default values for parameters beyond the
+// explicit argument count.  bind_evaluated_arguments (above) was updated to
+// handle this, but bind_pre_evaluated_arguments was not, because it lacks an
+// EvaluationContext& needed to call evaluate() on default-value AST nodes.
+// Callers that use find_matching_constructor (which now returns constructors
+// callable via default params) and then feed the result into this function
+// (e.g., array element construction in evaluate_array_subscript_member_access,
+// nested member access materialization) will leave defaulted parameters
+// unbound if evaluated_arguments.size() < parameters.size().
+// To fix: add an EvaluationContext& parameter, add a second loop mirroring
+// bind_evaluated_arguments lines 3304-3322, and update all call sites.
 EvalResult Evaluator::bind_pre_evaluated_arguments(
 	const std::vector<ASTNode>& parameters,
 	const std::vector<EvalResult>& evaluated_arguments,

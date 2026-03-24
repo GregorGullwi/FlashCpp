@@ -672,7 +672,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								ctor_evaluated = true;
 							}
 						}
-					}					if (!ctor_evaluated) {
+					}
+					if (!ctor_evaluated) {
 						// Fallback: zero-initialize for default constructor or failed eval
 						op.is_initialized = true;
 						op.init_data.resize(si ? si->total_size : element_size, 0);
