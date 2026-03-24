@@ -2092,7 +2092,27 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				return EvalResult::error("Unsupported type in cast for constant evaluation");
 		}
 	}
-	
+
+	// Handle ConstCastNode (const_cast<T>(e)) using the bindings-aware recursive
+	// evaluator so that local variables and function parameters are visible inside
+	// the cast expression.  const_cast only changes cv/ref qualification — no type
+	// conversion is performed; the value/object identity is preserved as-is.
+	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+		const ASTNode& type_node = const_cast_node->target_type();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Const cast without valid type specifier");
+		}
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		// Evaluate the inner expression with bindings.
+		auto inner_result = recursive_eval(const_cast_node->expr(), bindings, context);
+		if (!inner_result.success()) {
+			return inner_result;
+		}
+		// Only update the type metadata — no value conversion needed.
+		inner_result.set_exact_type(type_spec);
+		return inner_result;
+	}
+
 	// Handle ConstructorCallNode for struct types (e.g., Pair{a, b} inside constexpr function bodies).
 	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
 	// constructor arguments that reference local variables.
