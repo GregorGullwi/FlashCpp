@@ -92,6 +92,8 @@ private:
 	// parameter without a default value is encountered (indicates an overload
 	// resolution bug).
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+	void populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
+	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
@@ -273,7 +275,7 @@ private:
 		Type& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
-	static ExprResult makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index = TypeIndex{}, PointerDepth pointer_depth = PointerDepth{});
+	static ExprResult makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
 	bool setupBaseFromIdentifier(
 		const IdentifierNode& identifier,
 		const Token& member_token,
@@ -408,7 +410,7 @@ private:
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 				value = *ull_val;
 			}
-			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed

@@ -25,6 +25,26 @@ unsigned long long AstToIr::evalResultScalarToRaw(const ConstExpr::EvalResult& r
 	return static_cast<unsigned long long>(r.as_int());
 }
 
+void AstToIr::populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
+	call_op.returns_reference =
+		(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+		!return_type.has_function_signature();
+	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+	call_op.referenced_value_size_in_bits = call_op.returns_reference
+		? SizeInBits{getTypeSpecSizeBits(return_type)}
+		: call_op.return_size_in_bits;
+}
+
+void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type) {
+	call_op.returns_reference =
+		(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+		!return_type.has_function_signature();
+	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+	call_op.referenced_value_size_in_bits = call_op.returns_reference
+		? SizeInBits{getTypeSpecSizeBits(return_type)}
+		: call_op.result.size_in_bits;
+}
+
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
 static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
 	if (member_type == Type::Float) {
@@ -85,7 +105,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index(), PointerDepth{});
+	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -174,7 +194,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 										IrOperand{result_var},
 										TypeIndex{},
 										PointerDepth{1}
-									);
+									, ValueStorage::ContainsData);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -247,10 +267,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});  // 64 bits for return value
+					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -422,7 +442,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
@@ -956,12 +976,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (ret_type == Type::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
-				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
-				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
@@ -972,7 +992,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			}
 
 			// Scalar integer / bool / enum
-			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)
@@ -1487,9 +1507,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits())};
+		populateReferenceReturnInfo(call_op, return_type);
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
-		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
 			Type this_type = Type::Struct;
@@ -1608,10 +1628,15 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		TypeIndex type_index_result = isIrStructType(toIrType(return_type.type()))
 			? return_type.type_index()
 			: TypeIndex{};
-		return makeExprResult(
-			return_type.type(),
-			SizeInBits{result_size},
-			IrOperand{ret_var},
-			type_index_result
-		, PointerDepth{});
+		{
+			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
+				? ValueStorage::ContainsAddress
+				: ValueStorage::ContainsData;
+			return makeExprResult(
+				return_type.type(),
+				SizeInBits{result_size},
+				IrOperand{ret_var},
+				type_index_result,
+				PointerDepth{}, st);
+		}
 	}

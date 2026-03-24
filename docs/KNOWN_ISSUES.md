@@ -61,6 +61,19 @@ still produced an object file and the test linked and returned the wrong value.
 translation unit, or otherwise suppress object emission when any required
 top-level node fails IR generation.
 
+## Virtual reference-return calls can still fail in lowered callers
+
+Minimal virtual calls that return references through a base pointer/reference can
+still hit frontend lowering failures in the caller body (observed as
+`IR conversion failed for node 'main': bad any_cast`), and because function-body
+IR conversion failures are not yet fatal, the compiler may still emit a broken
+object file that later crashes at runtime.
+
+This was observed while trying to add focused runtime coverage for virtual
+`T&&` / `T&` returns through a base-class call path. Direct non-virtual
+reference-return coverage passes; the virtual-reference-return caller path still
+needs dedicated investigation.
+
 ## Nested template static members of struct type can misbehave at runtime
 
 Struct-typed static members inside nested template classes are still unreliable
@@ -162,4 +175,3 @@ evaluator features.
 they represent true C++ violations (not evaluator gaps), then the existing enforcement
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
-

@@ -1756,13 +1756,20 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 		bool holds_address_only,
 		TempVar temp_var)  {
 
-		indirect_stack_info_[stack_offset] = IndirectStorageInfo{
+		IndirectStorageInfo info{
 			.value_type = value_type,
 			.ir_type = toIrType(value_type),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
 		};
+
+		if (temp_var.var_number == 0) {
+			indirect_stack_info_[stack_offset] = info;
+		} else {
+			tempvar_indirect_stack_info_[stack_offset] = info;
+			current_function_tempvar_indirect_info_[temp_var.var_number] = info;
+		}
 
 		// Sync TempVar metadata with stack storage info
 		if (temp_var.var_number != 0) {
@@ -1780,6 +1787,8 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::clearFunctionTempVarMetadata()  {
 		indirect_stack_info_.clear();
+		tempvar_indirect_stack_info_.clear();
+		current_function_tempvar_indirect_info_.clear();
 		for (size_t var_num : reference_temp_var_numbers_) {
 			GlobalTempVarMetadataStorage::instance().clearEntry(var_num);
 		}
@@ -1797,9 +1806,38 @@ void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, Ty
 	}
 
 template<class TWriterClass>
+void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
+		if (!returns_reference || value_type == Type::Function) {
+			return;
+		}
+
+		setReferenceInfo(
+			stack_offset,
+			value_type,
+			referenced_value_size_in_bits.value,
+			returns_rvalue_reference,
+			TempVar{0});
+	}
+
+template<class TWriterClass>
 std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getIndirectStackInfo(int32_t stack_offset) const  {
 		auto it = indirect_stack_info_.find(stack_offset);
 		if (it != indirect_stack_info_.end()) {
+			return it->second;
+		}
+
+		auto tempvar_it = tempvar_indirect_stack_info_.find(stack_offset);
+		if (tempvar_it != tempvar_indirect_stack_info_.end()) {
+			return tempvar_it->second;
+		}
+
+		return std::nullopt;
+	}
+
+template<class TWriterClass>
+std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getTempVarIndirectStackInfo(int32_t stack_offset) const  {
+		auto it = tempvar_indirect_stack_info_.find(stack_offset);
+		if (it != tempvar_indirect_stack_info_.end()) {
 			return it->second;
 		}
 
@@ -1869,8 +1907,13 @@ bool IrToObjConverter<TWriterClass>::hasIndirectStorage(TempVar temp_var, int32_
 
 template<class TWriterClass>
 std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrToObjConverter<TWriterClass>::getReferenceInfo(TempVar temp_var, int32_t stack_offset) const  {
-		// Check TempVar metadata first
 		if (temp_var.var_number != 0) {
+			auto current_function_it = current_function_tempvar_indirect_info_.find(temp_var.var_number);
+			if (current_function_it != current_function_tempvar_indirect_info_.end()) {
+				return current_function_it->second;
+			}
+
+			// Check TempVar metadata next
 			if (isTempVarReference(temp_var)) {
 				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
@@ -4488,12 +4531,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					result_offset);
 			}
 
-			// Mark rvalue reference returns in indirect_stack_info_ so they are treated as pointers
-			// This is needed for proper handling when passing rvalue reference results to other functions
-			if (call_op.returns_rvalue_reference) {
-				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits.value, true, true, TempVar{0});
+			// Seed current-function stack-side reference tracking for object reference
+			// call results. Some later lowering paths query call-result slots by
+			// offset alone, so they need the call IR to describe whether the returned
+			// 64-bit value is a true object reference and what size object it refers to.
+			// Function references are different: they carry a callable address and must
+			// not be registered as implicitly-dereferenced object references.
+			if (call_op.returns_reference && call_op.return_type != Type::Function) {
+				registerObjectReferenceCallResult(
+					result_offset,
+					call_op.return_type,
+					call_op.referenced_value_size_in_bits,
+					call_op.returns_reference,
+					call_op.returns_rvalue_reference);
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Marked function call result at offset {} as rvalue reference (holds address)",
+					"Marked function call result at offset {} as reference return",
 					result_offset);
 			}
 
@@ -5474,6 +5526,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			);
 		}
 
+		registerObjectReferenceCallResult(
+			result_offset,
+			op.result.type,
+			op.referenced_value_size_in_bits,
+			op.returns_reference,
+			op.returns_rvalue_reference);
+
 		regAlloc.reset();
 	}
 
@@ -6188,6 +6247,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		// non-reference declaration that reuses the slot.
 		if (!is_reference) {
 			indirect_stack_info_.erase(var_it->second.offset);
+			tempvar_indirect_stack_info_.erase(var_it->second.offset);
 		}
 
 		// REMOVED: Flawed TempVar linking heuristic
@@ -6233,35 +6293,10 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						FLASH_LOG(Codegen, Debug, "Source uses indirect storage, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
-						// Check if the TempVar carries Indirect LValue metadata.
-						// addr_temps created by LValueAddress evaluation of a reference variable
-						// have LValueInfo::Kind::Indirect set and hold a 64-bit pointer value
-						// even though their reported size_in_bits is the pointee size (e.g. 32
-						// for int&).  Regular expression results (function call returns,
-						// arithmetic) do not carry this metadata.
-						auto lvalue_info_opt = getTempVarLValueInfo(temp_var);
-						bool has_indirect_lvalue = lvalue_info_opt &&
-						                           lvalue_info_opt->kind == LValueInfo::Kind::Indirect;
-
-						// Also check address-only metadata set on addr_temps from
-						// ArrayElementAddressOp (reference init from array subscript).
-						// Those TempVars hold a 64-bit element address, not a data value.
-						TempVarMetadata temp_meta = getTempVarMetadata(temp_var);
-						bool holds_address = temp_meta.is_address && temp_meta.holds_address_only;
-
-						// For non-indirect TempVars that are 64-bit pointer/struct types
-						// (e.g. range-iterator pointer), we still want to MOV the address value
-						// rather than LEA into the storage location.
-						// Deliberately exclude isIrIntegerType here so that a 64-bit integer
-						// data value (e.g. a long long function return) uses LEA to materialise
-						// a stack temporary, rather than being mistaken for a pointer.
-						IrType init_ir = init.effectiveIrType();
-						bool is_likely_pointer = has_indirect_lvalue || holds_address ||
-						                         (init.size_in_bits == SizeInBits{64} &&
-						                          (isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
+						// Determine MOV vs LEA from the explicit ValueStorage annotation on the initializer.
+						const bool is_likely_pointer = (init.storage == ValueStorage::ContainsAddress);
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer,
-						          " has_indirect_lvalue=", has_indirect_lvalue,
-						          " holds_address=", holds_address);
+						          " storage=", static_cast<int>(init.storage));
 						if (is_likely_pointer) {
 							// Load the pointer value
 							emitMovFromFrame(pointer_reg, src_offset);
@@ -8295,6 +8330,18 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								}
 								default:
 									break;
+								case LValueInfo::Kind::Global: {
+									// Returning a T& or T&& reference to a global: emit RIP-relative LEA
+									StringHandle global_name = std::get<StringHandle>(lv_info.base);
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+									uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+									pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+									if (lv_info.offset != 0) {
+										emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+									}
+									handled_reference_return = true;
+									break;
+								}
 							}
 
 							if (handled_reference_return) {

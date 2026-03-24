@@ -1010,10 +1010,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Format: [type, size_in_bits, var_name, custom_alignment, is_ref, is_rvalue_ref, is_array, ...]
 		std::vector<IrOperand> operands;
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
-			operands.reserve(operands.size() + 3);
+			operands.reserve(operands.size() + 4);
 			operands.emplace_back(result.type);
 			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
+			operands.emplace_back(static_cast<int>(result.storage));
 		};
 		operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
@@ -1099,8 +1100,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					decl_op.is_array = decl.is_array();
-					if (operands.size() >= 10) {
-						TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+					if (operands.size() >= 11) {
+						TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
 						decl_op.initializer = std::move(tv);
 					}
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
@@ -1691,7 +1692,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				decl_op.array_count = *ull_val;
 			}
 		}
-		if (node.initializer() && !decl.is_array() && operands.size() >= 10) {
+		if (node.initializer() && !decl.is_array() && operands.size() >= 11) {
 			// For reference initialization, check if the initializer is an array element (arr[i])
 			// If so, we need to emit an ArrayElementAddress instruction to compute the actual address
 			if ((type_node.is_reference() || type_node.is_rvalue_reference()) &&
@@ -1741,15 +1742,16 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					tv.ir_type = toIrType(elem_type);
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
+					tv.storage = ValueStorage::ContainsAddress;
 					decl_op.initializer = std::move(tv);
 				} else {
 					// Not an array element, use the value as-is
-					TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+					TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
 					decl_op.initializer = std::move(tv);
 				}
 			} else {
 				// Not a reference, or not a TempVar - use the value as-is
-				TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+				TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
 				decl_op.initializer = std::move(tv);
 			}
 		}
@@ -2556,7 +2558,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_op, Token()));
 
-					hidden_decl_op.initializer = makeTypedValue(init_type, SizeInBits{64}, addr_temp);
+					hidden_decl_op.initializer = withStorage(makeTypedValue(init_type, SizeInBits{64}, addr_temp), ValueStorage::ContainsAddress);
 				} else {
 					// For other expressions, just use the value and hope for the best
 					hidden_decl_op.initializer = toTypedValue(init_operands);
@@ -2682,7 +2684,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 						? CVReferenceQualifier::RValueReference
 						: CVReferenceQualifier::LValueReference;
-					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{64}, element_addr);
+					binding_var_decl.initializer = withStorage(makeTypedValue(array_element_type, SizeInBits{64}, element_addr), ValueStorage::ContainsAddress);
 
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 				} else {
@@ -3108,6 +3110,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				init_val.type = member.type;
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
+				init_val.storage = ValueStorage::ContainsAddress;
 				init_val.type_index = member.type_index;
 				binding_var_decl.initializer = init_val;
 

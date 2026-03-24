@@ -139,7 +139,7 @@
 		if (type_it == gTypesByName.end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
-			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		const TypeInfo* closure_type = type_it->second;
@@ -489,7 +489,7 @@
 			SizeInBits{static_cast<int>(closure_size_bits)},
 			IrOperand{StringTable::getOrInternStringHandle(closure_var_name)},
 			closure_type_index
-		, PointerDepth{});
+		, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {

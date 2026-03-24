@@ -327,16 +327,10 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		makeReferenceAddressValue(addr_var);
 	};
 
-	auto tempAlreadyHoldsAddress = [&](TempVar temp_var) {
-		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-		if (metadata_storage.hasMetadata(temp_var)) {
-			const TempVarMetadata metadata = metadata_storage.getMetadata(temp_var);
-			if (metadata.category == ValueCategory::LValue || metadata.category == ValueCategory::XValue) {
-				return true;
-			}
-		}
-
-		return argument_result.size_in_bits == SizeInBits{64} && argument_result.type == Type::Struct;
+	// Returns true if argument_result already holds a 64-bit address
+	// (reference binding must MOV, not take the address again).
+	auto tempAlreadyHoldsAddress = [&]() {
+		return argument_result.storage == ValueStorage::ContainsAddress;
 	};
 
 	if (param_is_ref &&
@@ -401,7 +395,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			setTempVarMetadata(address_temp, std::move(address_meta));
 
 			makeReferenceAddressValue(address_temp);
-		} else if (tempAlreadyHoldsAddress(arg_temp)) {
+		} else if (tempAlreadyHoldsAddress()) {
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
@@ -672,7 +666,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 
 		// Return the result variable
-		return makeExprResult(common_type, SizeInBits{result_size}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(common_type, SizeInBits{result_size}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
@@ -758,7 +752,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 						// This shouldn't happen with proper metadata, but log for debugging
 						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
-						return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}}, TypeIndex{}, PointerDepth{});
+						return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -790,7 +784,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						return rhsExprResult;
 					}
 					FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}}, TypeIndex{}, PointerDepth{});
+					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{TempVar{0}}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}
@@ -825,7 +819,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 
 						// Return the result
-						return makeExprResult(lhs_type.type(), SizeInBits{static_cast<int>(lhs_type.size_in_bits())}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+						return makeExprResult(lhs_type.type(), SizeInBits{static_cast<int>(lhs_type.size_in_bits())}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -872,7 +866,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
 				binding.type, binding.size_in_bits.value));
 
-		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	};
 
 	auto tryGetGlobalLValueName = [&](const ExprResult& expr_result) -> std::optional<StringHandle> {
@@ -976,7 +970,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (is_shift_op && is_floating_point_type(gsi.type))
 						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 
-					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{});
+					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					if (gsi.type != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
@@ -1038,7 +1032,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 					// Convert result back to global's type if needed
-					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					if (commonType != gsi.type) {
 						// Phase 17: verify sema annotated the back-conversion.
 						if (sema_ && sema_normalized_current_function_ &&
@@ -1371,7 +1365,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 							// Return result
-							return makeExprResult(return_type.type(), SizeInBits{static_cast<int>(return_type.size_in_bits())}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+							return makeExprResult(return_type.type(), SizeInBits{static_cast<int>(return_type.size_in_bits())}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -1743,7 +1737,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					SizeInBits{actual_return_size},
 					IrOperand{result_var},
 					return_type.type_index()
-				, PointerDepth{});
+				, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			else if (overload_result.has_match) {
@@ -1908,7 +1902,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					SizeInBits{static_cast<int>(actual_return_size)},
 					IrOperand{result_var},
 					return_type.type_index()
-				, PointerDepth{});
+				, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			}
 
@@ -2094,7 +2088,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 								if (op == "<=>") {
-									return makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+									return makeExprResult(return_type, SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 
 								TempVar cmp_result = var_counter.next();
@@ -2113,7 +2107,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								else if (op == "!=") cmp_opcode = IrOpcode::NotEqual;
 
 								ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), binaryOperatorNode.get_token()));
-								return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{cmp_result}, TypeIndex{}, PointerDepth{});
+								return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{cmp_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -2217,7 +2211,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
 
 			// Return result as Long (ptrdiff_t) with 64-bit size
-			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
@@ -2268,7 +2262,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(ptr_opcode, std::move(ptr_arith_op), binaryOperatorNode.get_token()));
 
 			// Return pointer type with 64-bit size
-			return makeExprResult(lhsType, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(lhsType, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Check for logical operations BEFORE type promotions
@@ -2290,7 +2284,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			};
 			IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});  // Logical operations return bool8
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // Logical operations return bool8
 		}
 
 		// Special handling for pointer compound assignment (ptr += int or ptr -= int)
@@ -2365,7 +2359,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			}
 
 			// Return the pointer result
-			return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Apply integer promotions and find common type
@@ -2392,7 +2386,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsExprResult);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<StringHandle>(lhsExprResult.value)}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<StringHandle>(lhsExprResult.value)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (std::holds_alternative<TempVar>(lhsExprResult.value)) {
 				[[maybe_unused]] TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
@@ -2413,7 +2407,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = toTypedValue(rhsExprResult);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
-				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<TempVar>(lhsExprResult.value)}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, IrOperand{std::get<TempVar>(lhsExprResult.value)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -2563,7 +2557,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (!back_conv.has_value())
 						throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 				}
-				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result}, TypeIndex{}, PointerDepth{});
+				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				ExprResult converted = generateTypeConversion(op_expr, commonType, lhsType, binaryOperatorNode.get_token());
 
 				// 3. Store back to original LHS variable
@@ -2581,7 +2575,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				assign_op.rhs = toTypedValue(converted);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-				return makeExprResult(lhsType, SizeInBits{lhsSize}, original_lhs_value, TypeIndex{}, PointerDepth{});
+				return makeExprResult(lhsType, SizeInBits{lhsSize}, original_lhs_value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -2878,7 +2872,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			};
 
 			ir_.addInstruction(IrInstruction(float_opcode, std::move(bin_op), binaryOperatorNode.get_token()));			// Return the result variable with float type and size
-				return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// Float comparison operations use typed BinaryOp
@@ -2906,7 +2900,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 				// Float comparisons return boolean (bool8)
-				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			else {
 				// Unsupported floating-point operator
@@ -2918,11 +2912,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		} else {
 			// Return the result variable with its type and size
 			// Note: Assignment is handled earlier and returns before reaching this point
-			return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 
@@ -3054,7 +3048,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
-			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Long, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Get the argument
@@ -3093,13 +3087,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), functionCallNode.called_from()));
 
-		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
-			return makeExprResult(Type::Double, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Double, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Get the argument
@@ -3124,7 +3118,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), functionCallNode.called_from()));
 
-		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(arg_type, SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const {
@@ -3155,7 +3149,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg requires exactly 2 arguments (va_list and type)");
-			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Get the first argument (va_list variable)
@@ -3215,7 +3209,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			va_list_var = *string;
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_arg first argument must be a variable");
-			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
@@ -3501,7 +3495,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// ============ END LABEL ============
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
 
-			return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 
 		} else {
 			// Windows/MSVC ABI or Linux with simple char* va_list
@@ -3763,7 +3757,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// ============ END LABEL ============
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
 
-				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 
 			} else {
 				// Windows/MSVC ABI: Simple pointer-based approach
@@ -3840,7 +3834,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				assign_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, next_ptr);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 
-				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(requested_type, SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 	}
@@ -3849,7 +3843,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
-			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Get the first argument (va_list variable)
@@ -3876,7 +3870,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			last_param_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
 		} else {
 			FLASH_LOG(Codegen, Error, "__builtin_va_start second argument must be a parameter name");
-			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Platform-specific varargs implementation:
@@ -3902,7 +3896,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = *string;
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
-				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			AssignmentOp final_assign;
@@ -3930,7 +3924,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				va_list_var = *string;
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
-				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+				return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			if (context_->isItaniumMangling()) {
@@ -3963,7 +3957,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				auto param_symbol = symbol_table.lookup(last_param_name);
 				if (!param_symbol.has_value()) {
 					FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
-					return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+					return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 				const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -3998,7 +3992,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// __builtin_va_start returns void
-		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -4016,13 +4010,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_unreachable encountered - marking code path as unreachable");
 
 		// Return void (this intrinsic doesn't produce a value)
-		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
-			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Evaluate the condition expression (but we don't use the result)
@@ -4039,14 +4033,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		FLASH_LOG(Codegen, Debug, "__builtin_assume encountered - assumption recorded (not yet used for optimization)");
 
 		// Return void (this intrinsic doesn't produce a value)
-		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(Type::Void, SizeInBits{0}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
 			// Return a default value matching typical usage (long type)
-			return makeExprResult(Type::LongLong, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::LongLong, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Evaluate the first argument (the expression)
@@ -4072,7 +4066,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 1) {
 			FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
-			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{});
+			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Evaluate the pointer argument
@@ -4128,7 +4122,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			op.result = result;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
 		}
-		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -4140,7 +4134,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		SehAbnormalTerminationOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -4152,7 +4146,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		SehExceptionIntrinsicOp op;
 		op.result = result;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
-		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{});
+		return makeExprResult(result_type, SizeInBits{result_size}, IrOperand{result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 

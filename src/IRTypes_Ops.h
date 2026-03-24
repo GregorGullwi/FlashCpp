@@ -397,6 +397,14 @@ private:
 // Typed IR Operand Structures
 // ============================================================================
 
+// Discriminator that records whether a TempVar slot holds a data value or a
+// 64-bit address.  Used by handleVariableDecl to decide MOV vs LEA without
+// relying on a size/type heuristic.
+enum class ValueStorage : uint8_t {
+	ContainsData,        // slot holds a value; reference binding must LEA or materialise
+	ContainsAddress,     // slot holds address of existing object; reference binding must MOV
+};
+
 // Typed value - combines IrValue with its type information
 struct TypedValue {
 	Type type = Type::Void;	// 4 bytes (enum) — semantic type (kept during transition, will be removed in Phase 4)
@@ -426,6 +434,10 @@ struct TypedValue {
 			return ir_type;
 		return toIrType(type);
 	}
+
+	// Storage discriminator: records whether `value` holds a data value or a
+	// 64-bit address.
+	ValueStorage storage = ValueStorage::ContainsData;
 };
 
 // Helper function to print TypedValue
@@ -474,10 +486,12 @@ struct CallOp {
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	SizeInBits return_size_in_bits;              // 4 bytes
+	SizeInBits referenced_value_size_in_bits {}; // Referenced object size for T&/T&& returns
 	TypeIndex return_type_index {};      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
+	bool returns_reference = false;       // 1 byte - True if function returns T& or T&&
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
 	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
 	
@@ -666,6 +680,9 @@ struct VirtualCallOp {
 	int vtable_index;                                // Index into vtable
 	std::vector<TypedValue> arguments;               // Call arguments
 	bool is_pointer_access = false;                  // True if object is a pointer (ptr->method)
+	bool returns_reference = false;                  // True if function returns T& or T&&
+	bool returns_rvalue_reference = false;           // True if function returns T&&
+	SizeInBits referenced_value_size_in_bits {};     // Referenced object size for T&/T&& returns
 };
 
 // String literal
