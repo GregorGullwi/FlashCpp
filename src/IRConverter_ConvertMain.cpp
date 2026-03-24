@@ -6233,21 +6233,40 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						FLASH_LOG(Codegen, Debug, "Source uses indirect storage, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
-						// Check if it's a 64-bit value (likely a pointer)
-						// For __range_begin_ and similar, which are int64 pointers
-						// Also check for struct types that returned as pointers (reference returns)
-						// And function pointers which are always 64-bit addresses
-						// Positive whitelist: only types that genuinely hold 64-bit pointer/address values.
-						// Excludes Void, Bool, Nullptr, etc. which happen to be non-float but aren't pointers.
+						// Check if the TempVar carries Indirect LValue metadata.
+						// addr_temps created by LValueAddress evaluation of a reference variable
+						// have LValueInfo::Kind::Indirect set and hold a 64-bit pointer value
+						// even though their reported size_in_bits is the pointee size (e.g. 32
+						// for int&).  Regular expression results (function call returns,
+						// arithmetic) do not carry this metadata.
+						auto lvalue_info_opt = getTempVarLValueInfo(temp_var);
+						bool has_indirect_lvalue = lvalue_info_opt &&
+						                           lvalue_info_opt->kind == LValueInfo::Kind::Indirect;
+
+						// Also check address-only metadata set on addr_temps from
+						// ArrayElementAddressOp (reference init from array subscript).
+						// Those TempVars hold a 64-bit element address, not a data value.
+						TempVarMetadata temp_meta = getTempVarMetadata(temp_var);
+						bool holds_address = temp_meta.is_address && temp_meta.holds_address_only;
+
+						// For non-indirect TempVars that are 64-bit pointer/struct types
+						// (e.g. range-iterator pointer), we still want to MOV the address value
+						// rather than LEA into the storage location.
+						// Deliberately exclude isIrIntegerType here so that a 64-bit integer
+						// data value (e.g. a long long function return) uses LEA to materialise
+						// a stack temporary, rather than being mistaken for a pointer.
 						IrType init_ir = init.effectiveIrType();
-						bool is_likely_pointer = (init.size_in_bits == SizeInBits{64} &&
-						                          (isIrIntegerType(init_ir) || isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
-						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
+						bool is_likely_pointer = has_indirect_lvalue || holds_address ||
+						                         (init.size_in_bits == SizeInBits{64} &&
+						                          (isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
+						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer,
+						          " has_indirect_lvalue=", has_indirect_lvalue,
+						          " holds_address=", holds_address);
 						if (is_likely_pointer) {
 							// Load the pointer value
 							emitMovFromFrame(pointer_reg, src_offset);
 						} else {
-							// Load address of the source variable
+							// Load address of the source variable (materialise temporary)
 							emitLeaFromFrame(pointer_reg, src_offset);
 						}
 					}
