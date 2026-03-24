@@ -86,6 +86,7 @@ struct ExprResult {
 	TypeIndex type_index {};
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
+	ValueStorage storage = ValueStorage::LegacyUnclassified;  // storage discriminator (Option A migration)
 
 	// Returns the effective runtime representation type.
 	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
@@ -112,13 +113,29 @@ inline ExprResult makeExprResultImpl(
 		.value = std::move(value),
 		.type_index = type_index,
 		.pointer_depth = pointer_depth,
-		.ir_type = toIrType(type)
+		.ir_type = toIrType(type),
+		.storage = ValueStorage::LegacyUnclassified
 	};
 }
 
 // All five arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
+}
+
+/// Returns a copy of \p result with the storage discriminator set to \p storage.
+/// Use this at address-producing or data-producing sites to annotate the result
+/// without changing the call signature of makeExprResult.
+inline ExprResult withStorage(ExprResult result, ValueStorage storage) {
+	result.storage = storage;
+	return result;
+}
+
+/// Returns a copy of \p tv with the storage discriminator set to \p storage.
+/// Mirrors the ExprResult overload above for TypedValue construction sites.
+inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
+	tv.storage = storage;
+	return tv;
 }
 
 // ============================================================================
@@ -191,6 +208,7 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	tv.value = toIrValue(result.value);
 	tv.type_index = result.type_index;
 	tv.pointer_depth = result.pointer_depth;
+	tv.storage = result.storage;
 	return tv;
 }
 

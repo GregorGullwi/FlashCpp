@@ -982,7 +982,7 @@
 
 					// Return with TempVar that has lvalue metadata
 					// The type/size are for the pointee (what the reference refers to)
-					return makeIdentifierResult(pointee_type, pointee_size, lvalue_temp, type_index);
+					return withStorage(makeIdentifierResult(pointee_type, pointee_size, lvalue_temp, type_index), ValueStorage::ContainsAddress);
 				}
 
 				// For non-array references in Load context, we need to dereference to get the value
@@ -1157,7 +1157,7 @@
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 						TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
-						return makeIdentifierResult(pointee_type, pointee_size, addr_temp, type_index);
+						return withStorage(makeIdentifierResult(pointee_type, pointee_size, addr_temp, type_index), ValueStorage::ContainsAddress);
 					}
 
 					// For Load context (reading the value), dereference to get the value

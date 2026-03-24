@@ -397,6 +397,15 @@ private:
 // Typed IR Operand Structures
 // ============================================================================
 
+// Discriminator that records whether a TempVar slot holds a data value or a
+// 64-bit address.  Used by handleVariableDecl to decide MOV vs LEA without
+// relying on a size/type heuristic.
+enum class ValueStorage : uint8_t {
+	LegacyUnclassified,  // migration sentinel — treat like current heuristic
+	ContainsData,        // slot holds a value; reference binding must LEA or materialise
+	ContainsAddress,     // slot holds address of existing object; reference binding must MOV
+};
+
 // Typed value - combines IrValue with its type information
 struct TypedValue {
 	Type type = Type::Void;	// 4 bytes (enum) — semantic type (kept during transition, will be removed in Phase 4)
@@ -426,6 +435,11 @@ struct TypedValue {
 			return ir_type;
 		return toIrType(type);
 	}
+
+	// Storage discriminator: records whether `value` holds a data value or a
+	// 64-bit address.  Defaults to LegacyUnclassified to preserve existing
+	// behaviour until all construction sites are annotated (Option A migration).
+	ValueStorage storage = ValueStorage::LegacyUnclassified;
 };
 
 // Helper function to print TypedValue

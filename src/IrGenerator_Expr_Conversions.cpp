@@ -654,13 +654,13 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 
 				// Return pointer to result (64-bit pointer)
-				ExprResult result = makeExprResult(
+				return withStorage(makeExprResult(
 					addr_components->final_type,
 					SizeInBits{64},
 					result_var,
 					TypeIndex{},
-					PointerDepth{addr_components->pointer_depth.value + 1});
-				return result;
+					PointerDepth{addr_components->pointer_depth.value + 1}),
+					ValueStorage::ContainsAddress);
 			}
 
 			// Fall back to legacy implementation if analysis failed
@@ -760,7 +760,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
 
 									// Return pointer to member (64-bit pointer, 0 for no additional type info)
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{});
+									return withStorage(makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -819,7 +819,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 
 									// Return pointer to member
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+									return withStorage(makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -1008,7 +1008,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
 				// Return pointer to element (64-bit pointer)
-				return makeExprResult(element_type, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{});
+				return withStorage(makeExprResult(element_type, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsAddress);
 			}
 		}
 
@@ -1534,13 +1534,13 @@
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-				return makeExprResult(
+				return withStorage(makeExprResult(
 					operandType,
 					SizeInBits{64},
 					IrOperand{lvalue_temp},
 					operandIrOperands.type_index,
-					PointerDepth{static_cast<int>(result_ptr_depth)}
-				);
+					PointerDepth{static_cast<int>(result_ptr_depth)}),
+					ValueStorage::ContainsAddress);
 			}
 
 			int element_size = 64; // Default to pointer size

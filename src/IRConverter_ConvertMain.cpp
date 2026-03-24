@@ -6256,12 +6256,22 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						// data value (e.g. a long long function return) uses LEA to materialise
 						// a stack temporary, rather than being mistaken for a pointer.
 						IrType init_ir = init.effectiveIrType();
-						bool is_likely_pointer = has_indirect_lvalue || holds_address ||
-						                         (init.size_in_bits == SizeInBits{64} &&
-						                          (isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
+						bool is_likely_pointer;
+						if (init.storage == ValueStorage::ContainsAddress) {
+							is_likely_pointer = true;
+						} else if (init.storage == ValueStorage::ContainsData) {
+							is_likely_pointer = false;
+						} else {
+							// LegacyUnclassified — fall back to existing heuristic
+							FLASH_LOG(Codegen, Debug, "handleVariableDecl: LegacyUnclassified storage for TempVar, using heuristic");
+							is_likely_pointer = has_indirect_lvalue || holds_address ||
+							                    (init.size_in_bits == SizeInBits{64} &&
+							                     (isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
+						}
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer,
 						          " has_indirect_lvalue=", has_indirect_lvalue,
-						          " holds_address=", holds_address);
+						          " holds_address=", holds_address,
+						          " storage=", static_cast<int>(init.storage));
 						if (is_likely_pointer) {
 							// Load the pointer value
 							emitMovFromFrame(pointer_reg, src_offset);

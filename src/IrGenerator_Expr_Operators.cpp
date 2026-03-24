@@ -328,6 +328,10 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	};
 
 	auto tempAlreadyHoldsAddress = [&](TempVar temp_var) {
+		// Explicit annotation: if storage discriminator is set, trust it directly.
+		if (argument_result.storage == ValueStorage::ContainsAddress) return true;
+		if (argument_result.storage == ValueStorage::ContainsData)    return false;
+		// LegacyUnclassified — fall back to metadata heuristic.
 		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
 		if (metadata_storage.hasMetadata(temp_var)) {
 			const TempVarMetadata metadata = metadata_storage.getMetadata(temp_var);

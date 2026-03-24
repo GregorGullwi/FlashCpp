@@ -1675,12 +1675,17 @@
 		TypeIndex ret_type_index = isIrStructType(toIrType(return_type.type()))
 			? return_type.type_index()
 			: TypeIndex{};
-		return makeExprResult(
-			return_type.type(),
-			SizeInBits{return_size_bits},
-			IrOperand{ret_var},
-			ret_type_index
-		, PointerDepth{});
+		{
+			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
+				? ValueStorage::ContainsAddress
+				: ValueStorage::ContainsData;
+			return withStorage(makeExprResult(
+				return_type.type(),
+				SizeInBits{return_size_bits},
+				IrOperand{ret_var},
+				ret_type_index,
+				PointerDepth{}), st);
+		}
 	}
 
 
