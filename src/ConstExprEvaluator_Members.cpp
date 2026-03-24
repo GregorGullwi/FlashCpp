@@ -2061,38 +2061,56 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!inner_result.success()) {
 			return inner_result;
 		}
-		// Apply the target-type conversion (mirrors evaluate_expr_node).
-		switch (type_spec.type()) {
-			case Type::Bool: {
-				EvalResult r = EvalResult::from_bool(inner_result.as_bool());
-				r.set_exact_type(type_spec);
-				return r;
+		// For struct/user-defined/enum types, a static_cast that only changes cv/ref
+		// qualification (e.g., static_cast<const T&>(obj)) should pass through the
+		// value unchanged — no scalar conversion is needed.  This mirrors the
+		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
+		// Guard with a type-match check so that cross-struct casts fall through to
+		// the scalar conversion switch (which correctly errors for struct types).
+		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined ||
+			type_spec.type() == Type::Enum) {
+			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
+			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+				inner_result.set_exact_type(type_spec);
+				return inner_result;
 			}
-			case Type::Char: case Type::Short: case Type::Int:
-			case Type::Long:  case Type::LongLong: {
-				EvalResult r = EvalResult::from_int(inner_result.as_int());
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
-			case Type::UnsignedLong: case Type::UnsignedLongLong: {
-				// Read the source value preserving full bit-width using as_uint_raw()
-				// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
-				const unsigned long long uval = inner_result.as_uint_raw();
-				EvalResult r = EvalResult::from_uint(uval);
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			case Type::Float: case Type::Double: case Type::LongDouble: {
-				EvalResult r = EvalResult::from_double(inner_result.as_double());
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			default:
-				return EvalResult::error("Unsupported type in cast for constant evaluation");
+			// Source type unavailable or doesn't match — fall through to the
+			// scalar conversion switch which will error for struct/enum types.
 		}
+		// Apply the target-type conversion using the shared helper (mirrors evaluate_expr_node).
+		return convertEvalResultToTargetType(type_spec, inner_result, "Unsupported type in cast for constant evaluation");
 	}
-	
+
+	// Handle ConstCastNode (const_cast<T>(e)) using the bindings-aware recursive
+	// evaluator so that local variables and function parameters are visible inside
+	// the cast expression.  const_cast only changes cv/ref qualification — no type
+	// conversion is performed; the value/object identity is preserved as-is.
+	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+		const ASTNode& type_node = const_cast_node->target_type();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Const cast without valid type specifier");
+		}
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		// Evaluate the inner expression with bindings.
+		auto inner_result = recursive_eval(const_cast_node->expr(), bindings, context);
+		if (!inner_result.success()) {
+			return inner_result;
+		}
+		// Validate that const_cast only changes cv/ref qualification — reject
+		// type-changing casts like const_cast<float*>(&int_value).  Uses the
+		// shared Evaluator::typesMatchIgnoringCvAndRef / tryGetExpressionType.
+		if (auto source_type = tryGetExpressionType(inner_result, const_cast_node->expr(), context);
+			source_type.has_value() &&
+			!typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+			return EvalResult::error(
+				"const_cast in constant expression may only change cv-qualification",
+				EvalErrorType::NotConstantExpression);
+		}
+		// Only update the type metadata — no value conversion needed.
+		inner_result.set_exact_type(type_spec);
+		return inner_result;
+	}
+
 	// Handle ConstructorCallNode for struct types (e.g., Pair{a, b} inside constexpr function bodies).
 	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
 	// constructor arguments that reference local variables.
@@ -3528,7 +3546,96 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	const IdentifierNode* base_identifier = tryGetIdentifier(base_obj_expr);
 	if (!base_identifier) {
 		if (base_obj_expr.is<ExpressionNode>()) {
-			return EvalResult::error("Complex base expression in nested member access not supported");
+			EvalResult base_result = evaluate(base_obj_expr, context);
+			if (!base_result.success()) {
+				return base_result;
+			}
+
+			if (!base_result.object_type_index.is_valid() ||
+				base_result.object_type_index.value >= gTypeInfo.size()) {
+				return EvalResult::error("Base expression has invalid or out-of-bounds type index in nested member access");
+			}
+
+			const StructTypeInfo* base_struct_info = gTypeInfo[base_result.object_type_index.value].getStructInfo();
+			if (!base_struct_info) {
+				return EvalResult::error("Base expression in nested member access is not a struct object");
+			}
+
+			const StructMember* intermediate_member_info = base_struct_info->findMember(intermediate_member);
+			if (!intermediate_member_info) {
+				return EvalResult::error(
+					std::string(StringBuilder()
+						.append("Intermediate member '"sv)
+						.append(intermediate_member)
+						.append("' is not defined in the base struct type for nested member access"sv)
+						.commit()));
+			}
+
+			auto intermediate_member_it = base_result.object_member_bindings.find(intermediate_member);
+			if (intermediate_member_it == base_result.object_member_bindings.end()) {
+				return EvalResult::error(
+					std::string(StringBuilder()
+						.append("Intermediate member '"sv)
+						.append(intermediate_member)
+						.append("' has no constexpr value in the evaluated base object for nested member access"sv)
+						.commit()));
+			}
+
+			EvalResult intermediate_result = intermediate_member_it->second;
+			const bool needs_intermediate_materialization =
+				!intermediate_result.object_type_index.is_valid() &&
+				intermediate_result.object_member_bindings.empty() &&
+				(intermediate_member_info->type == Type::Struct ||
+				 intermediate_member_info->type == Type::UserDefined) &&
+				intermediate_member_info->type_index.is_valid() &&
+				intermediate_member_info->type_index.value < gTypeInfo.size();
+			if (needs_intermediate_materialization) {
+				if (const StructTypeInfo* intermediate_struct_info =
+					gTypeInfo[intermediate_member_info->type_index.value].getStructInfo()) {
+					auto ctor_resolution = resolve_constructor_overload_arity(*intermediate_struct_info, 1, true);
+					const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
+					if (matching_ctor) {
+						std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+						std::vector<EvalResult> ctor_args;
+						ctor_args.push_back(intermediate_result);
+						auto bind_result = bind_pre_evaluated_arguments(
+							matching_ctor->parameter_nodes(),
+							ctor_args,
+							ctor_param_bindings,
+							"Invalid parameter node while materializing intermediate struct member for nested member access",
+							true);
+						if (!bind_result.success()) {
+							return bind_result;
+						}
+
+						EvalResult materialized_result = EvalResult::from_int(0LL);
+						materialized_result.object_type_index = intermediate_member_info->type_index;
+						auto materialize_result = materialize_members_from_constructor(
+							intermediate_struct_info,
+							*matching_ctor,
+							ctor_param_bindings,
+							materialized_result.object_member_bindings,
+							context,
+							false);
+						if (!materialize_result.success()) {
+							return materialize_result;
+						}
+						intermediate_result = std::move(materialized_result);
+					}
+				}
+			}
+
+			auto final_member_it = intermediate_result.object_member_bindings.find(final_member_name);
+			if (final_member_it != intermediate_result.object_member_bindings.end()) {
+				return final_member_it->second;
+			}
+
+			return EvalResult::error(
+				std::string(StringBuilder()
+					.append("Final member '"sv)
+					.append(final_member_name)
+					.append("' not found in nested member access"sv)
+					.commit()));
 		}
 		return EvalResult::error("Invalid base expression in nested member access");
 	}
@@ -3980,7 +4087,6 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const FunctionCallNode& func_call,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	
 	// Get the function declaration to determine return type
 	const DeclarationNode& func_decl_node = func_call.function_declaration();
 	// Convert member_name to StringHandle once for efficient comparison
@@ -4011,7 +4117,7 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	if (!struct_info) {
 		return EvalResult::error("Return type is not a struct");
 	}
-	
+
 	// Use the helper function to look up and evaluate the static member
 	return evaluate_static_member_from_struct(struct_info, type_info, member_name_handle, member_name, context);
 }

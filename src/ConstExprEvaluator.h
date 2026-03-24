@@ -626,6 +626,7 @@ private:
 	static EvalResult evaluate_delete_expression(const DeleteExpressionNode& del_expr, EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context);
+	static EvalResult evaluate_const_cast(const ConstCastNode& cast_node, EvaluationContext& context);
 	static EvalResult evaluate_expr_node(const TypeSpecifierNode& target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr);
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
@@ -827,6 +828,27 @@ private:
 			const ChunkedVector<ASTNode>& arguments,
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
+
+	// Type comparison helpers — shared across Core and Members TUs.
+	// Compares two TypeSpecifierNodes ignoring cv-qualifiers (and optionally
+	// reference qualifiers), checking type(), type_index(), pointer_depth(),
+	// array_dimensions(), member class, and function signatures.
+	static bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs);
+
+	// Try to obtain the source expression's type from an already-evaluated
+	// result (exact_type) or by asking the parser for the AST node's type.
+	static std::optional<TypeSpecifierNode> tryGetExpressionType(
+		const EvalResult& result,
+		const ASTNode& expr,
+		EvaluationContext& context);
+
+	// Convert an already-evaluated EvalResult to a different target type
+	// (Bool/Int/Uint/Float).  Returns an error for unsupported target types
+	// (e.g. Struct).  Shared across Core and Members TUs.
+	static EvalResult convertEvalResultToTargetType(
+		const TypeSpecifierNode& target_type,
+		const EvalResult& expr_result,
+		const char* invalidTypeErrorStr);
 
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);

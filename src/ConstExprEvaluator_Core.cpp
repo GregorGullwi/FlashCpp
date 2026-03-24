@@ -62,6 +62,52 @@ namespace {
 			maybe_set_exact_type_from_initializer(result, *initializer, context);
 		}
 	}
+
+}
+
+EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
+	switch (target_type.type()) {
+		case Type::Bool:
+		{
+			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+			result.set_exact_type(target_type);
+			return result;
+		}
+
+		case Type::Char:
+		case Type::Short:
+		case Type::Int:
+		case Type::Long:
+		case Type::LongLong:
+		{
+			EvalResult result = EvalResult::from_int(expr_result.as_int());
+			result.set_exact_type(target_type);
+			return result;
+		}
+
+		case Type::UnsignedChar:
+		case Type::UnsignedShort:
+		case Type::UnsignedInt:
+		case Type::UnsignedLong:
+		case Type::UnsignedLongLong:
+		{
+			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
+			result.set_exact_type(target_type);
+			return result;
+		}
+
+		case Type::Float:
+		case Type::Double:
+		case Type::LongDouble:
+		{
+			EvalResult result = EvalResult::from_double(expr_result.as_double());
+			result.set_exact_type(target_type);
+			return result;
+		}
+
+		default:
+			return EvalResult::error(invalidTypeErrorStr);
+	}
 }
 
 // Main evaluation entry point
@@ -201,6 +247,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For StaticCastNode (static_cast<Type>(expr) and C-style casts)
 	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 		return evaluate_static_cast(*static_cast_node, context);
+	}
+
+	// For ConstCastNode (const_cast<Type>(expr))
+	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+		return evaluate_const_cast(*const_cast_node, context);
 	}
 
 	// For ArraySubscriptNode (e.g., arr[0] or obj.data[1])
@@ -1327,19 +1378,100 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	return evaluate_expr_node(type_spec, args[0], context, "Unsupported type in constructor call for constant evaluation");
 }
 
+bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	if (lhs.type() != rhs.type() ||
+		lhs.type_index() != rhs.type_index() ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.array_dimensions() != rhs.array_dimensions() ||
+		lhs.has_member_class() != rhs.has_member_class() ||
+		lhs.has_function_signature() != rhs.has_function_signature()) {
+		return false;
+	}
+
+	if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
+		return false;
+	}
+
+	if (lhs.has_function_signature()) {
+		const FunctionSignature& lhs_sig = lhs.function_signature();
+		const FunctionSignature& rhs_sig = rhs.function_signature();
+		if (lhs_sig.return_type != rhs_sig.return_type ||
+			lhs_sig.parameter_types != rhs_sig.parameter_types ||
+			lhs_sig.linkage != rhs_sig.linkage ||
+			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.is_const != rhs_sig.is_const ||
+			lhs_sig.is_volatile != rhs_sig.is_volatile) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(
+	const EvalResult& result,
+	const ASTNode& expr,
+	EvaluationContext& context) {
+	if (result.exact_type.has_value()) {
+		return result.exact_type;
+	}
+	if (context.parser) {
+		return context.parser->get_expression_type(expr);
+	}
+	return std::nullopt;
+}
+
 EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, EvaluationContext& context) {
 	// Evaluate static_cast<Type>(expr) and C-style casts in constant expressions
-	
+
 	// Get the target type
 	const ASTNode& type_node = cast_node.target_type();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Cast without valid type specifier");
 	}
-	
+
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	
-	// Evaluate the expression being cast
-	return evaluate_expr_node(type_spec, cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+
+	EvalResult result = evaluate(cast_node.expr(), context);
+	if (!result.success()) {
+		return result;
+	}
+
+	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
+		source_type.has_value() &&
+		typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+		maybe_set_exact_type(result, type_spec);
+		return result;
+	}
+
+	return convertEvalResultToTargetType(type_spec, result, "Unsupported type in static_cast for constant evaluation");
+}
+
+EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, EvaluationContext& context) {
+	// Evaluate const_cast<Type>(expr) in constant expressions.
+	// Constexpr evaluation preserves the underlying value/pointer/object identity;
+	// only the target cv/reference-qualified type metadata changes.
+	const ASTNode& type_node = cast_node.target_type();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Const cast without valid type specifier");
+	}
+
+	const TypeSpecifierNode& target_type = type_node.as<TypeSpecifierNode>();
+	EvalResult result = evaluate(cast_node.expr(), context);
+	if (!result.success()) {
+		return result;
+	}
+
+	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
+		source_type.has_value() &&
+		!typesMatchIgnoringCvAndRef(target_type, *source_type)) {
+		return EvalResult::error(
+			"const_cast in constant expression may only change cv-qualification",
+			EvalErrorType::NotConstantExpression);
+	}
+
+	maybe_set_exact_type(result, target_type);
+	return result;
 }
 
 // Helper: default-initialize a value of the given type (used by new-expression evaluation).
@@ -1567,53 +1699,8 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 	if (!expr_result.success()) {
 		return expr_result;
 	}
-	
-	// Perform the type conversion
-	switch (target_type.type()) {
-		case Type::Bool:
-		{
-			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
-			result.set_exact_type(target_type);
-			return result;
-		}
-		
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		{
-			EvalResult result = EvalResult::from_int(expr_result.as_int());
-			result.set_exact_type(target_type);
-			return result;
-		}
-		
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-			// For unsigned types, convert to unsigned.
-		{
-			// Read the source value preserving full bit-width using as_uint_raw()
-			// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
-			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
-			result.set_exact_type(target_type);
-			return result;
-		}
-		
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-		{
-			EvalResult result = EvalResult::from_double(expr_result.as_double());
-			result.set_exact_type(target_type);
-			return result;
-		}
-		
-		default:
-			return EvalResult::error(invalidTypeErrorStr);
-	}
+
+	return convertEvalResultToTargetType(target_type, expr_result, invalidTypeErrorStr);
 }
 
 EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context) {
@@ -1752,7 +1839,31 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	// Recursively evaluate the initializer
-	EvalResult result = evaluate(initializer.value(), context);
+	auto evaluateIdentifierInitializer = [&]() -> EvalResult {
+		if (initializer->is<ConstructorCallNode>()) {
+			return evaluate_constructor_call(initializer->as<ConstructorCallNode>(), context);
+		}
+
+		if (initializer->is<InitializerListNode>() &&
+			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+				type_spec.type_index().is_valid() &&
+				type_spec.type_index().value < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
+					return materialize_aggregate_object_value(
+						struct_info,
+						type_spec.type_index(),
+						initializer->as<InitializerListNode>(),
+						context);
+				}
+			}
+		}
+
+		return evaluate(initializer.value(), context);
+	};
+
+	EvalResult result = evaluateIdentifierInitializer();
 	if (!result.success()) {
 		return result;
 	}

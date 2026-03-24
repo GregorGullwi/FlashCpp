@@ -49,7 +49,7 @@ static_assert(big > 1LL);               // unsigned long long vs signed ✅
 ```
 
 Constexpr functions may also return and accept all primitive types, and
-C-style casts / `static_cast` inside function bodies work correctly:
+C-style casts / `static_cast` / cv-only `const_cast` inside function bodies work correctly:
 
 ```cpp
 constexpr double fn(double a, double b) { return a * b; }
@@ -146,7 +146,7 @@ constexpr int f() {
 static_assert(f() == 42);  // ✅ Works
 ```
 
-Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects.
+Nested local reads such as `obj.inner.value` and `obj.data[1]` work for both aggregate-initialized (brace-init) and constructor-initialized local objects. Nested member access through constexpr function results such as `make_outer().inner.value` now also works.
 
 ### ✅ Complex Initializer Expressions
 ```cpp
