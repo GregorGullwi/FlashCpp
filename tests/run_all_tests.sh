@@ -316,12 +316,17 @@ fi
 # ──────────────────────────────────────────────────────
 declare -a COMPILE_OK=()
 declare -a COMPILE_FAIL=()
+declare -a COMPILE_FAIL_DETAILS=()
 declare -a LINK_OK=()
 declare -a LINK_FAIL=()
+declare -a LINK_FAIL_DETAILS=()
 declare -a FAIL_OK=()
 declare -a FAIL_BAD=()
+declare -a FAIL_BAD_DETAILS=()
 declare -a RUNTIME_CRASH=()
+declare -a RUNTIME_CRASH_DETAILS=()
 declare -a RETURN_MISMATCH=()
+declare -a RETURN_MISMATCH_DETAILS=()
 
 for base in "${TEST_FILES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
@@ -340,6 +345,7 @@ for base in "${TEST_FILES[@]}"; do
             COMPILE_OK+=("$base")
             LINK_OK+=("$base")
             RETURN_MISMATCH+=("$base")
+            RETURN_MISMATCH_DETAILS+=("$detail")
             echo -e "${RED}[RETURN MISMATCH]${NC} $base ($detail)"
             ;;
         RUNTIME_CRASH)
@@ -350,6 +356,7 @@ for base in "${TEST_FILES[@]}"; do
                 [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected runtime crash)" >&2
             else
                 RUNTIME_CRASH+=("$base")
+                RUNTIME_CRASH_DETAILS+=("$detail")
                 echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
             fi
             ;;
@@ -361,6 +368,7 @@ for base in "${TEST_FILES[@]}"; do
                 [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected link fail)" >&2
             else
                 LINK_FAIL+=("$base")
+                LINK_FAIL_DETAILS+=("$detail")
                 echo -e "${RED}[LINK FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
             fi
@@ -371,6 +379,7 @@ for base in "${TEST_FILES[@]}"; do
                 [ "$VERBOSE" = "1" ] && echo "  $base ... OK (expected fail)" >&2
             else
                 COMPILE_FAIL+=("$base")
+                COMPILE_FAIL_DETAILS+=("$detail")
                 echo -e "${RED}[COMPILE FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail"
             fi
@@ -392,6 +401,7 @@ for base in "${FAIL_FILES[@]}"; do
             ;;
         FAIL_BAD)
             FAIL_BAD+=("$base")
+            FAIL_BAD_DETAILS+=("$detail")
             if [[ "$detail" == CRASHED* ]]; then
                 echo -e "${RED}[COMPILER CRASH]${NC} $base ($detail)"
             else
@@ -412,33 +422,67 @@ printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "
 printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
 [ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
 
-# Show failures
+# Show failures with details
 if [ ${#COMPILE_FAIL[@]} -gt 0 ]; then
     echo -e "\n${RED}Compile failures (${#COMPILE_FAIL[@]}):${NC}"
-    printf '  %s\n' "${COMPILE_FAIL[@]}" | head -20
-    [ ${#COMPILE_FAIL[@]} -gt 20 ] && echo "  ... and $((${#COMPILE_FAIL[@]} - 20)) more"
+    local_limit=20
+    for i in "${!COMPILE_FAIL[@]}"; do
+        [ "$i" -ge "$local_limit" ] && break
+        if [ -n "${COMPILE_FAIL_DETAILS[$i]}" ]; then
+            echo "  ${COMPILE_FAIL[$i]} — ${COMPILE_FAIL_DETAILS[$i]}"
+        else
+            echo "  ${COMPILE_FAIL[$i]}"
+        fi
+    done
+    [ ${#COMPILE_FAIL[@]} -gt $local_limit ] && echo "  ... and $((${#COMPILE_FAIL[@]} - local_limit)) more"
 fi
 
 if [ ${#LINK_FAIL[@]} -gt 0 ]; then
     echo -e "\n${YELLOW}Link failures (${#LINK_FAIL[@]}) - likely need C++ features:${NC}"
     echo "  (vtables, constructors, exceptions, etc.)"
-    printf '  %s\n' "${LINK_FAIL[@]}" | head -20
-    [ ${#LINK_FAIL[@]} -gt 20 ] && echo "  ... and $((${#LINK_FAIL[@]} - 20)) more"
+    local_limit=20
+    for i in "${!LINK_FAIL[@]}"; do
+        [ "$i" -ge "$local_limit" ] && break
+        if [ -n "${LINK_FAIL_DETAILS[$i]}" ]; then
+            echo "  ${LINK_FAIL[$i]} — ${LINK_FAIL_DETAILS[$i]}"
+        else
+            echo "  ${LINK_FAIL[$i]}"
+        fi
+    done
+    [ ${#LINK_FAIL[@]} -gt $local_limit ] && echo "  ... and $((${#LINK_FAIL[@]} - local_limit)) more"
 fi
 
 if [ ${#RUNTIME_CRASH[@]} -gt 0 ]; then
     echo -e "\n${RED}Runtime crashes (${#RUNTIME_CRASH[@]}):${NC}"
-    printf '  %s\n' "${RUNTIME_CRASH[@]}"
+    for i in "${!RUNTIME_CRASH[@]}"; do
+        if [ -n "${RUNTIME_CRASH_DETAILS[$i]}" ]; then
+            echo "  ${RUNTIME_CRASH[$i]} — ${RUNTIME_CRASH_DETAILS[$i]}"
+        else
+            echo "  ${RUNTIME_CRASH[$i]}"
+        fi
+    done
 fi
 
 if [ ${#RETURN_MISMATCH[@]} -gt 0 ]; then
     echo -e "\n${RED}Return value mismatches (${#RETURN_MISMATCH[@]}):${NC}"
-    printf '  %s\n' "${RETURN_MISMATCH[@]}"
+    for i in "${!RETURN_MISMATCH[@]}"; do
+        if [ -n "${RETURN_MISMATCH_DETAILS[$i]}" ]; then
+            echo "  ${RETURN_MISMATCH[$i]} — ${RETURN_MISMATCH_DETAILS[$i]}"
+        else
+            echo "  ${RETURN_MISMATCH[$i]}"
+        fi
+    done
 fi
 
 [ ${#FAIL_BAD[@]} -gt 0 ] && {
     echo -e "\n${RED}_fail files that passed:${NC}"
-    printf '  %s\n' "${FAIL_BAD[@]}"
+    for i in "${!FAIL_BAD[@]}"; do
+        if [ -n "${FAIL_BAD_DETAILS[$i]}" ]; then
+            echo "  ${FAIL_BAD[$i]} — ${FAIL_BAD_DETAILS[$i]}"
+        else
+            echo "  ${FAIL_BAD[$i]}"
+        fi
+    done
 }
 
 echo ""
