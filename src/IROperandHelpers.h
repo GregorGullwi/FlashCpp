@@ -105,7 +105,8 @@ inline ExprResult makeExprResultImpl(
 	SizeInBits size_in_bits,
 	IrOperand value,
 	TypeIndex type_index,
-	PointerDepth pointer_depth
+	PointerDepth pointer_depth,
+	ValueStorage storage
 ) {
 	return {
 		.type = type,
@@ -114,21 +115,13 @@ inline ExprResult makeExprResultImpl(
 		.type_index = type_index,
 		.pointer_depth = pointer_depth,
 		.ir_type = toIrType(type),
-		.storage = ValueStorage::LegacyUnclassified
+		.storage = storage
 	};
 }
 
-// All five arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
-inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth);
-}
-
-/// Returns a copy of \p result with the storage discriminator set to \p storage.
-/// Use this at address-producing or data-producing sites to annotate the result
-/// without changing the call signature of makeExprResult.
-inline ExprResult withStorage(ExprResult result, ValueStorage storage) {
-	result.storage = storage;
-	return result;
+// All six arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
+inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
+	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, storage);
 }
 
 /// Returns a copy of \p tv with the storage discriminator set to \p storage.

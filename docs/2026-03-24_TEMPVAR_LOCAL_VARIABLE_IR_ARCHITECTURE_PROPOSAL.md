@@ -49,13 +49,14 @@ with any novel IR types that might be produced.  The architectural root cause is
 
 ## Implementation progress (as of 2026-03-24)
 
-Phases 1 through 4 are complete.  All 1 734 tests pass.
+Phases 1 through 4 are complete, plus the `makeExprResult`/`makeMemberResult` factory refactor.
+All 1 734 tests pass.
 
 ### Phase 1 — complete
 
 `ValueStorage` enum added to `src/IRTypes_Ops.h`.  `TypedValue::storage` and
 `ExprResult::storage` fields added (default `LegacyUnclassified`).  `toTypedValue(ExprResult)`
-propagates the field.  `withStorage(result, storage)` helper added in `src/IROperandHelpers.h`.
+propagates the field.
 `handleVariableDecl` in `src/IRConverter_ConvertMain.cpp` now checks the field before the
 heuristic: `ContainsAddress` → MOV, `ContainsData` → LEA, `LegacyUnclassified` → `InternalError`
 (see Phase 4).
@@ -75,18 +76,28 @@ are now marked `ContainsAddress`:
 | `IrGenerator_Call_Indirect.cpp` | reference returns (virtual and non-virtual paths share the same annotation; VirtualCallOp gap from §1C is now closed) |
 | `IrGenerator_MemberAccess.cpp` | reference member LValueAddress path + struct reference member load path |
 
-### Phase 3 — complete (all `makeExprResult` call sites annotated)
+### Phase 3 — complete (all ExprResult factory call sites annotated, refactored to compile-time enforcement)
 
-Every `makeExprResult(...)` call site is now wrapped in `withStorage(..., ValueStorage::X)`.
-No `LegacyUnclassified` result can be produced.  Annotated files and approximate counts:
+`ValueStorage storage` is now a **required 6th parameter** of `makeExprResult()`.  The
+`ExprResult withStorage(ExprResult, ValueStorage)` wrapper has been deleted.  Omitting the
+`storage` argument is now a **compile error**, not a silent `LegacyUnclassified` default.
+
+`makeMemberResult()` also received the same treatment: `storage` added as a required 6th
+parameter (default params on `TypeIndex`/`PointerDepth` removed too), and four previously-
+unannotated call sites were annotated.
+
+`withStorage(TypedValue, ValueStorage)` is kept for the two `makeTypedValue` sites in
+`IrGenerator_Stmt_Decl.cpp` that set `ContainsAddress` on structured-binding initializers.
+
+Summary of annotated sites per file:
 
 | File | `ContainsData` sites | `ContainsAddress` sites |
 |---|---|---|
 | `IrGenerator_Expr_Operators.cpp` | 45 | 0 |
 | `IrGenerator_Expr_Conversions.cpp` | 40 | 0 |
-| `IrGenerator_MemberAccess.cpp` | 23 | 0 |
-| `IrGenerator_Expr_Primitives.cpp` | 14 | 2 (FunctionAddressOp, ref-var LValueAddress) |
-| `IrGenerator_NewDeleteCast.cpp` | 12 | 1 (dynamic_cast to reference) |
+| `IrGenerator_MemberAccess.cpp` | 27 | 2 |
+| `IrGenerator_Expr_Primitives.cpp` | 14 | 2 |
+| `IrGenerator_NewDeleteCast.cpp` | 12 | 1 |
 | `IrGenerator_Call_Indirect.cpp` | 7 | 0 |
 | `IrGenerator_Call_Direct.cpp` | 8 | 0 |
 | `IrGenerator_Visitors_Decl.cpp` | 3 | 0 |
@@ -99,8 +110,7 @@ No `LegacyUnclassified` result can be produced.  Annotated files and approximate
 The `LegacyUnclassified` else-branch in `handleVariableDecl` now throws
 `InternalError("handleVariableDecl: TempVar tN has LegacyUnclassified storage — all ExprResult producers must be annotated")`.
 The old `is_likely_pointer` heuristic (`isIrStructType || isIrPointerLikeType`) is gone.
-Every new ExprResult producer added to the codebase will fail loudly at runtime if it does
-not set the `storage` field, preventing a return to silent misclassification.
+Any new `makeExprResult` or `makeMemberResult` call that omits `storage` will not compile.
 
 ### Remaining work
 
@@ -551,17 +561,17 @@ stamp `setReferenceInfo(...)`, and set `storage = ContainsAddress`.
 - Two residual heuristic arms (`isIrStructType`, `isIrPointerLikeType`) introduced false-positive
   risks for 64-bit struct/pointer-valued data results.
 
-**Current status (after Option A implementation, Phases 1–4 complete):**
+**Current status (after Option A, Phases 1–4 complete + factory refactor):**
 - `ValueStorage` field is on both `ExprResult` and `TypedValue`; `toTypedValue(ExprResult)`
-  propagates it.  The `withStorage(...)` helper makes annotation ergonomic.
+  propagates it.
 - All known address-producing generator sites are annotated `ContainsAddress` (Phase 2 complete).
 - VirtualCallOp reference-return gap is closed.
-- Every single `makeExprResult(...)` call site is now annotated — no `LegacyUnclassified` result
-  can be produced anywhere in the IR generator.
+- `ValueStorage storage` is a **required 6th parameter** of both `makeExprResult()` and
+  `makeMemberResult()`.  The `ExprResult withStorage(ExprResult, ValueStorage)` helper is deleted.
+  Omitting `storage` on any new ExprResult producer is now a **compile error**.
 - The `LegacyUnclassified` heuristic branch in `handleVariableDecl` is replaced with
-  `InternalError`: any future unannotated site fails loudly instead of silently misfiring.
-- Architecture is now self-enforcing: adding a new IR op without setting `storage` will always
-  produce a runtime error rather than a silent wrong-codegen bug.
+  `InternalError`: even if somehow a `LegacyUnclassified` value were produced, it would fail
+  loudly at runtime.
 
 **Remaining work:**
 1. Phase 5: remove `TempVarMetadata.is_address`, `holds_address_only`, and the

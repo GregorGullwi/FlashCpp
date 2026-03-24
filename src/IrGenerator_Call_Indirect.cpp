@@ -242,7 +242,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 
 				// Return the result with actual return type from lambda
-				return withStorage(makeExprResult(lambda_return_type, SizeInBits{static_cast<int>(lambda_return_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+				return makeExprResult(lambda_return_type, SizeInBits{static_cast<int>(lambda_return_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			if (!std::holds_alternative<StringHandle>(lambda_result.value) || !lambda_result.type_index.is_valid()) {
@@ -421,7 +421,7 @@
 					}
 					Type ret_type = resolved_member->function_signature->return_type;
 					int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-					return withStorage(makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// We resolved the member access - now check if it's a struct type
@@ -482,7 +482,7 @@
 									}
 									Type ret_type = member.function_signature->return_type;
 									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-									return withStorage(makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
 
@@ -573,12 +573,12 @@
 			if (ret_type == Type::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
-				return withStorage(makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
-				return withStorage(makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
@@ -586,7 +586,7 @@
 					memberFunctionCallNode.called_from());
 				if (agg.type != Type::Void) return agg;
 			}
-			return withStorage(makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		auto getParamDecl = [](const ASTNode& param_node) -> const DeclarationNode* {
 			if (param_node.is<DeclarationNode>()) {
@@ -822,7 +822,7 @@
 						}
 						Type ret_type = member.function_signature->return_type;
 						int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
-						return withStorage(makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
+						return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1679,12 +1679,12 @@
 			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
 				? ValueStorage::ContainsAddress
 				: ValueStorage::ContainsData;
-			return withStorage(makeExprResult(
+			return makeExprResult(
 				return_type.type(),
 				SizeInBits{return_size_bits},
 				IrOperand{ret_var},
 				ret_type_index,
-				PointerDepth{}), st);
+				PointerDepth{}, st);
 		}
 	}
 
