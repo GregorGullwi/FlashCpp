@@ -322,6 +322,105 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 				}
 			};
+			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, Type member_type) -> unsigned long long {
+				if (member_type == Type::Float) {
+					float fval = static_cast<float>(r.as_double());
+					uint32_t fbits = 0;
+					std::memcpy(&fbits, &fval, sizeof(float));
+					return static_cast<unsigned long long>(fbits);
+				}
+				if (member_type == Type::Double || member_type == Type::LongDouble) {
+					double dval = r.as_double();
+					unsigned long long dbits = 0;
+					std::memcpy(&dbits, &dval, sizeof(double));
+					return dbits;
+				}
+				return evalResultScalarToRaw(r);
+			};
+			auto writeRawValueAtOffset = [](std::vector<char>& data, size_t offset, size_t byte_count, unsigned long long value) {
+				for (size_t i = 0; i < byte_count && (offset + i) < data.size(); ++i) {
+					data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
+				}
+			};
+			std::function<void(std::vector<char>&, const StructTypeInfo&, const ConstExpr::EvalResult&, size_t)> packStructEvalResultIntoInitData;
+			packStructEvalResultIntoInitData = [&](std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset) {
+				for (const auto& member : struct_info.members) {
+					std::string_view member_name = StringTable::getStringView(member.getName());
+					auto it = eval_result.object_member_bindings.find(member_name);
+					if (it == eval_result.object_member_bindings.end()) {
+						continue;
+					}
+
+					const ConstExpr::EvalResult& member_result = it->second;
+					const size_t abs_offset = base_offset + member.offset;
+					if (member.is_array && member_result.is_array) {
+						size_t total_elements = 1;
+						for (size_t dim : member.array_dimensions) {
+							total_elements *= dim;
+						}
+						if (total_elements == 0) {
+							continue;
+						}
+
+						if (const TypeInfo* elem_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
+							if (const StructTypeInfo* elem_struct = elem_type_info->getStructInfo()) {
+								for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
+									packStructEvalResultIntoInitData(
+										init_data,
+										*elem_struct,
+										member_result.array_elements[elem_i],
+										abs_offset + elem_i * elem_struct->total_size);
+								}
+								continue;
+							}
+						}
+
+						const size_t element_size = member.size / total_elements;
+						if (!member_result.array_elements.empty()) {
+							for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
+								writeRawValueAtOffset(
+									init_data,
+									abs_offset + elem_i * element_size,
+									element_size,
+									evalResultMemberToRaw(member_result.array_elements[elem_i], member.type));
+							}
+						} else {
+							for (size_t elem_i = 0; elem_i < member_result.array_values.size() && elem_i < total_elements; ++elem_i) {
+								writeRawValueAtOffset(
+									init_data,
+									abs_offset + elem_i * element_size,
+									element_size,
+									static_cast<unsigned long long>(member_result.array_values[elem_i]));
+							}
+						}
+						continue;
+					}
+
+					if (const TypeInfo* member_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
+						if (const StructTypeInfo* nested_struct = member_type_info->getStructInfo();
+							nested_struct && !member_result.object_member_bindings.empty()) {
+							packStructEvalResultIntoInitData(init_data, *nested_struct, member_result, abs_offset);
+							continue;
+						}
+					}
+
+					unsigned long long value = evalResultMemberToRaw(member_result, member.type);
+					if (member.bitfield_width.has_value()) {
+						size_t width = *member.bitfield_width;
+						size_t bit_offset = member.bitfield_bit_offset;
+						unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+						value &= mask;
+						unsigned long long existing = 0;
+						for (size_t byte_index = 0; byte_index < member.size && (abs_offset + byte_index) < init_data.size(); ++byte_index) {
+							existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(init_data[abs_offset + byte_index])) << (byte_index * 8));
+						}
+						existing |= (value << bit_offset);
+						writeRawValueAtOffset(init_data, abs_offset, member.size, existing);
+					} else {
+						writeRawValueAtOffset(init_data, abs_offset, member.size, value);
+					}
+				}
+			};
 			auto resolveGlobalRelocTarget = [&](std::string_view name) -> StringHandle {
 				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(name);
 				auto it = global_variable_names_.find(simple_name_handle);
@@ -700,9 +799,25 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						handled_as_reloc = true;
 					}
 					if (!handled_as_reloc) {
-						unsigned long long value = evalToValue(init_node, type_node.type());
 						op.is_initialized = true;
-						appendValueAsBytes(op.init_data, value, element_size);
+						auto ctx = makeStaticStorageEvalContext();
+						auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
+						if (type_node.type() == Type::Struct &&
+							eval_result.success() &&
+							type_node.type_index().is_valid()) {
+							const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
+							const StructTypeInfo* struct_info = struct_type_info ? struct_type_info->getStructInfo() : nullptr;
+							if (struct_info && !eval_result.object_member_bindings.empty()) {
+								op.init_data.resize(struct_info->total_size, 0);
+								packStructEvalResultIntoInitData(op.init_data, *struct_info, eval_result, 0);
+							} else {
+								unsigned long long value = evalToValue(init_node, type_node.type());
+								appendValueAsBytes(op.init_data, value, element_size);
+							}
+						} else {
+							unsigned long long value = evalToValue(init_node, type_node.type());
+							appendValueAsBytes(op.init_data, value, element_size);
+						}
 					}
 				} else {
 					op.is_initialized = false;

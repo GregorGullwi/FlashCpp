@@ -19,5 +19,5 @@ static_assert(p.first == 5);
 static_assert(p.second == 3);
 
 int main() {
-	return 0;
+	return (p.first == 5 && p.second == 3) ? 0 : 1;
 }
