@@ -83,6 +83,15 @@ struct BoxPoint {
 	int sumXY() const { return p.x + p.y; }
 };
 
+// --- mutable struct reference member: field read + write through method ---
+struct WrapPoint {
+	Point& p;
+	WrapPoint(Point& v) : p(v) {}
+	void scale(int n) { p.x = p.x * n; p.y = p.y * n; }
+	int getX() const { return p.x; }
+	int getY() const { return p.y; }
+};
+
 // --- Pre-bind conversions: ctor(const T&) called with convertible source ---
 struct SinkDouble {
 	double stored;
@@ -162,6 +171,21 @@ int main() {
 	// Part 13: constructor pre-bind conversion int → const float&
 	SinkFloat sf(3);
 	if ((int)sf.stored != 3) return 16;
+
+	// Part 14: mutable struct reference member — read fields through method
+	Point mp{2, 5};
+	WrapPoint wp(mp);
+	if (wp.getX() != 2) return 17;
+	if (wp.getY() != 5) return 18;
+
+	// Part 15: mutable struct reference member — write fields through method
+	wp.scale(3);
+	if (mp.x != 6) return 19;
+	if (mp.y != 15) return 20;
+
+	// Part 16: mutable struct reference member — verify wrapper reads updated values
+	if (wp.getX() != 6) return 21;
+	if (wp.getY() != 15) return 22;
 
 	return 0;
 }

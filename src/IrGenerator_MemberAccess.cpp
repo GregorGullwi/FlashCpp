@@ -1033,6 +1033,17 @@
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
+				// When the nested member access resolved a struct reference member (e.g. wp.p
+				// where p is Point&), the result TempVar holds a pointer to the referenced struct.
+				// Detect this via the LValue metadata and set is_pointer_dereference so the
+				// subsequent MemberAccess instruction dereferences through the pointer.
+				if (!is_pointer_dereference && std::holds_alternative<TempVar>(nested_result.value)) {
+					TempVar nested_temp = std::get<TempVar>(nested_result.value);
+					auto nested_lv = getTempVarLValueInfo(nested_temp);
+					if (nested_lv.has_value() && nested_lv->is_pointer_to_member) {
+						is_pointer_dereference = true;
+					}
+				}
 			}
 			else if (expr && std::holds_alternative<UnaryOperatorNode>(*expr)) {
 				const UnaryOperatorNode& unary_op = std::get<UnaryOperatorNode>(*expr);
@@ -1385,6 +1396,19 @@
 			if (member->referenced_size_bits == 0)
 				throw InternalError("reference member '" + std::string(StringTable::getStringView(member->name)) + "' has referenced_size_bits == 0");
 			int pointee_size_bits = static_cast<int>(member->referenced_size_bits);
+
+			// For struct-typed reference members (e.g. Point& p), do NOT dereference here.
+			// The loaded pointer IS the address of the referenced struct object. Downstream
+			// member access (e.g. wp.p.x) needs this pointer as a base with is_pointer_dereference
+			// semantics — just like accessing through a struct pointer (ptr->x). Dereferencing
+			// would load the struct's raw bytes into a scalar TempVar, making field access impossible.
+			if (isIrStructType(toIrType(member->type)) && member->type_index.is_valid()) {
+				// Return the loaded pointer directly — the next level of member access will
+				// treat it as a pointer-to-struct base (is_pointer_dereference = true).
+				return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, result_var, member->type_index,
+					PointerDepth{member->pointer_depth});
+			}
+
 			TempVar deref_var = emitDereference(member->type, 64, 1, IrValue(result_var), Token());
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
