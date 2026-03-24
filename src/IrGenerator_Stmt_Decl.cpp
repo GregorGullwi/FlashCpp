@@ -1708,11 +1708,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Create a new temp var for the address result
 					TempVar addr_temp = var_counter.next();
 
+					// Extract element type/size once for both addr_op and metadata
+					const Type elem_type = std::get<Type>(operands[7]);
+					const int  elem_size = std::get<int>(operands[8]);
+
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.element_type = std::get<Type>(operands[7]);
-					addr_op.element_size_in_bits = std::get<int>(operands[8]);
+					addr_op.element_type = elem_type;
+					addr_op.element_size_in_bits = elem_size;
 					addr_op.array = lv_info.base;
 
 					// Build TypedValue for index from metadata
@@ -1727,10 +1731,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Emit the instruction
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), decl.identifier_token()));
 
+					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
+					setTempVarMetadata(addr_temp,
+						TempVarMetadata::makeAddressOnly(elem_type, SizeInBits{elem_size}, ValueCategory::LValue));
+
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
-					tv.type = std::get<Type>(operands[7]);
-					tv.ir_type = toIrType(std::get<Type>(operands[7]));
+					tv.type = elem_type;
+					tv.ir_type = toIrType(elem_type);
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
 					decl_op.initializer = std::move(tv);
@@ -2662,6 +2670,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), binding_token));
 
+					// Mark element_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
+					setTempVarMetadata(element_addr,
+						TempVarMetadata::makeAddressOnly(array_element_type, SizeInBits{array_element_size}, ValueCategory::LValue));
+
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
@@ -3079,6 +3091,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
+
+				// Mark member_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
+				setTempVarMetadata(member_addr,
+					TempVarMetadata::makeAddressOnly(member.type, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
 
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
