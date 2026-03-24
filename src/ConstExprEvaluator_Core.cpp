@@ -1847,29 +1847,23 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	// Recursively evaluate the initializer
 	auto evaluateIdentifierInitializer = [&]() -> EvalResult {
-		if (initializer->is<ExpressionNode>()) {
-			return evaluate(initializer.value(), context);
-		}
-
 		if (initializer->is<ConstructorCallNode>()) {
 			return evaluate_constructor_call(initializer->as<ConstructorCallNode>(), context);
 		}
 
-		if (!initializer->is<InitializerListNode>() ||
-			!var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
-			return evaluate(initializer.value(), context);
-		}
-
-		const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
-			type_spec.type_index().is_valid() &&
-			type_spec.type_index().value < gTypeInfo.size()) {
-			if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
-				return materialize_aggregate_object_value(
-					struct_info,
-					type_spec.type_index(),
-					initializer->as<InitializerListNode>(),
-					context);
+		if (initializer->is<InitializerListNode>() &&
+			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+				type_spec.type_index().is_valid() &&
+				type_spec.type_index().value < gTypeInfo.size()) {
+				if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
+					return materialize_aggregate_object_value(
+						struct_info,
+						type_spec.type_index(),
+						initializer->as<InitializerListNode>(),
+						context);
+				}
 			}
 		}
 
