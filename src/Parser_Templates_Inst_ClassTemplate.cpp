@@ -31,8 +31,8 @@ static StringHandle computeInstantiatedLookupName(
 					return StringTable::getOrInternStringHandle(
 						StringBuilder().append("operator ").append(type_name).commit());
 				}
-				// User-defined type (struct/enum)
-				if (substituted_return_type == Type::Struct && substituted_return_type_index.is_valid()
+				// User-defined type (struct/enum/any named type with a valid TypeIndex)
+				if (substituted_return_type_index.is_valid()
 				    && substituted_return_type_index.value < gTypeInfo.size()) {
 					std::string_view udt_name = StringTable::getStringView(
 						gTypeInfo[substituted_return_type_index.value].name());
