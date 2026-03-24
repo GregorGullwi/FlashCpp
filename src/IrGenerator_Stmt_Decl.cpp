@@ -528,7 +528,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-					if (type_node.type() == Type::Struct && !decl.is_array() && !type_node.is_array()
+					if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) && !decl.is_array() && !type_node.is_array()
 						&& type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
 						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index().value].getStructInfo();
 						if (struct_info_ptr) {
@@ -548,7 +548,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if (type_node.type() == Type::Struct && type_node.type_index().is_valid() &&
+						if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) && type_node.type_index().is_valid() &&
 							type_node.type_index().value < gTypeInfo.size()) {
 							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index().value].getStructInfo();
 							if (elem_struct) {
@@ -586,8 +586,22 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					const TypeInfo& ti = gTypeInfo[type_node.type_index().value];
 					const StructTypeInfo* si = ti.getStructInfo();
 					bool ctor_evaluated = false;
-					if (si && !ctor_call.arguments().empty()) {
-						// Find matching constructor
+					if (si) {
+						// Try the constexpr evaluator first — handles all member types
+						// (int, float, double, nested structs) correctly via packStructEvalResultIntoInitData.
+						auto constexpr_ctx = makeStaticStorageEvalContext();
+						auto constexpr_result = ConstExpr::Evaluator::evaluate(init_node, constexpr_ctx);
+						if (constexpr_result.success() && !constexpr_result.object_member_bindings.empty()) {
+							op.is_initialized = true;
+							op.init_data.resize(si->total_size, 0);
+							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *si, constexpr_result, 0, 0);
+							ctor_evaluated = true;
+						}
+					}
+					if (!ctor_evaluated && si && !ctor_call.arguments().empty()) {
+						// Fallback manual path: resolves the constructor and evaluates member initializers.
+						// Used when the constexpr evaluator cannot fully evaluate (e.g., non-constexpr constructors
+						// with compile-time-known arguments). Uses evalResultMemberToRaw for correct float/double handling.
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
 						if (parser_) {
 							std::vector<TypeSpecifierNode> arg_types;
@@ -610,7 +624,6 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								matching_ctor = resolution.selected_overload;
 							}
 						}
-
 						if (!matching_ctor) {
 							auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
 							matching_ctor = arity_resolution.selected_overload;
@@ -619,7 +632,6 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 							eval_ctx.local_bindings = &param_bindings;
-							std::unordered_map<std::string_view, long long> param_values;
 							bool args_ok = true;
 							const auto& params = matching_ctor->parameter_nodes();
 							for (size_t ai = 0; ai < params.size(); ++ai) {
@@ -636,7 +648,6 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								}
 								if (arg_result.success()) {
 									param_bindings[param_decl.identifier_token().value()] = arg_result;
-									param_values[param_decl.identifier_token().value()] = arg_result.as_int();
 								} else {
 									args_ok = false;
 									break;
@@ -646,30 +657,22 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								op.is_initialized = true;
 								op.init_data.resize(si->total_size, 0);
 								for (const auto& member : si->members) {
-									long long member_val = 0;
+									unsigned long long member_val = 0;
 									for (const auto& mem_init : matching_ctor->member_initializers()) {
 										if (mem_init.member_name == StringTable::getStringView(member.getName())) {
-											if (mem_init.initializer_expr.is<ExpressionNode>()) {
-												const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
-												if (const auto* identifier = std::get_if<IdentifierNode>(&init_e)) {
-													auto it = param_values.find(identifier->name());
-													if (it != param_values.end()) member_val = it->second;
-												}
-											}
 											auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
-											if (eval_r.success()) member_val = eval_r.as_int();
+											if (eval_r.success()) member_val = evalResultMemberToRaw(eval_r, member.type);
 											break;
 										}
 									}
 									for (size_t bi = 0; bi < member.size && (member.offset + bi) < op.init_data.size(); ++bi) {
-										op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+										op.init_data[member.offset + bi] = static_cast<char>((member_val >> (bi * 8)) & 0xFF);
 									}
 								}
 								ctor_evaluated = true;
 							}
 						}
-					}
-					if (!ctor_evaluated) {
+					}					if (!ctor_evaluated) {
 						// Fallback: zero-initialize for default constructor or failed eval
 						op.is_initialized = true;
 						op.init_data.resize(si ? si->total_size : element_size, 0);
@@ -808,7 +811,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.is_initialized = true;
 						auto ctx = makeStaticStorageEvalContext();
 						auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-						if (type_node.type() == Type::Struct &&
+						if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) &&
 							eval_result.success() &&
 							type_node.type_index().is_valid()) {
 							const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());

@@ -3301,6 +3301,26 @@ EvalResult Evaluator::bind_evaluated_arguments(
 		bindings[param_decl.identifier_token().value()] = arg_result;
 	}
 
+	// Bind default values for parameters not covered by explicit arguments.
+	for (size_t i = arguments.size(); i < parameters.size(); ++i) {
+		const ASTNode& param_node = parameters[i];
+		if (!param_node.is<DeclarationNode>()) {
+			if (skip_invalid_params) continue;
+			return EvalResult::error(std::string(invalid_parameter_error));
+		}
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			if (skip_invalid_params) continue;
+			return EvalResult::error("Missing required argument: " + std::string(param_decl.identifier_token().value()));
+		}
+		EvalResult default_result = evaluate(param_decl.default_value(), context);
+		if (!default_result.success()) {
+			return default_result;
+		}
+		maybe_set_exact_type_from_declaration(default_result, param_decl);
+		bindings[param_decl.identifier_token().value()] = default_result;
+	}
+
 	return EvalResult::from_bool(true);
 }
 

@@ -885,7 +885,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// At global scope with struct types, use ConstructorCallNode for constexpr evaluation.
 			// At block scope, use InitializerListNode consistent with parse_variable_declaration.
 			bool is_global_scope = (gSymbolTable.get_current_scope_type() == ScopeType::Global);
-			if (is_global_scope && type_specifier.type() == Type::Struct) {
+			if (is_global_scope && (type_specifier.type() == Type::Struct ||
+			    (type_specifier.type() == Type::UserDefined && type_specifier.type_index().is_valid()))) {
 				Token paren_token = peek_info();
 				advance(); // consume '('
 				ChunkedVector<ASTNode> arguments;
@@ -907,8 +908,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 				}
 				ASTNode type_node_copy = decl_node.type_node();
-				initializer = ASTNode::emplace_node<ConstructorCallNode>(
-					type_node_copy, std::move(arguments), paren_token);
+				// Wrap ConstructorCallNode in ExpressionNode, matching the convention used
+				// everywhere else in the codebase, so IR path checks work correctly.
+				initializer = ASTNode::emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_node_copy, std::move(arguments), paren_token));
 			} else {
 				auto init_result = parse_direct_initialization();
 				if (init_result.has_value()) {

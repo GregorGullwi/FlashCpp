@@ -228,7 +228,9 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 
 	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
 	if (ctor_candidates.empty()) {
-		return nullptr;
+		// No exact-arity match: fall back to constructors callable with this many args via default params.
+		auto arity_result = resolve_constructor_overload_arity(*struct_info, arguments.size(), false);
+		return arity_result.selected_overload;
 	}
 
 	std::vector<TypeSpecifierNode> arg_types;
