@@ -314,7 +314,7 @@
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, ret_type_idx, false);
+								source_struct_info, return_type, ret_type_idx, isExprConstQualified(*expr_opt));
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
