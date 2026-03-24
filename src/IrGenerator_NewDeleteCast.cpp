@@ -435,7 +435,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{});
+		return withStorage(makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {

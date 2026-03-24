@@ -475,7 +475,7 @@
 				info.size_in_bits.value));
 
 			// Return the temp variable that will hold the loaded value
-			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp}, info.type_index, PointerDepth{});
+			return withStorage(makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp}, info.type_index, PointerDepth{}), ValueStorage::ContainsData);
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the
@@ -522,7 +522,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_name),
 								type_n.type(), size_bits));
 						}
-						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+						return withStorage(makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true), ValueStorage::ContainsData);
 					}
 
 					if (fast_sym->is<DeclarationNode>()) {
@@ -548,7 +548,7 @@
 								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
 								type_n.type(), size_bits));
 						}
-						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
+						return withStorage(makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true), ValueStorage::ContainsData);
 					}
 					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 				}
@@ -831,7 +831,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
+						return withStorage(makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index), ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -921,7 +921,7 @@
 				// Return the temp variable that will hold the loaded value
 				// For pointers and arrays, return 64 bits (pointer size)
 				// Include type_index for struct types
-				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+				return withStorage(makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true), ValueStorage::ContainsData);
 			}
 
 			// Check if this is a reference parameter - if so, we need to dereference it
@@ -1107,7 +1107,7 @@
 
 				// Return the temp variable that will hold the loaded value
 				// Include type_index for struct types
-				return makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true);
+				return withStorage(makeIdentifierResultFromTypeNode(type_node, size_bits, result_temp, true), ValueStorage::ContainsData);
 			} else {
 				// This is a local variable
 
@@ -1227,7 +1227,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
-			return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{});
+			return withStorage(makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 		}
 
 		// Check if it's a TemplateVariableDeclarationNode (variable template)
@@ -1514,12 +1514,12 @@
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-							return makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type)}, IrOperand{deref_temp}, type_index, PointerDepth{});
+							return withStorage(makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type)}, IrOperand{deref_temp}, type_index, PointerDepth{}), ValueStorage::ContainsData);
 						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-						return makeExprResult(static_member->type, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index, PointerDepth{});
+						return withStorage(makeExprResult(static_member->type, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}), ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1598,7 +1598,7 @@
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-					return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{});
+					return withStorage(makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}), ValueStorage::ContainsData);
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
@@ -1638,7 +1638,7 @@
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
-			return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{});
+			return withStorage(makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}), ValueStorage::ContainsData);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {

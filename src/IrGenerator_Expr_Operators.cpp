@@ -327,19 +327,23 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		makeReferenceAddressValue(addr_var);
 	};
 
-	auto tempAlreadyHoldsAddress = [&](TempVar temp_var) {
-		// Explicit annotation: if storage discriminator is set, trust it directly.
+	// Returns true if the TempVar in argument_result already holds a 64-bit address
+	// (i.e., reference binding should MOV, not take the address again).
+	// Checks the explicit ValueStorage field first; falls back to TempVar metadata for
+	// LegacyUnclassified results during the migration to full annotation coverage.
+	auto tempAlreadyHoldsAddress = [&]() {
 		if (argument_result.storage == ValueStorage::ContainsAddress) return true;
 		if (argument_result.storage == ValueStorage::ContainsData)    return false;
-		// LegacyUnclassified — fall back to metadata heuristic.
+		// LegacyUnclassified — fall back to TempVar metadata heuristic.
+		if (!std::holds_alternative<TempVar>(argument_result.value)) return false;
+		const TempVar t = std::get<TempVar>(argument_result.value);
 		auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-		if (metadata_storage.hasMetadata(temp_var)) {
-			const TempVarMetadata metadata = metadata_storage.getMetadata(temp_var);
+		if (metadata_storage.hasMetadata(t)) {
+			const TempVarMetadata metadata = metadata_storage.getMetadata(t);
 			if (metadata.category == ValueCategory::LValue || metadata.category == ValueCategory::XValue) {
 				return true;
 			}
 		}
-
 		return argument_result.size_in_bits == SizeInBits{64} && argument_result.type == Type::Struct;
 	};
 
@@ -405,7 +409,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			setTempVarMetadata(address_temp, std::move(address_meta));
 
 			makeReferenceAddressValue(address_temp);
-		} else if (tempAlreadyHoldsAddress(arg_temp)) {
+		} else if (tempAlreadyHoldsAddress()) {
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
@@ -876,7 +880,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
 				binding.type, binding.size_in_bits.value));
 
-		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{});
+		return withStorage(makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 	};
 
 	auto tryGetGlobalLValueName = [&](const ExprResult& expr_result) -> std::optional<StringHandle> {
@@ -980,7 +984,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					if (is_shift_op && is_floating_point_type(gsi.type))
 						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 
-					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{});
+					ExprResult lhs_operand = withStorage(makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{}), ValueStorage::ContainsData);
 					if (gsi.type != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))

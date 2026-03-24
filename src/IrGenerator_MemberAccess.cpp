@@ -1385,8 +1385,8 @@
 				0            // No offset - the pointer points directly to the target
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
-				PointerDepth{member->pointer_depth});
+			return withStorage(makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+				PointerDepth{member->pointer_depth}), ValueStorage::ContainsAddress);
 		}
 
 		// For reference members in Load context (reading the value):
@@ -1409,8 +1409,8 @@
 			if (isIrStructType(toIrType(member->type)) && member->type_index.is_valid()) {
 				// Return the loaded pointer directly — the next level of member access will
 				// treat it as a pointer-to-struct base (is_pointer_dereference = true).
-				return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, result_var, member->type_index,
-					PointerDepth{member->pointer_depth});
+				return withStorage(makeMemberResult(member->type, SizeInBits{pointee_size_bits}, result_var, member->type_index,
+					PointerDepth{member->pointer_depth}), ValueStorage::ContainsAddress);
 			}
 
 			TempVar deref_var = emitDereference(member->type, 64, 1, IrValue(result_var), Token());

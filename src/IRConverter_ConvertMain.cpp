@@ -6263,7 +6263,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 							is_likely_pointer = false;
 						} else {
 							// LegacyUnclassified — fall back to existing heuristic
-							FLASH_LOG(Codegen, Debug, "handleVariableDecl: LegacyUnclassified storage for TempVar, using heuristic");
+							FLASH_LOG(Codegen, Debug, "handleVariableDecl: LegacyUnclassified storage for TempVar t", temp_var.var_number, ", using heuristic");
 							is_likely_pointer = has_indirect_lvalue || holds_address ||
 							                    (init.size_in_bits == SizeInBits{64} &&
 							                     (isIrStructType(init_ir) || isIrPointerLikeType(init_ir)));
