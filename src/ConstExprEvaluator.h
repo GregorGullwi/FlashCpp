@@ -842,6 +842,14 @@ private:
 		const ASTNode& expr,
 		EvaluationContext& context);
 
+	// Convert an already-evaluated EvalResult to a different target type
+	// (Bool/Int/Uint/Float).  Returns an error for unsupported target types
+	// (e.g. Struct).  Shared across Core and Members TUs.
+	static EvalResult convertEvalResultToTargetType(
+		const TypeSpecifierNode& target_type,
+		const EvalResult& expr_result,
+		const char* invalidTypeErrorStr);
+
 	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);
 	static std::optional<long long> safe_sub(long long a, long long b);

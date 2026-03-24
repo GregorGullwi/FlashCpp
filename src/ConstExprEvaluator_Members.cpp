@@ -2077,36 +2077,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			// Source type unavailable or doesn't match — fall through to the
 			// scalar conversion switch which will error for struct/enum types.
 		}
-		// Apply the target-type conversion (mirrors evaluate_expr_node).
-		switch (type_spec.type()) {
-			case Type::Bool: {
-				EvalResult r = EvalResult::from_bool(inner_result.as_bool());
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			case Type::Char: case Type::Short: case Type::Int:
-			case Type::Long:  case Type::LongLong: {
-				EvalResult r = EvalResult::from_int(inner_result.as_int());
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
-			case Type::UnsignedLong: case Type::UnsignedLongLong: {
-				// Read the source value preserving full bit-width using as_uint_raw()
-				// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
-				const unsigned long long uval = inner_result.as_uint_raw();
-				EvalResult r = EvalResult::from_uint(uval);
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			case Type::Float: case Type::Double: case Type::LongDouble: {
-				EvalResult r = EvalResult::from_double(inner_result.as_double());
-				r.set_exact_type(type_spec);
-				return r;
-			}
-			default:
-				return EvalResult::error("Unsupported type in cast for constant evaluation");
-		}
+		// Apply the target-type conversion using the shared helper (mirrors evaluate_expr_node).
+		return convertEvalResultToTargetType(type_spec, inner_result, "Unsupported type in cast for constant evaluation");
 	}
 
 	// Handle ConstCastNode (const_cast<T>(e)) using the bindings-aware recursive
