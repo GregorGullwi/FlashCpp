@@ -291,8 +291,8 @@ Add a storage discriminator such as:
 
 ```cpp
 enum class ValueStorage {
-Data,
-Address,
+ContainsData,
+ContainsAddress,
 };
 ```
 
@@ -300,20 +300,20 @@ on `TypedValue` (`src/IRTypes_Ops.h:401-429`), with helper constructors in `src/
 
 The critical rule would be:
 
-- `Data`: the slot contains a value; reference binding must materialize/take address as needed
-- `Address`: the slot already contains the address of the object to bind/store through; reference binding must load/copy the stored pointer
+- `ContainsData`: the slot contains a value; reference binding must materialize/take address as needed
+- `ContainsAddress`: the slot already contains the address of the object to bind/store through; reference binding must load/copy the stored pointer
 
 In practice I would strongly prefer a temporary migration state of:
 
 ```cpp
 enum class ValueStorage {
-Unknown,
-Data,
-Address,
+LegacyUnclassified,
+ContainsData,
+ContainsAddress,
 };
 ```
 
-with `handleVariableDecl` asserting or logging on `Unknown` once the migration is underway.
+with `handleVariableDecl` asserting or logging on `LegacyUnclassified` once the migration is underway.
 
 ## Files / call sites likely affected
 
@@ -362,19 +362,19 @@ Option A only removes the need to abuse that metadata as the *sole* carrier of "
 
 It directly attacks the real failure mode: the converter would stop inferring address-ness from backend heuristics and would instead read an IR-authored fact.
 
-However, the migration should be designed so omissions are visible. If `ValueStorage` defaults silently to `Data`, a missed annotation could still regress correctness. That is why `Unknown` during migration is safer than going straight to a silent default.
+However, the migration should be designed so omissions are visible. If `ValueStorage` defaults silently to `ContainsData`, a missed annotation could still regress correctness. That is why `LegacyUnclassified` during migration is safer than going straight to a silent default.
 
 ## Migration path that can keep tests green
 
 A safe incremental path is:
 
-1. Add `ValueStorage::Unknown/Data/Address` to `TypedValue`
-2. Default all existing helper-created `TypedValue`s to `Data`
+1. Add `ValueStorage::LegacyUnclassified/ContainsData/ContainsAddress` to `TypedValue`
+2. Default all existing helper-created `TypedValue`s to `ContainsData`
 3. Teach `handleVariableDecl` to:
-   - prefer `storage == Address` / `Data`
-   - temporarily fall back to existing metadata + heuristic only for `Unknown`
+   - prefer `storage == ContainsAddress` / `ContainsData`
+   - temporarily fall back to existing metadata + heuristic only for `LegacyUnclassified`
 4. Annotate the known address producers/copy-address sites one family at a time
-5. Once all audited sites are covered, delete the heuristic fallback and treat `Unknown` as an internal error in reference-init code
+5. Once all audited sites are covered, delete the heuristic fallback and treat `LegacyUnclassified` as an internal error in reference-init code
 
 That migration can be kept test-green throughout because behavior only flips from heuristic to explicit on audited sites.
 
@@ -475,7 +475,7 @@ I do **not** recommend Option B as the primary fix by itself, because it only re
 
 ### Best practical recommendation
 
-1. Implement **Option A** (preferably with `Unknown/Data/Address` during migration)
+1. Implement **Option A** (preferably with `LegacyUnclassified/ContainsData/ContainsAddress` during migration)
 2. Once the storage bit is authoritative and the heuristic is gone, optionally add **Option B** later as a readability/maintainability cleanup for the current pointer-copy use of `AssignmentOp`
 
 That sequencing gives correctness first and opcode hygiene second.
@@ -486,15 +486,15 @@ That sequencing gives correctness first and opcode hygiene second.
 
 - Add `ValueStorage` to `TypedValue` in `src/IRTypes_Ops.h`
 - Initialize it in every `makeTypedValue(...)` / `toTypedValue(...)` helper in `src/IROperandHelpers.h`
-- Start with `Unknown` or `Data` by default; `Unknown` is safer during migration
+- Start with `LegacyUnclassified` or `ContainsData` by default; `LegacyUnclassified` is safer during migration
 
 ### Phase 2: teach reference initialization to use the explicit bit
 
 In `src/IRConverter_ConvertMain.cpp:6221-6252`, replace the current temp-init branch with logic of the form:
 
 - if source is known reference/address metadata -> `MOV`
-- else if `init.storage == ValueStorage::Address` -> `MOV`
-- else if `init.storage == ValueStorage::Data` -> `LEA`
+- else if `init.storage == ValueStorage::ContainsAddress` -> `MOV`
+- else if `init.storage == ValueStorage::ContainsData` -> `LEA`
 - else -> temporary compatibility fallback / assertion during migration
 
 The key point is that the heuristic disappears from the final state.
@@ -563,4 +563,4 @@ Again: this is worth doing **after** the real correctness source-of-truth proble
 - `CopyReferenceOp` is a good cleanup, but it is too narrow to solve the full problem alone
 - The smallest complete architectural fix is to make storage kind explicit in the IR data flow that reaches `handleVariableDecl`
 
-**Recommendation: choose Option A as the primary fix, with an assertive migration (`Unknown -> Address/Data`), and treat Option B as a later cleanup rather than the main solution.**
+**Recommendation: choose Option A as the primary fix, with an assertive migration (`LegacyUnclassified -> ContainsAddress/ContainsData`), and treat Option B as a later cleanup rather than the main solution.**
