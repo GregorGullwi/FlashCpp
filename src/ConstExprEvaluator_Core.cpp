@@ -63,7 +63,7 @@ namespace {
 		}
 	}
 
-	EvalResult convertEvaluatedExprToType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
+	EvalResult convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
 		switch (target_type.type()) {
 			case Type::Bool:
 			{
@@ -108,14 +108,18 @@ namespace {
 		}
 	}
 
-	bool constCastTypesMatchIgnoringCv(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	bool typesMatchIgnoringCvImpl(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs, bool compare_reference_qualifier) {
 		if (lhs.type() != rhs.type() ||
 			lhs.type_index() != rhs.type_index() ||
-			lhs.reference_qualifier() != rhs.reference_qualifier() ||
 			lhs.pointer_depth() != rhs.pointer_depth() ||
 			lhs.array_dimensions() != rhs.array_dimensions() ||
 			lhs.has_member_class() != rhs.has_member_class() ||
 			lhs.has_function_signature() != rhs.has_function_signature()) {
+			return false;
+		}
+
+		if (compare_reference_qualifier &&
+			lhs.reference_qualifier() != rhs.reference_qualifier()) {
 			return false;
 		}
 
@@ -129,9 +133,7 @@ namespace {
 			if (lhs_sig.return_type != rhs_sig.return_type ||
 				lhs_sig.parameter_types != rhs_sig.parameter_types ||
 				lhs_sig.linkage != rhs_sig.linkage ||
-				lhs_sig.class_name != rhs_sig.class_name ||
-				lhs_sig.is_const != rhs_sig.is_const ||
-				lhs_sig.is_volatile != rhs_sig.is_volatile) {
+				lhs_sig.class_name != rhs_sig.class_name) {
 				return false;
 			}
 		}
@@ -139,37 +141,15 @@ namespace {
 		return true;
 	}
 
-	bool castTypesMatchIgnoringCvRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		if (lhs.type() != rhs.type() ||
-			lhs.type_index() != rhs.type_index() ||
-			lhs.pointer_depth() != rhs.pointer_depth() ||
-			lhs.array_dimensions() != rhs.array_dimensions() ||
-			lhs.has_member_class() != rhs.has_member_class() ||
-			lhs.has_function_signature() != rhs.has_function_signature()) {
-			return false;
-		}
-
-		if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
-			return false;
-		}
-
-		if (lhs.has_function_signature()) {
-			const FunctionSignature& lhs_sig = lhs.function_signature();
-			const FunctionSignature& rhs_sig = rhs.function_signature();
-			if (lhs_sig.return_type != rhs_sig.return_type ||
-				lhs_sig.parameter_types != rhs_sig.parameter_types ||
-				lhs_sig.linkage != rhs_sig.linkage ||
-				lhs_sig.class_name != rhs_sig.class_name ||
-				lhs_sig.is_const != rhs_sig.is_const ||
-				lhs_sig.is_volatile != rhs_sig.is_volatile) {
-				return false;
-			}
-		}
-
-		return true;
+	bool typesMatchIgnoringCvQualifiers(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		return typesMatchIgnoringCvImpl(lhs, rhs, true);
 	}
 
-	std::optional<TypeSpecifierNode> tryGetCastSourceType(
+	bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		return typesMatchIgnoringCvImpl(lhs, rhs, false);
+	}
+
+	std::optional<TypeSpecifierNode> tryGetExpressionType(
 		const EvalResult& result,
 		const ASTNode& expr,
 		EvaluationContext& context) {
@@ -1468,14 +1448,14 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 		return result;
 	}
 
-	if (auto source_type = tryGetCastSourceType(result, cast_node.expr(), context);
+	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
 		source_type.has_value() &&
-		castTypesMatchIgnoringCvRef(type_spec, *source_type)) {
+		typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 		maybe_set_exact_type(result, type_spec);
 		return result;
 	}
 
-	return convertEvaluatedExprToType(type_spec, result, "Unsupported type in static_cast for constant evaluation");
+	return convertEvalResultToTargetType(type_spec, result, "Unsupported type in static_cast for constant evaluation");
 }
 
 EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, EvaluationContext& context) {
@@ -1493,9 +1473,9 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 		return result;
 	}
 
-	if (auto source_type = tryGetCastSourceType(result, cast_node.expr(), context);
+	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
 		source_type.has_value() &&
-		!constCastTypesMatchIgnoringCv(target_type, *source_type)) {
+		!typesMatchIgnoringCvQualifiers(target_type, *source_type)) {
 		return EvalResult::error(
 			"const_cast in constant expression may only change cv-qualification",
 			EvalErrorType::NotConstantExpression);
@@ -1731,7 +1711,7 @@ EvalResult Evaluator::evaluate_expr_node(const TypeSpecifierNode& target_type, c
 		return expr_result;
 	}
 
-	return convertEvaluatedExprToType(target_type, expr_result, invalidTypeErrorStr);
+	return convertEvalResultToTargetType(target_type, expr_result, invalidTypeErrorStr);
 }
 
 EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context) {
@@ -1870,32 +1850,37 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	// Recursively evaluate the initializer
-	EvalResult result;
-	if (initializer->is<ExpressionNode>()) {
-		result = evaluate(initializer.value(), context);
-	} else if (initializer->is<ConstructorCallNode>()) {
-		result = evaluate_constructor_call(initializer->as<ConstructorCallNode>(), context);
-	} else if (initializer->is<InitializerListNode>() &&
-		var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+	auto evaluateIdentifierInitializer = [&]() -> EvalResult {
+		if (initializer->is<ExpressionNode>()) {
+			return evaluate(initializer.value(), context);
+		}
+
+		if (initializer->is<ConstructorCallNode>()) {
+			return evaluate_constructor_call(initializer->as<ConstructorCallNode>(), context);
+		}
+
+		if (!initializer->is<InitializerListNode>() ||
+			!var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			return evaluate(initializer.value(), context);
+		}
+
 		const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
 		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 			type_spec.type_index().is_valid() &&
 			type_spec.type_index().value < gTypeInfo.size()) {
 			if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
-				result = materialize_aggregate_object_value(
+				return materialize_aggregate_object_value(
 					struct_info,
 					type_spec.type_index(),
 					initializer->as<InitializerListNode>(),
 					context);
-			} else {
-				result = evaluate(initializer.value(), context);
 			}
-		} else {
-			result = evaluate(initializer.value(), context);
 		}
-	} else {
-		result = evaluate(initializer.value(), context);
-	}
+
+		return evaluate(initializer.value(), context);
+	};
+
+	EvalResult result = evaluateIdentifierInitializer();
 	if (!result.success()) {
 		return result;
 	}
