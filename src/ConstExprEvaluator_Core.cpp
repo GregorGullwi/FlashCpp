@@ -203,6 +203,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_static_cast(*static_cast_node, context);
 	}
 
+	// For ConstCastNode (const_cast<Type>(expr))
+	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+		return evaluate_const_cast(*const_cast_node, context);
+	}
+
 	// For ArraySubscriptNode (e.g., arr[0] or obj.data[1])
 	if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
 		return evaluate_array_subscript(*array_subscript, context);
@@ -1340,6 +1345,25 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	
 	// Evaluate the expression being cast
 	return evaluate_expr_node(type_spec, cast_node.expr(), context, "Unsupported type in static_cast for constant evaluation");
+}
+
+EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, EvaluationContext& context) {
+	// Evaluate const_cast<Type>(expr) in constant expressions.
+	// Constexpr evaluation preserves the underlying value/pointer/object identity;
+	// only the target cv/reference-qualified type metadata changes.
+	const ASTNode& type_node = cast_node.target_type();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Const cast without valid type specifier");
+	}
+
+	const TypeSpecifierNode& target_type = type_node.as<TypeSpecifierNode>();
+	EvalResult result = evaluate(cast_node.expr(), context);
+	if (!result.success()) {
+		return result;
+	}
+
+	maybe_set_exact_type(result, target_type);
+	return result;
 }
 
 // Helper: default-initialize a value of the given type (used by new-expression evaluation).
