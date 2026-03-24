@@ -310,7 +310,18 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
-				substituted_args.push_back(substituteTemplateParameters(constructor_call.arguments()[i], template_params, template_args));
+				const ASTNode& arg = constructor_call.arguments()[i];
+				bool expanded = false;
+				if (arg.is<ExpressionNode>()) {
+					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+						expanded = expandPackExpansionArgs(
+							*pack_expansion_expr, template_params, template_args, substituted_args);
+					}
+				}
+				if (!expanded) {
+					substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
+				}
 			}
 			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
 		} else if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {

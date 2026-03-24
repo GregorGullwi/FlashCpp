@@ -2721,19 +2721,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Check for pack expansion (...) after the argument in variadic template function calls
-				// Only expand if the argument is an identifier matching a known pack parameter name
-				if (peek() == "..."_tok && !pack_param_info_.empty() && !args.empty()) {
-					// Check if the last argument is an identifier matching a pack parameter
+				if (peek() == "..."_tok && !args.empty()) {
+					// Check if the last argument is an identifier matching a known pack parameter name
 					const PackParamInfo* matching_pack = nullptr;
-					ASTNode& last_arg = args[args.size() - 1];
-					if (last_arg.is<ExpressionNode>()) {
-						const auto& expr = last_arg.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(expr)) {
-							const auto& id = std::get<IdentifierNode>(expr);
-							for (const auto& pack_info : pack_param_info_) {
-								if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
-									matching_pack = &pack_info;
-									break;
+					if (!pack_param_info_.empty()) {
+						ASTNode& last_arg = args[args.size() - 1];
+						if (last_arg.is<ExpressionNode>()) {
+							const auto& expr = last_arg.as<ExpressionNode>();
+							if (std::holds_alternative<IdentifierNode>(expr)) {
+								const auto& id = std::get<IdentifierNode>(expr);
+								for (const auto& pack_info : pack_param_info_) {
+									if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
+										matching_pack = &pack_info;
+										break;
+									}
 								}
 							}
 						}
