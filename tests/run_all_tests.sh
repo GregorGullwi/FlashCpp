@@ -332,6 +332,7 @@ for base in "${TEST_FILES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
     if [ ! -f "$result_file" ]; then
         COMPILE_FAIL+=("$base (no result)")
+        COMPILE_FAIL_DETAILS+=("")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
@@ -391,6 +392,7 @@ for base in "${FAIL_FILES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
     if [ ! -f "$result_file" ]; then
         FAIL_BAD+=("$base (no result)")
+        FAIL_BAD_DETAILS+=("")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
