@@ -49,7 +49,7 @@ with any novel IR types that might be produced.  The architectural root cause is
 
 ## Implementation progress (as of 2026-03-24)
 
-All phases are complete.  All 1 734 tests pass.
+Phases 1–6 are complete.  Phase 7 remains pending.  All 1 736 tests pass.
 
 ### Phase 1 — complete
 
@@ -128,6 +128,8 @@ a separate concern from `ExprResult.storage` and is not yet redundant.
 
 ### Remaining work
 
+- **Phase 7:** restrict `indirect_stack_info_` writes to named variables / `TempVar{0}` only after
+  auditing all naked `getIndirectStackInfo(offset)` call sites (see §11.2).
 - **Option B** (optional readability): add `CopyReferenceOp` opcode (see §9).
 
 ---
@@ -196,13 +198,15 @@ guesses when neither is seeded.
 
 ### 1B. Correctly tracked — metadata set in generator
 
-#### `CallOp` / `IndirectCallOp` when callee returns `T&` or `T&&`
+#### `CallOp` / `VirtualCallOp` when callee returns `T&` or `T&&`
 - Direct-call path: `setTempVarMetadata(...makeXValue / makeLValue...)` on ret_var
   (`src/IrGenerator_Call_Direct.cpp:1588-1598`)
-- Member / indirect call path: same (`src/IrGenerator_Call_Indirect.cpp:1656-1666`)
-- Status: **generator metadata set**; for `T&&` the converter *also* mirrors via
-  `setIndirectStorageInfo(...)` (`src/IRConverter_ConvertMain.cpp:4491-4498`) — dual tracking
-  already present for rvalue references
+- Member / virtual call path: same (`src/IrGenerator_Call_Indirect.cpp:1656-1666`)
+- Converter seeds the current-function stack map for both direct and virtual reference returns
+  from explicit call-op fields (`returns_reference`, `returns_rvalue_reference`,
+  `referenced_value_size_in_bits`) instead of a T&&-only special case
+- Status: **generator metadata + call-op metadata**; later lowering can reason about call-result
+  slots by TempVar or by current-function stack offset without reconstructing the referent size
 
 #### `MemberLoadOp` for reference members
 - Generator sets `makeLValue / makeXValue` on the result
@@ -595,52 +599,35 @@ that could cause bugs as the compiler grows.
 
 ---
 
-### 11.1 — Bug risk: T&& call-return `holds_address_only` flag is wrong in the stack map
+### 11.1 — Fixed: call-return stack tracking now comes from explicit call-op metadata
 
-**Location:** `src/IRConverter_ConvertMain.cpp:4493-4497`
+**Locations:** `src/IRTypes_Ops.h`, `src/IrGenerator_Call_Direct.cpp`,
+`src/IrGenerator_Call_Indirect.cpp`, `src/IRConverter_ConvertMain.cpp`
 
 ```cpp
-if (call_op.returns_rvalue_reference) {
-    setIndirectStorageInfo(result_offset, ..., is_rvalue_ref=true, holds_address_only=true, TempVar{0});
+if (call_op.returns_reference) {
+    setReferenceInfo(result_offset,
+        call_op.return_type,
+        call_op.referenced_value_size_in_bits.value,
+        call_op.returns_rvalue_reference,
+        TempVar{0});
 }
 ```
 
-For T&& (`rvalue reference`) non-virtual call returns, the converter registers the result slot in
-`indirect_stack_info_` with `holds_address_only=true` ("raw pointer, do not implicitly deref").
+The direct-call fix has now been generalized:
 
-But the generator's shared post-call block (`IrGenerator_Call_Indirect.cpp:1662-1663`) also calls:
+- `CallOp` carries `returns_reference`, `returns_rvalue_reference`, and
+  `referenced_value_size_in_bits`.
+- `VirtualCallOp` carries the same fields.
+- The converter uses those fields to seed the **current-function** stack map for call-result
+  slots via `setReferenceInfo(..., TempVar{0})`.
 
-```cpp
-setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, ...))
-```
+This avoids the old contradiction where the generator modeled a T&& result as a true reference
+while the converter's T&&-only side-table write modeled it as `holds_address_only=true`.
 
-`makeXValue` sets `is_address=true, holds_address_only=false` — a **true reference** that
-*should* be implicitly dereffed when used as an rvalue.
+Coverage now includes:
 
-These two registrations are contradictory:
-
-| Lookup method | Result |
-|---|---|
-| `getReferenceInfo(ret_var, result_offset)` | TempVar checked first → `holds_address_only=false` (correct) |
-| `getIndirectStackInfo(result_offset)` (naked offset) | Stack map only → `holds_address_only=true` (wrong) |
-
-There are ~25 callers of `getIndirectStackInfo(offset)` (naked offset, no TempVar) in the
-converter.  Code paths that query the T&& result slot by offset alone will see
-`holds_address_only=true` and NOT dereference when they should.  For example, the non-reference
-struct-init path at line 6433 would copy the 64-bit pointer value instead of loading the object
-through it.
-
-**Fix (Phase 6):** Remove lines 4493-4497 entirely.
-
-The generator already registers the T&& result in TempVar metadata correctly.  Every code path
-that holds the TempVar can use `getReferenceInfo(ret_var, result_offset)` and get the right
-answer.  The only callers of naked `getIndirectStackInfo(result_offset)` for T&& results would
-then get `nullopt`, which triggers the "not a reference, copy raw value" path — also correct,
-since T&& results are 64-bit addresses and copying the 64-bit value gives the address.
-
-**Before implementing:** add a test that returns T&& from a non-virtual function and then
-initializes both a `T&&` reference variable and a `T` copy variable from that result, to
-confirm the two different code paths produce correct machine code.
+- non-virtual T&& return → `T&&` bind + `T` copy
 
 ---
 

@@ -1487,6 +1487,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits())};
+		call_op.returns_reference =
+			(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+			!return_type.has_function_signature();
+		call_op.referenced_value_size_in_bits = call_op.returns_reference
+			? SizeInBits{getTypeSpecSizeBits(return_type)}
+			: call_op.return_size_in_bits;
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();

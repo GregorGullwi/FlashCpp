@@ -1037,6 +1037,13 @@
 			} else {
 				vcall_op.result.size_in_bits = SizeInBits{return_type.size_in_bits()};
 			}
+			vcall_op.returns_reference =
+				(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+				!return_type.has_function_signature();
+			vcall_op.returns_rvalue_reference = return_type.is_rvalue_reference();
+			vcall_op.referenced_value_size_in_bits = vcall_op.returns_reference
+				? SizeInBits{getTypeSpecSizeBits(return_type)}
+				: vcall_op.result.size_in_bits;
 			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
@@ -1313,6 +1320,13 @@
 			call_op.return_type = return_type.type();
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
 			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
+			call_op.returns_reference =
+				(return_type.is_reference() || return_type.is_rvalue_reference()) &&
+				!return_type.has_function_signature();
+			call_op.referenced_value_size_in_bits = call_op.returns_reference
+				? SizeInBits{getTypeSpecSizeBits(return_type)}
+				: call_op.return_size_in_bits;
+			call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 			call_op.is_member_function = true;
 
 			// Get the actual function declaration to check if it's variadic

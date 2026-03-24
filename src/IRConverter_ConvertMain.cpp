@@ -4488,14 +4488,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					result_offset);
 			}
 
-			// Mirror rvalue-reference call results in the stack-side reference map.
-			// T&& results are true references: callers that read the result by value
-			// must dereference the stored pointer, while callers that need the address
-			// itself still load the pointer from the slot.
-			if (call_op.returns_rvalue_reference) {
-				setIndirectStorageInfo(result_offset, call_op.return_type, call_op.return_size_in_bits.value, true, false, TempVar{0});
+			// Seed current-function stack-side reference tracking for object reference
+			// call results. Some later lowering paths query call-result slots by
+			// offset alone, so they need the call IR to describe whether the returned
+			// 64-bit value is a true object reference and what size object it refers to.
+			// Function references are different: they carry a callable address and must
+			// not be registered as implicitly-dereferenced object references.
+			if (call_op.returns_reference && call_op.return_type != Type::Function) {
+				setReferenceInfo(
+					result_offset,
+					call_op.return_type,
+					call_op.referenced_value_size_in_bits.value,
+					call_op.returns_rvalue_reference,
+					TempVar{0});
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Marked function call result at offset {} as rvalue reference",
+					"Marked function call result at offset {} as reference return",
 					result_offset);
 			}
 
@@ -5474,6 +5481,15 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
 				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.type)}  // dest
 			);
+		}
+
+		if (op.returns_reference && op.result.type != Type::Function) {
+			setReferenceInfo(
+				result_offset,
+				op.result.type,
+				op.referenced_value_size_in_bits.value,
+				op.returns_rvalue_reference,
+				TempVar{0});
 		}
 
 		regAlloc.reset();
