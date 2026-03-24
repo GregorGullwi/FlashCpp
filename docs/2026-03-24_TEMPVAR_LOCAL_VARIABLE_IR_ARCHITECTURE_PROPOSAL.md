@@ -67,7 +67,7 @@ are now marked `ContainsAddress`:
 |---|---|
 | `IrGenerator_Stmt_Decl.cpp` | `ArrayElementAddressOp` (regular ref + structured binding) + `ComputeAddressOp` (structured binding) |
 | `IrGenerator_Expr_Conversions.cpp` | `ComputeAddressOp` (unary `&`), `ArrayElementAddressOp` (unary `&arr[i]`), `BinaryOp Add` (pointer+member offset), `AddressOfMember`, dereference-to-lvalue-reference copy |
-| `IrGenerator_Expr_Primitives.cpp` | `AssignmentOp(dereference=false)` reference-parameter and reference-variable LValueAddress paths |
+| `IrGenerator_Expr_Primitives.cpp` | `AssignmentOp(dereference=false)` reference-parameter and reference-variable LValueAddress paths + `FunctionAddressOp` (function-reference binding) |
 | `IrGenerator_NewDeleteCast.cpp` | `handleRValueReferenceCast` and `handleLValueReferenceCast` |
 | `IrGenerator_Call_Direct.cpp` | reference (`T&`/`T&&`) call returns |
 | `IrGenerator_Call_Indirect.cpp` | reference returns (virtual and non-virtual paths share the same annotation; VirtualCallOp gap from §1C is now closed) |
@@ -93,7 +93,7 @@ Summary of annotated sites per file:
 | `IrGenerator_Expr_Operators.cpp` | 45 | 0 |
 | `IrGenerator_Expr_Conversions.cpp` | 40 | 0 |
 | `IrGenerator_MemberAccess.cpp` | 27 | 2 |
-| `IrGenerator_Expr_Primitives.cpp` | 14 | 2 |
+| `IrGenerator_Expr_Primitives.cpp` | 14 | 3 |
 | `IrGenerator_NewDeleteCast.cpp` | 12 | 1 |
 | `IrGenerator_Call_Indirect.cpp` | 7 | 0 |
 | `IrGenerator_Call_Direct.cpp` | 8 | 0 |
@@ -275,7 +275,7 @@ guesses when neither is seeded.
 | `ConversionOp`, `TypeConversionOp` | No metadata | Treated as data by default |
 | `DereferenceOp` (final load) | No metadata | Loads data from pointer |
 | `GlobalLoadOp` (scalar) | No metadata | Data value |
-| `FunctionAddressOp` | No metadata but is 64-bit pointer | Pointer **data**, not a reference slot |
+| `FunctionAddressOp` | `ContainsAddress` | Function address for reference binding (MOV, not LEA) |
 | `GlobalLoadOp` (`is_array = true`) | No metadata but is 64-bit pointer | Array-decay pointer data |
 | `HeapAllocOp` / `HeapAllocArrayOp` | No metadata | Heap pointer data |
 | `TypeidOp` / pointer `DynamicCastOp` | No metadata | Pointer data |
@@ -514,7 +514,7 @@ enum.  `handleVariableDecl` uses a direct `ContainsAddress` check — no fallbac
 | Site | Status |
 |---|---|
 | `CallOp` / `VirtualCallOp` / `IndirectCallOp` normal returns | ✅ `ContainsData` |
-| `FunctionAddressOp` result | ✅ `ContainsData` |
+| `FunctionAddressOp` result | ✅ `ContainsAddress` (function address for reference binding) |
 | `HeapAllocOp` / `HeapAllocArrayOp` result | ✅ `ContainsData` |
 | `GlobalLoadOp` TempVar results | ✅ `ContainsData` |
 | All arithmetic `BinaryOp` / `UnaryOp` / conversion results | ✅ `ContainsData` |
