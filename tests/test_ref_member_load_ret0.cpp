@@ -1,19 +1,21 @@
 // Regression test for reference member access in Load context.
 // Bug: after MemberAccess loads the stored pointer for a reference member,
 // the IR was missing a Dereference instruction in Load context, causing the
-// raw pointer bits to be used as the value instead of the dereferenced int/double.
+// raw pointer bits to be used as the value instead of the dereferenced value.
 //
 // Also covers: applyConstructorArgConversion now applies pre-bind type conversions
-// for reference parameters (e.g. int → const double&).
+// for reference parameters (e.g. int → const double&, int → const float&).
+//
+// Type coverage: int (various sizes), double, float, enum, struct (const read).
 
-// --- Part 1: const int& member ---
+// --- int& members ---
 struct BoxInt {
 	const int& val;
 	BoxInt(const int& v) : val(v) {}
 	int get() const { return val; }
 };
 
-// --- Part 2: non-const int& member (mutation through reference) ---
+// non-const int& member: mutation must propagate back to the caller
 struct Wrapper {
 	int& r;
 	Wrapper(int& x) : r(x) {}
@@ -22,17 +24,74 @@ struct Wrapper {
 	int get() const { return r; }
 };
 
-// --- Part 3: double& member ---
+// --- double& member ---
 struct BoxDouble {
 	const double& d;
 	BoxDouble(const double& v) : d(v) {}
 	double get() const { return d; }
 };
 
-// --- Part 4: constructor taking const double& from int literal (pre-bind conversion) ---
-struct Sink {
+// --- float& member ---
+struct BoxFloat {
+	const float& f;
+	BoxFloat(const float& v) : f(v) {}
+	float get() const { return f; }
+};
+
+struct WrapFloat {
+	float& f;
+	WrapFloat(float& v) : f(v) {}
+	void twice() { f = f * 2.0f; }
+};
+
+// --- short& member ---
+struct BoxShort {
+	const short& s;
+	BoxShort(const short& v) : s(v) {}
+	short get() const { return s; }
+};
+
+// --- char& member ---
+struct BoxChar {
+	const char& c;
+	BoxChar(const char& v) : c(v) {}
+	char get() const { return c; }
+};
+
+// --- long long& member ---
+struct BoxLL {
+	const long long& v;
+	BoxLL(const long long& x) : v(x) {}
+	long long get() const { return v; }
+};
+
+// --- enum& member ---
+enum Color { Red = 1, Green = 2, Blue = 4 };
+
+struct BoxEnum {
+	const Color& c;
+	BoxEnum(const Color& v) : c(v) {}
+	Color get() const { return c; }
+};
+
+// --- struct (const read through reference member) ---
+struct Point { int x; int y; };
+
+struct BoxPoint {
+	const Point& p;
+	BoxPoint(const Point& v) : p(v) {}
+	int sumXY() const { return p.x + p.y; }
+};
+
+// --- Pre-bind conversions: ctor(const T&) called with convertible source ---
+struct SinkDouble {
 	double stored;
-	Sink(const double& x) : stored(x) {}
+	SinkDouble(const double& x) : stored(x) {}
+};
+
+struct SinkFloat {
+	float stored;
+	SinkFloat(const float& x) : stored(x) {}
 };
 
 int main() {
@@ -57,12 +116,52 @@ int main() {
 	if ((int)(bd.get() * 100) != 314) return 6;
 
 	// Part 4: constructor pre-bind conversion int → const double&
-	Sink s(7);
-	if ((int)s.stored != 7) return 7;
+	SinkDouble sd(7);
+	if ((int)sd.stored != 7) return 7;
 
 	// Part 5: const int& member with int literal arg (temporary materialization)
 	BoxInt lit(99);
 	if (lit.get() != 99) return 8;
+
+	// Part 6: float reference member (read)
+	float fv = 1.5f;
+	BoxFloat bf(fv);
+	if ((int)(bf.get() * 2) != 3) return 9;
+
+	// Part 7: float reference member (mutate)
+	float mf = 4.0f;
+	WrapFloat wf(mf);
+	wf.twice();
+	if ((int)mf != 8) return 10;
+
+	// Part 8: short reference member
+	short sv = 200;
+	BoxShort bs(sv);
+	if (bs.get() != 200) return 11;
+
+	// Part 9: char reference member
+	char cv = 'Z';
+	BoxChar bc(cv);
+	if (bc.get() != 'Z') return 12;
+
+	// Part 10: long long reference member
+	long long llv = 1000000000LL;
+	BoxLL bll(llv);
+	if (bll.get() != 1000000000LL) return 13;
+
+	// Part 11: enum reference member
+	Color col = Green;
+	BoxEnum be(col);
+	if (be.get() != Green) return 14;
+
+	// Part 12: const struct reference member (read)
+	Point pt{3, 7};
+	BoxPoint bp(pt);
+	if (bp.sumXY() != 10) return 15;
+
+	// Part 13: constructor pre-bind conversion int → const float&
+	SinkFloat sf(3);
+	if ((int)sf.stored != 3) return 16;
 
 	return 0;
 }
