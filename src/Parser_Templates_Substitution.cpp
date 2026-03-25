@@ -847,7 +847,17 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_object = substituteTemplateParameters(member_call.object(), template_params, template_args);
 			ChunkedVector<ASTNode> substituted_args;
 			for (const auto& arg : member_call.arguments()) {
-				substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
+				bool expanded = false;
+				if (arg.is<ExpressionNode>()) {
+					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+						expanded = expandPackExpansionArgs(
+							*pack_expansion_expr, template_params, template_args, substituted_args);
+					}
+				}
+				if (!expanded) {
+					substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
+				}
 			}
 			return emplace_node<ExpressionNode>(
 				MemberFunctionCallNode(substituted_object, const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
