@@ -374,6 +374,19 @@
 					// object_name remains empty; expression will be evaluated when needed
 				}
 			}
+		} else if (object_expr && std::holds_alternative<ConstructorCallNode>(*object_expr)) {
+			// Handle temporary constructed via brace/paren-init (e.g., Counter<int,int,int>{}.size())
+			// Set object_type from the constructor's TypeSpecifierNode so the struct-type check below
+			// passes and the object_name.empty() path below correctly evaluates the ConstructorCallNode
+			// to get an addressable TempVar for the 'this' pointer.
+			const ConstructorCallNode& ctor_call = std::get<ConstructorCallNode>(*object_expr);
+			if (ctor_call.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& ctor_type = ctor_call.type_node().as<TypeSpecifierNode>();
+				if (isIrStructType(toIrType(ctor_type.type()))) {
+					object_type = ctor_type;
+					// object_name remains empty; expression will be evaluated when needed
+				}
+			}
 		} else if (object_expr && std::holds_alternative<MemberAccessNode>(*object_expr)) {
 			// Handle member access for function pointer calls
 			// This handles both simple cases like "this->callback" and nested cases like "o.inner.callback"
