@@ -1458,79 +1458,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
 				const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 				
-				Type substituted_return_type = orig_return_type.type();
-				TypeIndex substituted_return_type_index = orig_return_type.type_index();
-				
-				// Check if return type needs substitution (same logic as struct members)
-				bool needs_substitution = (substituted_return_type == Type::UserDefined);
-				if (needs_substitution && !template_args.empty()) {
-					// First, check if this return type refers to a type alias defined in this struct
-					// (e.g., for conversion operators like "operator value_type()" where "using value_type = T;")
-					bool found_type_alias = false;
-					std::string_view return_type_name = orig_return_type.token().value();
-					
-					for (const auto& type_alias : pattern_struct.type_aliases()) {
-						StringHandle alias_name = type_alias.alias_name;
-						if (StringTable::getStringView(alias_name) == return_type_name) {
-							// Found a type alias that matches the return type name
-							// Get what the alias resolves to
-							const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
-							
-							// If the alias resolves to UserDefined (a template parameter), substitute with concrete type
-							if (alias_type_spec.type() == Type::UserDefined && !template_args.empty()) {
-								// The alias refers to a template parameter - substitute with the first template arg
-								// (This handles cases like "using value_type = T;" where T is template param 0)
-								substituted_return_type = template_args[0].base_type;
-								substituted_return_type_index = template_args[0].type_index;
-								found_type_alias = true;
-								FLASH_LOG(Templates, Debug, "Resolved type alias '", return_type_name, 
-									"' in return type to type=", static_cast<int>(substituted_return_type));
-							} else {
-								// The alias resolves to a concrete type
-								substituted_return_type = alias_type_spec.type();
-								substituted_return_type_index = alias_type_spec.type_index();
-								found_type_alias = true;
-							}
-							break;
-						}
-					}
-					
-					// If not a type alias, fall back to substituting with template_args[0]
-					// (for direct template parameter return types like "T")
-					if (!found_type_alias) {
-						substituted_return_type = template_args[0].base_type;
-						substituted_return_type_index = template_args[0].type_index;
-					}
-					
-					// Calculate return type size for the substituted type
-					// Pointers and references are always 64 bits
-					int substituted_return_size_bits;
-					if (orig_return_type.pointer_depth() > 0 || orig_return_type.is_reference() || orig_return_type.is_rvalue_reference()) {
-						substituted_return_size_bits = 64;
-					} else {
-						substituted_return_size_bits = static_cast<int>(get_type_size_bits(substituted_return_type));
-					}
-					
-					// Create a new TypeSpecifierNode with the substituted return type
-					// Use the struct type constructor since we have a type_index
-					TypeSpecifierNode new_return_type(
-						substituted_return_type,
-						substituted_return_type_index,
-						substituted_return_size_bits,
-						orig_return_type.token(),
-						orig_return_type.cv_qualifier()
-					);
-					
-					// Copy pointer levels and reference qualifier from the original
-					new_return_type.copy_indirection_from(orig_return_type);
-				}
+				// Use substitute_template_parameter for return type — handles all params by name,
+				// not just template_args[0].
+				auto [substituted_return_type, substituted_return_type_index] = substitute_template_parameter(
+					orig_return_type, template_params, template_args);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(
 					substituted_return_type,
 					substituted_return_type_index,
-					(orig_return_type.pointer_depth() > 0 || orig_return_type.is_reference() || orig_return_type.is_rvalue_reference())
-						? 64
-						: static_cast<int>(get_type_size_bits(substituted_return_type)),
+					get_substituted_type_size_bits(substituted_return_type, substituted_return_type_index),
 					orig_decl.identifier_token(),
 					orig_return_type.cv_qualifier()
 				);
