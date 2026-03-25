@@ -116,6 +116,7 @@ TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns) {
 TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
     auto& info = gTypeInfo.emplace_back(name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
     info.setNamespaceHandle(ns);
+    info.is_type_alias_ = true;
     info.pointer_depth_ = type_spec.pointer_depth();
     info.reference_qualifier_ = type_spec.reference_qualifier();
     if (type_spec.has_function_signature()) {

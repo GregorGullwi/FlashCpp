@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-25  
-**Status**: Phase 1 (Option A) complete. Phases 2-5 (Option C) pending. Option D evaluated and documented.  
+**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -16,13 +16,13 @@
 | 1 | Make `binaryOperatorUsesTypeIndexIdentity` and `carriesSemanticTypeIndex` delegate to `needs_type_index` | ✅ Done (this PR) |
 | 1 | Add `is_builtin_type(Type)` helper; replace 2 enum-order range checks | ✅ Done (this PR) |
 | 1 | Add canonical `constexpr isArithmeticType`/`isFundamentalType`; deduplicate 3 local copies | ✅ Done (this PR) |
-| 2 | Add `TypeInfo` query helpers (`isStructLike`, `isPrimitive`, `needsTypeIndex`, `isTemplatePlaceholder`) | ⬜ TODO |
-| 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§7.1) | ⬜ TODO |
-| 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ⬜ TODO |
+| 2 | Add `TypeInfo` query helpers (`isStructLike`, `isPrimitive`, `needsTypeIndex`, `isTemplatePlaceholder`) | ✅ Done |
+| 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§7.1) | ✅ Done (`is_type_alias_` flag + `isTypeAlias()`) |
+| 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ✅ Done (`Type::Count_` + static_assert) |
 | 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
 | 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ⬜ TODO |
 | 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ⬜ TODO |
-| 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ⬜ TODO |
+| 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
 | 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ⬜ TODO |
 | 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | ⬜ TODO |
@@ -91,7 +91,7 @@ branch) found multiple ad-hoc ways to ask the same classification question:
 | `isIntegralType(Type)` | `src/AstNodeTypes_TypeSystem.h:461` | integral primitives incl. char types and `Bool` | — |
 | `isFloatingPointType(Type)` | `src/AstNodeTypes_TypeSystem.h:349` | `Float`, `Double`, `LongDouble` | — |
 | `isUnsignedIntegralType(Type)` | `src/AstNodeTypes_TypeSystem.h:353` | unsigned integral types | target-dependent for `WChar` |
-| `is_integral_type(Type)` | `src/OverloadResolution.h:45-47` | `Bool` + integer primitives | duplicate concept to `isIntegralType`; lives in wrong header |
+| `is_integral_type(Type)` | removed from `src/OverloadResolution.h` | `Bool` + integer primitives | **merged into `isIntegralType`** — all call sites updated |
 | `isArithmeticType(Type)` | duplicated in 3 TUs | `Bool` through `LongDouble` | Moved to `AstNodeTypes_TypeSystem.h:449` (this PR); local copies delegate |
 | `isFundamentalType(Type)` | duplicated in 3 TUs | `Void`, `Nullptr`, arithmetic | Moved to `AstNodeTypes_TypeSystem.h:449` (this PR); local copies delegate |
 | `isPlaceholderAutoType(Type)` | `src/AstNodeTypes_TypeSystem.h:322` | `Auto`, `DeclTypeAuto` | — |
@@ -529,18 +529,18 @@ The updated recommendation relative to the previous version of this document:
 
 - [x] **TODO 1**: Add `is_builtin_type(Type)` helper and replace the two range checks in `Parser_Core.cpp:65` and `Parser_Templates_Inst_Deduction.cpp:32`.
 - [x] **TODO 2**: Move `isArithmeticType` and `isFundamentalType` to `AstNodeTypes_TypeSystem.h` as `constexpr` switch-based helpers. Delete the three duplicated local copies.
-- [ ] **TODO 3**: Consolidate `is_integral_type` / `isIntegralType` to one definition in `AstNodeTypes_TypeSystem.h`.
+- [x] **TODO 3**: Consolidate `is_integral_type` / `isIntegralType` to one definition in `AstNodeTypes_TypeSystem.h`. Removed `is_integral_type` from `OverloadResolution.h`; all 5 call sites now use `isIntegralType`.
 
 #### Milestone 2 — Add `TypeInfo` query helpers and resolve `UserDefined` ambiguity (Option C Step A)
 
-- [ ] Add `isStructLike()`, `isPrimitive()`, `needsTypeIndex()`, `isTemplatePlaceholder()` to `TypeInfo` in `AstNodeTypes_DeclNodes.h`.
+- [x] Add `isStructLike()`, `isPrimitive()`, `needsTypeIndex()`, `isTemplatePlaceholder()` to `TypeInfo` in `AstNodeTypes_DeclNodes.h`.
 - [ ] Replace the most redundant `gTypeInfo[idx].type_ == Type::X` patterns with the new helpers. Priority: `TemplateRegistry_Types.h` and `OverloadResolution.h`.
-- [ ] Evaluate splitting `Type::UserDefined` into `TypeAlias` + `UserDefined`, or adding an `is_type_alias` flag to `TypeInfo` (see §7.1). This decision gates the safety of Milestone 3 alias-resolution changes.
-- [ ] Add a `static_assert` enum-count sentinel to catch new `Type` values (see §7.3).
+- [x] Evaluate splitting `Type::UserDefined` into `TypeAlias` + `UserDefined`, or adding an `is_type_alias` flag to `TypeInfo` (see §7.1). Decision: add `is_type_alias_` flag and `isTypeAlias()` method; set in `register_type_alias`. Defer full split to Milestone 7 (TypeCategory).
+- [x] Add a `static_assert` enum-count sentinel to catch new `Type` values (see §7.3). Added `Type::Count_` and `static_assert(static_cast<int>(Type::Count_) == 31, ...)`.
 
 #### Milestone 2.5 — Resolve the `Type::UserDefined` ambiguity (prerequisite for Milestone 3)
 
-- [ ] Decide between option (a) split `UserDefined` into `TypeAlias`/`OpaqueUserType`, option (b) make `resolve_type_alias()` recursive, or option (c) accept and document. See §7.1.
+- [x] Decide between option (a) split `UserDefined` into `TypeAlias`/`OpaqueUserType`, option (b) make `resolve_type_alias()` recursive, or option (c) accept and document. Decision: add `is_type_alias_` flag to `TypeInfo` (intermediate step toward option (a) TypeAlias split in Milestone 7) — `register_type_alias` sets it; `add_user_type` does not.
 - [ ] If option (b): add cycle detection (max-depth guard) and update `resolve_type_alias()` to follow `UserDefined` → `UserDefined` chains. Verify that `buildConversionPlan` still passes all overload resolution tests.
 - [ ] If option (a): define the new enum variants, update `is_struct_type()` and `needs_type_index()`, and migrate call sites incrementally.
 
@@ -554,8 +554,8 @@ The updated recommendation relative to the previous version of this document:
 
 #### Milestone 4 — Settle `Type::Template` (Option C Step D)
 
-- [ ] Add `TypeInfo::isTemplatePlaceholder()` and replace the 6 raw `type_ == Type::Template` comparisons with the helper call.
-- [ ] Document in code why `Type::Template` is not part of `needs_type_index()`.
+- [x] Add `TypeInfo::isTemplatePlaceholder()` and replace the 6 raw `type_ == Type::Template` comparisons with the helper call. Added to `TypeInfo` in `AstNodeTypes_DeclNodes.h`.
+- [x] Document in code why `Type::Template` is not part of `needs_type_index()`. Added comment to `needs_type_index()` in `AstNodeTypes_TypeSystem.h`.
 
 #### Milestone 5 — Audit and narrow remaining raw `Type` consumers
 

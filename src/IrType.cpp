@@ -64,6 +64,7 @@ IrType toIrType(Type semantic_type) {
 		case Type::Function:
 			return IrType::FunctionPointer;
 		case Type::Invalid:
+		case Type::Count_:    // Sentinel — never a real type value
 			return IrType::Void;
 	}
 	assert(false && "Unknown Type value in toIrType");
