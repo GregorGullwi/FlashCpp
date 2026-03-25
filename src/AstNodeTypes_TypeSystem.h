@@ -323,6 +323,48 @@ inline bool isPlaceholderAutoType(Type type) {
 	return type == Type::Auto || type == Type::DeclTypeAuto;
 }
 
+// Type classification model:
+// - Primitive builtins are identified entirely by the Type enum and never need a
+//   gTypeInfo lookup for identity.
+// - Struct, Enum, and UserDefined represent semantic types whose concrete
+//   identity lives in TypeIndex/gTypeInfo.
+// - Type::Template placeholders may also carry a TypeIndex during substitution,
+//   but callers still handle that unresolved case explicitly today instead of
+//   folding it into needs_type_index().
+// - is_struct_type() remains the narrower "struct/class-like object" helper and
+//   intentionally excludes enums and unresolved template placeholders.
+inline bool is_primitive_type(Type type) {
+	switch (type) {
+	case Type::Void:
+	case Type::Bool:
+	case Type::Char:
+	case Type::UnsignedChar:
+	case Type::WChar:
+	case Type::Char8:
+	case Type::Char16:
+	case Type::Char32:
+	case Type::Short:
+	case Type::UnsignedShort:
+	case Type::Int:
+	case Type::UnsignedInt:
+	case Type::Long:
+	case Type::UnsignedLong:
+	case Type::LongLong:
+	case Type::UnsignedLongLong:
+	case Type::Float:
+	case Type::Double:
+	case Type::LongDouble:
+	case Type::Nullptr:
+		return true;
+	default:
+		return false;
+	}
+}
+
+inline bool needs_type_index(Type type) {
+	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
+}
+
 inline bool isIntegralType(Type type) {
 	switch (type) {
 	case Type::Bool:
