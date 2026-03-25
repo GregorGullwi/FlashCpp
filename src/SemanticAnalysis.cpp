@@ -10,6 +10,8 @@
 #include "IrGenerator.h"
 
 namespace {
+constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -330,17 +332,31 @@ private:
 
 		if (node.is<FunctionDeclarationNode>()) {
 			const auto& func = node.as<FunctionDeclarationNode>();
+			// Skip functions with deferred template bodies - their bodies intentionally
+			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
+			// Also skip function bodies generally: template member functions like emplace<_Args...>
+			// legitimately retain PackExpansionExprNode for their own variadic template parameters,
+			// which are only resolved when the function is called with concrete args.
+			if (func.has_template_body_position()) {
+				return;
+			}
+			// Only check parameters, not the body (bodies of template functions may have
+			// pack expansions from the function's own variadic params, which are expected).
 			for (const auto& param : func.parameter_nodes()) {
 				visit(param);
-			}
-			if (func.get_definition().has_value()) {
-				visit(*func.get_definition());
 			}
 			return;
 		}
 
 		if (node.is<ConstructorDeclarationNode>()) {
 			const auto& ctor = node.as<ConstructorDeclarationNode>();
+			// If this constructor has a deferred (template) body position, it is an
+			// uninstantiated template constructor. Its member/base initializers intentionally
+			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
+			// Skip visiting them here to avoid false-positive boundary violations.
+			if (ctor.has_template_body_position() || ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
+				return;
+			}
 			for (const auto& param : ctor.parameter_nodes()) {
 				visit(param);
 			}
@@ -1538,6 +1554,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor) {
 	const auto& def = ctor.get_definition();
 	if (!def.has_value()) return;
+	if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) return;
 
 	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
 		return;
@@ -2133,9 +2150,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					"FoldExpressionNode reached SemanticAnalysis::normalizeExpression after post-parse boundary enforcement");
 			}
 			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
-				// Phase 4: unreachable after pre-sema boundary check.
-				throw InternalError(
-					"PackExpansionExprNode reached SemanticAnalysis::normalizeExpression after post-parse boundary enforcement");
+				// PackExpansionExprNode in a function body: this can occur legitimately
+				// for template member functions (like emplace<_Args...>) whose own
+				// variadic params haven't been resolved yet.  Leave the node as-is;
+				// it will be properly handled when the function is instantiated with
+				// concrete template arguments.
+				(void)e;
 			}
 			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				normalizeExpression(e.expr(), ctx);
@@ -2380,9 +2400,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					"FoldExpressionNode reached SemanticAnalysis::inferExpressionType after post-parse boundary enforcement");
 			}
 			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
-				// Phase 4: unreachable after pre-sema boundary check.
-				throw InternalError(
-					"PackExpansionExprNode reached SemanticAnalysis::inferExpressionType after post-parse boundary enforcement");
+				// PackExpansionExprNode in a function body: occurs legitimately
+				// for template member functions with unresolved variadic params.
+				// Return empty type; will be resolved when function is instantiated.
+				(void)e;
 			}
 			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());

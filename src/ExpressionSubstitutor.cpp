@@ -978,10 +978,12 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
-	if ((type.type() == Type::Template || isPlaceholderAutoType(type.type()) || type.type() == Type::UserDefined) 
-	    && type.type_index().value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type.type_index().value];
-		std::string_view type_name = StringTable::getStringView(type_info.name());
+	if (type.type() == Type::Template || isPlaceholderAutoType(type.type()) || type.type() == Type::UserDefined) {
+		std::string_view type_name = type.token().value();
+		if (type_name.empty() && type.type_index().value < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type.type_index().value];
+			type_name = StringTable::getStringView(type_info.name());
+		}
 		
 		FLASH_LOG(Templates, Debug, "  Type is template parameter: ", type_name);
 		
@@ -1031,7 +1033,9 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			return substituted_type;
 		}
 		
-		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
+		if (!type_name.empty()) {
+			FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
+		}
 	}
 	
 	// Check if this is a struct/class type that might have template arguments

@@ -2226,10 +2226,47 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 
-        // Check if this is a registered struct type (considering current namespace context)
-        StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
-        const TypeInfo* type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
-        if (type_info_ctx && type_info_ctx->isStruct()) {
+		// Check if this is a registered struct type (considering current namespace context)
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+
+		// Before the global lookup, try struct-scoped typedef lookup.
+		// When multiple template specializations (e.g., char_traits<char> and char_traits<wchar_t>)
+		// each define a member typedef with the same simple name (e.g., char_type), both
+		// registrations insert into gTypesByName with the simple key.  gTypesByName.emplace()
+		// won't overwrite, so only the FIRST specialization's entry survives under the simple key.
+		// This causes a wrong-type error (e.g., wchar_t body resolves char_type to char).
+		// Fix: prefer the struct-qualified name "StructName::type_name" when we are inside a
+		// member-function or struct-parsing context.
+		auto tryStructScopedTypeAlias = [&]() -> const TypeInfo* {
+			auto tryName = [&](std::string_view struct_name) -> const TypeInfo* {
+				if (struct_name.empty()) return nullptr;
+				StringBuilder sb;
+				StringHandle qualified = StringTable::getOrInternStringHandle(
+					sb.append(struct_name).append("::").append(type_name).commit());
+				auto it = gTypesByName.find(qualified);
+				if (it == gTypesByName.end()) return nullptr;
+				const TypeInfo* info = it->second;
+				// Only accept concrete typedef entries (non-struct, non-placeholder)
+				if (info->isStruct() || info->is_incomplete_instantiation_) return nullptr;
+				return info;
+			};
+			// Innermost member function context takes priority
+			for (auto it = member_function_context_stack_.rbegin();
+				 it != member_function_context_stack_.rend(); ++it) {
+				std::string_view sname = StringTable::getStringView(it->struct_name);
+				if (const TypeInfo* found = tryName(sname)) return found;
+			}
+			// Then struct-parsing context stack
+			for (auto it = struct_parsing_context_stack_.rbegin();
+				 it != struct_parsing_context_stack_.rend(); ++it) {
+				if (const TypeInfo* found = tryName(it->struct_name)) return found;
+			}
+			return nullptr;
+		};
+
+		const TypeInfo* struct_scoped = tryStructScopedTypeAlias();
+		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
+		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
 			const TypeInfo* original_type_info = type_info_ctx;  // Keep reference to original for checking ref qualifiers
 			const TypeInfo* struct_type_info = type_info_ctx;

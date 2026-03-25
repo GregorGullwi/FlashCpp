@@ -2721,19 +2721,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Check for pack expansion (...) after the argument in variadic template function calls
-				// Only expand if the argument is an identifier matching a known pack parameter name
-				if (peek() == "..."_tok && !pack_param_info_.empty() && !args.empty()) {
-					// Check if the last argument is an identifier matching a pack parameter
+				if (peek() == "..."_tok && !args.empty()) {
+					// Check if the last argument is an identifier matching a known pack parameter name
 					const PackParamInfo* matching_pack = nullptr;
-					ASTNode& last_arg = args[args.size() - 1];
-					if (last_arg.is<ExpressionNode>()) {
-						const auto& expr = last_arg.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(expr)) {
-							const auto& id = std::get<IdentifierNode>(expr);
-							for (const auto& pack_info : pack_param_info_) {
-								if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
-									matching_pack = &pack_info;
-									break;
+					if (!pack_param_info_.empty()) {
+						ASTNode& last_arg = args[args.size() - 1];
+						if (last_arg.is<ExpressionNode>()) {
+							const auto& expr = last_arg.as<ExpressionNode>();
+							if (std::holds_alternative<IdentifierNode>(expr)) {
+								const auto& id = std::get<IdentifierNode>(expr);
+								for (const auto& pack_info : pack_param_info_) {
+									if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
+										matching_pack = &pack_info;
+										break;
+									}
 								}
 							}
 						}
@@ -3857,7 +3858,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 								
 								// Non-dependent template arguments - instantiate the class template
-								try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+								// Add returned StructDeclarationNode to ast_nodes_ so visitStructDeclarationNode
+								// is called during codegen and member function bodies get generated.
+								{
+									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
+										ast_nodes_.push_back(*instantiated_struct);
+									}
+								}
 								
 								// Build the instantiated type name to look up the type
 								std::string_view instantiated_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
@@ -3936,7 +3944,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								std::string_view instantiated_type_name = get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
 								
 								// Try to instantiate the class template (may fail for dependent args, which is OK)
-								try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+								// Add returned StructDeclarationNode to ast_nodes_ so member function bodies get generated.
+								{
+									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
+									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
+										ast_nodes_.push_back(*instantiated_struct);
+									}
+								}
 								
 								// Consume '(' and parse constructor arguments
 								advance(); // consume '('
@@ -3965,9 +3979,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 								
 								// Create TypeSpecifierNode for the instantiated template type
+								// Look up the type to get the proper TypeIndex and size for mangling
 								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 								                      identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-								auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+								auto inst_type_handle = StringTable::getOrInternStringHandle(instantiated_type_name);
+								auto inst_type_it = gTypesByName.find(inst_type_handle);
+								ASTNode type_spec_node;
+								if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+									const TypeInfo& inst_type_info = *inst_type_it->second;
+									TypeIndex inst_type_index = inst_type_info.type_index_;
+									int inst_type_size = 0;
+									if (inst_type_info.struct_info_) {
+										inst_type_size = static_cast<int>(inst_type_info.struct_info_->total_size * 8);
+									}
+									type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, inst_type_index, inst_type_size, inst_type_token);
+								} else {
+									// Type not found yet (e.g. dependent/incomplete); size 0 is the standard placeholder
+									type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+								}
 								
 								// Create ConstructorCallNode for functional-style cast
 								result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));

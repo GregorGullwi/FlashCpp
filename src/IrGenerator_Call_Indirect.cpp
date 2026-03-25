@@ -374,6 +374,19 @@
 					// object_name remains empty; expression will be evaluated when needed
 				}
 			}
+		} else if (object_expr && std::holds_alternative<ConstructorCallNode>(*object_expr)) {
+			// Handle temporary constructed via brace/paren-init (e.g., Counter<int,int,int>{}.size())
+			// Set object_type from the constructor's TypeSpecifierNode so the struct-type check below
+			// passes and the object_name.empty() path below correctly evaluates the ConstructorCallNode
+			// to get an addressable TempVar for the 'this' pointer.
+			const ConstructorCallNode& ctor_call = std::get<ConstructorCallNode>(*object_expr);
+			if (ctor_call.type_node().is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& ctor_type = ctor_call.type_node().as<TypeSpecifierNode>();
+				if (isIrStructType(toIrType(ctor_type.type()))) {
+					object_type = ctor_type;
+					// object_name remains empty; expression will be evaluated when needed
+				}
+			}
 		} else if (object_expr && std::holds_alternative<MemberAccessNode>(*object_expr)) {
 			// Handle member access for function pointer calls
 			// This handles both simple cases like "this->callback" and nested cases like "o.inner.callback"
@@ -1142,9 +1155,14 @@
 					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));
 				} else {
 					// Regular member function (not a template) - generate proper mangled name
-					// Use the function declaration from struct_info if available (has correct parameters)
+					// Prefer the function declaration from struct_info (has correctly substituted
+					// parameter types for template instantiations). The MemberFunctionCallNode's
+					// embedded func_decl may still reference the unsubstituted pattern declaration
+					// (e.g., with T& instead of int&) because MemberFunctionCallNode stores a
+					// const reference that cannot be rebound during template substitution.
 					const FunctionDeclarationNode* func_for_mangling = &func_decl;
-					if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+					if (called_member_func &&
+						called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
 
@@ -1318,11 +1336,10 @@
 			call_op.is_member_function = true;
 
 			// Get the actual function declaration to check if it's variadic
-			const FunctionDeclarationNode* actual_func_decl_for_variadic = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode* actual_func_decl_for_variadic = &func_decl;
+			if (called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
-			} else {
-				actual_func_decl_for_variadic = &func_decl;
 			}
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 
@@ -1400,12 +1417,15 @@
 			// Generate IR for function arguments and add to CallOp
 			size_t arg_index = 0;
 
-			// Get the actual function declaration with parameters from struct_info if available
-			const FunctionDeclarationNode* actual_func_decl = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			// Prefer the function declaration embedded in the MemberFunctionCallNode.
+			// For member function templates, this is the instantiated declaration and
+			// carries any substituted default arguments from the outer class template
+			// bindings. struct_info may still point at the original uninstantiated
+			// template declaration.
+			const FunctionDeclarationNode* actual_func_decl = &func_decl;
+			if (called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
-			} else {
-				actual_func_decl = &func_decl;
 			}
 
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {

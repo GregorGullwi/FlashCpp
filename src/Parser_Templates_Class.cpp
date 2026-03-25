@@ -1444,13 +1444,40 @@ ParseResult Parser::parse_template_declaration() {
 			// For now, we'll parse a simple class body
 			AccessSpecifier current_access = struct_ref.default_access();
 
-			// Set up member function context so functions know they're in a class
+			// Set up member function context so functions know they're in a class.
+			// RAII guard ensures the stack entry is always popped, even on early returns.
 			member_function_context_stack_.push_back({
 				instantiated_name,
 				struct_type_info.type_index_,
 				&struct_ref,
 				nullptr  // local_struct_info - not needed during template instantiation
 			});
+			auto pop_member_ctx_guard = [this](void*) {
+				if (!member_function_context_stack_.empty())
+					member_function_context_stack_.pop_back();
+			};
+			std::unique_ptr<void, decltype(pop_member_ctx_guard)> member_ctx_scope(
+				reinterpret_cast<void*>(1), pop_member_ctx_guard);
+
+			// Set up struct parsing context so member typedef/using registrations
+			// build struct-qualified names (e.g., "SpecName$HASH::char_type").
+			// Without this, member typedefs from different specializations of the same
+			// template (e.g., char_traits<char>::char_type and char_traits<wchar_t>::char_type)
+			// both register under the simple name "char_type" and only the first survives.
+			// RAII guard ensures the stack entry is always popped, even on early returns.
+			struct_parsing_context_stack_.push_back({
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info.get(),
+				gSymbolTable.get_current_namespace_handle(),
+				{}
+			});
+			auto pop_struct_ctx_guard = [this](void*) {
+				if (!struct_parsing_context_stack_.empty())
+					struct_parsing_context_stack_.pop_back();
+			};
+			std::unique_ptr<void, decltype(pop_struct_ctx_guard)> struct_ctx_scope(
+				reinterpret_cast<void*>(1), pop_struct_ctx_guard);
 
 			while (!peek().is_eof() && peek() != "}"_tok) {
 				// Skip empty declarations (bare ';' tokens) - valid in C++
@@ -1724,8 +1751,12 @@ ParseResult Parser::parse_template_declaration() {
 										if (auto arg_node = arg_result.node()) {
 											// Check for pack expansion: expr...
 											if (peek() == "..."_tok) {
+												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
-												// Mark this as a pack expansion - actual expansion happens at instantiation
+												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+													PackExpansionExprNode(*arg_node, ellipsis_token));
+												init_args.push_back(ASTNode(&pack_expansion));
+												continue;
 											}
 											init_args.push_back(*arg_node);
 										}
@@ -2294,9 +2325,14 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			// Pop member function context
+			// (also done by RAII guard; explicit pop here ensures correct order before
+			// the guard's destructor fires at function exit)
 			member_function_context_stack_.pop_back();
+			member_ctx_scope.release();
 
-			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			// Pop struct parsing context (pushed before body parsing)
+			struct_parsing_context_stack_.pop_back();
+			struct_ctx_scope.release();
 			skip_cpp_attributes();
 
 			// Expect semicolon
@@ -3170,8 +3206,12 @@ ParseResult Parser::parse_template_declaration() {
 										if (auto arg_node = arg_result.node()) {
 											// Check for pack expansion: expr...
 											if (peek() == "..."_tok) {
+												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
-												// Mark this as a pack expansion - actual expansion happens at instantiation
+												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+													PackExpansionExprNode(*arg_node, ellipsis_token));
+												init_args.push_back(ASTNode(&pack_expansion));
+												continue;
 											}
 											init_args.push_back(*arg_node);
 										}

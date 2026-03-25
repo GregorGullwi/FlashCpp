@@ -2528,6 +2528,32 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	size_t num_args = 0;
+	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
+
+	if (!is_struct_type(type_spec.type()) && type_spec.type() != Type::UserDefined) {
+		const int type_size_bits = get_type_size_bits(type_spec.type());
+		if (num_args == 0) {
+			if (is_floating_point_type(type_spec.type())) {
+				return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0.0}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+			}
+			return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0ULL}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+		}
+		if (num_args == 1) {
+			ASTNode first_arg;
+			constructorCallNode.arguments().visit([&](ASTNode arg) {
+				if (!first_arg.has_value()) {
+					first_arg = arg;
+				}
+			});
+			if (!first_arg.is<ExpressionNode>()) {
+				throw InternalError("Primitive constructor call argument must be an expression");
+			}
+			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
+			return generateTypeConversion(arg_result, arg_result.type, type_spec.type(), constructorCallNode.called_from());
+		}
+		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
+	}
 
 	// For constructor calls, we need to generate a constructor call instruction
 	// In C++, constructors are named after the class
@@ -2573,8 +2599,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Find the matching constructor to get parameter types for reference handling
 	const ConstructorDeclarationNode* matching_ctor = nullptr;
-	size_t num_args = 0;
-	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
 	if (struct_info) {
 			if (parser_) {

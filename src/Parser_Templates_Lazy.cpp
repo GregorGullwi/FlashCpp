@@ -33,10 +33,64 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle
 		);
 
+		// Build parameter list, expanding variadic pack parameters into N individual
+		// parameters (args_0, args_1, ...) and populating pack_param_info_ so that
+		// pack expansions in initializers and the body resolve correctly.
+		size_t saved_ctor_pack_info = pack_param_info_.size();
 		for (const auto& param : ctor_decl.parameter_nodes()) {
 			if (param.is<DeclarationNode>()) {
 				const DeclarationNode& param_decl = param.as<DeclarationNode>();
 				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+				bool handled_as_pack = false;
+				if (param_decl.is_parameter_pack() && param_type_spec.type() == Type::UserDefined) {
+					std::string_view type_name = param_type_spec.token().value();
+					size_t non_variadic = 0;
+					size_t pack_size = 0;
+					bool found_pack = false;
+					for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
+						if (!lazy_info.template_params[i].is<TemplateParameterNode>()) continue;
+						const TemplateParameterNode& tparam = lazy_info.template_params[i].as<TemplateParameterNode>();
+						if (!tparam.is_variadic()) { non_variadic++; continue; }
+						if (tparam.name() == type_name) {
+							pack_size = lazy_info.template_args.size() > non_variadic
+								? lazy_info.template_args.size() - non_variadic : 0;
+							found_pack = true;
+							break;
+						}
+					}
+					if (found_pack) {
+						if (pack_size == 0) { handled_as_pack = true; }
+						else {
+							std::string_view orig_name = param_decl.identifier_token().value();
+							for (size_t pi = 0; pi < pack_size; ++pi) {
+								const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
+								Type elem_type = elem.base_type;
+								TypeIndex elem_type_index = elem.type_index;
+								TypeSpecifierNode sub_type(
+									elem_type, param_type_spec.qualifier(),
+									get_type_size_bits(elem_type),
+									param_decl.identifier_token(), param_type_spec.cv_qualifier());
+								sub_type.set_type_index(elem_type_index);
+								for (const auto& pl : param_type_spec.pointer_levels())
+									sub_type.add_pointer_level(pl.cv_qualifier);
+								sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+								StringBuilder name_builder;
+								name_builder.append(orig_name).append('_').append(pi);
+								Token elem_token(Token::Type::Identifier, name_builder.commit(),
+									param_decl.identifier_token().line(),
+									param_decl.identifier_token().column(),
+									param_decl.identifier_token().file_index());
+								new_ctor_ref.add_parameter_node(emplace_node<DeclarationNode>(
+									emplace_node<TypeSpecifierNode>(sub_type), elem_token));
+							}
+							pack_param_info_.push_back({orig_name, 0, pack_size});
+							handled_as_pack = true;
+						}
+					}
+				}
+				if (handled_as_pack) continue;
+
 				auto [param_type, param_type_index] = substitute_template_parameter(
 					param_type_spec, lazy_info.template_params, lazy_info.template_args
 				);
@@ -56,20 +110,70 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
+				if (param_decl.has_default_value()) {
+					ASTNode substituted_default = substituteTemplateParameters(
+						param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
+					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
+				}
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
 			} else {
 				new_ctor_ref.add_parameter_node(param);
 			}
 		}
 
-		for (const auto& init : ctor_decl.member_initializers()) {
-			new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
+		// Build converted_template_args early so member/base initializer expressions
+		// can be substituted (they may contain PackExpansionExprNode from patterns like
+		// _M_value(std::forward<_Args>(__args)...) that must be expanded now).
+		std::vector<TemplateTypeArg> converted_template_args;
+		converted_template_args.reserve(lazy_info.template_args.size());
+		for (const auto& ttype_arg : lazy_info.template_args) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+			}
 		}
+
+		auto substituteInitExpr = [&](const ASTNode& expr) -> ASTNode {
+			return substituteTemplateParameters(expr, lazy_info.template_params, converted_template_args);
+		};
+
+		for (const auto& init : ctor_decl.member_initializers()) {
+			new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
+		}
+		// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
+		// into multiple arguments when present.  Mirrors the eager path's substituteInitArg.
+		auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+				if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+					ChunkedVector<ASTNode> expanded;
+					if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
+						for (size_t ei = 0; ei < expanded.size(); ++ei) {
+							out.push_back(expanded[ei]);
+						}
+						return;
+					}
+				}
+			}
+			out.push_back(substituteInitExpr(arg));
+		};
+
 		for (const auto& init : ctor_decl.base_initializers()) {
-			new_ctor_ref.add_base_initializer(init.getBaseClassName(), init.arguments);
+			std::vector<ASTNode> substituted_args;
+			substituted_args.reserve(init.arguments.size());
+			for (const auto& arg : init.arguments) {
+				substituteInitArg(arg, substituted_args);
+			}
+			new_ctor_ref.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
 		}
 		if (ctor_decl.delegating_initializer().has_value()) {
-			new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
+			std::vector<ASTNode> substituted_del_args;
+			substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
+			for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
+				substituteInitArg(arg, substituted_del_args);
+			}
+			new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 		}
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
@@ -117,28 +221,13 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			return std::nullopt;
 		}
 
-		std::vector<TemplateTypeArg> converted_template_args;
-		converted_template_args.reserve(lazy_info.template_args.size());
-		for (const auto& ttype_arg : lazy_info.template_args) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
-			}
-		}
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*body_to_substitute,
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_ctor_ref.set_definition(substituted_body);
-		} catch (const CompileError&) {
-			throw;  // Phase 1 violations (non-dependent name not declared before template) must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(Templates, Error, "Exception during lazy constructor substitution: ", e.what());
-			return std::nullopt;
-		}
+		ASTNode substituted_body = substituteTemplateParameters(
+			*body_to_substitute,
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_ctor_ref.set_definition(substituted_body);
+		pack_param_info_.resize(saved_ctor_pack_info);
 
 		ast_nodes_.push_back(new_ctor_node);
 		return new_ctor_node;
@@ -186,19 +275,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			}
 		}
 
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*dtor_decl.get_definition(),
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_dtor_ref.set_definition(substituted_body);
-		} catch (const CompileError&) {
-			throw;  // Phase 1 violations must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(Templates, Error, "Exception during lazy destructor substitution: ", e.what());
-			return std::nullopt;
-		}
+		ASTNode substituted_body = substituteTemplateParameters(
+			*dtor_decl.get_definition(),
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_dtor_ref.set_definition(substituted_body);
 
 		ast_nodes_.push_back(new_dtor_node);
 		return new_dtor_node;
@@ -277,11 +359,63 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	);
 	setOuterTemplateBindingsFromParams(new_func_ref, lazy_info.template_params, lazy_info.template_args);
 
-	// Substitute and copy parameters
+	// Substitute and copy parameters, expanding variadic pack parameters into N individual
+	// parameters (args_0, args_1, ...) and populating pack_param_info_ for body expansion.
+	size_t saved_pack_info = pack_param_info_.size();
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+			// Expand variadic pack parameters (e.g. "Args... args") into N params.
+			bool handled_as_pack = false;
+			if (param_decl.is_parameter_pack() && param_type_spec.type() == Type::UserDefined) {
+				std::string_view type_name = param_type_spec.token().value();
+				size_t non_variadic = 0;
+				size_t pack_size = 0;
+				bool found_pack = false;
+				for (size_t i = 0; i < lazy_info.template_params.size(); ++i) {
+					if (!lazy_info.template_params[i].is<TemplateParameterNode>()) continue;
+					const TemplateParameterNode& tparam = lazy_info.template_params[i].as<TemplateParameterNode>();
+					if (!tparam.is_variadic()) { non_variadic++; continue; }
+					if (tparam.name() == type_name) {
+						pack_size = lazy_info.template_args.size() > non_variadic
+							? lazy_info.template_args.size() - non_variadic : 0;
+						found_pack = true;
+						break;
+					}
+				}
+				if (found_pack) {
+					if (pack_size == 0) { handled_as_pack = true; } // empty pack, skip
+					else {
+						std::string_view orig_name = param_decl.identifier_token().value();
+						for (size_t pi = 0; pi < pack_size; ++pi) {
+							const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
+							Type elem_type = elem.base_type;
+							TypeIndex elem_type_index = elem.type_index;
+							TypeSpecifierNode sub_type(
+								elem_type, param_type_spec.qualifier(),
+								get_type_size_bits(elem_type),
+								param_decl.identifier_token(), param_type_spec.cv_qualifier());
+							sub_type.set_type_index(elem_type_index);
+							for (const auto& pl : param_type_spec.pointer_levels())
+								sub_type.add_pointer_level(pl.cv_qualifier);
+							sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+							StringBuilder name_builder;
+							name_builder.append(orig_name).append('_').append(pi);
+							Token elem_token(Token::Type::Identifier, name_builder.commit(),
+								param_decl.identifier_token().line(),
+								param_decl.identifier_token().column(),
+								param_decl.identifier_token().file_index());
+							new_func_ref.add_parameter_node(emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(sub_type), elem_token));
+						}
+						pack_param_info_.push_back({orig_name, 0, pack_size});
+						handled_as_pack = true;
+					}
+				}
+			}
+			if (handled_as_pack) continue;
 
 			// Substitute parameter type
 			auto [param_type, param_type_index] = substitute_template_parameter(
@@ -312,16 +446,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				substituted_param_type_node, param_decl.identifier_token()
 			);
 			// Copy default value if present
-if (param_decl.has_default_value()) {
-// Substitute template parameters in the default value expression
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							// Note: In this context, we don't have easy access to template parameter order
-							// so we fallback to the original approach for now
-							ExpressionSubstitutor substitutor(param_map, *this);
-							std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
-				if (substituted_default.has_value()) {
-					substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
-				}
+			if (param_decl.has_default_value()) {
+				ASTNode substituted_default = substituteTemplateParameters(
+					param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
+				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
 			new_func_ref.add_parameter_node(substituted_param_decl);
 		} else {
@@ -427,31 +555,22 @@ if (param_decl.has_default_value()) {
 		struct_ctx.struct_node = nullptr;
 		struct_ctx.local_struct_info = nullptr;
 		struct_parsing_context_stack_.push_back(struct_ctx);
-		
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*body_to_substitute,
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_func_ref.set_definition(substituted_body);
-		} catch (const std::exception& e) {
-			struct_parsing_context_stack_.pop_back();  // Clean up on error
-			FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
-			          decl.identifier_token().value(), ": ", e.what());
-			throw;
-		} catch (...) {
-			struct_parsing_context_stack_.pop_back();  // Clean up on error
-			FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
-			          decl.identifier_token().value());
-			throw;
-		}
-		
-		// Pop struct parsing context
-		struct_parsing_context_stack_.pop_back();
+		auto pop_struct_ctx = [this](void*) {
+			if (!struct_parsing_context_stack_.empty())
+				struct_parsing_context_stack_.pop_back();
+		};
+		std::unique_ptr<void, decltype(pop_struct_ctx)> struct_ctx_scope(reinterpret_cast<void*>(1), pop_struct_ctx);
+
+		ASTNode substituted_body = substituteTemplateParameters(
+			*body_to_substitute,
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_func_ref.set_definition(substituted_body);
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+	pack_param_info_.resize(saved_pack_info);
 	// Carry the const-method qualifier so mangling emits 'K' (Itanium) / 'QEBA' (MSVC).
 	new_func_ref.set_is_const_member_function(lazy_info.identity.is_const_method);
 	new_func_ref.set_is_volatile_member_function(hasCVQualifier(lazy_info.identity.cv_qualifier, CVQualifier::Volatile));

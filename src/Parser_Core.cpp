@@ -1087,7 +1087,7 @@ void Parser::register_builtin_functions() {
 	};
 	
 	// Helper lambda to register a builtin function with no parameters
-	auto register_no_param_builtin = [&](std::string_view name, Type return_type, std::string_view mangled_name = "") {
+	auto register_no_param_builtin = [&](std::string_view name, Type return_type) {
 		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
@@ -1101,11 +1101,6 @@ void Parser::register_builtin_functions() {
 		
 		// Create function declaration node
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Set pre-computed mangled name if provided
-		if (!mangled_name.empty()) {
-			func_decl_ref.set_mangled_name(mangled_name);
-		}
 		
 		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
@@ -1148,44 +1143,68 @@ void Parser::register_builtin_functions() {
 	// Using UnsignedLongLong (pointer-sized) for the parameter and return type
 	register_builtin("__builtin_launder", Type::UnsignedLongLong, Type::UnsignedLongLong);
 	
-	// Helper lambda to register a builtin function with a const char* parameter
-	// Returns size_t (UnsignedLong on 64-bit)
-	auto register_strlen_builtin = [&](std::string_view name) {
-		// Create return type node (size_t = unsigned long on 64-bit)
-		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, type_token);
-		
-		// Create function name token
-		Token func_token = dummy_token;
-		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
-		
-		// Create declaration node for the function
-		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
-		
-		// Create function declaration node
-		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Create parameter: const char* 
-		Token param_token = dummy_token;
-		auto param_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Char, TypeQualifier::None, 8, param_token, CVQualifier::Const);
-		param_type_node_ref.second.add_pointer_level();  // Make it const char*
-		auto param_decl = emplace_node<DeclarationNode>(param_type_node_ref.first, param_token);
-		func_decl_ref.add_parameter_node(param_decl);
-		
-		// Set extern "C" linkage
-		func_decl_ref.set_linkage(Linkage::C);
-		
-		// Register in global symbol table
-		gSymbolTable.insert(name, func_decl_node);
+	// Helper to register an extern "C" function builtin with an arbitrary signature.
+	auto register_extern_c_builtin = [&](std::string_view name, const ASTNode& return_type, std::initializer_list<ASTNode> params) {
+		auto decl = emplace_node<DeclarationNode>(return_type, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		for (const auto& param_type : params) {
+			fn_ref.add_parameter_node(emplace_node<DeclarationNode>(param_type, dummy_token));
+		}
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
 	};
 	
+	auto make_builtin_type = [&](Type base_type, CVQualifier cv, int pointer_depth) {
+		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(base_type, TypeQualifier::None, get_type_size_bits(base_type), dummy_token, cv);
+		for (int i = 0; i < pointer_depth; ++i) {
+			t_ref.add_pointer_level();
+		}
+		return t;
+	};
+	
+	// size_t is 64-bit on all supported platforms, but the underlying type differs:
+	// LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
+	// LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
+	const Type size_t_base = context_.isLLP64() ? Type::UnsignedLongLong : Type::UnsignedLong;
+	
 	// __builtin_strlen(const char*) - returns length of string
-	// Returns size_t (unsigned long on 64-bit platforms)
-	register_strlen_builtin("__builtin_strlen");
+	register_extern_c_builtin(
+		"__builtin_strlen",
+		make_builtin_type(size_t_base, CVQualifier::None, 0),
+		{ make_builtin_type(Type::Char, CVQualifier::Const, 1) });
 	
-	// Wide memory/character functions are provided by the C library headers.
-	// No manual registration here—declarations should come from the standard headers.
+	// Wide-character memory/string functions needed by char_traits<wchar_t>.
+	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
+	// before those headers are explicitly included.
+	const ASTNode wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::None, 1);
+	const ASTNode const_wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::Const, 1);
+	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 	
+	register_extern_c_builtin(
+		"wmemcmp",
+		make_builtin_type(Type::Int, CVQualifier::None, 0),
+		{ const_wchar_t_ptr, const_wchar_t_ptr, size_t_type });
+	register_extern_c_builtin(
+		"wmemchr",
+		wchar_t_ptr,
+		{ const_wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
+	register_extern_c_builtin(
+		"wmemcpy",
+		wchar_t_ptr,
+		{ wchar_t_ptr, const_wchar_t_ptr, size_t_type });
+	register_extern_c_builtin(
+		"wmemmove",
+		wchar_t_ptr,
+		{ wchar_t_ptr, const_wchar_t_ptr, size_t_type });
+	register_extern_c_builtin(
+		"wmemset",
+		wchar_t_ptr,
+		{ wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
+	register_extern_c_builtin(
+		"wcslen",
+		size_t_type,
+		{ const_wchar_t_ptr });
+
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling

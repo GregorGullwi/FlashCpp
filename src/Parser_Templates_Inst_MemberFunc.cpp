@@ -354,6 +354,36 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_func_decl_ref, struct_name);
 
+	std::unordered_map<TypeIndex, TemplateTypeArg> default_type_sub_map;
+	std::unordered_map<std::string_view, int64_t> default_nontype_sub_map;
+	std::unordered_map<std::string_view, TemplateTypeArg> default_param_map;
+	if (outer_binding) {
+		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+			default_param_map[StringTable::getStringView(outer_binding->param_names[i])] = outer_binding->param_args[i];
+			auto type_it = gTypesByName.find(outer_binding->param_names[i]);
+			if (type_it != gTypesByName.end()) {
+				default_type_sub_map[type_it->second->type_index_] = outer_binding->param_args[i];
+			} else {
+				default_type_sub_map[TypeIndex{gTypeInfo.size() + default_type_sub_map.size() + 1}] = outer_binding->param_args[i];
+			}
+		}
+	}
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) continue;
+		const auto& template_param = template_params[i].as<TemplateParameterNode>();
+		default_param_map[template_param.name()] = template_args[i];
+		if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
+			auto type_it = gTypesByName.find(template_param.nameHandle());
+			if (type_it != gTypesByName.end()) {
+				default_type_sub_map[type_it->second->type_index_] = template_args[i];
+			} else {
+				default_type_sub_map[TypeIndex{gTypeInfo.size() + default_type_sub_map.size() + 1}] = template_args[i];
+			}
+		} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
+			default_nontype_sub_map[template_param.name()] = template_args[i].value;
+		}
+	}
+
 	// Copy and substitute parameters
 	for (const auto& param : func_decl.parameter_nodes()) {
 		if (param.is<DeclarationNode>()) {
@@ -382,6 +412,16 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
+			if (param_decl.has_default_value()) {
+				ExpressionSubstitutor substitutor(default_param_map, *this);
+				ASTNode substituted_default = substitutor.substitute(param_decl.default_value());
+				if (substituted_default.is<ExpressionNode>() &&
+					std::holds_alternative<ConstructorCallNode>(substituted_default.as<ExpressionNode>())) {
+					substituted_default = substitute_template_params_in_expression(
+						substituted_default, default_type_sub_map, default_nontype_sub_map);
+				}
+				new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
+			}
 			new_func_ref.add_parameter_node(new_param_decl);
 		}
 	}
