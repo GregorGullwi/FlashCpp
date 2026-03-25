@@ -5675,6 +5675,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					);
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
 					
+					// Ensure template_param_order is populated (used by ExpressionSubstitutor later)
+					if (template_param_order.empty()) {
+						for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+							if (template_params[i].is<TemplateParameterNode>()) {
+								template_param_order.push_back(template_params[i].as<TemplateParameterNode>().name());
+							}
+						}
+					}
+
 					// Substitute and copy parameters
 					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
 					
