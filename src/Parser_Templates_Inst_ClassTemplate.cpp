@@ -1184,7 +1184,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					bool resolved = false;
 					if (arg_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
-						if ((ts.type() == Type::UserDefined || ts.type() == Type::Struct) && ts.type_index().value < gTypeInfo.size()) {
+						if ((is_struct_type(ts.type())) && ts.type_index().value < gTypeInfo.size()) {
 							std::string_view tname = StringTable::getStringView(gTypeInfo[ts.type_index().value].name());
 							auto it = spec_name_subst_map.find(tname);
 							if (it != spec_name_subst_map.end()) {
@@ -3238,7 +3238,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeIndex resolved_index = type_spec.type_index();
 					bool resolved = false;
 					
-					if ((resolved_type == Type::UserDefined || resolved_type == Type::Struct) && resolved_index.value < gTypeInfo.size()) {
+					if ((is_struct_type(resolved_type)) && resolved_index.value < gTypeInfo.size()) {
 						std::string_view type_name = StringTable::getStringView(gTypeInfo[resolved_index.value].name());
 						auto subst_it = name_substitution_map.find(type_name);
 						if (subst_it != name_substitution_map.end()) {
@@ -3338,7 +3338,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							[[maybe_unused]] bool substituted = false;
 							TypeSpecifierNode substituted_type_spec = type_spec;
 							
-							if ((base_type == Type::UserDefined || base_type == Type::Struct) && type_idx.value < gTypeInfo.size()) {
+							if ((is_struct_type(base_type)) && type_idx.value < gTypeInfo.size()) {
 								std::string_view type_name = StringTable::getStringView(gTypeInfo[type_idx.value].name());
 								auto subst_it = name_substitution_map.find(type_name);
 								if (subst_it != name_substitution_map.end()) {
@@ -3699,7 +3699,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		//   template<typename T> struct TD { TC<T> c; }; 
 		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
 		// We need to instantiate TC with the concrete args when instantiating TD.
-		if ((member_type == Type::Struct || member_type == Type::UserDefined) && member_type_index.value < gTypeInfo.size()) {
+		if ((is_struct_type(member_type)) && member_type_index.value < gTypeInfo.size()) {
 			const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
@@ -4924,7 +4924,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Substitute template parameters in the alias type
 		// Handle both UserDefined and Struct types (template types are often registered as Struct)
-		if (substituted_type == Type::UserDefined || substituted_type == Type::Struct) {
+		if (is_struct_type(substituted_type)) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx.value < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx.value];

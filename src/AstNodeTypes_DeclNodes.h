@@ -837,7 +837,7 @@ extern std::deque<TypeInfo> gTypeInfo;
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type_index.value];
-		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
+		if (!needs_type_index(type_info.type_)) {
 			return type_info.type_;
 		}
 	}
@@ -1086,7 +1086,7 @@ public:
 		}
 		
 		// Check type index for user-defined types
-		if (type_ == Type::UserDefined || type_ == Type::Struct) {
+		if (is_struct_type(type_)) {
 			if (type_index_ != other.type_index_) {
 				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
 				if (token_.value() != other.token_.value()) {
@@ -1171,7 +1171,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		return 64;
 	}
 	Type t = type_spec.type();
-	if (t == Type::Struct || t == Type::UserDefined || t == Type::Enum) {
+	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
 		if (idx.is_valid() && idx.value < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[idx.value];

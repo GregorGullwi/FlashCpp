@@ -1366,7 +1366,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	// Handle struct types with arguments: delegate to materialize_constructor_object_value
 	// which first attempts user-defined constructor matching and falls back to aggregate
 	// initialization only when no matching constructor is found.
-	if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+	if (is_struct_type(type_spec.type())) {
 		return materialize_constructor_object_value(ctor_call, context);
 	}
 
@@ -1543,7 +1543,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const auto& ctor_args = new_expr.constructor_args();
 
 	// Handle struct/class types via the constructor materialization path.
-	if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+	if (is_struct_type(type_spec.type())) {
 		TypeIndex type_index = type_spec.type_index();
 		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
 			return EvalResult::error("new-expression: invalid struct type index");
@@ -1847,7 +1847,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (initializer->is<InitializerListNode>() &&
 			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+			if ((is_struct_type(type_spec.type())) &&
 				type_spec.type_index().is_valid() &&
 				type_spec.type_index().value < gTypeInfo.size()) {
 				if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
@@ -2848,7 +2848,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// Check for incomplete class/struct types
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx.is_valid() && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+					if (type_idx.is_valid() && (is_struct_type(base_type))) {
 						const TypeInfo& type_info = gTypeInfo[type_idx.value];
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						
@@ -3529,7 +3529,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+						if ((is_struct_type(type_spec.type())) &&
 							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
@@ -3590,7 +3590,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 				if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-					if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+					if (is_struct_type(type_spec.type())) {
 						auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
 						if (!object_result.success()) {
 							return object_result;
@@ -3617,7 +3617,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Uninitialized variable — check if it's a struct/class type requiring default construction
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+				if ((is_struct_type(type_spec.type())) &&
 					type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {

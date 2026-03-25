@@ -18,7 +18,7 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value()) return std::nullopt;
 	const auto& type_spec = *type_opt;
-	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return std::nullopt;
+	if (!is_struct_type(type_spec.type())) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
 	if (type_idx.value >= gTypeInfo.size()) return std::nullopt;
 	auto struct_name = StringTable::getStringView(gTypeInfo[type_idx.value].name());
@@ -38,7 +38,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value()) return nullptr;
 	const auto& type_spec = *type_opt;
-	if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return nullptr;
+	if (!is_struct_type(type_spec.type())) return nullptr;
 	TypeIndex type_idx = type_spec.type_index();
 	if (type_idx.value >= gTypeInfo.size()) return nullptr;
 
@@ -1282,7 +1282,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					if (symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-							if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
+							if (is_struct_type(type_spec.type())) {
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx.value < gTypeInfo.size()) {
 									object_struct_name = StringTable::getStringView(gTypeInfo[type_idx.value].name());

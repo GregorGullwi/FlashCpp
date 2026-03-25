@@ -753,7 +753,7 @@ ParseResult Parser::parse_template_declaration() {
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
 
-		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+		if ((is_struct_type(type_spec.type())) &&
 		    type_spec.type_index().value < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[type_spec.type_index().value];
 			std::string_view type_name = StringTable::getStringView(ti.name());

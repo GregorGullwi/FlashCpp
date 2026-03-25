@@ -1053,7 +1053,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 									}
 									// Fallback: match by type_index name against param names
 									if (!substituted && !arg_info.is_value &&
-									    (arg_info.base_type == Type::UserDefined || arg_info.base_type == Type::Struct) &&
+									    (is_struct_type(arg_info.base_type)) &&
 									    arg_info.type_index.value < gTypeInfo.size()) {
 										std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg_info.type_index.value].name());
 										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
@@ -1667,7 +1667,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const TypeSpecifierNode& object_type = *object_type_opt;
 		
 		// Handle struct/class member access
-		if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
+		if (is_struct_type(object_type.type())) {
 			size_t struct_type_index = object_type.type_index().value;
 			if (struct_type_index < gTypeInfo.size()) {
 				// Look up the member
@@ -1723,8 +1723,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			
 			// Handle common type conversions for arithmetic types
-			if (true_type.type() != Type::Struct && true_type.type() != Type::UserDefined &&
-				false_type.type() != Type::Struct && false_type.type() != Type::UserDefined) {
+			if (!is_struct_type(true_type.type()) &&
+				!is_struct_type(false_type.type())) {
 				// For arithmetic types, use usual arithmetic conversions
 				// Return the larger type (in terms of bit width)
 				if (true_type.size_in_bits() >= false_type.size_in_bits()) {

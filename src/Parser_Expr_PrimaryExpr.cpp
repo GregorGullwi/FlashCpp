@@ -3137,7 +3137,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							ASTNode def_val = params[i].as<DeclarationNode>().default_value();
 							if (def_val.is<InitializerListNode>()) {
 								const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
+								if (is_struct_type(param_type_node.type())) {
 									auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
 									const InitializerListNode& init_list = def_val.as<InitializerListNode>();
 									ChunkedVector<ASTNode> ctor_args;
@@ -4859,7 +4859,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Check if this is a struct with operator(). Placeholder-auto lambda
 					// variables may still carry Type::Auto here while already pointing at
 					// the synthesized closure type via type_index().
-					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined ||
+					if (is_struct_type(type_node.type()) ||
 						isPlaceholderAutoType(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
@@ -4927,7 +4927,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (def_val.is<InitializerListNode>()) {
 									const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 									// For struct/aggregate parameters, convert InitializerListNode to ConstructorCallNode
-									if (param_type_node.type() == Type::Struct || param_type_node.type() == Type::UserDefined) {
+									if (is_struct_type(param_type_node.type())) {
 										auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
 										const InitializerListNode& init_list = def_val.as<InitializerListNode>();
 										ChunkedVector<ASTNode> ctor_args;

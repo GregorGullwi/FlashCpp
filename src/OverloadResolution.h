@@ -1256,7 +1256,7 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 }
 
 inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
-	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
+	return needs_type_index(type);
 }
 
 inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {

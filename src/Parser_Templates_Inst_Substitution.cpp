@@ -418,7 +418,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 			}
 		}
-		if (!arg.is_dependent && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
+		if (!arg.is_dependent && is_struct_type(arg.base_type) &&
 		    arg.type_index.value < gTypeInfo.size()) {
 			StringHandle type_name = gTypeInfo[arg.type_index.value].name();
 			for (const auto& subst : template_param_substitutions_) {

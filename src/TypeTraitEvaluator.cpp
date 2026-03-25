@@ -81,7 +81,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	}
 	for (const auto& member : struct_info->members) {
 		// Only struct/class-typed members (not pointers or references) have destructors
-		if ((member.type != Type::Struct && member.type != Type::UserDefined) ||
+		if ((!is_struct_type(member.type)) ||
 		    member.pointer_depth > 0 || member.is_reference()) continue;
 		if (member.type_index.value >= gTypeInfo.size()) continue;
 		const StructTypeInfo* mem_struct = gTypeInfo[member.type_index.value].getStructInfo();
@@ -169,7 +169,7 @@ TypeTraitResult evaluateTypeTrait(
 			}
 			
 			// Check for incomplete class/struct types (struct_info is null for incomplete types)
-			if ((base_type == Type::Struct || base_type == Type::UserDefined) && 
+			if (is_struct_type(base_type) &&
 			    !struct_info && pointer_depth == 0 && !is_reference) {
 				return TypeTraitResult::success_false();
 			}
@@ -226,7 +226,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsClass:
-			result = (base_type == Type::Struct || base_type == Type::UserDefined) && 
+			result = is_struct_type(base_type) &&
 			         struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0;
 			break;
 			

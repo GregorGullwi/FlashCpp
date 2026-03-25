@@ -787,7 +787,7 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) && type_spec.type_index().value < gTypeInfo.size()) {
+					if ((is_struct_type(type_spec.type())) && type_spec.type_index().value < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						

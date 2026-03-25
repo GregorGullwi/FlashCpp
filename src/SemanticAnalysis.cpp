@@ -2968,7 +2968,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return t == Type::UserDefined || t == Type::Invalid || isPlaceholderAutoType(t);
 	};
 	auto is_non_primitive_target = [](Type t) {
-		return t == Type::Struct || t == Type::UserDefined ||
+		return is_struct_type(t) ||
 		       t == Type::Invalid || isPlaceholderAutoType(t);
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;

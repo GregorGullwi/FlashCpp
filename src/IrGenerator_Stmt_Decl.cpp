@@ -528,7 +528,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-					if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) && !decl.is_array() && !type_node.is_array()
+					if ((is_struct_type(type_node.type())) && !decl.is_array() && !type_node.is_array()
 						&& type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
 						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index().value].getStructInfo();
 						if (struct_info_ptr) {
@@ -548,7 +548,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) && type_node.type_index().is_valid() &&
+						if ((is_struct_type(type_node.type())) && type_node.type_index().is_valid() &&
 							type_node.type_index().value < gTypeInfo.size()) {
 							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index().value].getStructInfo();
 							if (elem_struct) {
@@ -812,7 +812,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.is_initialized = true;
 						auto ctx = makeStaticStorageEvalContext();
 						auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-						if ((type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) &&
+						if ((is_struct_type(type_node.type())) &&
 							eval_result.success() &&
 							type_node.type_index().is_valid()) {
 							const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());

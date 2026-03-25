@@ -290,7 +290,7 @@ struct TemplateTypeArg {
 		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
 		    ? Type::Int : base_type;
 		size_t h = std::hash<int>{}(static_cast<int>(effective_type));
-		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+		if (needs_type_index(base_type)) {
 			h ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -316,7 +316,7 @@ struct TemplateTypeArg {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
 		// For primitive types like int, float, etc., the type_index should be ignored
 		bool type_index_match = true;
-		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+		if (needs_type_index(base_type)) {
 			type_index_match = (type_index == other.type_index);
 		}
 		
@@ -455,7 +455,7 @@ struct TemplateTypeArg {
 		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
 		    ? Type::Int : base_type;
 		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
-		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+		if (needs_type_index(base_type)) {
 			hash ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -490,7 +490,7 @@ struct TemplateTypeArgHash {
 		    ? Type::Int : arg.base_type;
 		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
 		// Only include type_index in hash for user-defined types (to match operator==)
-		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
+		if (needs_type_index(arg.base_type)) {
 			hash ^= std::hash<size_t>{}(arg.type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
