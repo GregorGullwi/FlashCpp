@@ -17,9 +17,15 @@
 | 1 | Add `is_builtin_type(Type)` helper; replace 2 enum-order range checks | ✅ Done (this PR) |
 | 1 | Add canonical `constexpr isArithmeticType`/`isFundamentalType`; deduplicate 3 local copies | ✅ Done (this PR) |
 | 2 | Add `TypeInfo` query helpers (`isStructLike`, `isPrimitive`, `needsTypeIndex`, `isTemplatePlaceholder`) | ⬜ TODO |
+| 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§6.1) | ⬜ TODO |
+| 2 | Add `static_assert` enum-count sentinel for `Type` (§6.3) | ⬜ TODO |
 | 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
+| 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§6.6) | ⬜ TODO |
+| 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§6.2) | ⬜ TODO |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ⬜ TODO |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
+| — | Resolve `Type::UserDefined` semantic ambiguity (§6.1) — prerequisite for Milestone 3 | ⬜ TODO |
+| — | Migrate `buildConversionPlan` with dedicated test coverage (§6.2) | ⬜ TODO |
 
 ---
 
@@ -286,15 +292,26 @@ Option A is done. The recommended next steps follow the Option C progression:
 - [x] **TODO 2**: Move `isArithmeticType` and `isFundamentalType` to `AstNodeTypes_TypeSystem.h` as `constexpr` switch-based helpers. Delete the three duplicated local copies.
 - [ ] **TODO 3**: Consolidate `is_integral_type` / `isIntegralType` to one definition in `AstNodeTypes_TypeSystem.h`.
 
-#### Milestone 2 — Add `TypeInfo` query helpers (Option C Step A)
+#### Milestone 2 — Add `TypeInfo` query helpers and resolve `UserDefined` ambiguity (Option C Step A)
 
 - [ ] Add `isStructLike()`, `isPrimitive()`, `needsTypeIndex()`, `isTemplatePlaceholder()` to `TypeInfo` in `AstNodeTypes_DeclNodes.h`.
 - [ ] Replace the most redundant `gTypeInfo[idx].type_ == Type::X` patterns with the new helpers. Priority: `TemplateRegistry_Types.h` and `OverloadResolution.h`.
+- [ ] Evaluate splitting `Type::UserDefined` into `TypeAlias` + `UserDefined`, or adding an `is_type_alias` flag to `TypeInfo` (see §6.1). This decision gates the safety of Milestone 3 alias-resolution changes.
+- [ ] Add a `static_assert` enum-count sentinel to catch new `Type` values (see §6.3).
+
+#### Milestone 2.5 — Resolve the `Type::UserDefined` ambiguity (prerequisite for Milestone 3)
+
+- [ ] Decide between option (a) split `UserDefined` into `TypeAlias`/`OpaqueUserType`, option (b) make `resolve_type_alias()` recursive, or option (c) accept and document. See §6.1.
+- [ ] If option (b): add cycle detection (max-depth guard) and update `resolve_type_alias()` to follow `UserDefined` → `UserDefined` chains. Verify that `buildConversionPlan` still passes all overload resolution tests.
+- [ ] If option (a): define the new enum variants, update `is_struct_type()` and `needs_type_index()`, and migrate call sites incrementally.
 
 #### Milestone 3 — Migrate mixed `Type` + `TypeIndex` hot spots (Option C Step B/C)
 
 - [ ] Convert the mixed-identity sites in `ExpressionSubstitutor.cpp` and `SemanticAnalysis.cpp` to use `TypeIndex` as primary, reading category from `TypeInfo` methods.
 - [ ] Replace the alias-resolution pattern in `AstNodeTypes_DeclNodes.h:837-845` with explicit `TypeInfo` helper calls.
+- [ ] **Sub-milestone 3a**: Migrate `buildConversionPlan` separately with dedicated test coverage (see §6.2). Do not batch this with mechanical helper replacements.
+- [ ] Upgrade `resolve_type_alias()` to chase alias chains (bounded depth) or document why the shallow version is intentional (see §6.6).
+- [ ] Document `buildConversionPlan` as a legitimate `Type`-primary consumer — do not attempt to migrate its core dispatch to `TypeIndex` (see §6.2).
 
 #### Milestone 4 — Settle `Type::Template` (Option C Step D)
 
@@ -309,3 +326,218 @@ Option A is done. The recommended next steps follow the Option C progression:
 ### `Type::Template` decision (immediate)
 
 Do **not** fold `Type::Template` into `needs_type_index()` yet. Template placeholders are semantically different from concrete `Struct` / `Enum` / `UserDefined` types and require different handling during substitution. Adding `isTemplatePlaceholder()` to `TypeInfo` (Milestone 4) is the right way to make this boundary explicit.
+
+---
+
+## 6. Known risks and gaps in the Option C roadmap
+
+This section captures structural issues that the milestones above do not fully address.
+They should be evaluated before committing to Milestones 3–5.
+
+### 6.1 The `Type::UserDefined` semantic ambiguity
+
+**This is the single most important architectural issue in the type system, and the
+current roadmap underweights it.**
+
+`Type::UserDefined` is used for two fundamentally different things:
+
+1. **Resolved typedef aliases** — e.g., `using size_t = unsigned long long;` creates a
+   `TypeInfo` with `type_ == Type::UserDefined` and a `type_index_` pointing to the
+   underlying type. The `resolve_type_alias()` function in `src/OverloadResolution.h:180-188`
+   handles this case, but only resolves to primitives — if the underlying type is another
+   `UserDefined`, `Struct`, or `Enum`, it gives up and returns `Type::UserDefined`.
+
+2. **Unresolved or opaque user types** — e.g., `__builtin_va_list` is registered as
+   `Type::UserDefined` in `src/AstNodeTypes.cpp:214`. Template parameter types that
+   haven't been substituted yet may also appear as `UserDefined`.
+
+The overload resolution code in `src/OverloadResolution.h` has multiple workarounds for
+this ambiguity:
+
+- Lines 636–647 (in the `TypeSpecifierNode` overload of `buildConversionPlan`): when a
+  type is still `UserDefined` with `type_index == 0` after alias resolution, the code
+  optimistically allows conversion to/from integral types, assuming it's probably
+  `size_t` or `ptrdiff_t`.
+- Lines 432–438 (pointer conversion): when either pointer base type is still
+  `UserDefined` after resolution, the code accepts a `PointerConversion` rather than
+  rejecting the match, because the `UserDefined` might be a template parameter that
+  resolves to a compatible type.
+- Lines 600–604 (reference-from-non-reference): same optimistic pattern for
+  `UserDefined` after alias resolution.
+
+These are not bugs today — they're pragmatic workarounds. But they mean that
+`is_struct_type()` returning `true` for `UserDefined` is technically a lie in some
+contexts: a `UserDefined` might actually be an alias for `int`, not a struct at all.
+
+**Recommendation**: Before Milestone 3, decide whether to:
+
+- **(a)** Split `Type::UserDefined` into `Type::TypeAlias` (resolved, points to underlying
+  type) and `Type::OpaqueUserType` (unresolved, used for builtins and unsubstituted
+  template params). This is the cleanest fix but touches many call sites.
+- **(b)** Make `resolve_type_alias()` recursive (follow chains of `UserDefined` →
+  `UserDefined` → ... → concrete type) and always resolve before classification. This
+  is less invasive but requires care to avoid infinite loops (alias cycles).
+- **(c)** Accept the ambiguity and document it. The current workarounds work in practice;
+  the cost is occasional optimistic conversion acceptance that CodeGen later rejects.
+
+Option (b) is probably the best cost/benefit for the near term. Option (a) is the right
+long-term answer but should be its own milestone.
+
+### 6.2 `buildConversionPlan` is deeply entangled with raw `Type` comparisons
+
+Milestone 3 says "convert mixed `Type` + `TypeIndex` hot spots in `OverloadResolution.h`"
+but understates the difficulty. `buildConversionPlan` (both the `Type,Type` overload at
+`src/OverloadResolution.h:82-186` and the `TypeSpecifierNode,TypeSpecifierNode` overload
+at `src/OverloadResolution.h:353-669`) is the hottest path in the compiler for type
+classification, and it interleaves `Type` enum comparisons with `TypeIndex` identity
+checks at every level:
+
+- Enum-to-int promotion (`from == Type::Enum && to == Type::Int`)
+- Struct-to-struct identity (`from_type == Type::Struct && to_type == Type::Struct &&
+  from.type_index() == to.type_index()`)
+- User-defined conversion detection (`from == Type::Struct && to != Type::Struct`)
+- Pointer-to-pointer compatibility (resolve aliases, then compare `Type` and `TypeIndex`)
+
+These are not mechanical replacements — each branch encodes a specific C++20 conversion
+rule. Migrating them to `TypeInfo` query helpers requires understanding the conversion
+semantics, not just the classification API. This should be treated as a separate,
+carefully tested milestone rather than part of a bulk migration.
+
+**Recommendation**: Add a dedicated sub-milestone under Milestone 3 for
+`buildConversionPlan` specifically, with its own test plan covering:
+- Primitive-to-primitive promotions and conversions
+- Struct-to-struct identity (same TypeIndex vs different TypeIndex)
+- UserDefined alias resolution through pointer and reference layers
+- Enum-to-integral promotion paths
+
+### 6.3 Enum exhaustiveness is not enforced for classification helpers
+
+The `constexpr` switch-based helpers (`is_primitive_type`, `is_builtin_type`,
+`isArithmeticType`, `needs_type_index`) use `default: return false;`. This means that
+if a new `Type` enum variant is added (e.g., `Type::Union`, `Type::Concept`,
+`Type::ConstrainedAuto`), the helpers silently return `false` instead of producing a
+compile error.
+
+The `static_assert` checks in `src/AstNodeTypes_TypeSystem.h:368-381` only verify
+known positive/negative cases — they cannot catch a newly added variant that should
+be in a helper but isn't.
+
+Some existing functions in the codebase *do* enumerate all cases explicitly (e.g.,
+`isSignedType` at `src/AstNodeTypes_TypeSystem.h:617-657` lists every `Type` variant
+including a `default` that covers `Type::Template`). These would produce `-Wswitch`
+warnings if a new variant were added. The classification helpers do not have this
+property.
+
+**Recommendation**: For each classification helper, add a comment documenting which
+`Type` variants are intentionally excluded and why. Consider adding a compile-time
+enum count check (e.g., `static_assert` on the number of `Type` variants) that forces
+a manual audit of all helpers whenever the enum grows. Alternatively, periodically
+verify that the helpers' positive + negative cases cover all enum values.
+
+### 6.4 `is_integral_type` vs `isIntegralType` — semantically identical, safe to merge
+
+The document's TODO 3 says "consolidate" but doesn't confirm whether the two functions
+have identical semantics. They do:
+
+- `isIntegralType(Type)` at `src/AstNodeTypes_TypeSystem.h:461-482` includes `Bool` and
+  all integer/char types via an explicit switch.
+- `is_integral_type(Type)` at `src/OverloadResolution.h:46-48` is defined as
+  `type == Type::Bool || is_integer_type(type)`, where `is_integer_type` at
+  `src/AstNodeTypes.cpp:222-242` covers all integer/char types *excluding* Bool.
+
+So `is_integral_type(x)` ≡ `isIntegralType(x)` for all `Type` values. The merge is
+safe: replace all `is_integral_type` call sites (5 in `src/OverloadResolution.h`) with
+`isIntegralType`, then delete the `is_integral_type` definition.
+
+### 6.5 Global mutable state (`gTypeInfo`) constrains future parallelism
+
+`gTypeInfo` is a global `std::deque<TypeInfo>` (`src/AstNodeTypes.cpp:70`), and
+`gTypesByName` is a global `std::unordered_map` (`src/AstNodeTypes.cpp:71`). The
+Option C plan proposes making `TypeIndex` the primary identity and reading category
+from `TypeInfo` methods — which means more code paths will dereference into `gTypeInfo`.
+
+This is fine for a single-threaded compiler, but if parallel compilation units or
+concurrent template instantiation are ever needed, the global mutable state becomes a
+bottleneck. The document should acknowledge this constraint so that future work doesn't
+accidentally make the coupling worse.
+
+**Recommendation**: This is not a blocker for Option C, but any new `TypeInfo` query
+helpers should be `const` methods that read only from the `TypeInfo` instance, not from
+global state. This keeps the door open for a future where `TypeInfo` objects are owned
+per-compilation-unit rather than globally.
+
+---
+
+## 6. Known risks and gaps
+
+This section catalogs architectural issues that the Option C migration plan does not fully address. These should be resolved — or at least explicitly scoped out — before Milestone 3 work begins.
+
+### 6.1 The `Type::UserDefined` dual-meaning problem
+
+`Type::UserDefined` is the single most ambiguous value in the `Type` enum. It is used for at least two semantically distinct purposes:
+
+1. **Unresolved typedef aliases** — e.g., `size_t` or `ptrdiff_t` that the parser could not resolve to a primitive. These carry a `TypeIndex` pointing to a `gTypeInfo` entry whose `type_` may be a primitive (`Type::UnsignedLong`, etc.), but the alias itself remains tagged as `UserDefined`.
+
+2. **Genuine user-defined types** — e.g., a `using MyInt = int;` that was registered via `add_user_type()` in `src/AstNodeTypes.cpp:74-78`. These also carry `Type::UserDefined` and a valid `TypeIndex`.
+
+This ambiguity causes defensive code throughout the codebase. For example, `resolve_type_alias()` in `src/OverloadResolution.h:180-188` only resolves `UserDefined` to its underlying type when the underlying type is a primitive — it explicitly refuses to resolve when the underlying type is `Struct`, `Enum`, or another `UserDefined`, because it cannot tell whether the alias chain has bottomed out. The `buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode)` overload in `src/OverloadResolution.h:636-647` has a further fallback: when a type is still `UserDefined` with `type_index == 0` after resolution, it optimistically accepts integral conversions, because `size_t` and `ptrdiff_t` commonly appear in this state.
+
+This is the **most likely source of subtle type-matching bugs** in the compiler. The `TypeInfo` query helpers proposed in Milestone 2 will not fix it — they just provide a nicer API over the same ambiguous data.
+
+**Recommendation**: Before Milestone 3, evaluate whether `Type::UserDefined` should be split into two enum values:
+- `Type::TypeAlias` — for unresolved or partially-resolved aliases (the parser knows this is an alias but hasn't fully chased the chain)
+- `Type::UserDefined` — for genuinely user-defined types that are not aliases to something else
+
+Alternatively, add a `bool is_type_alias` flag to `TypeInfo` and enforce that alias resolution always chases through to the terminal type. Either approach would eliminate the need for the optimistic `type_index == 0` fallback paths.
+
+### 6.2 `buildConversionPlan` is deeply entangled with raw `Type` comparisons
+
+The overload resolution engine in `src/OverloadResolution.h` is the hottest consumer of `Type` classification in the compiler. The `buildConversionPlan(Type, Type)` overload (starting around line 82) switches directly on individual `Type` values — `Type::Bool`, `Type::Struct`, `Type::Enum`, etc. — in a carefully ordered cascade that implements C++20 [conv], [conv.prom], and [conv.rank].
+
+The `buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode)` overload (starting around line 353) is even more complex: it interleaves `Type` comparisons with `TypeIndex` identity checks (e.g., for struct-to-struct matching), pointer depth, reference binding rules, and user-defined conversion lookups via `hasConversionOperator()` and `hasConvertingConstructorFrom()`.
+
+Milestone 3 says "convert mixed `Type` + `TypeIndex` hot spots to use `TypeIndex` as primary." But `buildConversionPlan` cannot be mechanically converted — it implements conversion ranking semantics where the `Type` category (is this an integer? a float? an enum? a struct?) determines which ranking rule applies, and `TypeIndex` only matters for same-category identity (is this the *same* struct?). The two pieces of information serve fundamentally different roles in this function.
+
+**Recommendation**: Do not attempt to migrate `buildConversionPlan` to `TypeIndex`-primary. Instead, document it as a legitimate `Type`-primary consumer (it answers "what conversion rule applies?" not "what is this type's identity?"). The `TypeInfo` helpers from Milestone 2 can still clean up the `gTypeInfo[idx].type_` lookups inside the `TypeSpecifierNode` overload, but the core `Type`-based dispatch should stay.
+
+### 6.3 Enum exhaustiveness is not enforced for classification helpers
+
+The new `constexpr` helpers (`is_primitive_type`, `needs_type_index`, `is_builtin_type`, `isArithmeticType`) use `switch` with a `default` branch. This means that if a new `Type` enum value is added (e.g., `Type::Union`, `Type::Concept`, `Type::ConstrainedAuto`), the compiler will **not** warn that the new value is unhandled — it will silently fall into `default: return false`.
+
+The `static_assert` checks in `src/AstNodeTypes_TypeSystem.h:368-381` and `src/AstNodeTypes_TypeSystem.h:450-459` only verify known representative values. They do not catch a missing new value.
+
+**Recommendation**: For each classification helper, add a comment listing the `Type` values that intentionally fall through to `default`. Consider adding a compile-time enum count check:
+
+```cpp
+// If this fires, a new Type value was added — review all classification helpers.
+static_assert(static_cast<int>(Type::Template) == 19,
+    "Type enum changed — audit is_primitive_type, needs_type_index, "
+    "is_builtin_type, isArithmeticType, isFundamentalType");
+```
+
+This is a cheap guard that makes the "update the helpers" step impossible to forget.
+
+### 6.4 `is_integral_type` vs `isIntegralType` are semantically identical
+
+The document's TODO 3 says to "consolidate `is_integral_type` / `isIntegralType` to one definition." The prerequisite for safe consolidation is confirming they have identical semantics. They do:
+
+- `isIntegralType(Type)` in `src/AstNodeTypes_TypeSystem.h:461-482` — explicit switch covering `Bool`, all char types, all integer types. Returns true for `Bool`.
+- `is_integral_type(Type)` in `src/OverloadResolution.h:46-48` — defined as `type == Type::Bool || is_integer_type(type)`, where `is_integer_type()` in `src/AstNodeTypes.cpp:222-242` covers all char types and integer types but **not** `Bool`.
+
+The net result is identical: both include `Bool` plus all integer and char types. The consolidation is safe — replace `is_integral_type` call sites with `isIntegralType` and delete the duplicate.
+
+Note: there is also `is_integer_type(Type)` in `src/AstNodeTypes.cpp:222-242` which intentionally excludes `Bool`. This is a distinct concept (C++ "integer types" vs "integral types" per [basic.fundamental]) and should be kept separate with a clarifying comment.
+
+### 6.5 Global mutable state (`gTypeInfo`) constrains future parallelism
+
+`gTypeInfo` is a global `std::deque<TypeInfo>` declared in `src/AstNodeTypes.cpp:70`. The Option C plan proposes making `TypeIndex` the primary identity and reading category from `TypeInfo` methods — which means more code paths will dereference into `gTypeInfo`. This is fine for a single-threaded compiler, but if parallel compilation units are ever needed, the global mutable state becomes a serious problem.
+
+**Recommendation**: This is not a blocker for the current migration, but the document should acknowledge that Option C increases coupling to `gTypeInfo` rather than decreasing it. A future "Option D" might introduce a `TypeRegistry` abstraction that owns the `TypeInfo` storage and can be made thread-local or per-compilation-unit. For now, just note the constraint.
+
+### 6.6 `resolve_type_alias` only resolves one level and only to primitives
+
+`resolve_type_alias()` in `src/OverloadResolution.h:180-188` follows exactly one level of `UserDefined` → underlying type, and only when the underlying type is not `Struct`, `Enum`, or another `UserDefined`. This means chained aliases (`using A = B; using B = int;`) where `A`'s `gTypeInfo` entry points to `B` (still `UserDefined`) will not resolve.
+
+Other parts of the codebase do chase alias chains — e.g., the alias-following loop in `ConstExprEvaluator.h` with `MAX_ALIAS_CHAIN_DEPTH = 100`. But overload resolution uses the shallow version, which can cause type mismatches for deeply aliased types.
+
+**Recommendation**: As part of Milestone 3, consider replacing `resolve_type_alias` with a chain-following version (bounded by a depth limit), or at minimum document why the shallow version is intentional for overload resolution performance.
