@@ -1157,7 +1157,9 @@
 					// Regular member function (not a template) - generate proper mangled name
 					// Use the function declaration from struct_info if available (has correct parameters)
 					const FunctionDeclarationNode* func_for_mangling = &func_decl;
-					if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+					if (func_for_mangling->parameter_nodes().empty() &&
+						called_member_func &&
+						called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
 
@@ -1331,11 +1333,11 @@
 			call_op.is_member_function = true;
 
 			// Get the actual function declaration to check if it's variadic
-			const FunctionDeclarationNode* actual_func_decl_for_variadic = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode* actual_func_decl_for_variadic = &func_decl;
+			if (actual_func_decl_for_variadic->parameter_nodes().empty() &&
+				called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
-			} else {
-				actual_func_decl_for_variadic = &func_decl;
 			}
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 
@@ -1413,12 +1415,16 @@
 			// Generate IR for function arguments and add to CallOp
 			size_t arg_index = 0;
 
-			// Get the actual function declaration with parameters from struct_info if available
-			const FunctionDeclarationNode* actual_func_decl = nullptr;
-			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			// Prefer the function declaration embedded in the MemberFunctionCallNode.
+			// For member function templates, this is the instantiated declaration and
+			// carries any substituted default arguments from the outer class template
+			// bindings. struct_info may still point at the original uninstantiated
+			// template declaration.
+			const FunctionDeclarationNode* actual_func_decl = &func_decl;
+			if (actual_func_decl->parameter_nodes().empty() &&
+				called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
-			} else {
-				actual_func_decl = &func_decl;
 			}
 
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
@@ -1668,9 +1674,7 @@
 		// Return the result variable with its type and size
 		// If we found the actual member function from the struct, use its return type
 		// Otherwise fall back to the placeholder function declaration
-		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
-			: func_decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
 		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);

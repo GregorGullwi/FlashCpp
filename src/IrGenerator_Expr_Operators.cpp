@@ -463,22 +463,42 @@ TypedValue AstToIr::materializeDefaultArgument(
 	const ASTNode& default_expr,
 	const TypeSpecifierNode& param_type_spec,
 	std::string_view error_context) {
+	auto materializePlaceholderCtorDefault = [&](const ConstructorCallNode& ctor_call) -> std::optional<TypedValue> {
+		if (ctor_call.arguments().size() == 0 &&
+			ctor_call.type_node().is<TypeSpecifierNode>() &&
+			(ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::UserDefined ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::Struct ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::Template ||
+			 isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
+			!is_struct_type(param_type_spec.type()) &&
+			param_type_spec.type() != Type::UserDefined) {
+			const int type_size_bits = get_type_size_bits(param_type_spec.type());
+			TypedValue concrete_default = is_floating_point_type(param_type_spec.type())
+				? makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0.0)
+				: makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0ULL);
+			applyTypeNodeMetadata(concrete_default, param_type_spec);
+			return concrete_default;
+		}
+		return std::nullopt;
+	};
+
+	if (default_expr.is<ConstructorCallNode>()) {
+		const ConstructorCallNode& ctor_call = default_expr.as<ConstructorCallNode>();
+		if (std::optional<TypedValue> concrete_default = materializePlaceholderCtorDefault(ctor_call)) {
+			return *concrete_default;
+		}
+		ASTNode wrapped_expr = ASTNode::emplace_node<ExpressionNode>(ctor_call);
+		auto default_operands = visitExpressionNode(wrapped_expr.as<ExpressionNode>());
+		TypedValue tv = toTypedValue(default_operands);
+		applyTypeNodeMetadata(tv, param_type_spec);
+		return tv;
+	}
+
 	if (default_expr.is<ExpressionNode>()) {
 		const ExpressionNode& default_expr_node = default_expr.as<ExpressionNode>();
 		if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&default_expr_node)) {
-			if (ctor_call->arguments().size() == 0 &&
-				ctor_call->type_node().is<TypeSpecifierNode>() &&
-				ctor_call->type_node().as<TypeSpecifierNode>().type() == Type::UserDefined &&
-				!is_struct_type(param_type_spec.type()) &&
-				param_type_spec.type() != Type::UserDefined) {
-				ChunkedVector<ASTNode> concrete_args;
-				ASTNode concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(param_type_spec);
-				ExpressionNode& concrete_default_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					ConstructorCallNode(concrete_type_node, std::move(concrete_args), ctor_call->called_from()));
-				auto concrete_default_operands = visitExpressionNode(concrete_default_expr);
-				TypedValue concrete_default = toTypedValue(concrete_default_operands);
-				applyTypeNodeMetadata(concrete_default, param_type_spec);
-				return concrete_default;
+			if (std::optional<TypedValue> concrete_default = materializePlaceholderCtorDefault(*ctor_call)) {
+				return *concrete_default;
 			}
 		}
 		auto default_operands = visitExpressionNode(default_expr_node);
