@@ -1167,11 +1167,15 @@ void Parser::register_builtin_functions() {
 		return t;
 	};
 	
+	// size_t is 64-bit on all supported platforms, but the underlying type differs:
+	// LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
+	// LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
+	const Type size_t_base = context_.isLLP64() ? Type::UnsignedLongLong : Type::UnsignedLong;
+	
 	// __builtin_strlen(const char*) - returns length of string
-	// Returns size_t (unsigned long on 64-bit platforms)
 	register_extern_c_builtin(
 		"__builtin_strlen",
-		make_builtin_type(Type::UnsignedLong, 64),
+		make_builtin_type(size_t_base, 64),
 		{ make_builtin_type(Type::Char, 8, CVQualifier::Const, 1) });
 	
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
@@ -1179,7 +1183,7 @@ void Parser::register_builtin_functions() {
 	// before those headers are explicitly included.
 	const ASTNode wchar_t_ptr = make_builtin_type(Type::WChar, 32, CVQualifier::None, 1);
 	const ASTNode const_wchar_t_ptr = make_builtin_type(Type::WChar, 32, CVQualifier::Const, 1);
-	const ASTNode size_t_type = make_builtin_type(Type::UnsignedLong, 64);
+	const ASTNode size_t_type = make_builtin_type(size_t_base, 64);
 	
 	register_extern_c_builtin(
 		"wmemcmp",
