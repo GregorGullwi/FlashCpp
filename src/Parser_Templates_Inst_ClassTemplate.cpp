@@ -474,25 +474,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
 				substituted_param_type_node, param_decl.identifier_token());
 			if (param_decl.has_default_value()) {
-				// Substitute template parameters in the default value expression.
-				// Without this, template-dependent defaults like T{} or T(0) remain
-				// unsubstituted after instantiation.
-				std::unordered_map<std::string_view, TemplateTypeArg> default_param_map;
-				for (size_t i = 0; i < tmpl_params.size() && i < tmpl_args.size(); ++i) {
-					if (tmpl_params[i].template is<TemplateParameterNode>()) {
-						const TemplateParameterNode& tp = tmpl_params[i].template as<TemplateParameterNode>();
-						default_param_map[tp.name()] = tmpl_args[i];
-					}
-				}
-				if (!default_param_map.empty()) {
-					ExpressionSubstitutor substitutor(default_param_map, *this);
-					std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
-					if (substituted_default.has_value()) {
-						substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
-					}
-				} else {
-					substituted_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-				}
+				ASTNode substituted_default = substituteTemplateParameters(
+					param_decl.default_value(), tmpl_params, tmpl_args);
+				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
 			target_node.add_parameter_node(substituted_param_decl);
 		}
@@ -5945,7 +5929,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_param_type_node, param_decl.identifier_token());
 						// Copy default value if present
 						if (param_decl.has_default_value()) {
-							new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+							std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+							std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+								if (!template_params[i].is<TemplateParameterNode>()) continue;
+								const auto& template_param = template_params[i].as<TemplateParameterNode>();
+								if (template_param.kind() == TemplateParameterKind::Type && !template_args_to_use[i].is_value) {
+									auto type_it = gTypesByName.find(template_param.nameHandle());
+									if (type_it != gTypesByName.end()) {
+										type_sub_map[type_it->second->type_index_] = template_args_to_use[i];
+									} else {
+										type_sub_map[TypeIndex{gTypeInfo.size() + type_sub_map.size() + 1}] = template_args_to_use[i];
+									}
+								} else if (template_param.kind() == TemplateParameterKind::NonType && template_args_to_use[i].is_value) {
+									nontype_sub_map[template_param.name()] = template_args_to_use[i].value;
+								}
+							}
+							ASTNode substituted_default = substitute_template_params_in_expression(
+								param_decl.default_value(), type_sub_map, nontype_sub_map);
+							new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 						}
 						new_func_ref.add_parameter_node(new_param_decl);
 					}

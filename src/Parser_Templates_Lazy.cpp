@@ -56,6 +56,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
+				if (param_decl.has_default_value()) {
+					ASTNode substituted_default = substituteTemplateParameters(
+						param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
+					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
+				}
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
 			} else {
 				new_ctor_ref.add_parameter_node(param);
@@ -335,16 +340,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				substituted_param_type_node, param_decl.identifier_token()
 			);
 			// Copy default value if present
-if (param_decl.has_default_value()) {
-// Substitute template parameters in the default value expression
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							// Note: In this context, we don't have easy access to template parameter order
-							// so we fallback to the original approach for now
-							ExpressionSubstitutor substitutor(param_map, *this);
-							std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
-				if (substituted_default.has_value()) {
-					substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
-				}
+			if (param_decl.has_default_value()) {
+				ASTNode substituted_default = substituteTemplateParameters(
+					param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
+				substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 			}
 			new_func_ref.add_parameter_node(substituted_param_decl);
 		} else {

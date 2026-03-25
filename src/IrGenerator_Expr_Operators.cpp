@@ -464,7 +464,24 @@ TypedValue AstToIr::materializeDefaultArgument(
 	const TypeSpecifierNode& param_type_spec,
 	std::string_view error_context) {
 	if (default_expr.is<ExpressionNode>()) {
-		auto default_operands = visitExpressionNode(default_expr.as<ExpressionNode>());
+		const ExpressionNode& default_expr_node = default_expr.as<ExpressionNode>();
+		if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&default_expr_node)) {
+			if (ctor_call->arguments().size() == 0 &&
+				ctor_call->type_node().is<TypeSpecifierNode>() &&
+				ctor_call->type_node().as<TypeSpecifierNode>().type() == Type::UserDefined &&
+				!is_struct_type(param_type_spec.type()) &&
+				param_type_spec.type() != Type::UserDefined) {
+				ChunkedVector<ASTNode> concrete_args;
+				ASTNode concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(param_type_spec);
+				ExpressionNode& concrete_default_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					ConstructorCallNode(concrete_type_node, std::move(concrete_args), ctor_call->called_from()));
+				auto concrete_default_operands = visitExpressionNode(concrete_default_expr);
+				TypedValue concrete_default = toTypedValue(concrete_default_operands);
+				applyTypeNodeMetadata(concrete_default, param_type_spec);
+				return concrete_default;
+			}
+		}
+		auto default_operands = visitExpressionNode(default_expr_node);
 		TypedValue tv = toTypedValue(default_operands);
 		applyTypeNodeMetadata(tv, param_type_spec);
 		return tv;

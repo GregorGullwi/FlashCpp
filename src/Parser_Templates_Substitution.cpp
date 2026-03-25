@@ -923,11 +923,32 @@ ASTNode Parser::substituteTemplateParameters(
 				if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size() && gTypeInfo[substituted_type_index.value].type_size_ > 0) {
 					substituted_size_bits = gTypeInfo[substituted_type_index.value].type_size_;
 				}
+				Token substituted_token = type_spec.token();
+				if (substituted_type == Type::Struct || substituted_type == Type::UserDefined) {
+					if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size()) {
+						substituted_token = Token(
+							Token::Type::Identifier,
+							StringTable::getStringView(gTypeInfo[substituted_type_index.value].name()),
+							type_spec.token().line(),
+							type_spec.token().column(),
+							type_spec.token().file_index());
+					}
+				} else {
+					std::string_view substituted_type_name = get_type_name(substituted_type);
+					if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
+						substituted_token = Token(
+							Token::Type::Keyword,
+							substituted_type_name,
+							type_spec.token().line(),
+							type_spec.token().column(),
+							type_spec.token().file_index());
+					}
+				}
 				TypeSpecifierNode substituted_spec(
 					substituted_type,
 					substituted_type_index,
 					substituted_size_bits,
-					type_spec.token(),
+					substituted_token,
 					type_spec.cv_qualifier(),
 					type_spec.reference_qualifier());
 				substituted_spec.copy_indirection_from(type_spec);
