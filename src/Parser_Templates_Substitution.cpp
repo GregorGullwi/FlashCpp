@@ -211,20 +211,7 @@ ASTNode Parser::substituteTemplateParameters(
 			const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
-				const ASTNode& arg = func_call.arguments()[i];
-				// Check if this argument is a PackExpansionExprNode that needs to be expanded
-				// into multiple arguments (e.g., func(identity(args)...) -> func(identity(args_0), identity(args_1), ...))
-				bool expanded = false;
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						expanded = expandPackExpansionArgs(
-							*pack_expansion_expr, template_params, template_args, substituted_args);
-					}
-				}
-				if (!expanded) {
-					substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
-				}
+				substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
 			}
 			
 			// Check if function name contains a dependent template hash (Base$hash::member)
@@ -310,18 +297,7 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
-				const ASTNode& arg = constructor_call.arguments()[i];
-				bool expanded = false;
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						expanded = expandPackExpansionArgs(
-							*pack_expansion_expr, template_params, template_args, substituted_args);
-					}
-				}
-				if (!expanded) {
-					substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
-				}
+				substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 			}
 			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
 		} else if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
@@ -847,17 +823,7 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_object = substituteTemplateParameters(member_call.object(), template_params, template_args);
 			ChunkedVector<ASTNode> substituted_args;
 			for (const auto& arg : member_call.arguments()) {
-				bool expanded = false;
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						expanded = expandPackExpansionArgs(
-							*pack_expansion_expr, template_params, template_args, substituted_args);
-					}
-				}
-				if (!expanded) {
-					substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
-				}
+				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
 			}
 			return emplace_node<ExpressionNode>(
 				MemberFunctionCallNode(substituted_object, const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
@@ -874,18 +840,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Substitute arguments (with PackExpansionExprNode handling)
 		ChunkedVector<ASTNode> substituted_args;
 		for (size_t i = 0; i < func_call.arguments().size(); ++i) {
-			const ASTNode& arg = func_call.arguments()[i];
-			bool expanded = false;
-			if (arg.is<ExpressionNode>()) {
-				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-				if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-					expanded = expandPackExpansionArgs(
-						*pack_expansion_expr, template_params, template_args, substituted_args);
-				}
-			}
-			if (!expanded) {
-				substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
-			}
+			substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
 		}
 
 		// For now, don't substitute the function declaration itself
@@ -1326,6 +1281,25 @@ bool Parser::expandPackExpansionArgs(
 		out_args.push_back(substituted);
 	}
 	return true;
+}
+
+// Substitute a single argument, expanding PackExpansionExprNode when present.
+// Consolidates the repeated check-expand-or-substitute pattern used in
+// FunctionCallNode, ConstructorCallNode, and MemberFunctionCallNode handlers.
+void Parser::substituteArgWithPackExpansion(
+	const ASTNode& arg,
+	const InlineVector<ASTNode, 4>& template_params,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	ChunkedVector<ASTNode>& out) {
+	if (arg.is<ExpressionNode>()) {
+		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+		if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+			if (expandPackExpansionArgs(*pack_expansion_expr, template_params, template_args, out)) {
+				return;
+			}
+		}
+	}
+	out.push_back(substituteTemplateParameters(arg, template_params, template_args));
 }
 
 // Replace a pack parameter identifier in an expression pattern with its expanded element name.

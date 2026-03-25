@@ -1043,6 +1043,15 @@ public:  // Public methods for template instantiation
             const InlineVector<TemplateTypeArg, 4>& template_args,
             ChunkedVector<ASTNode>& out_args);
 
+        // Substitute a single argument, expanding PackExpansionExprNode into
+        // multiple arguments when present.  Falls back to substituteTemplateParameters
+        // for non-pack arguments.  Appends result(s) to `out`.
+        void substituteArgWithPackExpansion(
+            const ASTNode& arg,
+            const InlineVector<ASTNode, 4>& template_params,
+            const InlineVector<TemplateTypeArg, 4>& template_args,
+            ChunkedVector<ASTNode>& out);
+
         // Phase 3: Expression context tracking for template disambiguation
         enum class ExpressionContext {
             Normal,              // Regular expression context
