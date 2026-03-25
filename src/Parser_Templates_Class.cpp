@@ -1452,6 +1452,19 @@ ParseResult Parser::parse_template_declaration() {
 				nullptr  // local_struct_info - not needed during template instantiation
 			});
 
+			// Set up struct parsing context so member typedef/using registrations
+			// build struct-qualified names (e.g., "SpecName$HASH::char_type").
+			// Without this, member typedefs from different specializations of the same
+			// template (e.g., char_traits<char>::char_type and char_traits<wchar_t>::char_type)
+			// both register under the simple name "char_type" and only the first survives.
+			struct_parsing_context_stack_.push_back({
+				StringTable::getStringView(instantiated_name),
+				&struct_ref,
+				struct_info.get(),
+				gSymbolTable.get_current_namespace_handle(),
+				{}
+			});
+
 			while (!peek().is_eof() && peek() != "}"_tok) {
 				// Skip empty declarations (bare ';' tokens) - valid in C++
 				if (peek() == ";"_tok) {
@@ -2296,7 +2309,8 @@ ParseResult Parser::parse_template_declaration() {
 			// Pop member function context
 			member_function_context_stack_.pop_back();
 
-			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			// Pop struct parsing context (pushed before body parsing)
+			struct_parsing_context_stack_.pop_back();
 			skip_cpp_attributes();
 
 			// Expect semicolon
