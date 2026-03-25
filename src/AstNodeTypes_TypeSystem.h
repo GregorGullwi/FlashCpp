@@ -333,7 +333,7 @@ inline bool isPlaceholderAutoType(Type type) {
 //   folding it into needs_type_index().
 // - is_struct_type() remains the narrower "struct/class-like object" helper and
 //   intentionally excludes enums and unresolved template placeholders.
-inline bool is_primitive_type(Type type) {
+constexpr bool is_primitive_type(Type type) {
 	switch (type) {
 	case Type::Void:
 	case Type::Bool:
@@ -361,9 +361,24 @@ inline bool is_primitive_type(Type type) {
 	}
 }
 
-inline bool needs_type_index(Type type) {
+constexpr bool needs_type_index(Type type) {
 	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
 }
+
+static_assert(is_primitive_type(Type::Void));
+static_assert(is_primitive_type(Type::LongDouble));
+static_assert(is_primitive_type(Type::Nullptr));
+static_assert(!is_primitive_type(Type::Struct));
+static_assert(!is_primitive_type(Type::Enum));
+static_assert(!is_primitive_type(Type::UserDefined));
+static_assert(!is_primitive_type(Type::Template));
+
+static_assert(needs_type_index(Type::Struct));
+static_assert(needs_type_index(Type::Enum));
+static_assert(needs_type_index(Type::UserDefined));
+static_assert(!needs_type_index(Type::Int));
+static_assert(!needs_type_index(Type::Nullptr));
+static_assert(!needs_type_index(Type::Template));
 
 inline bool isIntegralType(Type type) {
 	switch (type) {
