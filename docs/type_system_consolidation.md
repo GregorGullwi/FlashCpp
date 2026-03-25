@@ -80,7 +80,7 @@ branch) found multiple ad-hoc ways to ask the same classification question:
 | `needs_type_index(Type)` | `src/AstNodeTypes_TypeSystem.h:364-366` | `Struct`, `Enum`, `UserDefined` | Does not cover `Template` (intentional) |
 | `carriesSemanticTypeIndex(Type)` | `src/IrType.h:86` | delegates to `needs_type_index` | IR-layer alias; use `needs_type_index` in semantic code |
 | `binaryOperatorUsesTypeIndexIdentity(Type)` | `src/OverloadResolution.h:1258` | delegates to `needs_type_index` | Overload-resolution alias; semantically identical to `needs_type_index` |
-| `isIntegralType(Type)` | `src/AstNodeTypes_TypeSystem.h:383` | integral primitives incl. char types | Does not include `Bool` |
+| `isIntegralType(Type)` | `src/AstNodeTypes_TypeSystem.h:461` | integral primitives incl. char types and `Bool` | — |
 | `isFloatingPointType(Type)` | `src/AstNodeTypes_TypeSystem.h:349` | `Float`, `Double`, `LongDouble` | — |
 | `isUnsignedIntegralType(Type)` | `src/AstNodeTypes_TypeSystem.h:353` | unsigned integral types | target-dependent for `WChar` |
 | `is_integral_type(Type)` | `src/OverloadResolution.h:45-47` | `Bool` + integer primitives | duplicate concept to `isIntegralType`; lives in wrong header |
