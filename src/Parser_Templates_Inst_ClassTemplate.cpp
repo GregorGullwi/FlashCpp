@@ -425,6 +425,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+			// Skip variadic pack parameters that map to an empty pack.
+			// e.g. when instantiating Tuple<float> from Tuple<First, Rest...> with Rest=(),
+			// the parameter "Rest... r" must not appear in the instantiated function signature.
+			if (param_type_spec.type() == Type::UserDefined) {
+				std::string_view type_name = param_type_spec.token().value();
+				if (!type_name.empty()) {
+					bool is_empty_pack = false;
+					for (size_t i = 0; i < tmpl_params.size() && !is_empty_pack; ++i) {
+						if (!tmpl_params[i].template is<TemplateParameterNode>()) continue;
+						const TemplateParameterNode& tparam = tmpl_params[i].template as<TemplateParameterNode>();
+						if (!tparam.is_variadic() || tparam.name() != type_name) continue;
+						// Count non-variadic params to compute pack size.
+						size_t non_variadic = 0;
+						for (size_t j = 0; j < tmpl_params.size(); ++j) {
+							if (tmpl_params[j].template is<TemplateParameterNode>() &&
+								!tmpl_params[j].template as<TemplateParameterNode>().is_variadic()) {
+								non_variadic++;
+							}
+						}
+						size_t pack_size = tmpl_args.size() > non_variadic
+							? tmpl_args.size() - non_variadic : 0;
+						is_empty_pack = (pack_size == 0);
+					}
+					if (is_empty_pack) continue;  // Empty pack — omit this parameter entirely
+				}
+			}
+
 			auto [param_type, param_type_index] = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
 			TypeSpecifierNode substituted_param_type(
@@ -466,7 +494,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<ASTNode> substituted_args;
 			substituted_args.reserve(init.arguments.size());
 			for (const auto& arg : init.arguments) {
-				substituted_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+				// Check if this is a pack expansion — expand it properly.
+				// expandPackExpansionArgs handles empty packs (0 args) correctly,
+				// preventing a PackExpansionExprNode from leaking into codegen.
+				bool handled = false;
+				if (arg.is<ExpressionNode>()) {
+					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+					if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+						ChunkedVector<ASTNode> expanded;
+						if (expandPackExpansionArgs(*pack_exp, tmpl_params, tmpl_args, expanded)) {
+							for (size_t ei = 0; ei < expanded.size(); ++ei) {
+								substituted_args.push_back(expanded[ei]);
+							}
+							handled = true;
+						}
+					}
+				}
+				if (!handled) {
+					substituted_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+				}
 			}
 			new_ctor.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
 		}
