@@ -842,6 +842,18 @@ ASTNode Parser::substituteTemplateParameters(
 			return node;
 		}
 
+		if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+			const MemberFunctionCallNode& member_call = std::get<MemberFunctionCallNode>(expr);
+			ASTNode substituted_object = substituteTemplateParameters(member_call.object(), template_params, template_args);
+			ChunkedVector<ASTNode> substituted_args;
+			for (const auto& arg : member_call.arguments()) {
+				substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args));
+			}
+			return emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(substituted_object, const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
+					std::move(substituted_args), member_call.called_from()));
+		}
+
 		// For other expression types that don't contain subexpressions, return as-is
 		return node;
 
