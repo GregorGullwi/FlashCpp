@@ -516,33 +516,202 @@ inline bool isUnsignedIntegralType(Type type) {
 	}
 }
 
+// TypeCategory — a distinct type from `Type` that allows the compiler to flag
+// every remaining `Type::` usage as a migration error once TypeCategory is in use.
+// Explicit values 0-23 match the old Type enum exactly so that a numeric value
+// printed in a debug log has the same meaning in both systems.  TypeAlias (24) is
+// inserted between UserDefined (23) and Auto (25), shifting Auto and all later
+// values up by 1 relative to the old Type enum.
+//
+// TypeAlias is the key new discriminant: `register_type_alias` sets
+// TypeCategory::TypeAlias while `add_user_type` sets TypeCategory::UserDefined,
+// resolving the long-standing Type::UserDefined semantic ambiguity (§7.1).
+enum class TypeCategory : uint8_t {
+	Invalid              =  0,
+	Void                 =  1,
+	Bool                 =  2,
+	Char                 =  3,
+	UnsignedChar         =  4,
+	WChar                =  5,
+	Char8                =  6,
+	Char16               =  7,
+	Char32               =  8,
+	Short                =  9,
+	UnsignedShort        = 10,
+	Int                  = 11,
+	UnsignedInt          = 12,
+	Long                 = 13,
+	UnsignedLong         = 14,
+	LongLong             = 15,
+	UnsignedLongLong     = 16,
+	Float                = 17,
+	Double               = 18,
+	LongDouble           = 19,
+	FunctionPointer      = 20,
+	MemberFunctionPointer= 21,
+	MemberObjectPointer  = 22,
+	UserDefined          = 23,  // opaque/unresolved user type or builtin alias (e.g. __builtin_va_list)
+	TypeAlias            = 24,  // NEW: explicit typedef/using alias (was ambiguously Type::UserDefined)
+	Auto                 = 25,  // was Type::Auto = 24
+	DeclTypeAuto         = 26,  // was Type::DeclTypeAuto = 25
+	Function             = 27,  // was Type::Function = 26
+	Struct               = 28,  // was Type::Struct = 27
+	Enum                 = 29,  // was Type::Enum = 28
+	Nullptr              = 30,  // was Type::Nullptr = 29
+	Template             = 31,  // was Type::Template = 30
+};
+
+// Correspondence checks: values 0-23 match the old Type enum exactly; values >= 24
+// are each one greater because TypeAlias (24) was inserted between UserDefined and Auto.
+static_assert(static_cast<int>(TypeCategory::Invalid)     == static_cast<int>(Type::Invalid));
+static_assert(static_cast<int>(TypeCategory::Void)        == static_cast<int>(Type::Void));
+static_assert(static_cast<int>(TypeCategory::Int)         == static_cast<int>(Type::Int));
+static_assert(static_cast<int>(TypeCategory::UserDefined) == static_cast<int>(Type::UserDefined));
+static_assert(static_cast<int>(TypeCategory::TypeAlias)   == static_cast<int>(Type::UserDefined) + 1);
+static_assert(static_cast<int>(TypeCategory::Struct)      == static_cast<int>(Type::Struct)   + 1);
+static_assert(static_cast<int>(TypeCategory::Enum)        == static_cast<int>(Type::Enum)     + 1);
+static_assert(static_cast<int>(TypeCategory::Template)    == static_cast<int>(Type::Template) + 1);
+
+// Convert a legacy Type value to the corresponding TypeCategory.
+// Values 0-23 map 1:1.  Values >= 24 are shifted up by 1 to account for the
+// TypeAlias insertion.  Note: Type::UserDefined maps to TypeCategory::UserDefined
+// (not TypeAlias) — use TypeCategory::TypeAlias explicitly in register_type_alias.
+constexpr TypeCategory typeToCategory(Type t) noexcept {
+	auto v = static_cast<int>(t);
+	if (v <= 23) return static_cast<TypeCategory>(v);
+	return static_cast<TypeCategory>(v + 1);
+}
+
+// --- TypeCategory classification helpers (Milestone 7 Step 2) ---
+// These mirror the Type-based helpers above and allow call sites that have
+// already migrated to TypeIndex to avoid a gTypeInfo lookup for simple queries.
+// Helpers needed by TypeIndex itself are declared first so that TypeIndex
+// methods can delegate to them instead of duplicating the switch logic.
+
+// True for primitive scalar types (no gTypeInfo lookup needed for identity).
+constexpr bool is_primitive_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Void:
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Float:
+	case TypeCategory::Double:
+	case TypeCategory::LongDouble:
+	case TypeCategory::Nullptr:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// True for Struct, UserDefined (opaque), or TypeAlias — any user-defined type
+// that may carry struct-like metadata (StructTypeInfo) or be resolved via alias
+// lookup.  Intentionally excludes Enum and Template placeholders.
+constexpr bool is_struct_type(TypeCategory cat) {
+	return cat == TypeCategory::Struct
+		|| cat == TypeCategory::UserDefined
+		|| cat == TypeCategory::TypeAlias;
+}
+
+// True for any type that requires a gTypeInfo entry for identity
+// (Struct, Enum, UserDefined, TypeAlias).  Mirrors needs_type_index(Type).
+constexpr bool needs_type_index(TypeCategory cat) {
+	return cat == TypeCategory::Struct
+		|| cat == TypeCategory::Enum
+		|| cat == TypeCategory::UserDefined
+		|| cat == TypeCategory::TypeAlias;
+}
+
 // Strong wrapper for type indices into getTypeInfo(TypeIndex{}).
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
 // conversion at write sites; read sites use .value explicitly.
+//
+// Milestone 7 (Option D Step 1): `category_` now caches the TypeCategory of the
+// referenced type so that classification queries (isStruct, isEnum, …) do not
+// require a gTypeInfo lookup.  During the migration period, TypeIndex values
+// constructed via the legacy 1-arg ctor leave category_ = TypeCategory::Invalid;
+// only values returned by add* functions and initialize_native_types carry a
+// correct category.  Comparison operators use only `.value` for backward
+// compatibility until all construction sites are updated.
+//
+// Note: `.value` is retained (not yet renamed to `index_`) to avoid a mechanical
+// rename at ~499 call sites; that rename is deferred to the next Milestone 7 sub-PR.
 struct TypeIndex {
-	size_t value = 0;
-	// Non-explicit default ctor: keeps TypeIndex{} and aggregate-init working.
+	uint32_t     value     = 0;
+	TypeCategory category_ = TypeCategory::Invalid;
+
+	// Non-explicit default ctor: fully-null TypeIndex.
 	constexpr TypeIndex() noexcept = default;
-	// Explicit single-arg ctor: prevents bare integer → TypeIndex conversion.
-	constexpr explicit TypeIndex(size_t v) noexcept : value(v) {}
-	// Increment operators for loop variables.
+	// Explicit single-arg ctor (legacy): category stays Invalid.
+	constexpr explicit TypeIndex(size_t v) noexcept
+		: value(static_cast<uint32_t>(v)), category_(TypeCategory::Invalid) {}
+	// Two-arg ctor (preferred going forward): sets both index and category.
+	constexpr TypeIndex(size_t v, TypeCategory cat) noexcept
+		: value(static_cast<uint32_t>(v)), category_(cat) {}
+
+	// Increment operators for loop variables (index only).
 	TypeIndex& operator++() noexcept { ++value; return *this; }
 	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
-	// Spaceship operator covers all relational and equality comparisons.
-	constexpr auto operator<=>(const TypeIndex&) const noexcept = default;
+
+	// Comparison operators use only `.value` (the category is a cache, not an
+	// identity field) so that legacy TypeIndex{n} still matches stored values.
+	constexpr bool operator==(const TypeIndex& other) const noexcept { return value == other.value; }
+	constexpr bool operator!=(const TypeIndex& other) const noexcept { return value != other.value; }
+	constexpr auto operator<=>(const TypeIndex& other) const noexcept { return value <=> other.value; }
+
 	// True when the index is non-zero (i.e., refers to a real type entry).
+	// Semantics unchanged from before Milestone 7.
 	constexpr bool is_valid() const noexcept { return value > 0; }
+
+	// True when both index and category are their zero/Invalid defaults.
+	constexpr bool isNull() const noexcept {
+		return value == 0 && category_ == TypeCategory::Invalid;
+	}
+
+	// --- Category accessors (no gTypeInfo lookup required) ---
+	// These return meaningful results only when the TypeIndex was created via an
+	// add*() function or initialize_native_types().  Legacy TypeIndex{n} values
+	// always return TypeCategory::Invalid / false from these helpers.
+	constexpr TypeCategory category() const noexcept { return category_; }
+
+	constexpr bool isStruct()              const noexcept { return category_ == TypeCategory::Struct; }
+	constexpr bool isEnum()               const noexcept { return category_ == TypeCategory::Enum; }
+	constexpr bool isTypeAlias()          const noexcept { return category_ == TypeCategory::TypeAlias; }
+	constexpr bool isFunction()           const noexcept { return category_ == TypeCategory::Function; }
+	constexpr bool isTemplatePlaceholder() const noexcept { return category_ == TypeCategory::Template; }
+
+	// Delegates to is_struct_type(TypeCategory) — see its comment for semantics.
+	constexpr bool isStructLike()  const noexcept { return is_struct_type(category_); }
+	// Delegates to needs_type_index(TypeCategory) — see its comment for semantics.
+	constexpr bool needsTypeIndex() const noexcept { return ::needs_type_index(category_); }
+	// Delegates to is_primitive_type(TypeCategory) — see its comment for semantics.
+	constexpr bool isPrimitive()   const noexcept { return is_primitive_type(category_); }
 };
 
 namespace std {
 template<>
 struct hash<TypeIndex> {
-	size_t operator()(TypeIndex idx) const noexcept { return std::hash<size_t>{}(idx.value); }
+	// Hash only `.value` so that hash(a) == hash(b) whenever a == b
+	// (operator== compares only `.value`).
+	size_t operator()(TypeIndex idx) const noexcept { return std::hash<uint32_t>{}(idx.value); }
 };
 template<>
-struct formatter<TypeIndex, char> : formatter<size_t, char> {
+struct formatter<TypeIndex, char> : formatter<uint32_t, char> {
 	auto format(const TypeIndex& idx, format_context& ctx) const {
-		return formatter<size_t, char>::format(idx.value, ctx);
+		return formatter<uint32_t, char>::format(idx.value, ctx);
 	}
 };
 }  // namespace std
@@ -550,6 +719,99 @@ inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
 	return os << idx.value;
 }
 
+// --- TypeCategory classification helpers continued (Milestone 7 Step 2) ---
+// is_primitive_type, is_struct_type, and needs_type_index are defined before
+// TypeIndex (above) so that TypeIndex methods can delegate to them.
+
+// True for all builtin types that have a valid get_type_size_bits() answer.
+constexpr bool is_builtin_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Void:
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Float:
+	case TypeCategory::Double:
+	case TypeCategory::LongDouble:
+	case TypeCategory::FunctionPointer:
+	case TypeCategory::MemberFunctionPointer:
+	case TypeCategory::MemberObjectPointer:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool isArithmeticType(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Float:
+	case TypeCategory::Double:
+	case TypeCategory::LongDouble:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool isFundamentalType(TypeCategory cat) {
+	return cat == TypeCategory::Void || cat == TypeCategory::Nullptr || isArithmeticType(cat);
+}
+
+constexpr bool isIntegralType(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool isFloatingPointType(TypeCategory cat) {
+	return cat == TypeCategory::Float
+		|| cat == TypeCategory::Double
+		|| cat == TypeCategory::LongDouble;
+}
 
 // Identity record that travels with every deferred/lazy template member.
 // Slice 1 populates the source-side fields; Slice 2 fills instantiated_lookup_name.
