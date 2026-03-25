@@ -5676,66 +5676,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
 					
 					// Substitute and copy parameters
-					for (const auto& param : ctor_decl.parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const DeclarationNode& param_decl = param.as<DeclarationNode>();
-							const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-
-							// Substitute parameter type
-							auto [param_type, param_type_index] = substitute_template_parameter(
-								param_type_spec, template_params, template_args_to_use
-							);
-
-							// Create substituted parameter type
-							TypeSpecifierNode substituted_param_type(
-								param_type,
-								param_type_spec.qualifier(),
-								get_substituted_type_size_bits(param_type, param_type_index),
-								param_decl.identifier_token(),
-								param_type_spec.cv_qualifier()  // Preserve const/volatile qualifiers
-							);
-							substituted_param_type.set_type_index(param_type_index);
-
-							// Copy pointer levels and reference qualifiers
-							for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-								substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
-							}
-							substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
-							if (param_type_spec.has_function_signature()) {
-								substituted_param_type.set_function_signature(param_type_spec.function_signature());
-							}
-
-							auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
-							auto substituted_param_decl = emplace_node<DeclarationNode>(
-								substituted_param_type_node, param_decl.identifier_token()
-							);
-							// Copy default value if present
-							if (param_decl.has_default_value()) {
-								// Substitute template parameters in the default value expression
-								std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-								bool fill_template_param_order = template_param_order.empty();
-								for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-									if (template_params[i].is<TemplateParameterNode>()) {
-										const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
-										param_map[template_param.name()] = template_args_to_use[i];
-
-										if (fill_template_param_order) {
-											template_param_order.push_back(template_param.name());
-										}
-									}
-								}
-								ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
-								std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
-								if (substituted_default.has_value()) {
-									substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
-								}
-							}
-							new_ctor_ref.add_parameter_node(substituted_param_decl);
-						} else {
-							// Non-declaration parameter, copy as-is
-							new_ctor_ref.add_parameter_node(param);
-						}
-					}
+					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
 					
 					// Copy all initializers (member, base, delegating) with template parameter substitution
 					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
