@@ -1000,7 +1000,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						return ParseResult::error("Expected ';' after type alias", current_token_);
 					}
 
-					// Register the type alias in gTypesByName
+					// Register the type alias in getTypesByNameMap()
 					// Create a TypeInfo for the alias that points to the underlying type
 					auto& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
 					
@@ -1009,8 +1009,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					if (!namespace_handle.isGlobal()) {
 						StringHandle alias_handle = alias_token.handle();
 						auto full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, alias_handle);
-						if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
-							gTypesByName.emplace(full_qualified_name, &alias_type_info);
+						if (getTypesByNameMap().find(full_qualified_name) == getTypesByNameMap().end()) {
+							getTypesByNameMap().emplace(full_qualified_name, &alias_type_info);
 							FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias '{}' with namespace-qualified name '{}'",
 							                 alias_token.value(), StringTable::getStringView(full_qualified_name));
 						}
@@ -1148,8 +1148,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		// Add enumerators to gSymbolTable NOW so they're available during parsing
 		// This is needed because the parser needs to resolve identifiers like 'Red' when
 		// parsing subsequent expressions (e.g., static_cast<int>(Red))
-		auto type_it = gTypesByName.find(enum_name_handle);
-		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
+		auto type_it = getTypesByNameMap().find(enum_name_handle);
+		if (type_it != getTypesByNameMap().end() && type_it->second->getEnumInfo()) {
 			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 			
 			for (const auto& enumerator : enum_info->enumerators) {
@@ -1250,17 +1250,17 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			: identifier_handle;
 	}
 	
-	// Look up the type in gTypesByName
-	auto existing_type_it = gTypesByName.find(source_type_name);
+	// Look up the type in getTypesByNameMap()
+	auto existing_type_it = getTypesByNameMap().find(source_type_name);
 	
 	// If not found with qualified name, try the unqualified name
 	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
 	// might itself be an alias to ::lldiv_t
-	if (existing_type_it == gTypesByName.end() && !namespace_path.empty()) {
+	if (existing_type_it == getTypesByNameMap().end() && !namespace_path.empty()) {
 		StringHandle qualified_source = source_type_name;  // Save the qualified name for logging
 		StringHandle unqualified_source = identifier_token.handle();
-		auto unqualified_it = gTypesByName.find(unqualified_source);
-		if (unqualified_it != gTypesByName.end()) {
+		auto unqualified_it = getTypesByNameMap().find(unqualified_source);
+		if (unqualified_it != getTypesByNameMap().end()) {
 			existing_type_it = unqualified_it;
 			source_type_name = unqualified_source;  // Update to use the unqualified name that was found
 			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}", 
@@ -1277,17 +1277,16 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, identifier_handle);
 		
 		// Check if target name is already registered (avoid duplicates)
-		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
-			if (existing_type_it != gTypesByName.end()) {
+		if (getTypesByNameMap().find(target_type_name) == getTypesByNameMap().end()) {
+			if (existing_type_it != getTypesByNameMap().end()) {
 				// Found existing type - create alias pointing to it
 				const TypeInfo* source_type = existing_type_it->second;
-				auto& alias_type_info = gTypeInfo.emplace_back(target_type_name, source_type->type_, source_type->type_index_, source_type->type_size_);
+				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->type_, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
 				
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
 				// This is the same pattern used for typedef resolution
 				
-				gTypesByName.emplace(target_type_name, &alias_type_info);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}", 
 				                 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
 				
@@ -1295,8 +1294,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// This allows code inside the namespace to use the type without qualification
 				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
 				StringHandle unqualified_name = identifier_token.handle();
-				if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
-					gTypesByName.emplace(unqualified_name, &alias_type_info);
+				if (getTypesByNameMap().find(unqualified_name) == getTypesByNameMap().end()) {
+					getTypesByNameMap().emplace(unqualified_name, &alias_type_info);
 					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
 					                 StringTable::getStringView(unqualified_name));
 				}

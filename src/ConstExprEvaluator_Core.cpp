@@ -836,8 +836,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						if (arg.isTypeArgument()) {
 							size_t param_size = get_type_size_bits(arg.base_type) / 8;
 							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index.is_valid() &&
-									arg.type_index.value < gTypeInfo.size()) {
-								const StructTypeInfo* si = gTypeInfo[arg.type_index.value].getStructInfo();
+									arg.type_index.value < getTypeInfoCount()) {
+								const StructTypeInfo* si = getTypeInfo(arg.type_index).getStructInfo();
 								if (si) param_size = si->total_size;
 							}
 							if (param_size > 0) {
@@ -997,8 +997,8 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			// For struct types, look up alignment from type info
 			if (type_spec.type() == Type::Struct) {
 				size_t type_index = type_spec.type_index().value;
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
+				if (type_index < getTypeInfoCount()) {
+					const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -1043,8 +1043,8 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								// Handle struct types
 								if (type_spec.type() == Type::Struct) {
 									size_t type_index = type_spec.type_index().value;
-									if (type_index < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[type_index];
+									if (type_index < getTypeInfoCount()) {
+										const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
 											return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -1090,7 +1090,7 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	if (type_index.value >= getTypeInfoCount()) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 
@@ -1545,10 +1545,10 @@ EvalResult Evaluator::evaluate_new_expression(
 	// Handle struct/class types via the constructor materialization path.
 	if (is_struct_type(type_spec.type())) {
 		TypeIndex type_index = type_spec.type_index();
-		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
+		if (!type_index.is_valid() || type_index.value >= getTypeInfoCount()) {
 			return EvalResult::error("new-expression: invalid struct type index");
 		}
-		const StructTypeInfo* struct_info = gTypeInfo[type_index.value].getStructInfo();
+		const StructTypeInfo* struct_info = getTypeInfo(type_index).getStructInfo();
 		if (!struct_info) {
 			return EvalResult::error("new-expression: type is not a struct/class");
 		}
@@ -1784,8 +1784,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			if (type_spec.type() == Type::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
-				if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-					const TypeInfo& ti = gTypeInfo[type_index.value];
+				if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+					const TypeInfo& ti = getTypeInfo(type_index);
 					const EnumTypeInfo* enum_info = ti.getEnumInfo();
 					if (enum_info) {
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
@@ -1849,8 +1849,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
 			if ((is_struct_type(type_spec.type())) &&
 				type_spec.type_index().is_valid() &&
-				type_spec.type_index().value < gTypeInfo.size()) {
-				if (const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo()) {
+				type_spec.type_index().value < getTypeInfoCount()) {
+				if (const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo()) {
 					return materialize_aggregate_object_value(
 						struct_info,
 						type_spec.type_index(),
@@ -2849,7 +2849,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
 					if (type_idx.is_valid() && (is_struct_type(base_type))) {
-						const TypeInfo& type_info = gTypeInfo[type_idx.value];
+						const TypeInfo& type_info = getTypeInfo(type_idx);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						
 						// If it's a struct/class type with no struct_info, it's incomplete
@@ -2919,7 +2919,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// without an instance (parameter count mismatch or missing 'this' context).
 		// Static member functions have no implicit 'this' parameter, so they work correctly.
 		
-		for (const auto& type_info : ::gTypeInfo) {
+		for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& type_info = getTypeInfo(TypeIndex{_gti_i_});
 			if (!type_info.struct_info_) continue;
 			
 			// Search member functions in this struct
@@ -3141,8 +3142,8 @@ bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& con
 		return true;
 	}
 
-	auto current_struct_it = gTypesByName.find(context.struct_info->name);
-	if (current_struct_it == gTypesByName.end()) {
+	auto current_struct_it = getTypesByNameMap().find(context.struct_info->name);
+	if (current_struct_it == getTypesByNameMap().end()) {
 		return false;
 	}
 
@@ -3247,8 +3248,8 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		const TypeSpecifierNode& ret_spec =
 			func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
-		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
-			context.return_type_info = &gTypeInfo[ret_idx.value];
+		if (ret_idx.is_valid() && ret_idx.value < getTypeInfoCount())
+			context.return_type_info = &getTypeInfo(ret_idx);
 	}
 	
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
@@ -3415,8 +3416,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (si) {
 				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
 				TypeIndex return_type_index {};
-				for (size_t ti = 0; ti < gTypeInfo.size(); ++ti) {
-					if (&gTypeInfo[ti] == context.return_type_info) {
+				for (size_t ti = 0; ti < getTypeInfoCount(); ++ti) {
+					if (&getTypeInfo(TypeIndex{ti}) == context.return_type_info) {
 						return_type_index = TypeIndex{ti};
 						break;
 					}
@@ -3530,8 +3531,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 						if ((is_struct_type(type_spec.type())) &&
-							type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+							type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 								// Block-scope `Type o(a, b)` is parsed as InitializerListNode{a, b}.
 								// Prefer a matching user-defined constructor over aggregate init.
@@ -3618,8 +3619,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				if ((is_struct_type(type_spec.type())) &&
-					type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+					type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 						TypeIndex type_index = type_spec.type_index();
 						EvalResult object_result = EvalResult::from_int(0LL);

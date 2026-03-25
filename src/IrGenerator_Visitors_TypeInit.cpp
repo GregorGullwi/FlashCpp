@@ -383,8 +383,8 @@
 						}
 					}
 				} else {
-					auto struct_type_it = gTypesByName.find(struct_info->name);
-					if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+					auto struct_type_it = getTypesByNameMap().find(struct_info->name);
+					if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
 						const TypeInfo* struct_type = struct_type_it->second;
 						auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
 						if (param_handles.empty()) {
@@ -500,7 +500,7 @@
 			return false;
 		};
 
-		for (const auto& [type_name, type_info] : gTypesByName) {
+		for (const auto& [type_name, type_info] : getTypesByNameMap()) {
 			if (!type_info->isStruct()) {
 				continue;
 			}
@@ -516,7 +516,7 @@
 			}
 
 			// Skip if we've already processed this TypeInfo pointer
-			// (same struct can be registered under multiple keys in gTypesByName)
+			// (same struct can be registered under multiple keys in getTypesByNameMap())
 			if (processed_type_infos_.count(type_info) > 0) {
 				continue;
 			}
@@ -587,8 +587,8 @@
 					op.type = static_member.type;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
-					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.value < gTypeInfo.size()) {
-						const StructTypeInfo* member_si = gTypeInfo[static_member.type_index.value].getStructInfo();
+					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.value < getTypeInfoCount()) {
+						const StructTypeInfo* member_si = getTypeInfo(static_member.type_index).getStructInfo();
 						if (member_si) {
 							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
 						}
@@ -610,8 +610,8 @@
 							if (static_member.initializer->is<InitializerListNode>()) {
 								if (static_member.type == Type::Struct &&
 									static_member.type_index.is_valid() &&
-									static_member.type_index.value < gTypeInfo.size()) {
-									if (const StructTypeInfo* static_struct_info = gTypeInfo[static_member.type_index.value].getStructInfo()) {
+									static_member.type_index.value < getTypeInfoCount()) {
+									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
 										op.init_data.resize(static_struct_info->total_size, 0);
 										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
@@ -686,8 +686,8 @@
 							if (ctor_type_node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ctor_type_spec = ctor_type_node.as<TypeSpecifierNode>();
 								TypeIndex ctor_type_index = ctor_type_spec.type_index();
-								if (ctor_type_index.value < gTypeInfo.size()) {
-									const StructTypeInfo* ctor_struct_info = gTypeInfo[ctor_type_index.value].getStructInfo();
+								if (ctor_type_index.value < getTypeInfoCount()) {
+									const StructTypeInfo* ctor_struct_info = getTypeInfo(ctor_type_index).getStructInfo();
 									if (ctor_struct_info) {
 										const ConstructorDeclarationNode* matching_ctor = nullptr;
 										if (parser_) {
@@ -946,17 +946,17 @@
 			// and generate alias definitions if needed (Phase 3: Generate ALL inherited static members)
 			if (!struct_info->base_classes.empty()) {
 				for (const auto& base : struct_info->base_classes) {
-					if (base.type_index.value >= gTypeInfo.size()) {
+					if (base.type_index.value >= getTypeInfoCount()) {
 						continue;
 					}
 
-					const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+					const TypeInfo& base_type = getTypeInfo(base.type_index);
 					const StructTypeInfo* base_info = base_type.getStructInfo();
 
 					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
 					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
-					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_.value < gTypeInfo.size()) {
-						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_.value];
+					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_.value < getTypeInfoCount()) {
+						const TypeInfo& resolved_type = getTypeInfo(base_type.type_index_);
 						base_info = resolved_type.getStructInfo();
 						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_),
 						"' to struct '", StringTable::getStringView(resolved_type.name_), "'");
@@ -970,8 +970,8 @@
 						auto pos = base.name.rfind("::");
 						if (pos != std::string_view::npos) {
 							std::string_view actual_struct_name = base.name.substr(0, pos);
-							auto actual_struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_struct_name));
-							if (actual_struct_it != gTypesByName.end()) {
+							auto actual_struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(actual_struct_name));
+							if (actual_struct_it != getTypesByNameMap().end()) {
 								const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
 								if (actual_info) {
 									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name,
@@ -1006,8 +1006,8 @@
 
 							// Add base classes to queue
 							for (const auto& base_spec : current->base_classes) {
-								if (base_spec.type_index.value < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
+								if (base_spec.type_index.value < getTypeInfoCount()) {
+									const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 									if (const StructTypeInfo* base_struct = base_type_info.getStructInfo()) {
 										to_visit.push(base_struct);
 									}
@@ -1091,7 +1091,7 @@
 	void AstToIr::generateTrivialDefaultConstructors() {
 		std::unordered_set<const TypeInfo*> processed;
 
-		for (const auto& [type_name, type_info] : gTypesByName) {
+		for (const auto& [type_name, type_info] : getTypesByNameMap()) {
 			if (!type_info->isStruct()) {
 				continue;
 			}
@@ -1190,8 +1190,8 @@
 
 				// Call base class constructors if any
 				for (const auto& base : struct_info->base_classes) {
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
-					if (base_type_it != gTypesByName.end()) {
+					auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base.name));
+					if (base_type_it != getTypesByNameMap().end()) {
 						// Call base constructor if the base has user-defined constructors OR needs a trivial
 						// default constructor (e.g., template-instantiated class with member default-
 						// initializers but no explicit constructors). hasConstructor() covers the trivial
@@ -1315,16 +1315,16 @@
 // Important: only resolves when the unfinalized type's name matches the base name of the
 // enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.type() == Type::Struct && type.type_index().is_valid() && type.type_index().value < gTypeInfo.size()) {
-		auto& ti = gTypeInfo[type.type_index().value];
+	if (type.type() == Type::Struct && type.type_index().is_valid() && type.type_index().value < getTypeInfoCount()) {
+		auto& ti = getTypeInfo(type.type_index());
 		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
-			if (enclosing_type_index.value < gTypeInfo.size()) {
+			if (enclosing_type_index.value < getTypeInfoCount()) {
 				// Verify this is actually a self-reference by checking that the unfinalized
 				// type's name matches the base name of the enclosing struct.
 				// For template instantiations: W (unfinalized) matches W$hash (enclosing)
 				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
 				auto unfinalized_name = StringTable::getStringView(ti.name());
-				auto enclosing_name = StringTable::getStringView(gTypeInfo[enclosing_type_index.value].name());
+				auto enclosing_name = StringTable::getStringView(getTypeInfo(enclosing_type_index).name());
 
 				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
 				// Template hash: "Name$hash" -> "Name"
@@ -1477,13 +1477,13 @@ void AstToIr::emitRecursiveZeroFill(
 {
 	for (const StructMember& sub_member : struct_info.members) {
 		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
-			&& sub_member.type_index.value < gTypeInfo.size()
-			&& gTypeInfo[sub_member.type_index.value].struct_info_
+			&& sub_member.type_index.value < getTypeInfoCount()
+			&& getTypeInfo(sub_member.type_index).struct_info_
 			&& (sub_member.size * 8) > 64;
 
 		if (is_nested_struct) {
 			emitRecursiveZeroFill(
-				*gTypeInfo[sub_member.type_index.value].struct_info_,
+				*getTypeInfo(sub_member.type_index).struct_info_,
 				base_object,
 				base_offset + static_cast<int>(sub_member.offset),
 				token);
@@ -1525,8 +1525,8 @@ const Token& token)
 	}
 
 	int element_size_bits = 0;
-	if (member.type_index.value < gTypeInfo.size()) {
-		const TypeInfo& elem_type_info = gTypeInfo[member.type_index.value];
+	if (member.type_index.value < getTypeInfoCount()) {
+		const TypeInfo& elem_type_info = getTypeInfo(member.type_index);
 		if (elem_type_info.struct_info_) {
 			// Struct types store type_size_ in bytes
 			element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
@@ -1604,8 +1604,8 @@ const Token& token)
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
 	const bool is_struct_element = isIrStructType(toIrType(member.type))
-		&& member.type_index.value < gTypeInfo.size()
-		&& gTypeInfo[member.type_index.value].struct_info_
+		&& member.type_index.value < getTypeInfoCount()
+		&& getTypeInfo(member.type_index).struct_info_
 		&& element_size_bits > 64;
 
 	for (size_t i = emit_count; i < element_count; ++i) {
@@ -1615,7 +1615,7 @@ const Token& token)
 				+ static_cast<int>(member.offset)
 				+ static_cast<int>(i) * (element_size_bits / 8);
 
-			emitRecursiveZeroFill(*gTypeInfo[member.type_index.value].struct_info_,
+			emitRecursiveZeroFill(*getTypeInfo(member.type_index).struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
 			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
@@ -1687,8 +1687,8 @@ const Token& token)
 				continue;
 			}
 
-			if (member.type_index.value < gTypeInfo.size()) {
-				const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+			if (member.type_index.value < getTypeInfoCount()) {
+				const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 
 				if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
 					// RECURSIVE CALL for nested struct
@@ -1914,8 +1914,8 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	// Get struct type info for member functions
 	const TypeInfo* struct_type_info = nullptr;
 	if (inst_info.struct_name.isValid()) {
-		auto struct_type_it = gTypesByName.find(inst_info.struct_name);
-		if (struct_type_it != gTypesByName.end()) {
+		auto struct_type_it = getTypesByNameMap().find(inst_info.struct_name);
+		if (struct_type_it != getTypesByNameMap().end()) {
 			struct_type_info = struct_type_it->second;
 		}
 	}

@@ -743,10 +743,10 @@ ParseResult Parser::parse_variable_declaration()
 		const auto& init_list = first_init_expr->as<InitializerListNode>();
 		if (init_list.initializers().empty()) {
 			TypeIndex type_idx = type_specifier.type_index();
-			if (type_idx.value < gTypeInfo.size() && gTypeInfo[type_idx.value].struct_info_) {
-				const StructTypeInfo& struct_info = *gTypeInfo[type_idx.value].struct_info_;
+			if (type_idx.value < getTypeInfoCount() && getTypeInfo(type_idx).struct_info_) {
+				const StructTypeInfo& struct_info = *getTypeInfo(type_idx).struct_info_;
 				if (struct_info.isDefaultConstructorDeleted()) {
-					return ParseResult::error("Call to deleted constructor of '" + std::string(StringTable::getStringView(gTypeInfo[type_idx.value].name())) + "'", first_decl.identifier_token());
+					return ParseResult::error("Call to deleted constructor of '" + std::string(StringTable::getStringView(getTypeInfo(type_idx).name())) + "'", first_decl.identifier_token());
 				}
 			}
 		}
@@ -1067,11 +1067,11 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	}
 	
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	if (type_index.value >= getTypeInfoCount()) {
 		return std::nullopt;
 	}
 	
-	const TypeInfo& type_info = gTypeInfo[type_index.value];
+	const TypeInfo& type_info = getTypeInfo(type_index);
 	
 	// Phase 6: Use TypeInfo::isTemplateInstantiation() to check for initializer_list
 	// Check if this is a template instantiation of std::initializer_list
@@ -1283,7 +1283,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined) {
 		// Check if this UserDefined type is actually a struct (e.g., instantiated template)
 		TypeIndex type_index = type_specifier.type_index();
-		if (type_index.value < gTypeInfo.size() && gTypeInfo[type_index.value].struct_info_) {
+		if (type_index.value < getTypeInfoCount() && getTypeInfo(type_index).struct_info_) {
 			is_struct_like_type = true;
 		}
 	}
@@ -1342,9 +1342,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	TypeIndex type_index = type_specifier.type_index();
-	if (type_index.value >= gTypeInfo.size() ||
-		(type_index.value < gTypeInfo.size() && !gTypeInfo[type_index.value].struct_info_)) {
-		const bool invalid_struct_type_index = type_index.value >= gTypeInfo.size();
+	if (type_index.value >= getTypeInfoCount() ||
+		(type_index.value < getTypeInfoCount() && !getTypeInfo(type_index).struct_info_)) {
+		const bool invalid_struct_type_index = type_index.value >= getTypeInfoCount();
 		if (!(parsing_template_depth_ > 0) && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error(
 				invalid_struct_type_index ? "Invalid struct type index" : "Type is not a struct",
@@ -1376,7 +1376,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::success(init_list_node);
 	}
 
-	const TypeInfo& type_info = gTypeInfo[type_index.value];
+	const TypeInfo& type_info = getTypeInfo(type_index);
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
 
 	// Check if this struct has an initializer_list constructor
@@ -1431,13 +1431,13 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		
 		// Extract element type from the initializer_list struct's first member
 		// The first member is typically a pointer (const T*), and type_index points to T
-		if (init_list_type_index.value < gTypeInfo.size()) {
-			const TypeInfo& init_list_info = gTypeInfo[init_list_type_index.value];
+		if (init_list_type_index.value < getTypeInfoCount()) {
+			const TypeInfo& init_list_info = getTypeInfo(init_list_type_index);
 			if (init_list_info.struct_info_ && !init_list_info.struct_info_->members.empty()) {
 				const StructMember& first_member = init_list_info.struct_info_->members[0];
 				// The first member's type_index should point to the element type
-				if (first_member.type_index.is_valid() && first_member.type_index.value < gTypeInfo.size()) {
-					const TypeInfo& elem_info = gTypeInfo[first_member.type_index.value];
+				if (first_member.type_index.is_valid() && first_member.type_index.value < getTypeInfoCount()) {
+					const TypeInfo& elem_info = getTypeInfo(first_member.type_index);
 					Type elem_type = elem_info.type_;
 					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
 					
@@ -1748,8 +1748,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			TypeSpecifierNode member_type_spec;
 			bool have_member_type_spec = false;
 
-			if (target_member.type_index.is_valid() && target_member.type_index.value < gTypeInfo.size()) {
-				const TypeInfo& member_type_info = gTypeInfo[target_member.type_index.value];
+			if (target_member.type_index.is_valid() && target_member.type_index.value < getTypeInfoCount()) {
+				const TypeInfo& member_type_info = getTypeInfo(target_member.type_index);
 				if (is_struct_type(target_member.type)) {
 					member_type_spec = TypeSpecifierNode(
 						member_type_info.type_,
@@ -1880,8 +1880,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// This avoids incorrectly consuming too few flat initializers when each element requires
 			// multiple scalar sub-initializers.
 			bool element_is_aggregate = false;
-			if (target_member.type_index.value < gTypeInfo.size()) {
-				const TypeInfo& elem_info = gTypeInfo[target_member.type_index.value];
+			if (target_member.type_index.value < getTypeInfoCount()) {
+				const TypeInfo& elem_info = getTypeInfo(target_member.type_index);
 				if (elem_info.struct_info_ && !elem_info.struct_info_->members.empty()) {
 					element_is_aggregate = true;
 				}
@@ -2223,8 +2223,8 @@ std::optional<std::string_view> Parser::extract_template_param_name(const TypeSp
 		}
 	}
 
-	if (type_spec.type_index().value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+	if (type_spec.type_index().value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 		std::string_view type_name = StringTable::getStringView(type_info.name());
 		auto it = template_params.find(type_name);
 		if (it != template_params.end()) {
@@ -2269,8 +2269,8 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	}
 
 	std::string_view instantiated_name = get_instantiated_class_name(class_name, template_args);
-	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-	if (type_it == gTypesByName.end() || !type_it->second->isStruct()) {
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+	if (type_it == getTypesByNameMap().end() || !type_it->second->isStruct()) {
 		return false;
 	}
 

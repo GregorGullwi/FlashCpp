@@ -636,9 +636,9 @@ std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWri
 					if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
 						// Built-in type - get name from Type enum
 						handler_info.type_name = getTypeName(handler.exception_type);
-					} else if (handler.type_index.value < gTypeInfo.size()) {
+					} else if (handler.type_index.value < getTypeInfoCount()) {
 						// User-defined type - get name from gTypeInfo
-						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index.value].name());
+						handler_info.type_name = StringTable::getStringView(getTypeInfo(handler.type_index).name());
 					}
 				}
 
@@ -2144,8 +2144,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 										handled_by_typed_payload = true;
 									} else {
 										int catch_size_bits = 0;
-										if (catch_op->type_index.is_valid() && catch_op->type_index.value < gTypeInfo.size()) {
-											catch_size_bits = gTypeInfo[catch_op->type_index.value].type_size_;
+										if (catch_op->type_index.is_valid() && catch_op->type_index.value < getTypeInfoCount()) {
+											catch_size_bits = getTypeInfo(catch_op->type_index).type_size_;
 										} else {
 											catch_size_bits = get_type_size_bits(catch_op->exception_type);
 										}
@@ -4563,11 +4563,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move)  {
-		if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
+		if (!type_index.is_valid() || type_index.value >= getTypeInfoCount()) {
 			return false;
 		}
 
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
+		const TypeInfo& type_info = getTypeInfo(type_index);
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
 			return false;
@@ -4709,8 +4709,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 			// Get struct size for proper stack allocation
 			int struct_size_bits = 64;  // Default to 8 bytes
-			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-			if (struct_type_it != gTypesByName.end()) {
+			auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+			if (struct_type_it != getTypesByNameMap().end()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
 					struct_size_bits = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
@@ -4719,12 +4719,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 						struct_name, struct_size_bits);
 				} else {
 					FLASH_LOG_FORMAT(Codegen, Debug,
-						"Constructor for {} found in gTypesByName but no struct_info",
+						"Constructor for {} found in getTypesByNameMap() but no struct_info",
 						struct_name);
 				}
 			} else {
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Constructor for {} NOT found in gTypesByName",
+					"Constructor for {} NOT found in getTypesByNameMap()",
 					struct_name);
 			}
 
@@ -4746,8 +4746,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// If this is an array element constructor call, adjust offset for the specific element
 			if (ctor_op.array_index.has_value()) {
 				// Look up struct size to calculate element offset
-				auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-				if (struct_type_it != gTypesByName.end()) {
+				auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+				if (struct_type_it != getTypesByNameMap().end()) {
 					const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 					if (struct_info) {
 						size_t element_size = struct_info->total_size;
@@ -4805,12 +4805,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		};
 
 		// Look up the struct type once for use in both loops
-		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+		auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 
 		// Find the actual constructor to get the correct parameter types
 		// This is more reliable than trying to infer from argument types
 		const ConstructorDeclarationNode* actual_ctor = nullptr;
-		if (struct_type_it != gTypesByName.end()) {
+		if (struct_type_it != getTypesByNameMap().end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
 				// FIRST: If we have exactly one IR-level argument that's a reference to the same
@@ -4922,15 +4922,15 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
 				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 				bool is_same_struct_type = false;
-				if (struct_type_it != gTypesByName.end() && arg_type_index.is_valid()) {
+				if (struct_type_it != getTypesByNameMap().end() && arg_type_index.is_valid()) {
 					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 				}
 
 				if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
 					// This is likely a copy constructor, but arg_is_reference wasn't set
 					// Determine the actual CV qualifier from the constructor signature
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-					if (type_it != gTypesByName.end()) {
+					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+					if (type_it != getTypesByNameMap().end()) {
 						TypeIndex struct_type_index = type_it->second->type_index_;
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 
@@ -5220,8 +5220,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// Check if the struct's constructors are registered under a namespace-qualified name.
 			// This happens when a struct is defined inside a namespace (e.g., std::my_type)
 			// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				const StructTypeInfo* si = type_it->second->getStructInfo();
 				if (si && !si->member_functions.empty()) {
 					for (const auto& mf : si->member_functions) {
@@ -7209,8 +7209,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// If this is a member function, check if we need to register vtable for this class
 		if (!struct_name.empty()) {
 			// Look up the struct type info
-			auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-			if (struct_it != gTypesByName.end()) {
+			auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+			if (struct_it != getTypesByNameMap().end()) {
 				const TypeInfo* type_info = struct_it->second;
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 
@@ -7289,8 +7289,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 						// Populate base class names for RTTI
 						for (const auto& base : struct_info->base_classes) {
-							if (base.type_index.value < gTypeInfo.size()) {
-								const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+							if (base.type_index.value < getTypeInfoCount()) {
+								const TypeInfo& base_type = getTypeInfo(base.type_index);
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
@@ -14130,8 +14130,8 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 
 			if (is_builtin) {
 				type_size_bits = get_type_size_bits(catch_op.exception_type);
-			} else if (catch_op.type_index.is_valid() && catch_op.type_index.value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[catch_op.type_index.value];
+			} else if (catch_op.type_index.is_valid() && catch_op.type_index.value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(catch_op.type_index);
 				type_size_bits = type_info.type_size_;
 			}
 			size_t type_size = type_size_bits / 8;
@@ -14282,8 +14282,8 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 				int catch_storage_bits = 64;
 				if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
-					if (catch_op.type_index.is_valid() && catch_op.type_index.value < gTypeInfo.size()) {
-						catch_storage_bits = gTypeInfo[catch_op.type_index.value].type_size_;
+					if (catch_op.type_index.is_valid() && catch_op.type_index.value < getTypeInfoCount()) {
+						catch_storage_bits = getTypeInfo(catch_op.type_index).type_size_;
 					} else {
 						int builtin_size = get_type_size_bits(catch_op.exception_type);
 						if (builtin_size > 0) {
@@ -14608,8 +14608,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 
 			const StructTypeInfo* thrown_exception_struct_info = nullptr;
-			if (throw_op.type_index.value < gTypeInfo.size()) {
-				const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index.value];
+			if (throw_op.type_index.value < getTypeInfoCount()) {
+				const TypeInfo& thrown_type_info = getTypeInfo(throw_op.type_index);
 				thrown_exception_struct_info = thrown_type_info.getStructInfo();
 			}
 
@@ -14864,8 +14864,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
 					const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
-					if (thrown_struct_info && throw_op.type_index.value < gTypeInfo.size()) {
-						const TypeInfo& thrown_type_info = gTypeInfo[throw_op.type_index.value];
+					if (thrown_struct_info && throw_op.type_index.value < getTypeInfoCount()) {
+						const TypeInfo& thrown_type_info = getTypeInfo(throw_op.type_index);
 						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 				} else {

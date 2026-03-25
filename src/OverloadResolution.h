@@ -183,8 +183,8 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 // Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
 // Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
 inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
-	if (base_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[type_index.value].getEnumInfo())
+	if (base_type == Type::Enum && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
 			return ei->underlying_type;
 	}
 	return base_type;
@@ -203,14 +203,14 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = TypeIndex{}) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
-	if (source_type_index.is_valid() && source_type_index.value < gTypeInfo.size()) {
-		const TypeInfo& source_type_info = gTypeInfo[source_type_index.value];
+	if (source_type_index.is_valid() && source_type_index.value < getTypeInfoCount()) {
+		const TypeInfo& source_type_info = getTypeInfo(source_type_index);
 		std::string_view struct_name = StringTable::getStringView(source_type_info.name());
 		
 		// Build the target type name for the operator
 		std::string_view target_type_name;
-		if (target_type_index.is_valid() && target_type_index.value < gTypeInfo.size()) {
-			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index.value].name());
+		if (target_type_index.is_valid() && target_type_index.value < getTypeInfoCount()) {
+			target_type_name = StringTable::getStringView(getTypeInfo(target_type_index).name());
 		} else {
 			// For primitive types, use the helper function to get the type name
 			target_type_name = getTypeName(target_type);
@@ -257,7 +257,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 			
 			// Search base classes recursively
 			for (const auto& base_spec : source_struct_info->base_classes) {
-				if (base_spec.type_index.is_valid() && base_spec.type_index.value < gTypeInfo.size()) {
+				if (base_spec.type_index.is_valid() && base_spec.type_index.value < getTypeInfoCount()) {
 					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
 						return true;
 					}
@@ -273,8 +273,8 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 // Per C++20 [class.derived], a derived class implicitly converts to any of its base classes.
 inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
 	if (!source_idx.is_valid() || !base_idx.is_valid()) return false;
-	if (source_idx.value >= gTypeInfo.size()) return false;
-	const StructTypeInfo* source = gTypeInfo[source_idx.value].getStructInfo();
+	if (source_idx.value >= getTypeInfoCount()) return false;
+	const StructTypeInfo* source = getTypeInfo(source_idx).getStructInfo();
 	if (!source) return false;
 	for (const auto& b : source->base_classes) {
 		if (b.type_index == base_idx) return true;
@@ -292,8 +292,8 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 // getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
 inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
 	if (!target_idx.is_valid() || !source_idx.is_valid()) return false;
-	if (target_idx.value >= gTypeInfo.size() || source_idx.value >= gTypeInfo.size()) return false;
-	const StructTypeInfo* target = gTypeInfo[target_idx.value].getStructInfo();
+	if (target_idx.value >= getTypeInfoCount() || source_idx.value >= getTypeInfoCount()) return false;
+	const StructTypeInfo* target = getTypeInfo(target_idx).getStructInfo();
 	if (!target) return false;
 	auto count_min_required_params = [](const std::vector<ASTNode>& params) {
 		size_t min_required = params.size();
@@ -584,8 +584,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
 					// Struct info not yet finalized (parse-time): optimistically allow.
-					if (to.type_index().value >= gTypeInfo.size() ||
-						!gTypeInfo[to.type_index().value].getStructInfo()) {
+					if (to.type_index().value >= getTypeInfoCount() ||
+						!getTypeInfo(to.type_index()).getStructInfo()) {
 						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
 					return ConversionPlan::no_match();
@@ -654,8 +654,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		// Struct info not yet finalized (parse-time): optimistically allow.
-		if (to.type_index().value >= gTypeInfo.size() ||
-			!gTypeInfo[to.type_index().value].getStructInfo()) {
+		if (to.type_index().value >= getTypeInfoCount() ||
+			!getTypeInfo(to.type_index()).getStructInfo()) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		return ConversionPlan::no_match();
@@ -1234,13 +1234,13 @@ struct OperatorOverloadResult {
 // left_type_index so that type matching works correctly.
 // This mirrors the AstToIr::resolveSelfReferentialType logic used in codegen.
 inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_type_index) {
-	const size_t type_info_size = gTypeInfo.size();
+	const size_t type_info_size = getTypeInfoCount();
 	if (!param_idx.is_valid() || param_idx.value >= type_info_size || left_type_index.value >= type_info_size) return param_idx;
-	const auto& param_ti = gTypeInfo[param_idx.value];
+	const auto& param_ti = getTypeInfo(param_idx);
 	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0) return param_idx;
 	// param refers to an uninstantiated template (total_size==0); check name family
 	auto template_base_name = StringTable::getStringView(param_ti.name());
-	auto instantiated_name = StringTable::getStringView(gTypeInfo[left_type_index.value].name());
+	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
 	// Strip template hash suffix from the instantiated name: "Name$hash" -> "Name"
 	auto base_name = instantiated_name;
 	auto dollar_pos = base_name.find('$');
@@ -1256,8 +1256,8 @@ inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
 
 inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
 	Type type = spec.type();
-	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid() && spec.type_index().value < gTypeInfo.size()) {
-		type = gTypeInfo[spec.type_index().value].type_;
+	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid() && spec.type_index().value < getTypeInfoCount()) {
+		type = getTypeInfo(spec.type_index()).type_;
 	}
 	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid()) {
 		return Type::Struct;
@@ -1291,8 +1291,8 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex ty
 	Type effective_type = type;
 	int size_bits = 0;
 
-	if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		const auto& type_info = gTypeInfo[type_index.value];
+	if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		const auto& type_info = getTypeInfo(type_index);
 		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
 			if (type_info.type_ != Type::Invalid && type_info.type_ != Type::Void) {
 				effective_type = type_info.type_;
@@ -1396,11 +1396,11 @@ inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidateRanks(
 // Returns the member function that overloads the given operator, or nullptr if not found
 inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, OverloadableOperator operator_kind) {
 	// Only struct types can have operator overloads
-	if (!operand_type_index.is_valid() || operand_type_index.value >= gTypeInfo.size()) {
+	if (!operand_type_index.is_valid() || operand_type_index.value >= getTypeInfoCount()) {
 		return OperatorOverloadResult::no_overload();
 	}
 	
-	const TypeInfo& type_info = gTypeInfo[operand_type_index.value];
+	const TypeInfo& type_info = getTypeInfo(operand_type_index);
 	const StructTypeInfo* struct_info = type_info.getStructInfo();
 	
 	if (!struct_info) {
@@ -1416,7 +1416,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
-		if (base_spec.type_index.is_valid() && base_spec.type_index.value < gTypeInfo.size()) {
+		if (base_spec.type_index.is_valid() && base_spec.type_index.value < getTypeInfoCount()) {
 			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
 			if (result.has_match || result.is_ambiguous) {
 				return result;
@@ -1437,11 +1437,11 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	OverloadableOperator operator_kind)
 {
 	TypeIndex left_type_index = left_type_spec.type_index();
-	if (!left_type_index.is_valid() || left_type_index.value >= gTypeInfo.size()) {
+	if (!left_type_index.is_valid() || left_type_index.value >= getTypeInfoCount()) {
 		return OperatorOverloadResult::no_overload();
 	}
 
-	const StructTypeInfo* left_struct_info = gTypeInfo[left_type_index.value].getStructInfo();
+	const StructTypeInfo* left_struct_info = getTypeInfo(left_type_index).getStructInfo();
 	if (!left_struct_info) {
 		return OperatorOverloadResult::no_overload();
 	}
@@ -1454,8 +1454,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	std::vector<OperatorCandidate> candidates;
 
 	auto gatherMemberCandidates = [&](auto& self, TypeIndex struct_idx) -> void {
-		if (!struct_idx.is_valid() || struct_idx.value >= gTypeInfo.size()) return;
-		const StructTypeInfo* si = gTypeInfo[struct_idx.value].getStructInfo();
+		if (!struct_idx.is_valid() || struct_idx.value >= getTypeInfoCount()) return;
+		const StructTypeInfo* si = getTypeInfo(struct_idx).getStructInfo();
 		if (!si) return;
 
 		for (const auto& member_func : si->member_functions) {
@@ -1491,7 +1491,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		}
 
 		for (const auto& base_spec : si->base_classes) {
-			if (base_spec.type_index.is_valid() && base_spec.type_index.value < gTypeInfo.size()) {
+			if (base_spec.type_index.is_valid() && base_spec.type_index.value < getTypeInfoCount()) {
 				self(self, base_spec.type_index);
 			}
 		}
@@ -1539,8 +1539,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
 	Type effective_right_type = right_type;
-	if (right_type_index.is_valid() && right_type_index.value < gTypeInfo.size()) {
-		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index.value].type_, right_type_index);
+	if (right_type_index.is_valid() && right_type_index.value < getTypeInfoCount()) {
+		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}
@@ -1575,13 +1575,13 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 	TypeIndex left_type_index = left_type_spec.type_index();
 	TypeIndex right_type_index = right_type_spec.type_index();
-	const size_t type_info_size = gTypeInfo.size();
+	const size_t type_info_size = getTypeInfoCount();
 
 	// --- 1. Gather member-function candidates (recursive through base classes) ---
 	// Uses self-referencing lambda pattern to avoid std::function overhead.
 	auto gatherMemberCandidates = [&](auto& self, TypeIndex struct_idx) -> void {
 		if (!struct_idx.is_valid() || struct_idx.value >= type_info_size) return;
-		const StructTypeInfo* si = gTypeInfo[struct_idx.value].getStructInfo();
+		const StructTypeInfo* si = getTypeInfo(struct_idx).getStructInfo();
 		if (!si) return;
 
 		for (const auto& member_func : si->member_functions) {
@@ -1786,8 +1786,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	Type right_type)
 {
 	Type effective_right_type = right_type;
-	if (right_type_index.is_valid() && right_type_index.value < gTypeInfo.size()) {
-		Type indexed_right_type = resolve_type_alias(gTypeInfo[right_type_index.value].type_, right_type_index);
+	if (right_type_index.is_valid() && right_type_index.value < getTypeInfoCount()) {
+		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}

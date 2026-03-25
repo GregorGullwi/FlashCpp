@@ -40,8 +40,8 @@
 		// Look up the enum type and add all enumerators to the local symbol table
 		StringHandle enum_name = node.enum_type_name();
 
-		auto type_it = gTypesByName.find(enum_name);
-		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
+		auto type_it = getTypesByNameMap().find(enum_name);
+		if (type_it != getTypesByNameMap().end() && type_it->second->getEnumInfo()) {
 			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 			TypeIndex enum_type_index = type_it->second->type_index_;
 
@@ -101,10 +101,10 @@
 				const StructTypeInfo* struct_info = nullptr;
 
 				// Look up the struct by return type index or name
-				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
-					if (gTypeInfo[i].struct_info_ &&
-					static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
-						struct_info = gTypeInfo[i].struct_info_.get();
+				for (size_t i = 0; i < getTypeInfoCount(); ++i) {
+					if (getTypeInfo(TypeIndex{i}).struct_info_ &&
+					static_cast<int>(getTypeInfo(TypeIndex{i}).struct_info_->total_size * 8) == return_size) {
+						struct_info = getTypeInfo(TypeIndex{i}).struct_info_.get();
 						break;
 					}
 				}
@@ -268,8 +268,8 @@
 							annotated_source_type == Type::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
-								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+							if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
 								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
@@ -307,8 +307,8 @@
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
-						if (expr_type_index.is_valid() && expr_type_index.value < gTypeInfo.size()) {
-							const TypeInfo& source_type_info = gTypeInfo[expr_type_index.value];
+						if (expr_type_index.is_valid() && expr_type_index.value < getTypeInfoCount()) {
+							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
 

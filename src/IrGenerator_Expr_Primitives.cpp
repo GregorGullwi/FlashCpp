@@ -124,8 +124,8 @@
 
 		if (is_struct_type(object_type.type())) {
 			size_t struct_type_index = object_type.type_index().value;
-			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ",
@@ -289,14 +289,14 @@
 			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
 			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().value < gTypeInfo.size()) {
-				if (const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index().value].getEnumInfo()) {
+			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().value < getTypeInfoCount()) {
+				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
 			}
 			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
-			if (type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
-				semantic_type = resolve_type_alias(gTypeInfo[type_node.type_index().value].type_, type_node.type_index());
+			if (type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount()) {
+				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).type_, type_node.type_index());
 			}
 			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
@@ -323,8 +323,8 @@
 		if (is_explicit_capture || is_implicit_capture) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
-			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				TypeIndex closure_type_index = type_it->second->type_index_;
 				// Find the member
 				auto result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
@@ -595,8 +595,8 @@
 			}
 
 			if (current_struct_name_.isValid()) {
-				auto type_it = gTypesByName.find(current_struct_name_);
-				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				auto type_it = getTypesByNameMap().find(current_struct_name_);
+				if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 					TypeIndex struct_type_index = type_it->second->type_index_;
 					if (auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str)) {
 						const StructMember* member = result.member;
@@ -759,8 +759,8 @@
 		if (!symbol.has_value() && current_struct_name_.isValid() &&
 		!isInCopyThisLambda() && !current_lambda_context_.isActive()) {
 			// Look up the struct type
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				TypeIndex struct_type_index = type_it->second->type_index_;
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
@@ -814,8 +814,8 @@
 
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
-							const StructTypeInfo* member_si = gTypeInfo[static_member->type_index.value].getStructInfo();
+						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < getTypeInfoCount()) {
+							const StructTypeInfo* member_si = getTypeInfo(static_member->type_index).getStructInfo();
 							if (member_si) {
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
 							}
@@ -841,14 +841,14 @@
 		// Only search enums tracked as nested within the current struct to avoid
 		// incorrectly resolving enumerators from unrelated structs.
 		if (!symbol.has_value() && current_struct_name_.isValid()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
-						if (enum_idx.value < gTypeInfo.size()) {
-							const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
+						if (enum_idx.value < getTypeInfoCount()) {
+							const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
 								if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(*enum_info, id_handle)) {
 									return *enumerator_constant;
@@ -1253,29 +1253,29 @@
 			std::string_view struct_or_enum_name = gNamespaceRegistry.getName(ns_handle);
 
 			// Could be EnumName::EnumeratorName
-			// Check the codegen-local symbol table first before gTypesByName.
-			// gTypesByName uses unordered_map::emplace which is a no-op on duplicate
+			// Check the codegen-local symbol table first before getTypesByNameMap().
+			// getTypesByNameMap() uses unordered_map::emplace which is a no-op on duplicate
 			// keys, so when two functions define `enum class Priority`, the second
 			// function's TypeInfo is never registered under "Priority" — it always
 			// resolves to the first function's TypeInfo.
 			// visitEnumDeclarationNode inserts the correct TypeInfo (via TypeIndex
 			// stored in the AST node at parse time) into the local symbol table,
-			// so we must prefer that over the global gTypesByName lookup.
-			TypeInfo* scoped_enum_type_info = nullptr;
+			// so we must prefer that over the global getTypesByNameMap() lookup.
+			const TypeInfo* scoped_enum_type_info = nullptr;
 			{
 				const std::optional<ASTNode> local_sym = symbol_table.lookup(struct_or_enum_name);
 				if (local_sym && local_sym->is<DeclarationNode>()) {
 					const auto& decl = local_sym->as<DeclarationNode>();
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().value < gTypeInfo.size())
-							scoped_enum_type_info = &gTypeInfo[ts.type_index().value];
+						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().value < getTypeInfoCount())
+							scoped_enum_type_info = &getTypeInfo(ts.type_index());
 					}
 				}
 			}
 			if (!scoped_enum_type_info) {
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
-				if (type_it != gTypesByName.end() && type_it->second->isEnum())
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_or_enum_name));
+				if (type_it != getTypesByNameMap().end() && type_it->second->isEnum())
 					scoped_enum_type_info = type_it->second;
 			}
 			if (scoped_enum_type_info) {
@@ -1292,26 +1292,26 @@
 			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
 			// For nested types (depth > 1), try fully qualified name FIRST to avoid ambiguity
 			// This handles member template specializations like MakeUnsigned::List_int_char
-			auto struct_type_it = gTypesByName.end();
+			auto struct_type_it = getTypesByNameMap().end();
 
 			if (gNamespaceRegistry.getDepth(ns_handle) > 1) {
 				StringHandle ns_qualified_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 				std::string_view full_qualified_name = StringTable::getStringView(ns_qualified_handle);
 
 				// First try with the namespace handle directly
-				struct_type_it = gTypesByName.find(ns_qualified_handle);
-				if (struct_type_it != gTypesByName.end()) {
+				struct_type_it = getTypesByNameMap().find(ns_qualified_handle);
+				if (struct_type_it != getTypesByNameMap().end()) {
 					struct_or_enum_name = full_qualified_name;
 					FLASH_LOG(Codegen, Debug, "Found struct with full qualified name: ", full_qualified_name);
 				} else {
 					// Fallback: search by string content
 					// This handles cases where the type was registered with a different StringHandle
 					// but has the same string content (e.g., type aliases in templates)
-					for (const auto& [key, val] : gTypesByName) {
+					for (const auto& [key, val] : getTypesByNameMap()) {
 						std::string_view key_str = StringTable::getStringView(key);
 						if (key_str == full_qualified_name) {
-							struct_type_it = gTypesByName.find(key);
-							if (struct_type_it != gTypesByName.end()) {
+							struct_type_it = getTypesByNameMap().find(key);
+							if (struct_type_it != getTypesByNameMap().end()) {
 								struct_or_enum_name = key_str;
 								FLASH_LOG(Codegen, Debug, "Found struct by string content: ", full_qualified_name);
 							}
@@ -1322,21 +1322,21 @@
 			}
 
 			// If not found with fully qualified name, try simple name
-			if (struct_type_it == gTypesByName.end()) {
-				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
-				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
+			if (struct_type_it == getTypesByNameMap().end()) {
+				struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_or_enum_name));
+				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != getTypesByNameMap().end()));
 			}
 
 			// If not found directly, search for template instantiation using TypeInfo metadata
 			// This handles cases like has_type<T>::value where T has a default = void argument
 			// Uses TypeInfo::baseTemplateName() for deterministic lookup instead of prefix scanning
 			// Selection is deterministic by choosing the instantiation with the smallest type_index_
-			if (struct_type_it == gTypesByName.end()) {
+			if (struct_type_it == getTypesByNameMap().end()) {
 				// Use TypeInfo metadata to find instantiation with matching base template name
 				// We select deterministically by choosing the smallest type_index_ among matches
 				StringHandle base_name_handle = StringTable::getOrInternStringHandle(struct_or_enum_name);
 				TypeIndex best_type_index = std::numeric_limits<TypeIndex>::max();
-				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
+				for (auto it = getTypesByNameMap().begin(); it != getTypesByNameMap().end(); ++it) {
 					if (it->second->isStruct() && it->second->isTemplateInstantiation()) {
 						// Use TypeInfo metadata for matching
 						if (it->second->baseTemplateName() == base_name_handle) {
@@ -1354,19 +1354,19 @@
 			}
 
 			// Fallback: try old-style _void suffix for backward compatibility with legacy code
-			if (struct_type_it == gTypesByName.end()) {
+			if (struct_type_it == getTypesByNameMap().end()) {
 				std::string_view struct_name_with_void = StringBuilder().append(struct_or_enum_name).append("_void"sv).commit();
-				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_with_void));
-				if (struct_type_it != gTypesByName.end()) {
+				struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_with_void));
+				if (struct_type_it != getTypesByNameMap().end()) {
 					FLASH_LOG(Codegen, Debug, "Found struct with _void suffix: ", struct_name_with_void);
 				}
 			}
 
-			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
-				if (!struct_info && struct_type_it->second->type_index_.value < gTypeInfo.size()) {
-					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_.value];
+				if (!struct_info && struct_type_it->second->type_index_.value < getTypeInfoCount()) {
+					const TypeInfo* resolved_type = &getTypeInfo(struct_type_it->second->type_index_);
 					if (resolved_type && resolved_type->isStruct()) {
 						struct_info = resolved_type->getStructInfo();
 					}
@@ -1378,8 +1378,8 @@
 					FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 					if (static_member && owner_struct) {
 						// Check if the owner struct is an incomplete template instantiation
-						auto owner_type_it = gTypesByName.find(owner_struct->getName());
-						if (owner_type_it != gTypesByName.end() && owner_type_it->second->is_incomplete_instantiation_) {
+						auto owner_type_it = getTypesByNameMap().find(owner_struct->getName());
+						if (owner_type_it != getTypesByNameMap().end() && owner_type_it->second->is_incomplete_instantiation_) {
 							std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
 							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(),
 							"' from incomplete template instantiation '", owner_name, "'");
@@ -1402,8 +1402,8 @@
 							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
 							if (accessed_struct) {
 								for (const auto& base : accessed_struct->base_classes) {
-									if (base.type_index.value < gTypeInfo.size()) {
-										const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+									if (base.type_index.value < getTypeInfoCount()) {
+										const TypeInfo& base_type = getTypeInfo(base.type_index);
 										const StructTypeInfo* base_struct = base_type.getStructInfo();
 										if (base_struct && base_struct->getName() == owner_struct->getName()) {
 											is_inheritance = true;
@@ -1434,11 +1434,11 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type &&
-								resolved_type->type_index_.value < gTypeInfo.size() &&
+								resolved_type->type_index_.value < getTypeInfoCount() &&
 								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
-									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_.value];
+									const TypeInfo* target_type = &getTypeInfo(resolved_type->type_index_);
 
 									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 										// Use the target struct's name
@@ -1488,8 +1488,8 @@
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < gTypeInfo.size()) {
-							const StructTypeInfo* qsm_si = gTypeInfo[static_member->type_index.value].getStructInfo();
+						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < getTypeInfoCount()) {
+							const StructTypeInfo* qsm_si = getTypeInfo(static_member->type_index).getStructInfo();
 							if (qsm_si) {
 								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
 							}
@@ -1529,13 +1529,13 @@
 		// nested enum indices (e.g., Container::Ok from `typedef enum {Ok} Status;`).
 		// This mirrors the simple-identifier path that checks getNestedEnumIndices()
 		// when resolving bare names inside a struct body.
-		if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
 			const StructTypeInfo* struct_info_ne = struct_type_it->second->getStructInfo();
 			if (struct_info_ne) {
 				StringHandle member_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
 				for (TypeIndex enum_idx : struct_info_ne->getNestedEnumIndices()) {
-					if (enum_idx.value < gTypeInfo.size()) {
-						const EnumTypeInfo* enum_info = gTypeInfo[enum_idx.value].getEnumInfo();
+					if (enum_idx.value < getTypeInfoCount()) {
+						const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
 						if (enum_info && !enum_info->is_scoped) {
 							if (std::optional<ExprResult> enumerator_result =
 									tryMakeEnumeratorConstantExpr(*enum_info, member_handle)) {

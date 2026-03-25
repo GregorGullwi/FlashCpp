@@ -111,7 +111,7 @@ public:
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
 	// Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
 	// so codegen can look up the exact TypeInfo without any name-based search
-	// (name-based lookups via gTypesByName only store the first enum with a given
+	// (name-based lookups via getTypesByNameMap() only store the first enum with a given
 	// name and collide when two functions define local enums with the same name).
 	TypeIndex type_index() const { return type_index_; }
 

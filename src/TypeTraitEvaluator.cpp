@@ -63,8 +63,8 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	// No explicit destructor, or destructor without a noexcept specifier:
 	// the effective noexcept status depends on base classes and members.
 	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred || base.type_index.value >= gTypeInfo.size()) continue;
-		const StructTypeInfo* base_struct = gTypeInfo[base.type_index.value].getStructInfo();
+		if (base.is_deferred || base.type_index.value >= getTypeInfoCount()) continue;
+		const StructTypeInfo* base_struct = getTypeInfo(base.type_index).getStructInfo();
 		if (!isStructNothrowDestructible(base_struct))
 			return false;
 	}
@@ -72,8 +72,8 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 		// Only struct/class-typed members (not pointers or references) have destructors
 		if ((!is_struct_type(member.type)) ||
 		    member.pointer_depth > 0 || member.is_reference()) continue;
-		if (member.type_index.value >= gTypeInfo.size()) continue;
-		const StructTypeInfo* mem_struct = gTypeInfo[member.type_index.value].getStructInfo();
+		if (member.type_index.value >= getTypeInfoCount()) continue;
+		const StructTypeInfo* mem_struct = getTypeInfo(member.type_index).getStructInfo();
 		if (!isStructNothrowDestructible(mem_struct))
 			return false;
 	}
@@ -92,8 +92,8 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 				if (decl && decl->type_node().is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
-					if (type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
-						const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo();
+					if (type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+						const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 						if (struct_info) {
 							return isStructNothrowDestructible(struct_info);
 						}
@@ -104,8 +104,8 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 	}
 	// Fallback: look up by type name token (works for non-template types)
 	std::string_view type_name = pseudo_dtor.type_name();
-	auto it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-	if (it != gTypesByName.end()) {
+	auto it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+	if (it != getTypesByNameMap().end()) {
 		const StructTypeInfo* struct_info = it->second->getStructInfo();
 		if (struct_info) {
 			return isStructNothrowDestructible(struct_info);
@@ -421,8 +421,8 @@ TypeTraitResult evaluateTypeTrait(
 				// If no explicit destructor but has vtable, check base classes
 				if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 					for (const auto& base : struct_info->base_classes) {
-						if (base.type_index.value < gTypeInfo.size()) {
-							const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+						if (base.type_index.value < getTypeInfoCount()) {
+							const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 							if (base_struct_info && base_struct_info->has_vtable) {
 								result = true;

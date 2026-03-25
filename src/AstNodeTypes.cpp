@@ -131,6 +131,63 @@ TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_s
     return info;
 }
 
+// --- Type table accessor API (Milestone 6 / Option D Step 0) ---
+
+const TypeInfo& getTypeInfo(TypeIndex idx) {
+    assert(idx.value < gTypeInfo.size() && "TypeIndex out of range");
+    return gTypeInfo[idx.value];
+}
+
+TypeInfo& getTypeInfoMut(TypeIndex idx) {
+    assert(idx.value < gTypeInfo.size() && "TypeIndex out of range");
+    return gTypeInfo[idx.value];
+}
+
+const TypeInfo* findTypeByName(StringHandle name) {
+    auto it = gTypesByName.find(name);
+    return it != gTypesByName.end() ? it->second : nullptr;
+}
+
+const TypeInfo* findNativeType(Type type) {
+    auto it = gNativeTypes.find(type);
+    return it != gNativeTypes.end() ? it->second : nullptr;
+}
+
+size_t getTypeInfoCount() {
+    return gTypeInfo.size();
+}
+
+TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, kind, TypeIndex{static_cast<uint32_t>(gTypeInfo.size())}, size_bits);
+    gTypesByName.emplace(type_info.name(), &type_info);
+    return type_info;
+}
+
+TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, type, TypeIndex{static_cast<uint32_t>(gTypeInfo.size())}, size_bits);
+    gTypesByName.emplace(type_info.name(), &type_info);
+    return type_info;
+}
+
+TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, type, source_type_index, size_bits);
+    gTypesByName.emplace(type_info.name(), &type_info);
+    return type_info;
+}
+
+TypeInfo& add_empty_type_entry() {
+    auto& type_info = gTypeInfo.emplace_back();
+    return type_info;
+}
+
+std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {
+    return gTypesByName;
+}
+
+const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap() {
+    return gNativeTypes;
+}
+
 void initialize_native_types() {
     // Initialize native types if not already done
     if (!gNativeTypes.empty()) {

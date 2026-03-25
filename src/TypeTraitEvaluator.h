@@ -41,7 +41,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
 
 // Shared helper: determine whether a pseudo-destructor call expression is noexcept.
 // Resolves the object's type via symbol lookup (handles template specializations)
-// and falls back to gTypesByName lookup by type name token for non-template types.
+// and falls back to getTypesByNameMap() lookup by type name token for non-template types.
 // Scalar pseudo-destructor calls are always noexcept (no-ops).
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols);
 

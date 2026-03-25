@@ -110,10 +110,10 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
-		if (trailing_ts.type_index().value < gTypeInfo.size()) {
+		if (trailing_ts.type_index().value < getTypeInfoCount()) {
 			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
-			          StringTable::getStringView(gTypeInfo[trailing_ts.type_index().value].name()), 
-			          "', underlying_type=", static_cast<int>(gTypeInfo[trailing_ts.type_index().value].type_));
+			          StringTable::getStringView(getTypeInfo(trailing_ts.type_index()).name()), 
+			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).type_));
 		}
 		
 		// Replace the auto type with the trailing return type
@@ -238,7 +238,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
-				gTypesByName.emplace(type_info.name(), &type_info);
+				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -303,8 +303,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		bool is_base_template_ctor = false;
 		if (!peek().is_eof() && peek().is_identifier() &&
 		    peek_info().value() != struct_node.name()) {
-			auto type_it = gTypesByName.find(struct_node.name());
-			if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+			auto type_it = getTypesByNameMap().find(struct_node.name());
+			if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 				std::string_view base_name = StringTable::getStringView(type_it->second->baseTemplateName());
 				if (peek_info().value() == base_name) {
 					is_base_template_ctor = true;
@@ -456,9 +456,9 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 					SaveHandle body_start = save_token_position();
 					
 					// Look up the struct type
-					auto type_it = gTypesByName.find(struct_name_handle);
+					auto type_it = getTypesByNameMap().find(struct_name_handle);
 					TypeIndex struct_type_index{};
-					if (type_it != gTypesByName.end()) {
+					if (type_it != getTypesByNameMap().end()) {
 						struct_type_index = type_it->second->type_index_;
 					}
 					
@@ -896,8 +896,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
 		
 		// Look up the type - it should be an instantiated template class
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it == gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+		if (type_it == getTypesByNameMap().end()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system, attempting to instantiate as template", type_name);
 			
 			// Try to parse the type name as a template instantiation (e.g., "Num<int>")
@@ -998,8 +998,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
 		
 		// Look up the type - it should be an instantiated template class
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it == gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+		if (type_it == getTypesByNameMap().end()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
 			return std::nullopt;
 		}
@@ -1065,7 +1065,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
 		
 		// Get TypeInfo and StructTypeInfo for the type
-		const TypeInfo* type_info = (type_idx.value < gTypeInfo.size()) ? &gTypeInfo[type_idx.value] : nullptr;
+		const TypeInfo* type_info = (type_idx.value < getTypeInfoCount()) ? &getTypeInfo(type_idx) : nullptr;
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
 		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)

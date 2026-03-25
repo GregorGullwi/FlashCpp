@@ -64,8 +64,8 @@ public:
 			return "<not-a-type>";
 
 		const Type type = getOperandAs<Type>(index);
-		auto type_info = gNativeTypes.find(type);
-		if (type_info == gNativeTypes.end())
+		auto type_info = getNativeTypesMap().find(type);
+		if (type_info == getNativeTypesMap().end())
 			return "";
 
 		return StringTable::getStringView(type_info->second->name());
@@ -188,8 +188,8 @@ public:
 
 			if (op.return_value.has_value() && op.return_type.has_value()) {
 				// Return with value
-				auto type_info = gNativeTypes.find(op.return_type.value());
-				if (type_info != gNativeTypes.end()) {
+				auto type_info = getNativeTypesMap().find(op.return_type.value());
+				if (type_info != getNativeTypesMap().end()) {
 					oss << type_info->second->name();
 				}
 				oss << op.return_size << " ";
@@ -222,8 +222,8 @@ public:
 			}
 
 			// Return type
-			auto ret_type_info = gNativeTypes.find(op.return_type);
-			if (ret_type_info != gNativeTypes.end()) {
+			auto ret_type_info = getNativeTypesMap().find(op.return_type);
+			if (ret_type_info != getNativeTypesMap().end()) {
 				oss << ret_type_info->second->name();
 			}
 			for (int i = 0; i < op.return_pointer_depth.value; ++i) {
@@ -257,8 +257,8 @@ public:
 				const auto& param = op.parameters[i];
 
 				// Type
-				auto param_type_info = gNativeTypes.find(param.type);
-				if (param_type_info != gNativeTypes.end()) {
+				auto param_type_info = getNativeTypesMap().find(param.type);
+				if (param_type_info != getNativeTypesMap().end()) {
 					oss << param_type_info->second->name();
 				}
 				// Print pointer levels, but exclude the extra level added for lvalue references
@@ -320,8 +320,8 @@ public:
 				const auto& arg = op.args[i];
 
 				// Type and size
-				auto type_info = gNativeTypes.find(arg.type);
-				if (type_info != gNativeTypes.end()) {
+				auto type_info = getNativeTypesMap().find(arg.type);
+				if (type_info != getNativeTypesMap().end()) {
 					oss << type_info->second->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -344,8 +344,8 @@ public:
 			else
 				oss << std::get<TempVar>(op.result).var_number;
 			oss << " = alloca ";
-			auto type_info = gNativeTypes.find(op.type);
-			if (type_info != gNativeTypes.end())
+			auto type_info = getNativeTypesMap().find(op.type);
+			if (type_info != getNativeTypesMap().end())
 				oss << type_info->second->name();
 			oss << op.size_in_bits;
 		}
@@ -506,8 +506,8 @@ public:
 			oss << '%' << op.result.var_number << " = addressof ";
 
 			// Print type and size from TypedValue
-			auto type_info = gNativeTypes.find(op.operand.type);
-			if (type_info != gNativeTypes.end()) {
+			auto type_info = getNativeTypesMap().find(op.operand.type);
+			if (type_info != getNativeTypesMap().end()) {
 				oss << type_info->second->name();
 			}
 			oss << op.operand.size_in_bits;
@@ -582,8 +582,8 @@ public:
 			// Print type and size from TypedValue
 			// If pointer_depth > 1, result is still a pointer (64 bits)
 			// If pointer_depth == 1, result is the pointee type
-			auto type_info = gNativeTypes.find(op.pointer.type);
-			if (type_info != gNativeTypes.end()) {
+			auto type_info = getNativeTypesMap().find(op.pointer.type);
+			if (type_info != getNativeTypesMap().end()) {
 				oss << type_info->second->name();
 			}
 
@@ -611,8 +611,8 @@ public:
 			oss << "store_through_ptr ";
 
 			// Print pointer type and size
-			auto ptr_type_info = gNativeTypes.find(op.pointer.type);
-			if (ptr_type_info != gNativeTypes.end()) {
+			auto ptr_type_info = getNativeTypesMap().find(op.pointer.type);
+			if (ptr_type_info != getNativeTypesMap().end()) {
 				oss << ptr_type_info->second->name();
 			}
 			oss << op.pointer.size_in_bits;
@@ -658,8 +658,8 @@ public:
 			oss << " = member_access ";
 
 			// Type and size
-			auto type_info = gNativeTypes.find(op.result.type);
-			if (type_info != gNativeTypes.end()) {
+			auto type_info = getNativeTypesMap().find(op.result.type);
+			if (type_info != getNativeTypesMap().end()) {
 				oss << type_info->second->name();
 			}
 			oss << op.result.size_in_bits << " ";
@@ -690,8 +690,8 @@ public:
 			oss << "member_store ";
 
 			// Type and size
-			auto type_info = gNativeTypes.find(op.value.type);
-			if (type_info != gNativeTypes.end()) {
+			auto type_info = getNativeTypesMap().find(op.value.type);
+			if (type_info != getNativeTypesMap().end()) {
 				oss << type_info->second->name();
 			}
 			oss << op.value.size_in_bits << " ";
@@ -731,14 +731,14 @@ public:
 
 			// Add constructor arguments
 			for (const auto& arg : op.arguments) {
-				auto type_it = gNativeTypes.find(arg.type);
+				auto type_it = getNativeTypesMap().find(arg.type);
 				oss << " ";
-				if (type_it != gNativeTypes.end()) {
+				if (type_it != getNativeTypesMap().end()) {
 					oss << type_it->second;
 				} else if (arg.type == Type::Struct || arg.type == Type::Enum) {
 					// Try to get the type name from gTypeInfo using type_index
-					if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
-						oss << gTypeInfo[arg.type_index.value].name();
+					if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+						oss << getTypeInfo(arg.type_index).name();
 					} else {
 						oss << (arg.type == Type::Struct ? "struct" : "enum");
 					}
@@ -779,8 +779,8 @@ public:
 			oss << '%' << std::get<TempVar>(op.result.value).var_number << " = virtual_call ";
 
 			// Object type and size
-			auto type_info = gNativeTypes.find(op.object_type);
-			if (type_info != gNativeTypes.end()) {
+			auto type_info = getNativeTypesMap().find(op.object_type);
+			if (type_info != getNativeTypesMap().end()) {
 				oss << type_info->second->name();
 			}
 			oss << op.object_size << " %";
@@ -803,8 +803,8 @@ public:
 					const auto& arg = op.arguments[i];
 
 					// Type and size
-					auto arg_type_info = gNativeTypes.find(arg.type);
-					if (arg_type_info != gNativeTypes.end()) {
+					auto arg_type_info = getNativeTypesMap().find(arg.type);
+					if (arg_type_info != getNativeTypesMap().end()) {
 						oss << arg_type_info->second->name();
 					}
 					oss << arg.size_in_bits << " ";
@@ -1039,14 +1039,14 @@ public:
 
 			if (op.is_array && op.array_count.has_value()) {
 				// For arrays, print element type and count: int32[5]
-				auto type_info = gNativeTypes.find(op.type);
-				if (type_info != gNativeTypes.end())
+				auto type_info = getNativeTypesMap().find(op.type);
+				if (type_info != getNativeTypesMap().end())
 					oss << type_info->second->name();
 				oss << op.size_in_bits << "[" << op.array_count.value() << "]";
 			} else {
 				// For scalars, print type and size: int32
-				auto type_info = gNativeTypes.find(op.type);
-				if (type_info != gNativeTypes.end())
+				auto type_info = getNativeTypesMap().find(op.type);
+				if (type_info != getNativeTypesMap().end())
 					oss << type_info->second->name();
 				oss << op.size_in_bits;
 			}
@@ -1078,8 +1078,8 @@ public:
 		std::string_view var_name = StringTable::getStringView(var_name_handle);  // Use helper for backward compatibility
 
 			oss << "global_var ";
-			auto type_info = gNativeTypes.find(op.type);
-			if (type_info != gNativeTypes.end())
+			auto type_info = getNativeTypesMap().find(op.type);
+			if (type_info != getNativeTypesMap().end())
 				oss << type_info->second->name();
 			oss << op.size_in_bits << " @" << std::string(var_name);
 			if (op.element_count > 1) {
@@ -1140,8 +1140,8 @@ public:
 			// Arguments with type information
 			for (const auto& arg : op.arguments) {
 				oss << ", ";
-				auto type_info = gNativeTypes.find(arg.type);
-				if (type_info != gNativeTypes.end()) {
+				auto type_info = getNativeTypesMap().find(arg.type);
+				if (type_info != getNativeTypesMap().end()) {
 					oss << type_info->second->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -1172,8 +1172,8 @@ public:
 				default: break;
 			}
 			// Format: from_type from_size from_value to to_type to_size
-			auto from_type_info = gNativeTypes.find(op.from.type);
-			if (from_type_info != gNativeTypes.end()) {
+			auto from_type_info = getNativeTypesMap().find(op.from.type);
+			if (from_type_info != getNativeTypesMap().end()) {
 				oss << from_type_info->second->name();
 			}
 			oss << op.from.size_in_bits << " ";
@@ -1187,8 +1187,8 @@ public:
 				oss << *d_val;
 			}
 			oss << " to ";
-			auto to_type_info = gNativeTypes.find(op.to_type);
-			if (to_type_info != gNativeTypes.end()) {
+			auto to_type_info = getNativeTypesMap().find(op.to_type);
+			if (to_type_info != getNativeTypesMap().end()) {
 				oss << to_type_info->second->name();
 			}
 			oss << op.to_size_in_bits;

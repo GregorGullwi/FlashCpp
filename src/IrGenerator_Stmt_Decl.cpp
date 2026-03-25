@@ -529,8 +529,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
 					if ((is_struct_type(type_node.type())) && !decl.is_array() && !type_node.is_array()
-						&& type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size()) {
-						const StructTypeInfo* struct_info_ptr = gTypeInfo[type_node.type_index().value].getStructInfo();
+						&& type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount()) {
+						const StructTypeInfo* struct_info_ptr = getTypeInfo(type_node.type_index()).getStructInfo();
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
@@ -549,8 +549,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
 						if ((is_struct_type(type_node.type())) && type_node.type_index().is_valid() &&
-							type_node.type_index().value < gTypeInfo.size()) {
-							const StructTypeInfo* elem_struct = gTypeInfo[type_node.type_index().value].getStructInfo();
+							type_node.type_index().value < getTypeInfoCount()) {
+							const StructTypeInfo* elem_struct = getTypeInfo(type_node.type_index()).getStructInfo();
 							if (elem_struct) {
 								op.init_data.resize(op.element_count * elem_struct->total_size, 0);
 								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
@@ -583,7 +583,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				} else if (init_node.is<ExpressionNode>() && std::holds_alternative<ConstructorCallNode>(init_node.as<ExpressionNode>()) && type_node.type_index().is_valid()) {
 					// Struct-typed global variable initialized via constructor call (e.g., Ordering(-1))
 					const auto& ctor_call = std::get<ConstructorCallNode>(init_node.as<ExpressionNode>());
-					const TypeInfo& ti = gTypeInfo[type_node.type_index().value];
+					const TypeInfo& ti = getTypeInfo(type_node.type_index());
 					const StructTypeInfo* si = ti.getStructInfo();
 					bool ctor_evaluated = false;
 					if (si) {
@@ -847,7 +847,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Check if this is a struct with default member initializers
 				if (type_node.type_index().is_valid()) {
 					// This is a user-defined type (struct/class)
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
+					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info && !struct_info->members.empty()) {
 						// Check if any members have default initializers
@@ -1128,8 +1128,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if this struct has a constructor
 					if (type_node.type() == Type::Struct) {
 						TypeIndex type_index = type_node.type_index();
-						if (type_index.value < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index.value];
+						if (type_index.value < getTypeInfoCount()) {
+							const TypeInfo& type_info = getTypeInfo(type_index);
 							if (type_info.struct_info_) {
 								const StructTypeInfo& struct_info = *type_info.struct_info_;
 
@@ -1366,8 +1366,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
-											if (nested_member_type_index.value < gTypeInfo.size()) {
-												const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
+											if (nested_member_type_index.value < getTypeInfoCount()) {
+												const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
 
 												// If this is a struct type, use the recursive helper
 												if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
@@ -1497,8 +1497,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().value < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
+				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().value < getTypeInfoCount()) {
+					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
 					}
@@ -1546,8 +1546,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
 										TypeIndex source_type_index = sema_->typeContext().get(cast_info.source_type_id).type_index;
-										if (source_type_index.is_valid() && source_type_index.value < gTypeInfo.size()) {
-											const TypeInfo& src_info = gTypeInfo[source_type_index.value];
+										if (source_type_index.is_valid() && source_type_index.value < getTypeInfoCount()) {
+											const TypeInfo& src_info = getTypeInfo(source_type_index);
 											const StructMemberFunction* conv_op = findConversionOperator(
 												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
 												isExprConstQualified(init_node));
@@ -1566,8 +1566,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							// Fallback: no sema annotation — search for a conversion operator directly
-							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < gTypeInfo.size()) {
-								const TypeInfo& source_type_info = gTypeInfo[init_type_index.value];
+							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < getTypeInfoCount()) {
+								const TypeInfo& source_type_info = getTypeInfo(init_type_index);
 								const StructMemberFunction* conv_op = findConversionOperator(
 									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
 									isExprConstQualified(init_node));
@@ -1597,8 +1597,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Also update init_operands.type so generateTypeConversion sees a
 						// consistent fromType (avoiding Enum vs Int mismatch in the operands).
 						if (init_type == Type::Enum && init_operands.type_index.is_valid()
-							&& init_operands.type_index.value < gTypeInfo.size()) {
-							if (const EnumTypeInfo* enum_info = gTypeInfo[init_operands.type_index.value].getEnumInfo()) {
+							&& init_operands.type_index.value < getTypeInfoCount()) {
+							if (const EnumTypeInfo* enum_info = getTypeInfo(init_operands.type_index).getEnumInfo()) {
 								init_type = enum_info->underlying_type;
 								init_operands.type = init_type;
 							}
@@ -1660,8 +1660,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 						if (is_rvalue) {
 							const StructTypeInfo* target_struct_info =
-								(type_node.type_index().is_valid() && type_node.type_index().value < gTypeInfo.size())
-									? gTypeInfo[type_node.type_index().value].getStructInfo()
+								(type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount())
+									? getTypeInfo(type_node.type_index()).getStructInfo()
 									: nullptr;
 							const bool is_same_type_xvalue_init =
 								isSameTypeXValueSource(init_node, init_operands, type_node);
@@ -1775,8 +1775,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
-					struct_info_ptr = gTypeInfo[type_node.type_index().value].struct_info_.get();
+				if (type_node.type() == Type::Struct && type_node.type_index().value < getTypeInfoCount()) {
+					struct_info_ptr = getTypeInfo(type_node.type_index()).struct_info_.get();
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
 
@@ -1819,8 +1819,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
 		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
-			if (type_index.value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_index.value];
+			if (type_index.value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(type_index);
 
 				// Skip incomplete template instantiations
 				if (type_info.is_incomplete_instantiation_) {
@@ -2317,8 +2317,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if any base class has constructors that need to be called
 							bool has_base_with_constructors = false;
 							for (const auto& base : type_info.struct_info_->base_classes) {
-								if (base.type_index.value < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+								if (base.type_index.value < getTypeInfoCount()) {
+									const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 										has_base_with_constructors = true;
@@ -2729,12 +2729,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 5: Check for tuple-like decomposition (C++17 protocol)
 		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
 		// Otherwise, fall back to aggregate (struct) decomposition
-		if (init_type_index.value >= gTypeInfo.size()) {
+		if (init_type_index.value >= getTypeInfoCount()) {
 			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.value);
 			return;
 		}
 
-		const TypeInfo& type_info = gTypeInfo[init_type_index.value];
+		const TypeInfo& type_info = getTypeInfo(init_type_index);
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 
 		if (!struct_info) {
@@ -2763,13 +2763,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		"> as '", tuple_size_name, "' or '", std_tuple_size_name, "'");
 
 		// Look up the tuple_size specialization
-		auto tuple_size_it = gTypesByName.find(tuple_size_handle);
-		if (tuple_size_it == gTypesByName.end()) {
-			tuple_size_it = gTypesByName.find(std_tuple_size_handle);
+		auto tuple_size_it = getTypesByNameMap().find(tuple_size_handle);
+		if (tuple_size_it == getTypesByNameMap().end()) {
+			tuple_size_it = getTypesByNameMap().find(std_tuple_size_handle);
 		}
 
 		// If tuple_size is specialized for this type, use tuple-like decomposition
-		if (tuple_size_it != gTypesByName.end()) {
+		if (tuple_size_it != getTypesByNameMap().end()) {
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
 
 			const TypeInfo* tuple_size_type_info = tuple_size_it->second;
@@ -2832,16 +2832,16 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					StringHandle std_type_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(std_tuple_element_name).append("::type").commit());
 
-					auto type_alias_it = gTypesByName.find(type_alias_handle);
-					if (type_alias_it == gTypesByName.end()) {
-						type_alias_it = gTypesByName.find(std_type_alias_handle);
+					auto type_alias_it = getTypesByNameMap().find(type_alias_handle);
+					if (type_alias_it == getTypesByNameMap().end()) {
+						type_alias_it = getTypesByNameMap().find(std_type_alias_handle);
 					}
 
 					Type element_type = Type::Int;  // Default
 					int element_size = 32;
 					TypeIndex element_type_index {};
 
-					if (type_alias_it != gTypesByName.end()) {
+					if (type_alias_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
 						element_type = type_alias_info->type_;
 						element_type_index = type_alias_info->type_index_;

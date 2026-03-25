@@ -804,15 +804,14 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name
-		auto& type_info = gTypeInfo.emplace_back(
+		auto& type_info = add_instantiated_type(
 			param_name,
 			concrete_type,
-			TypeIndex{gTypeInfo.size()},
 			0 // Placeholder size
 		);
 
-		// Register in global type lookup
-		gTypesByName[param_name] = &type_info;
+		// Register in global type lookup (already done by add_instantiated_type, but insert_or_assign)
+		getTypesByNameMap()[param_name] = &type_info;
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -821,8 +820,8 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
 	if (setup_member_context) {
 		// Find the struct in the type system
-		auto struct_type_it = gTypesByName.find(struct_name);
-		if (struct_type_it != gTypesByName.end()) {
+		auto struct_type_it = getTypesByNameMap().find(struct_name);
+		if (struct_type_it != getTypesByNameMap().end()) {
 			[[maybe_unused]] const TypeInfo* type_info = struct_type_it->second;
 			
 			// Add 'this' pointer to global symbol table

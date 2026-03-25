@@ -108,13 +108,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			: buildQualifiedNameFromHandle(current_namespace_handle, first_id);
 		
 		// Try to find the class, first with qualified name, then unqualified
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_class_name));
-		if (type_it == gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_class_name));
+		if (type_it == getTypesByNameMap().end()) {
 			// Try unqualified name
-			type_it = gTypesByName.find(StringTable::getOrInternStringHandle(first_id));
+			type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(first_id));
 		}
 		
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			auto ctor_result = lookahead_constructor_or_destructor(first_id);
 			if (ctor_result.detected) {
 				return saved_position.propagate(parse_out_of_line_constructor_or_destructor(qualified_class_name, ctor_result.is_destructor, specs));
@@ -173,20 +173,20 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			auto inst_name_sv = get_instantiated_class_name(base_name, *template_args_opt);
 			auto inst_name = StringTable::getOrInternStringHandle(inst_name_sv);
 			FLASH_LOG(Parser, Debug, "Out-of-line template spec: base=", base_name, " instantiated=", inst_name_sv);
-			auto inst_type_it = gTypesByName.find(inst_name);
-			if (inst_type_it == gTypesByName.end()) {
+			auto inst_type_it = getTypesByNameMap().find(inst_name);
+			if (inst_type_it == getTypesByNameMap().end()) {
 				// Try namespace-qualified instantiated name
 				NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
 				if (!current_namespace_handle.isGlobal()) {
 					auto qual_inst_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, inst_name);
 					FLASH_LOG(Parser, Debug, "Out-of-line template spec: trying qualified name=", qual_inst_name.view());
-					inst_type_it = gTypesByName.find(qual_inst_name);
-					if (inst_type_it != gTypesByName.end()) {
+					inst_type_it = getTypesByNameMap().find(qual_inst_name);
+					if (inst_type_it != getTypesByNameMap().end()) {
 						inst_name = qual_inst_name;
 					}
 				}
 			}
-			if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+			if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
 				FLASH_LOG(Parser, Debug, "Out-of-line template spec: found type for ", inst_name.view());
 				// Update decl_node's identifier to be the instantiated name
 				Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_name),
@@ -274,8 +274,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		// Find the struct in the type registry
-		auto struct_iter = gTypesByName.find(class_name);
-		if (struct_iter == gTypesByName.end()) {
+		auto struct_iter = getTypesByNameMap().find(class_name);
+		if (struct_iter == getTypesByNameMap().end()) {
 			FLASH_LOG(Parser, Error, "Unknown class '", class_name.view(), "' in out-of-line member function definition");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
@@ -285,8 +285,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (!struct_info) {
 			// Type alias resolution: follow type_index_ to find the actual struct type
 			// e.g., using Alias = SomeStruct; then Alias::member() needs to resolve to SomeStruct
-			if (type_info->type_index_.value < gTypeInfo.size() && &gTypeInfo[type_info->type_index_.value] != type_info) {
-				TypeInfo& resolved_type = gTypeInfo[type_info->type_index_.value];
+			if (type_info->type_index_.value < getTypeInfoCount() && &getTypeInfo(type_info->type_index_) != type_info) {
+				TypeInfo& resolved_type = getTypeInfoMut(type_info->type_index_);
 				struct_info = resolved_type.getStructInfo();
 			}
 		}
@@ -1111,8 +1111,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	
 	// Find the struct in the type registry
 	StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
-	auto struct_iter = gTypesByName.find(class_name_handle);
-	if (struct_iter == gTypesByName.end()) {
+	auto struct_iter = getTypesByNameMap().find(class_name_handle);
+	if (struct_iter == getTypesByNameMap().end()) {
 		FLASH_LOG(Parser, Error, "Unknown class '", class_name, "' in out-of-line constructor/destructor definition");
 		return ParseResult::error("Unknown class in out-of-line constructor/destructor", class_name_token);
 	}

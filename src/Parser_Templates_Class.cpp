@@ -204,8 +204,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, TypeIndex{gTypeInfo.size()}, 0); // Do we need a correct size here?
-				gTypesByName.emplace(type_info.name(), &type_info);
+				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -754,8 +753,8 @@ ParseResult Parser::parse_template_declaration() {
 		std::vector<ASTNode> target_template_arg_nodes;
 
 		if ((is_struct_type(type_spec.type())) &&
-		    type_spec.type_index().value < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_spec.type_index().value];
+		    type_spec.type_index().value < getTypeInfoCount()) {
+			const TypeInfo& ti = getTypeInfo(type_spec.type_index());
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
 			// Check for incomplete instantiation indicating unresolved template parameters
@@ -848,8 +847,8 @@ ParseResult Parser::parse_template_declaration() {
 							const ASTNode& node = target_template_arg_nodes[i];
 							if (node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
-								if (ts.type_index().value < gTypeInfo.size()) {
-									std::string_view node_type_name = StringTable::getStringView(gTypeInfo[ts.type_index().value].name());
+								if (ts.type_index().value < getTypeInfoCount()) {
+									std::string_view node_type_name = StringTable::getStringView(getTypeInfo(ts.type_index()).name());
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()), 
 									          ", type_name='", node_type_name, "'");
 								}
@@ -1415,8 +1414,8 @@ ParseResult Parser::parse_template_declaration() {
 							qualified_builder.append(StringTable::getStringView(*member_type_name));
 							std::string_view alias_name = qualified_builder.commit();
 							
-							auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
-							if (alias_it == gTypesByName.end()) {
+							auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
+							if (alias_it == getTypesByNameMap().end()) {
 								return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(base_name_token));
 							}
 							
@@ -2372,7 +2371,8 @@ ParseResult Parser::parse_template_declaration() {
 
 				if (type_spec.type() == Type::Struct) {
 					const TypeInfo* member_type_info = nullptr;
-					for (const auto& ti : gTypeInfo) {
+					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == type_spec.type_index()) {
 							member_type_info = &ti;
 							break;
@@ -3348,9 +3348,9 @@ ParseResult Parser::parse_template_declaration() {
 						if (!is_defaulted && !is_deleted && peek() == "{"_tok) {
 							SaveHandle body_start = save_token_position();
 							
-							auto type_it = gTypesByName.find(instantiated_name);
+							auto type_it = getTypesByNameMap().find(instantiated_name);
 							TypeIndex struct_type_index{};
-							if (type_it != gTypesByName.end()) {
+							if (type_it != getTypesByNameMap().end()) {
 								struct_type_index = type_it->second->type_index_;
 							}
 							
@@ -4548,8 +4548,8 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 				post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 		} else {
 			// Simple identifier base class – look it up now; defer only if it's a template parameter
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
+			if (type_it != getTypesByNameMap().end()) {
 				// Concrete type found – register immediately (no deferral needed)
 				struct_ref.add_base_class(base_class_name, type_it->second->type_index_, base_access, is_virtual_base, /*is_deferred=*/false);
 			} else {

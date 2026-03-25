@@ -1262,8 +1262,8 @@ bool Parser::looks_like_function_parameters()
 			}
 			
 			// Check if this identifier is a known type in the type registry
-			auto type_iter = gTypesByName.find(id_handle);
-			if (type_iter != gTypesByName.end()) {
+			auto type_iter = getTypesByNameMap().find(id_handle);
+			if (type_iter != getTypesByNameMap().end()) {
 				// Before deciding it's a function parameter type, check if '::' follows.
 				// If so, this is a qualified-name expression (e.g., Color::Green, Ns::val)
 				// used as a direct-initialization argument, NOT a parameter type name.

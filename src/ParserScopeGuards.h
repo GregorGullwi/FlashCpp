@@ -22,7 +22,7 @@ namespace FlashCpp {
 // TemplateParameterScope
 // =============================================================================
 // RAII guard for template parameter type registration.
-// Automatically removes temporary template parameter types from gTypesByName
+// Automatically removes temporary template parameter types from getTypesByNameMap()
 // when the scope exits (success or failure).
 //
 // Usage:
@@ -41,7 +41,7 @@ public:
 		// Remove all registered template parameter types from the global type map
 		for (const auto* type_info : registered_types_) {
 			if (type_info) {
-				gTypesByName.erase(type_info->name());
+				getTypesByNameMap().erase(type_info->name());
 			}
 		}
 	}
@@ -60,7 +60,7 @@ public:
 			// Clean up current registrations first
 			for (const auto* type_info : registered_types_) {
 				if (type_info) {
-					gTypesByName.erase(type_info->name());
+					getTypesByNameMap().erase(type_info->name());
 				}
 			}
 			registered_types_ = std::move(other.registered_types_);

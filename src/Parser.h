@@ -1353,8 +1353,8 @@ public:  // Public methods for template instantiation
 
             auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
                 const StructTypeInfo* current_struct_info = local_struct_info;
-                if (!current_struct_info && struct_type_index.is_valid() && struct_type_index.value < gTypeInfo.size()) {
-                    current_struct_info = gTypeInfo[struct_type_index.value].getStructInfo();
+                if (!current_struct_info && struct_type_index.is_valid() && struct_type_index.value < getTypeInfoCount()) {
+                    current_struct_info = getTypeInfo(struct_type_index).getStructInfo();
                 }
                 if (!current_struct_info) return false;
                 bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
@@ -1365,7 +1365,7 @@ public:  // Public methods for template instantiation
                 // Only own-declared members are safe to bind eagerly; names inherited from concrete
                 // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
                 bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
-                if (!skip_base_traversal && struct_type_index.is_valid() && struct_type_index.value < gTypeInfo.size()) {
+                if (!skip_base_traversal && struct_type_index.is_valid() && struct_type_index.value < getTypeInfoCount()) {
                     auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
                     if (!member_result) return false;
                     if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
@@ -1385,8 +1385,8 @@ public:  // Public methods for template instantiation
                 if (!member_function_context_stack_.empty()) {
                     const auto& member_ctx = member_function_context_stack_.back();
                     const StructTypeInfo* struct_info = member_ctx.local_struct_info;
-                    if (!struct_info && member_ctx.struct_type_index.is_valid() && member_ctx.struct_type_index.value < gTypeInfo.size()) {
-                        struct_info = gTypeInfo[member_ctx.struct_type_index.value].getStructInfo();
+                    if (!struct_info && member_ctx.struct_type_index.is_valid() && member_ctx.struct_type_index.value < getTypeInfoCount()) {
+                        struct_info = getTypeInfo(member_ctx.struct_type_index).getStructInfo();
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
                     if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info)) return true;
@@ -1395,16 +1395,16 @@ public:  // Public methods for template instantiation
                     const auto& struct_ctx = struct_parsing_context_stack_.back();
                     const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
                     if (!struct_info) {
-                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
-                        if (struct_it != gTypesByName.end()) {
+                        auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != getTypesByNameMap().end()) {
                             struct_info = struct_it->second->getStructInfo();
                         }
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
                     TypeIndex struct_type_index {};
                     if (!struct_ctx.struct_name.empty()) {
-                        auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
-                        if (struct_it != gTypesByName.end()) {
+                        auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+                        if (struct_it != getTypesByNameMap().end()) {
                             struct_type_index = struct_it->second->type_index_;
                         }
                     }
@@ -1457,8 +1457,8 @@ public:  // Public methods for template instantiation
                     const auto& ts = decl.type_node().as<TypeSpecifierNode>();
                     if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
                         size_t enum_idx = ts.type_index().value;
-                        if (enum_idx < gTypeInfo.size()) {
-                            const EnumTypeInfo* enum_info = gTypeInfo[enum_idx].getEnumInfo();
+                        if (enum_idx < getTypeInfoCount()) {
+                            const EnumTypeInfo* enum_info = getTypeInfo(TypeIndex{enum_idx}).getEnumInfo();
                             if (enum_info && enum_info->findEnumerator(token.handle())) {
                                 node.set_binding(IdentifierBinding::EnumConstant);
                                 return node;

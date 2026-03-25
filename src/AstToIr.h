@@ -392,8 +392,8 @@ private:
 		// If we're in a member function, set the struct_info in the context
 		// This allows sizeof(T) to resolve template parameters from the struct
 		if (current_struct_name_.isValid()) {
-			auto struct_type_it = gTypesByName.find(current_struct_name_);
-			if (struct_type_it != gTypesByName.end()) {
+			auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
+			if (struct_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = struct_type_it->second;
 				ctx.struct_info = struct_type_info->getStructInfo();
 			}
@@ -461,8 +461,8 @@ private:
 				if (member_init.is<InitializerListNode>() &&
 					isIrStructType(toIrType(member.type)) &&
 					member.type_index.is_valid() &&
-					member.type_index.value < gTypeInfo.size()) {
-					const StructTypeInfo* nested_struct = gTypeInfo[member.type_index.value].getStructInfo();
+					member.type_index.value < getTypeInfoCount()) {
+					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
 					if (nested_struct) {
 						fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);
 					}
@@ -924,7 +924,7 @@ private:
 	std::unordered_set<StringHandle> emitted_static_members_;
 
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
-	// (same struct can be registered under multiple keys in gTypesByName)
+	// (same struct can be registered under multiple keys in getTypesByNameMap())
 	std::unordered_set<const TypeInfo*> processed_type_infos_;
 
 	// Current lambda context (for tracking captured variables)

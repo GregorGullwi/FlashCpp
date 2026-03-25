@@ -434,11 +434,11 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 			}
 
 			for (const auto& base : current_struct_info->base_classes) {
-				if (base.is_deferred || base.access != AccessSpecifier::Public || base.type_index.value >= gTypeInfo.size()) {
+				if (base.is_deferred || base.access != AccessSpecifier::Public || base.type_index.value >= getTypeInfoCount()) {
 					continue;
 				}
 
-				const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+				const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				if (!base_struct_info) {
 					continue;

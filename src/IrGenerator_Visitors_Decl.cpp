@@ -231,8 +231,8 @@
 				// rather than current_namespace_stack_, which may be the instantiation-site
 				// namespace when a template is instantiated from a different namespace.
 				auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
-				auto type_it = gTypesByName.find(struct_name_handle);
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(struct_name_handle);
+				if (type_it != getTypesByNameMap().end()) {
 					struct_found = true;
 					auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 					namespace_for_mangling.reserve(ns_views.size());
@@ -363,8 +363,8 @@
 			// Set up function scope and 'this' pointer
 			symbol_table.enter_scope(ScopeType::Function);
 			if (node.is_member_function()) {
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* struct_type_info = type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 					if (struct_info) {
@@ -382,8 +382,8 @@
 			}
 
 			// Look up struct info
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = type_it->second;
 				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 				if (struct_info && !struct_info->members.empty()) {
@@ -417,8 +417,8 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
-							const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
 							// Find operator<=> in the member struct and generate its mangled name
@@ -620,8 +620,8 @@
 			// generate direct memberwise comparison. This calls operator<=> and compares result with 0.
 			symbol_table.enter_scope(ScopeType::Function);
 			if (node.is_member_function()) {
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* struct_type_info = type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 					if (struct_info) {
@@ -644,8 +644,8 @@
 			// Find the operator<=> to call it - generate mangled name from the function signature
 			// (AST mangled name may not be set for user-defined operator<=>)
 			StringHandle spaceship_mangled;
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+			if (type_it != getTypesByNameMap().end()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					for (const auto& mf : struct_info->member_functions) {
@@ -729,8 +729,8 @@
 		// Static member functions have no 'this' pointer
 		if (node.is_member_function() && !node.is_static()) {
 			// Look up the struct type to get its type index and size
-			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = type_it->second;
 				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -798,8 +798,8 @@
 				}
 
 				// Look up the struct type
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
+				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* struct_type_info = type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -925,8 +925,8 @@
 
 		// Skip structs with incomplete instantiation - they have unresolved template params
 		{
-			auto incomplete_it = gTypesByName.find(node.name());
-			if (incomplete_it != gTypesByName.end() && incomplete_it->second->is_incomplete_instantiation_) {
+			auto incomplete_it = getTypesByNameMap().find(node.name());
+			if (incomplete_it != getTypesByNameMap().end() && incomplete_it->second->is_incomplete_instantiation_) {
 				FLASH_LOG(Codegen, Debug, "Skipping struct '", StringTable::getStringView(node.name()), "' (incomplete instantiation)");
 				return;
 			}
@@ -960,14 +960,14 @@
 			lookup_name = StringTable::getOrInternStringHandle(struct_name);
 		}
 
-		auto type_it = gTypesByName.find(lookup_name);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(lookup_name);
+		if (type_it != getTypesByNameMap().end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
 			// If simple name lookup failed, search for namespace-qualified version
 			// e.g., for "simple", look for "std::simple" or other qualified names
 			bool found_qualified = false;
-			for (const auto& [name_handle, type_info] : gTypesByName) {
+			for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
 				std::string_view qualified_name = StringTable::getStringView(name_handle);
 				// Check if this name ends with "::" + struct_name
 				if (qualified_name.size() > struct_name.size() + 2) {
@@ -1122,12 +1122,12 @@
 			StringHandle static_member_lookup_name = current_struct_name_.isValid()
 				? current_struct_name_
 				: node.name();
-			auto static_member_type_it = gTypesByName.find(static_member_lookup_name);
-			if (static_member_type_it != gTypesByName.end()) {
+			auto static_member_type_it = getTypesByNameMap().find(static_member_lookup_name);
+			if (static_member_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
 
 				// Skip if we've already processed this TypeInfo pointer
-				// (same struct can be registered under multiple keys in gTypesByName)
+				// (same struct can be registered under multiple keys in getTypesByNameMap())
 				if (processed_type_infos_.count(type_info) > 0) {
 					// Already processed in generateStaticMemberDeclarations() or earlier visit
 				} else {
@@ -1138,7 +1138,7 @@
 						for (const auto& static_member : struct_info->static_members) {
 							// Build the qualified name for deduplication using type_info->name()
 							// This ensures consistency with generateStaticMemberDeclarations() which uses
-							// the type name from gTypesByName iterator (important for template instantiations)
+							// the type name from getTypesByNameMap() iterator (important for template instantiations)
 							StringBuilder qualified_name_sb;
 							qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(StringTable::getStringView(static_member.getName()));
 							std::string_view qualified_name = qualified_name_sb.commit();
@@ -1206,15 +1206,15 @@
 		// Use the TypeIndex baked into the AST node at parse time (set in
 		// parse_enum_declaration immediately after add_enum_type) so we always
 		// reference the correct TypeInfo regardless of name collisions between
-		// local enums in different functions — gTypesByName uses emplace which
+		// local enums in different functions — getTypesByNameMap() uses emplace which
 		// is a no-op on duplicate keys and would return the wrong TypeInfo.
 		const TypeIndex type_idx = node.type_index();
-		if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) {
+		if (!type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) {
 			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
 				node.name(), "' (type_index=", type_idx.value, ") — parser may not have set it");
 			return;
 		}
-		TypeInfo& type_info = gTypeInfo[type_idx.value];
+		TypeInfo& type_info = getTypeInfoMut(type_idx);
 		const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 		if (!enum_info)
 			return;
@@ -1223,7 +1223,7 @@
 			// For scoped enums (enum class / enum struct): insert the *type name*
 			// into the codegen-local symbol table so that generateQualifiedIdentifierIr
 			// can find the correct TypeInfo for `Priority::High` without going through
-			// gTypesByName (which would collide when two functions define the same
+			// getTypesByNameMap() (which would collide when two functions define the same
 			// enum class name).
 			// symbol_table.insert is a no-op (returns false) for duplicate non-function
 			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
@@ -1387,8 +1387,8 @@
 		// Look up the struct type to get its type index and size
 		// Use struct_name_for_ctor (which is fully qualified) instead of node.struct_name()
 		// to handle nested classes correctly (node.struct_name() might be just "Inner" instead of "Outer::Inner")
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -1444,8 +1444,8 @@
 
 		// Look up the struct type to get base class and member information
 		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
-		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
-		if (struct_type_it != gTypesByName.end()) {
+		auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+		if (struct_type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -1463,8 +1463,8 @@
 						// For template instantiations, the base initializer stores the un-substituted
 						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
 						// Also match against the base template name.
-						if (base.type_index.value < gTypeInfo.size()) {
-							const TypeInfo& base_ti = gTypeInfo[base.type_index.value];
+						if (base.type_index.value < getTypeInfoCount()) {
+							const TypeInfo& base_ti = getTypeInfo(base.type_index);
 							if (base_ti.isTemplateInstantiation() && init.getBaseClassName() == base_ti.baseTemplateName()) {
 								base_init = &init;
 								break;
@@ -1473,10 +1473,10 @@
 					}
 
 					// Get base class type info
-					if (base.type_index.value >= gTypeInfo.size()) {
+					if (base.type_index.value >= getTypeInfoCount()) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 					// Build constructor call: Base::Base(this, args...)
 					ConstructorCallOp ctor_op;
@@ -1549,8 +1549,8 @@
 		// Step 2: Generate IR for member initializers (executed before constructor body)
 		// Look up the struct type to get member information
 		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
-		struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
-		if (struct_type_it != gTypesByName.end()) {
+		struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+		if (struct_type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -1580,10 +1580,10 @@
 						// Step 1: Call base class copy/move constructors (in declaration order)
 						for (const auto& base : struct_info->base_classes) {
 							// Get base class type info
-							if (base.type_index.value >= gTypeInfo.size()) {
+							if (base.type_index.value >= getTypeInfoCount()) {
 								continue;  // Invalid base type index
 							}
-							const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+							const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 							// Only call base copy/move constructor if the base class actually has constructors
 							// This avoids link errors when inheriting from classes without constructors
@@ -1623,8 +1623,8 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
 									TempVar member_source_addr = var_counter.next();
@@ -1771,8 +1771,8 @@
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
-									if (member_type_index.value < gTypeInfo.size()) {
-										const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
+									if (member_type_index.value < getTypeInfoCount()) {
+										const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 
 										// If this is a struct type, we need to initialize its members
 										if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
@@ -1811,8 +1811,8 @@
 
 														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
-														if (nested_member_type_index.value < gTypeInfo.size()) {
-															const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index.value];
+														if (nested_member_type_index.value < getTypeInfoCount()) {
+															const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
 
 															// If this is a struct type, use the recursive helper
 															if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
@@ -1912,8 +1912,8 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type == Type::Struct && member.type_index.value < gTypeInfo.size()) {
-									const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+								if (member.type == Type::Struct && member.type_index.value < getTypeInfoCount()) {
+									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
 									}
@@ -1921,7 +1921,7 @@
 
 								if (is_struct_with_constructor) {
 									// Call the nested struct's default constructor instead of zero-initializing
-									const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 									ConstructorCallOp ctor_op;
 									ctor_op.struct_name = member_type_info.name();
 									ctor_op.object = StringTable::getOrInternStringHandle("this");
@@ -2057,9 +2057,9 @@
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
 										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
 									} else if ((is_struct_type(member.type)) &&
-										member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
+										member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
-										if (const StructTypeInfo* nested_info = gTypeInfo[member.type_index.value].getStructInfo()) {
+										if (const StructTypeInfo* nested_info = getTypeInfo(member.type_index).getStructInfo()) {
 											const InitializerListNode& agg_init_list = init_expr_node.as<InitializerListNode>();
 											const auto& agg_elements = agg_init_list.initializers();
 											const auto& nested_members = nested_info->members;
@@ -2086,7 +2086,7 @@
 												nm_store.member_name = nm.getName();
 												nm_store.offset = static_cast<int>(member.offset + nm.offset);
 												nm_store.ref_qualifier = CVReferenceQualifier::None;
-												nm_store.struct_type_info = &gTypeInfo[member.type_index.value];
+												nm_store.struct_type_info = &getTypeInfo(member.type_index);
 												ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nm_store), node.name_token()));
 											}
 											continue;  // per-member stores emitted; skip single MemberStore below
@@ -2173,8 +2173,8 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type == Type::Struct && member.type_index.value < gTypeInfo.size()) {
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+							if (member.type == Type::Struct && member.type_index.value < getTypeInfoCount()) {
+								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
 								}
@@ -2182,7 +2182,7 @@
 
 							if (is_struct_with_constructor) {
 								// Call the nested struct's default constructor instead of zero-initializing
-								const TypeInfo& member_type_info = gTypeInfo[member.type_index.value];
+								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = member_type_info.name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
@@ -2284,11 +2284,11 @@
 	if (node.has_noexcept_specifier()) {
 		dtor_decl_op.is_noexcept = node.is_noexcept();
 	} else {
-		auto type_it = gTypesByName.find(node.struct_name());
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(node.struct_name());
+		if (type_it != getTypesByNameMap().end()) {
 			dtor_decl_op.is_noexcept = isStructNothrowDestructible(type_it->second->getStructInfo());
 		} else {
-			FLASH_LOG_FORMAT(Codegen, Warning, "visitDestructorDeclarationNode: struct '{}' not found in gTypesByName; defaulting destructor to noexcept", StringTable::getStringView(node.struct_name()));
+			FLASH_LOG_FORMAT(Codegen, Warning, "visitDestructorDeclarationNode: struct '{}' not found in getTypesByNameMap(); defaulting destructor to noexcept", StringTable::getStringView(node.struct_name()));
 			dtor_decl_op.is_noexcept = true;  // Unknown struct — assume noexcept
 		}
 	}
@@ -2306,8 +2306,8 @@
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
-		auto type_it = gTypesByName.find(node.struct_name());
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(node.struct_name());
+		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -2345,8 +2345,8 @@
 		// Step 2: Member destruction is automatic for primitive types (no action needed)
 
 		// Step 3: Call base class destructors in REVERSE order
-		auto struct_type_it = gTypesByName.find(node.struct_name());
-		if (struct_type_it != gTypesByName.end()) {
+		auto struct_type_it = getTypesByNameMap().find(node.struct_name());
+		if (struct_type_it != getTypesByNameMap().end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -2356,10 +2356,10 @@
 					const auto& base = *it;
 
 					// Get base class type info
-					if (base.type_index.value >= gTypeInfo.size()) {
+					if (base.type_index.value >= getTypeInfoCount()) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = gTypeInfo[base.type_index.value];
+					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
@@ -2449,12 +2449,12 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Step 3: Create the initializer_list struct
 	TypeIndex init_list_type_index = target_type.type_index();
-	if (init_list_type_index.value >= gTypeInfo.size()) {
+	if (init_list_type_index.value >= getTypeInfoCount()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
 		return ExprResult{};
 	}
 
-	const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index.value];
+	const TypeInfo& init_list_type_info = getTypeInfo(init_list_type_index);
 	const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
 	if (!init_list_struct_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
@@ -2561,14 +2561,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	if (is_struct_type(type_spec.type())) {
 		// If type_index is set, use it
 		if (type_spec.type_index().is_valid()) {
-			constructor_name = gTypeInfo[type_spec.type_index().value].name();
+			constructor_name = getTypeInfo(type_spec.type_index()).name();
 		} else {
 			// Otherwise, use the token value (the identifier name)
 			constructor_name = type_spec.token().handle();
 		}
 	} else {
 		// For basic types, constructors might not exist, but we can handle them as value construction
-		constructor_name = gTypeInfo[type_spec.type_index().value].name();
+		constructor_name = getTypeInfo(type_spec.type_index()).name();
 	}
 
 	// Create a temporary variable for the result (the constructed object)
@@ -2577,16 +2577,16 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.type() == Type::Struct && type_spec.type_index().value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+	if (type_spec.type() == Type::Struct && type_spec.type_index().value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 		if (type_info.struct_info_) {
 			actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
 			struct_info = type_info.struct_info_.get();
 		}
 	} else {
 		// Fallback: look up by name
-		auto type_it = gTypesByName.find(constructor_name);
-		if (type_it != gTypesByName.end() && type_it->second->struct_info_) {
+		auto type_it = getTypesByNameMap().find(constructor_name);
+		if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_) {
 			actual_size_bits = static_cast<int>(type_it->second->struct_info_->total_size * 8);
 			struct_info = type_it->second->struct_info_.get();
 		}
@@ -2664,8 +2664,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
 					member.type == Type::Struct &&
-					member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
-					const TypeInfo& nested_ti = gTypeInfo[member.type_index.value];
+					member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
 						TypeSpecifierNode nested_spec(member.type, member.type_index, nested_bits);

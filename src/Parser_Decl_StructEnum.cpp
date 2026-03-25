@@ -123,7 +123,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// unqualified access from within the namespace works, e.g.:
 			//   namespace ns { void f() { A::B b; } }
 			// The type resolver builds the literal string "A::B" and looks it up
-			// in gTypesByName; without this registration only "ns::A::B" exists.
+			// in getTypesByNameMap(); without this registration only "ns::A::B" exists.
 			// We defer the actual emplace to after add_struct_type() below (line 134+).
 		} else {
 			// No enclosing namespace: just the struct chain "A::B::C"
@@ -143,7 +143,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// For nested classes, also register with the simple name so it can be referenced
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
-		gTypesByName.emplace(struct_name, &struct_type_info);
+		getTypesByNameMap().emplace(struct_name, &struct_type_info);
 
 		// Register the struct-chain-relative name ("A::B", "A::B::C") when inside a
 		// namespace.  This allows unqualified access from within the namespace:
@@ -151,7 +151,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Without this, only "ns::A::B" and "B" are registered.
 		if (!qualified_namespace.empty()) {
 			if (struct_chain != type_name) {
-				gTypesByName.emplace(struct_chain, &struct_type_info);
+				getTypesByNameMap().emplace(struct_chain, &struct_type_info);
 			}
 		}
 	}
@@ -160,8 +160,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
 	// but parent_struct_name is just "Test", so we need this alias for lookups.
 	if (!is_nested_class && !qualified_namespace.empty()) {
-		if (gTypesByName.find(struct_name) == gTypesByName.end()) {
-			gTypesByName.emplace(struct_name, &struct_type_info);
+		if (getTypesByNameMap().find(struct_name) == getTypesByNameMap().end()) {
+			getTypesByNameMap().emplace(struct_name, &struct_type_info);
 		}
 	}
 
@@ -169,8 +169,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	if (!qualified_namespace.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		NamespaceHandle parent_namespace_handle = gNamespaceRegistry.getParent(current_namespace_handle);
 		StringHandle parent_handle = gNamespaceRegistry.buildQualifiedIdentifier(parent_namespace_handle, struct_name);
-		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
-			gTypesByName.emplace(parent_handle, &struct_type_info);
+		if (getTypesByNameMap().find(parent_handle) == getTypesByNameMap().end()) {
+			getTypesByNameMap().emplace(parent_handle, &struct_type_info);
 		}
 	}
 	
@@ -190,8 +190,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			partial_qualified.append(suffix).append("::").append(struct_name);
 			std::string_view partial_view = partial_qualified.commit();
 			auto partial_handle = StringTable::getOrInternStringHandle(partial_view);
-			if (gTypesByName.find(partial_handle) == gTypesByName.end()) {
-				gTypesByName.emplace(partial_handle, &struct_type_info);
+			if (getTypesByNameMap().find(partial_handle) == getTypesByNameMap().end()) {
+				getTypesByNameMap().emplace(partial_handle, &struct_type_info);
 				FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
 				          "' with partial qualified name '", partial_view, "'");
 			}
@@ -312,9 +312,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (type_spec_opt.has_value() && 
 			    type_spec_opt->type() == Type::Struct && 
 			    type_spec_opt->type_index().is_valid() &&
-			    type_spec_opt->type_index().value < gTypeInfo.size()) {
+			    type_spec_opt->type_index().value < getTypeInfoCount()) {
 				// Successfully evaluated - add as regular base class
-				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index().value];
+				const TypeInfo& base_type_info = getTypeInfo(type_spec_opt->type_index());
 				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
 				
 				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
@@ -402,8 +402,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							info.is_dependent = targ.is_dependent;
 							
 							StringHandle dep_name = targ.dependent_name;
-							if (!dep_name.isValid() && targ.type_index.value < gTypeInfo.size()) {
-								dep_name = gTypeInfo[targ.type_index.value].name_;
+							if (!dep_name.isValid() && targ.type_index.value < getTypeInfoCount()) {
+								dep_name = getTypeInfo(targ.type_index).name_;
 							}
 							if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
 								dep_name = current_template_param_names_[arg_idx];
@@ -534,8 +534,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
 				if (is_struct_type(arg.base_type)) {
-					if (arg.type_index.value < gTypeInfo.size()) {
-						StringHandle type_name_handle = gTypeInfo[arg.type_index.value].name();
+					if (arg.type_index.value < getTypeInfoCount()) {
+						StringHandle type_name_handle = getTypeInfo(arg.type_index).name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
 						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
 						if (contains_template_param(type_name_handle)) {
@@ -556,8 +556,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								StringTable::getStringView(type_name_handle));
 							if (is_dep_placeholder) {
 								bool confirmed_dependent = false;
-								auto type_it = gTypesByName.find(type_name_handle);
-								if (type_it != gTypesByName.end()) {
+								auto type_it = getTypesByNameMap().find(type_name_handle);
+								if (type_it != getTypesByNameMap().end()) {
 									for (const auto& t_arg : type_it->second->templateArgs()) {
 										// dependent_name is set when arg was a template parameter reference
 										if (t_arg.dependent_name.isValid()) {
@@ -565,8 +565,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 											break;
 										}
 										// Also check if the type_index name matches any template param
-										if (!t_arg.is_value && t_arg.type_index.value < gTypeInfo.size()) {
-											if (contains_template_param(gTypeInfo[t_arg.type_index.value].name())) {
+										if (!t_arg.is_value && t_arg.type_index.value < getTypeInfoCount()) {
+											if (contains_template_param(getTypeInfo(t_arg.type_index).name())) {
 												confirmed_dependent = true;
 												break;
 											}
@@ -592,8 +592,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
 						// Check if the type name contains template parameters
-						if (type_spec.type_index().value < gTypeInfo.size()) {
-							StringHandle type_name_handle = gTypeInfo[type_spec.type_index().value].name();
+						if (type_spec.type_index().value < getTypeInfoCount()) {
+							StringHandle type_name_handle = getTypeInfo(type_spec.type_index()).name();
 							// Check if this type is a template (has nested template args)
 							// If it's a template class and we're inside a template body, 
 							// and it was registered with the same name as the primary template,
@@ -624,7 +624,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Instantiate base class template if needed and register in AST
 			// Note: try_instantiate_class_template returns nullopt on success 
-			// (type is registered in gTypesByName)
+			// (type is registered in getTypesByNameMap())
 			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 			
 			// Resolve member type alias if present (e.g., Base<T>::type)
@@ -639,8 +639,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				std::string_view alias_name = qualified_builder.commit();
 				
 				const TypeInfo* alias_type_info = nullptr;
-				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
-				if (alias_it == gTypesByName.end()) {
+				auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
+				if (alias_it == getTypesByNameMap().end()) {
 					// Try looking up through inheritance (e.g., wrapper<true_type>::type where type is inherited)
 					alias_type_info = lookup_inherited_type_alias(base_class_name, member_name);
 					if (alias_type_info == nullptr) {
@@ -656,8 +656,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Type aliases have a type_index that points to the actual struct/class
 				const TypeInfo* resolved_type = alias_type_info;
 				size_t max_alias_depth = 10;  // Prevent infinite loops
-				while (resolved_type->type_index_.value < gTypeInfo.size() && max_alias_depth-- > 0) {
-					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_.value];
+				while (resolved_type->type_index_.value < getTypeInfoCount() && max_alias_depth-- > 0) {
+					const TypeInfo& underlying = getTypeInfo(resolved_type->type_index_);
 					// Stop if we're pointing to ourselves (not a valid alias)
 					if (&underlying == resolved_type) break;
 					
@@ -784,8 +784,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Track the enum's TypeIndex in the struct for nested enum enumerator lookup during codegen
 				if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
 					const auto& enum_decl = enum_node->as<EnumDeclarationNode>();
-					auto enum_it = gTypesByName.find(StringTable::getOrInternStringHandle(enum_decl.name()));
-					if (enum_it != gTypesByName.end()) {
+					auto enum_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(enum_decl.name()));
+					if (enum_it != getTypesByNameMap().end()) {
 						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
 
 						// Register the enum under every qualified name a caller might use.
@@ -808,7 +808,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
 							struct_chain_builder.commit());
 						// Register struct-relative name ("A::B::C::E", "Container::Status")
-						gTypesByName.emplace(struct_relative_handle, enum_it->second);
+						getTypesByNameMap().emplace(struct_relative_handle, enum_it->second);
 
 						// Also register namespace-fully-qualified name using NamespaceHandle
 						// ("ns::A::B::C::E", "ns::Container::Status")
@@ -816,7 +816,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 								current_namespace_handle, struct_relative_handle);
 							if (ns_qualified_handle != struct_relative_handle) {
-								gTypesByName.emplace(ns_qualified_handle, enum_it->second);
+								getTypesByNameMap().emplace(ns_qualified_handle, enum_it->second);
 							}
 						}
 					}
@@ -1230,7 +1230,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// For struct types, get size and alignment from the struct type info
 						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
 							const TypeInfo* member_type_info = nullptr;
-							for (const auto& ti : gTypeInfo) {
+							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 								if (ti.type_index_ == anon_member_type_spec.type_index()) {
 									member_type_info = &ti;
 									break;
@@ -1351,16 +1352,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								.append("::")
 								.append(nested_struct.name())
 								.commit();
-							auto nested_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_nested_name));
-							if (nested_type_it != gTypesByName.end()) {
+							auto nested_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_nested_name));
+							if (nested_type_it != getTypesByNameMap().end()) {
 								StructTypeInfo* nested_info = nested_type_it->second->getStructInfo();
 								if (nested_info) {
 									struct_info->addNestedClass(nested_info);
 								}
 
 								auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
-								if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
-									gTypesByName.emplace(qualified_name, nested_type_it->second);
+								if (getTypesByNameMap().find(qualified_name) == getTypesByNameMap().end()) {
+									getTypesByNameMap().emplace(qualified_name, nested_type_it->second);
 								}
 							}
 							
@@ -1471,8 +1472,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Push struct context so static member references can be resolved
 				// This enables expressions like `!is_signed` to find `is_signed` as a static member
 				TypeIndex struct_type_index{};
-				auto type_it = gTypesByName.find(qualified_struct_name);
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(qualified_struct_name);
+				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
 				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
@@ -1491,8 +1492,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Brace initialization: static constexpr int x{42};
 
 				TypeIndex struct_type_index{};
-				auto type_it = gTypesByName.find(qualified_struct_name);
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(qualified_struct_name);
+				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
 				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
@@ -1771,9 +1772,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					SaveHandle body_start = save_token_position();
 
 					// Look up the struct type
-					auto type_it = gTypesByName.find(struct_name);
+					auto type_it = getTypesByNameMap().find(struct_name);
 					TypeIndex struct_type_index{};
-					if (type_it != gTypesByName.end()) {
+					if (type_it != getTypesByNameMap().end()) {
 						struct_type_index = type_it->second->type_index_;
 					}
 
@@ -1935,9 +1936,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type
-				auto type_it = gTypesByName.find(struct_name);
+				auto type_it = getTypesByNameMap().find(struct_name);
 				TypeIndex struct_type_index{};
-				if (type_it != gTypesByName.end()) {
+				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
 
@@ -2196,9 +2197,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type to get its type index
-				auto type_it = gTypesByName.find(struct_name);
+				auto type_it = getTypesByNameMap().find(struct_name);
 				TypeIndex struct_type_index{};
-				if (type_it != gTypesByName.end()) {
+				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
 
@@ -2680,7 +2681,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
 			// Look up the struct type by type_index
 			const TypeInfo* member_type_info = nullptr;
-			for (const auto& ti : gTypeInfo) {
+			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == type_spec.type_index()) {
 					member_type_info = &ti;
 					break;
@@ -2891,11 +2893,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	    !parsing_template_class_) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
-			if (base_class.type_index.value >= gTypeInfo.size()) {
+			if (base_class.type_index.value >= getTypeInfoCount()) {
 				continue;
 			}
 			
-			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index.value];
+			const TypeInfo& base_type_info = getTypeInfo(base_class.type_index);
 			const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 			
 			if (!base_struct_info) {
@@ -3437,10 +3439,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// If this is a nested class, also register it with its qualified name
 	if (struct_ref.is_nested()) {
 		auto qualified_name = struct_ref.qualified_name();
-		// Register the qualified name as an alias in gTypesByName
+		// Register the qualified name as an alias in getTypesByNameMap()
 		// It points to the same TypeInfo as the simple name
-		if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
-			gTypesByName.emplace(qualified_name, &struct_type_info);
+		if (getTypesByNameMap().find(qualified_name) == getTypesByNameMap().end()) {
+			getTypesByNameMap().emplace(qualified_name, &struct_type_info);
 		}
 	}
 
@@ -3589,7 +3591,7 @@ ParseResult Parser::parse_enum_declaration()
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
 	// Bind this AST node directly to its TypeInfo so codegen never needs to
 	// search by name (which would collide when two functions define local enums
-	// with the same unqualified name — gTypesByName::emplace is a no-op on duplicates).
+	// with the same unqualified name — getTypesByNameMap()::emplace is a no-op on duplicates).
 	enum_ref.set_type_index(enum_type_info.type_index_);
 
 	// Check for underlying type specification (: type)
@@ -4144,8 +4146,8 @@ ParseResult Parser::parse_friend_declaration()
 		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
 		// Use the type_index to look up the full qualified name from gTypeInfo,
 		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
-		StringHandle friend_name = (type_spec.type_index().value < gTypeInfo.size())
-			? gTypeInfo[type_spec.type_index().value].name()
+		StringHandle friend_name = (type_spec.type_index().value < getTypeInfoCount())
+			? getTypeInfo(type_spec.type_index()).name()
 			: type_spec.token().handle();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
 		return saved_position.success(friend_node);
@@ -4386,7 +4388,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 			const auto& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				auto& type_info = add_user_type(tparam.nameHandle(), 0);
-				gTypesByName.emplace(type_info.name(), &type_info);
+				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 			current_template_param_names_.push_back(tparam.nameHandle());

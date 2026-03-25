@@ -845,21 +845,6 @@ struct TypeInfo
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
-extern std::deque<TypeInfo> gTypeInfo;
-
-// Resolve primitive type aliases (typedefs / using aliases represented as
-// Type::UserDefined) to their underlying primitive type. This intentionally
-// preserves struct and enum identity.
-inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
-		if (!needs_type_index(type_info.type_)) {
-			return type_info.type_;
-		}
-	}
-	return type;
-}
-
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
@@ -876,9 +861,30 @@ struct StringEqual {
 	}
 };
 
-extern std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
+// --- Type table accessor API (Milestone 6 / Option D Step 0) ---
+// Use these instead of accessing gTypeInfo / gTypesByName / gNativeTypes directly.
+const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
+TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
+const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
+const TypeInfo* findNativeType(Type type);         // returns nullptr if not found
+size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
-extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
+// Map accessors — use these instead of the extern globals
+std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
+const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap();
+
+// Resolve primitive type aliases (typedefs / using aliases represented as
+// Type::UserDefined) to their underlying primitive type. This intentionally
+// preserves struct and enum identity.
+inline Type resolve_type_alias(Type type, TypeIndex type_index) {
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(type_index);
+		if (!needs_type_index(type_info.type_)) {
+			return type_info.type_;
+		}
+	}
+	return type;
+}
 
 TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
@@ -889,6 +895,29 @@ TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandl
 TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
 void initialize_native_types();
+
+// Helper functions for adding types from parser/template instantiation code
+// (Step 4: replaces direct gTypeInfo.emplace_back() at external call sites)
+
+// For adding template parameter type placeholders (Type::Template or Type::UserDefined kind)
+TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits);
+
+// For adding a concrete instantiated type with known size (registers in gTypesByName too)
+TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits);
+
+// For adding an alias entry that copies type info from another TypeInfo
+TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
+
+// For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
+TypeInfo& add_empty_type_entry();
+
+// Iteration support — use instead of range-for over gTypeInfo
+template<typename Fn>
+inline void forEachTypeInfo(Fn&& fn) {
+    for (size_t i = 0; i < getTypeInfoCount(); ++i) {
+        fn(getTypeInfo(TypeIndex{i}));
+    }
+}
 
 // Get the natural alignment for a type (in bytes)
 // This follows the x64 Windows ABI alignment rules
@@ -1189,8 +1218,8 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	Type t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx.is_valid() && idx.value < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[idx.value];
+		if (idx.is_valid() && idx.value < getTypeInfoCount()) {
+			const TypeInfo& ti = getTypeInfo(idx);
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
 			}
