@@ -46,7 +46,7 @@ branch) found multiple ad-hoc ways to ask the same classification question:
 | Isolated `!= Type::UserDefined` / `== Type::UserDefined` | n/a | 14 | Mix of alias-resolution and substitution context |
 | `Type::Template` comparisons | 6 | 6 | Unresolved placeholder semantics; not yet consolidated |
 | `Type::Template \|\| Type::UserDefined` | 3 | 3 | Template param substitution context |
-| `arg.base_type >= Type::Void && <= Type::MemberObjectPointer` | 2 | 2 | Range-based primitive/pointer check |
+| `arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer` | 2 | 2 | Range-based primitive/pointer check |
 | `Bool <= x <= LongDouble` (arithmetic range check) | 4 | 4 | Duplicated helper in 3 separate translation units |
 
 ### Inconsistencies that remain
