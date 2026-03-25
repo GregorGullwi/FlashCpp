@@ -2235,7 +2235,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ASTNode substituted_expr = expr;
 					try {
 						substituted_expr = substituteTemplateParameters(expr, template_params, template_args_for_pattern);
-					} catch (const std::exception&) {}
+					} catch (const std::exception& e) {
+						FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for member initializer '{}': {}", StringTable::getStringView(name), e.what());
+					}
 					new_ctor_ref.add_member_initializer(name, substituted_expr);
 				}
 				
@@ -2244,7 +2246,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ASTNode substituted_body = *orig_ctor.get_definition();
 					try {
 						substituted_body = substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern);
-					} catch (const std::exception&) {}
+					} catch (const std::exception& e) {
+						FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for constructor body: {}", e.what());
+					}
 					new_ctor_ref.set_definition(substituted_body);
 				}
 				
@@ -5812,7 +5816,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ASTNode substituted_expr = init.initializer_expr;
 						try {
 							substituted_expr = substituteTemplateParameters(init.initializer_expr, template_params, template_args_to_use);
-						} catch (const std::exception&) {}
+						} catch (const std::exception& e) {
+							FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for member initializer '{}': {}", StringTable::getStringView(init.member_name), e.what());
+						}
 						new_ctor_ref.add_member_initializer(init.member_name, substituted_expr);
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
@@ -5822,13 +5828,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_args.reserve(init.arguments.size());
 						for (const auto& arg : init.arguments) {
 							ASTNode s = arg;
-							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception&) {}
+							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception& e) {
+								FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for base initializer arg: {}", e.what());
+							}
 							substituted_args.push_back(s);
 						}
 						new_ctor_ref.add_base_initializer(base_name_handle, std::move(substituted_args));
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
-						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
+						const auto& del_init = *ctor_decl.delegating_initializer();
+						std::vector<ASTNode> substituted_del_args;
+						substituted_del_args.reserve(del_init.arguments.size());
+						for (const auto& arg : del_init.arguments) {
+							ASTNode s = arg;
+							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception& e) {
+								FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for delegating initializer arg: {}", e.what());
+							}
+							substituted_del_args.push_back(s);
+						}
+						new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 					}
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
