@@ -1674,7 +1674,9 @@
 		// Return the result variable with its type and size
 		// If we found the actual member function from the struct, use its return type
 		// Otherwise fall back to the placeholder function declaration
-		const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
+			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
+			: func_decl_node.type_node().as<TypeSpecifierNode>();
 		if (return_type.is_reference() || return_type.is_rvalue_reference()) {
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);
