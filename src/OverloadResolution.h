@@ -42,11 +42,6 @@ struct TypeConversionResult {
 	static TypeConversionResult no_match()                { return {ConversionRank::NoMatch, false}; }
 };
 
-// Check if a type is an integral type (includes bool, unlike is_integer_type)
-inline bool is_integral_type(Type type) {
-	return type == Type::Bool || is_integer_type(type);
-}
-
 // Check whether two canonical type IDs represent the same type for overload resolution
 // signature matching (C++20 [over.match]).  Because all types are interned, equality of
 // the handles implies equality of the descriptors — this helper exists so call sites can
@@ -88,7 +83,7 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 
 	// --- Target is bool: BooleanConversion [conv.bool] ---
 	if (to == Type::Bool) {
-		if (is_integral_type(from) || is_floating_point_type(from) || from == Type::Enum) {
+		if (isIntegralType(from) || is_floating_point_type(from) || from == Type::Enum) {
 			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 		}
 		if (from == Type::Struct) {
@@ -158,7 +153,7 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 		if (to == Type::Int) {
 			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		if (is_integral_type(to)) {
+		if (isIntegralType(to)) {
 			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
 		}
 		if (is_floating_point_type(to)) {
@@ -635,13 +630,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
 	if (from_type == Type::UserDefined && !from.type_index().is_valid()) {
 		// 'from' is an unresolved type alias - allow if 'to' is integral
-		if (is_integral_type(to_type)) {
+		if (isIntegralType(to_type)) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
 	if (to_type == Type::UserDefined && !to.type_index().is_valid()) {
 		// 'to' is an unresolved type alias - allow if 'from' is integral
-		if (is_integral_type(from_type)) {
+		if (isIntegralType(from_type)) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}

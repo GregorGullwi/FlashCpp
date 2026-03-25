@@ -317,6 +317,7 @@ enum class Type : int_fast16_t {
 	Enum,
 	Nullptr,              // nullptr_t type
 	Template,             // Nested template param
+	Count_,               // Sentinel — must be last; static_assert below enforces count
 };
 
 inline bool isPlaceholderAutoType(Type type) {
@@ -362,6 +363,10 @@ constexpr bool is_primitive_type(Type type) {
 }
 
 constexpr bool needs_type_index(Type type) {
+	// Type::Template is intentionally excluded: it is an unresolved placeholder
+	// whose identity has not been committed to gTypeInfo yet.  Callers that need
+	// to detect template placeholders should use TypeInfo::isTemplatePlaceholder()
+	// (or compare directly against Type::Template) rather than folding it here.
 	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
 }
 
@@ -457,6 +462,13 @@ static_assert(!isFundamentalType(Type::Struct));
 static_assert(is_builtin_type(Type::FunctionPointer));
 static_assert(!is_builtin_type(Type::Struct));
 static_assert(!is_builtin_type(Type::Template));
+
+// Compile-time count guard: if a new Type variant is added, this fires
+// and forces a manual review of all classification helpers.
+// Current count: 31 (Invalid=0, Void..Template=1..30, Count_=31) as of Milestone 2.
+static_assert(static_cast<int>(Type::Count_) == 31,
+	"New Type variant added — audit is_primitive_type, needs_type_index, is_builtin_type, "
+	"isArithmeticType, isIntegralType, and other classification helpers, then update this count.");
 
 inline bool isIntegralType(Type type) {
 	switch (type) {

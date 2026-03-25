@@ -740,6 +740,9 @@ struct TypeInfo
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
 	bool is_incomplete_instantiation_ = false;
 
+	// True if this TypeInfo entry was registered via register_type_alias (typedef / using alias)
+	bool is_type_alias_ = false;
+
 	// For struct types, store additional information
 	std::unique_ptr<StructTypeInfo> struct_info_;
 
@@ -827,6 +830,19 @@ struct TypeInfo
 		}
 		enum_info_ = std::move(info);
 	}
+
+	// Classification helpers that read from type_ — no gTypeInfo lookup needed.
+	// isStructLike: includes Type::UserDefined because UserDefined entries either
+	// (a) are opaque user types (e.g. __builtin_va_list), or
+	// (b) are type aliases for another UserDefined type — in both cases the
+	//     effective underlying type is struct-like.  Aliases to primitives are
+	//     stored with the primitive's Type (e.g. Type::UnsignedLongLong for
+	//     `using size_t = unsigned long long`), so they do NOT appear as UserDefined.
+	bool isStructLike()          const { return type_ == Type::Struct || type_ == Type::UserDefined; }
+	bool isPrimitive()           const { return is_primitive_type(type_); }
+	bool needsTypeIndex()        const { return needs_type_index(type_); }
+	bool isTemplatePlaceholder() const { return type_ == Type::Template; }
+	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
 extern std::deque<TypeInfo> gTypeInfo;

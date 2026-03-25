@@ -49,7 +49,7 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 	}
 
 	const TypeSpecifierNode& type_spec = *type_opt;
-	if (!is_integral_type(type_spec.type())) {
+	if (!isIntegralType(type_spec.type())) {
 		return std::nullopt;
 	}
 
