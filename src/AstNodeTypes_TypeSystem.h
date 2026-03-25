@@ -380,6 +380,84 @@ static_assert(!needs_type_index(Type::Int));
 static_assert(!needs_type_index(Type::Nullptr));
 static_assert(!needs_type_index(Type::Template));
 
+// True for all builtin types that have a valid get_type_size_bits() answer:
+// Void through MemberObjectPointer in the enum. This is broader than
+// is_primitive_type() — it also covers FunctionPointer, MemberFunctionPointer,
+// MemberObjectPointer, Auto, and DeclTypeAuto.
+constexpr bool is_builtin_type(Type type) {
+	switch (type) {
+	case Type::Void:
+	case Type::Bool:
+	case Type::Char:
+	case Type::UnsignedChar:
+	case Type::WChar:
+	case Type::Char8:
+	case Type::Char16:
+	case Type::Char32:
+	case Type::Short:
+	case Type::UnsignedShort:
+	case Type::Int:
+	case Type::UnsignedInt:
+	case Type::Long:
+	case Type::UnsignedLong:
+	case Type::LongLong:
+	case Type::UnsignedLongLong:
+	case Type::Float:
+	case Type::Double:
+	case Type::LongDouble:
+	case Type::FunctionPointer:
+	case Type::MemberFunctionPointer:
+	case Type::MemberObjectPointer:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Arithmetic types per C++20 [basic.fundamental]: Bool, all integral types,
+// and all floating-point types.
+constexpr bool isArithmeticType(Type type) {
+	switch (type) {
+	case Type::Bool:
+	case Type::Char:
+	case Type::UnsignedChar:
+	case Type::WChar:
+	case Type::Char8:
+	case Type::Char16:
+	case Type::Char32:
+	case Type::Short:
+	case Type::UnsignedShort:
+	case Type::Int:
+	case Type::UnsignedInt:
+	case Type::Long:
+	case Type::UnsignedLong:
+	case Type::LongLong:
+	case Type::UnsignedLongLong:
+	case Type::Float:
+	case Type::Double:
+	case Type::LongDouble:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Fundamental types per C++20 [basic.fundamental]: arithmetic + void + nullptr_t.
+constexpr bool isFundamentalType(Type type) {
+	return type == Type::Void || type == Type::Nullptr || isArithmeticType(type);
+}
+
+static_assert(isArithmeticType(Type::Bool));
+static_assert(isArithmeticType(Type::LongDouble));
+static_assert(!isArithmeticType(Type::Void));
+static_assert(!isArithmeticType(Type::Struct));
+static_assert(isFundamentalType(Type::Void));
+static_assert(isFundamentalType(Type::Nullptr));
+static_assert(!isFundamentalType(Type::Struct));
+static_assert(is_builtin_type(Type::FunctionPointer));
+static_assert(!is_builtin_type(Type::Struct));
+static_assert(!is_builtin_type(Type::Template));
+
 inline bool isIntegralType(Type type) {
 	switch (type) {
 	case Type::Bool:

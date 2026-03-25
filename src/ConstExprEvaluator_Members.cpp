@@ -5418,16 +5418,13 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	return EvalResult::error("Array variable is not initialized with an array initializer");
 }
 
-// Helper functions for branchless type checking
+// Helper functions for type checking
 bool Evaluator::isArithmeticType(Type type) {
-	// Branchless: arithmetic types are Bool(1) through LongDouble(14)
-	return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
-	       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
+	return ::isArithmeticType(type);
 }
 
 bool Evaluator::isFundamentalType(Type type) {
-	// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types
-	return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
+	return ::isFundamentalType(type);
 }
 
 // Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())

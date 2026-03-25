@@ -2,17 +2,6 @@
 
 namespace TypeTraitEval {
 
-inline bool isArithmeticType(Type type) {
-	// Arithmetic types are Bool(1) through LongDouble(14)
-	return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &&
-	       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
-}
-
-inline bool isFundamentalType(Type type) {
-	// Fundamental types are Void(0), Nullptr(28), or arithmetic types
-	return (type == Type::Void) || (type == Type::Nullptr) || isArithmeticType(type);
-}
-
 inline bool isScalarType(Type type, bool is_reference, size_t pointer_depth) {
 	if (is_reference) return false;
 	if (pointer_depth > 0) return true;  // Pointers are scalar
