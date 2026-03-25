@@ -1087,7 +1087,7 @@ void Parser::register_builtin_functions() {
 	};
 	
 	// Helper lambda to register a builtin function with no parameters
-	auto register_no_param_builtin = [&](std::string_view name, Type return_type, std::string_view mangled_name = "") {
+	auto register_no_param_builtin = [&](std::string_view name, Type return_type) {
 		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
@@ -1101,11 +1101,6 @@ void Parser::register_builtin_functions() {
 		
 		// Create function declaration node
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Set pre-computed mangled name if provided
-		if (!mangled_name.empty()) {
-			func_decl_ref.set_mangled_name(mangled_name);
-		}
 		
 		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
@@ -1159,8 +1154,8 @@ void Parser::register_builtin_functions() {
 		gSymbolTable.insert(name, fn);
 	};
 	
-	auto make_builtin_type = [&](Type base_type, int bits, CVQualifier cv = CVQualifier::None, int pointer_depth = 0) {
-		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(base_type, TypeQualifier::None, bits, dummy_token, cv);
+	auto make_builtin_type = [&](Type base_type, CVQualifier cv, int pointer_depth) {
+		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(base_type, TypeQualifier::None, get_type_size_bits(base_type), dummy_token, cv);
 		for (int i = 0; i < pointer_depth; ++i) {
 			t_ref.add_pointer_level();
 		}
@@ -1175,24 +1170,24 @@ void Parser::register_builtin_functions() {
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
 		"__builtin_strlen",
-		make_builtin_type(size_t_base, 64),
-		{ make_builtin_type(Type::Char, 8, CVQualifier::Const, 1) });
+		make_builtin_type(size_t_base, CVQualifier::None, 0),
+		{ make_builtin_type(Type::Char, CVQualifier::Const, 1) });
 	
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
 	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
 	// before those headers are explicitly included.
-	const ASTNode wchar_t_ptr = make_builtin_type(Type::WChar, 32, CVQualifier::None, 1);
-	const ASTNode const_wchar_t_ptr = make_builtin_type(Type::WChar, 32, CVQualifier::Const, 1);
-	const ASTNode size_t_type = make_builtin_type(size_t_base, 64);
+	const ASTNode wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::None, 1);
+	const ASTNode const_wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::Const, 1);
+	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 	
 	register_extern_c_builtin(
 		"wmemcmp",
-		make_builtin_type(Type::Int, 32),
+		make_builtin_type(Type::Int, CVQualifier::None, 0),
 		{ const_wchar_t_ptr, const_wchar_t_ptr, size_t_type });
 	register_extern_c_builtin(
 		"wmemchr",
 		wchar_t_ptr,
-		{ const_wchar_t_ptr, make_builtin_type(Type::WChar, 32), size_t_type });
+		{ const_wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
 	register_extern_c_builtin(
 		"wmemcpy",
 		wchar_t_ptr,
@@ -1204,7 +1199,7 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin(
 		"wmemset",
 		wchar_t_ptr,
-		{ wchar_t_ptr, make_builtin_type(Type::WChar, 32), size_t_type });
+		{ wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
 	register_extern_c_builtin(
 		"wcslen",
 		size_t_type,
