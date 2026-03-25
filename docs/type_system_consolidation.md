@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-25  
-**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done.  
+**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 Steps 1+2 done: `TypeCategory` enum defined, embedded in `TypeIndex`, and TypeCategory-based classification helpers added.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -25,7 +25,7 @@
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
 | 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
-| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | ⬜ TODO |
+| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 Steps 1+2 done; Step 3 (site migration + delete `Type`) TODO |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
 
@@ -579,10 +579,14 @@ This is a behavior-preserving PR that establishes the encapsulation boundary for
 
 These steps can be split into separate PRs once Milestone 6 is merged.
 
-- [ ] Add `TypeCategory` enum with explicit values (§5); add `static_assert` correspondence checks with old `Type` values.
-- [ ] Change `TypeIndex` layout to `{ uint32_t index_; TypeCategory category_; }`. Update accessors, hash, and formatter. Keep `Type` untouched.
-- [ ] Update all `add*` / `addNativeType` to pass the correct `TypeCategory` when constructing `TypeIndex`.
-- [ ] Add `TypeCategory`-based classification helpers mirroring the existing `Type` helpers.
+- [x] Add `TypeCategory` enum with explicit values (§5); add `static_assert` correspondence checks with old `Type` values.
+- [x] Embed `TypeCategory category_` in `TypeIndex` alongside `uint32_t value`. The `value` field is kept (not renamed to `index_`) for backward compatibility during migration; comparison operators are updated to compare only `.value` so that legacy `TypeIndex{n}` constructions remain correct. Update `std::hash<TypeIndex>` and `std::formatter<TypeIndex>` to use `uint32_t`. Keep `Type` untouched.
+- [x] Update all `add*` / `initialize_native_types` to pass the correct `TypeCategory` when constructing `TypeIndex`. `register_type_alias` sets the alias TypeInfo via the existing `is_type_alias_` flag; the self-`TypeIndex` carrying `TypeCategory::TypeAlias` will be introduced with `TypeCreationResult` below.
+- [x] Add `TypeCategory`-based classification helpers (`is_primitive_type`, `is_struct_type`, `needs_type_index`, `is_builtin_type`, `isArithmeticType`, `isFundamentalType`, `isIntegralType`, `isFloatingPointType`) mirroring the existing `Type`-based helpers.
+- [x] Add `typeToCategory(Type)` helper to convert legacy `Type` values to `TypeCategory`.
+- [x] Add classification methods directly on `TypeIndex` (`isStruct`, `isEnum`, `isTypeAlias`, `isPrimitive`, `isStructLike`, `needsTypeIndex`, `isTemplatePlaceholder`, `isFunction`, `isNull`, `category`).
+- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred from Milestone 6). This enables callers to receive a `TypeIndex{pos, TypeCategory::TypeAlias}` for aliases without computing `gTypeInfo.size()-1` themselves.
+- [ ] Rename `TypeIndex::value` → `TypeIndex::index_` at all ~499 call sites now that the layout is established. Update comparison operators and accessors accordingly.
 - [ ] Migrate `TemplateTypeArg::base_type` (122+ write sites) from `Type` to relying on `type_index.category()`.
 - [ ] Migrate `TypeInfo::TemplateArgInfo::base_type` similarly.
 - [ ] Re-key `gNativeTypes` from `Type` to `TypeCategory`.
