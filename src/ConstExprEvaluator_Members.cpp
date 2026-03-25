@@ -2069,8 +2069,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
 		// Guard with a type-match check so that cross-struct casts fall through to
 		// the scalar conversion switch (which correctly errors for struct types).
-		if (is_struct_type(type_spec.type()) ||
-			type_spec.type() == Type::Enum) {
+		if (needs_type_index(type_spec.type())) {
 			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
 			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 				inner_result.set_exact_type(type_spec);

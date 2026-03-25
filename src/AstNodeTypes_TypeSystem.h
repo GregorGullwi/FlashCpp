@@ -383,7 +383,7 @@ static_assert(!needs_type_index(Type::Template));
 // True for all builtin types that have a valid get_type_size_bits() answer:
 // Void through MemberObjectPointer in the enum. This is broader than
 // is_primitive_type() — it also covers FunctionPointer, MemberFunctionPointer,
-// MemberObjectPointer.
+// and MemberObjectPointer (but NOT Auto, DeclTypeAuto, or Nullptr).
 constexpr bool is_builtin_type(Type type) {
 	switch (type) {
 	case Type::Void:

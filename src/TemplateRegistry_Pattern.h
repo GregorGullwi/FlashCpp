@@ -244,8 +244,7 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type mismatch");
 			return false;
 		}
-		if ((is_struct_type(p.base_type) ||
-		     p.base_type == Type::Enum) && p.type_index != c.type_index) {
+		if (needs_type_index(p.base_type) && p.type_index != c.type_index) {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type_index mismatch");
 			return false;
 		}
