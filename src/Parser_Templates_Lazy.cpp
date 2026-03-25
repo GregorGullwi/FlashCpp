@@ -76,11 +76,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 
 		auto substituteInitExpr = [&](const ASTNode& expr) -> ASTNode {
-			try {
-				return substituteTemplateParameters(expr, lazy_info.template_params, converted_template_args);
-			} catch (const std::exception&) {
-				return expr;  // fall back to unsubstituted on error
-			}
+			return substituteTemplateParameters(expr, lazy_info.template_params, converted_template_args);
 		};
 
 		for (const auto& init : ctor_decl.member_initializers()) {
@@ -148,19 +144,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			return std::nullopt;
 		}
 
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*body_to_substitute,
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_ctor_ref.set_definition(substituted_body);
-		} catch (const CompileError&) {
-			throw;  // Phase 1 violations (non-dependent name not declared before template) must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(Templates, Error, "Exception during lazy constructor substitution: ", e.what());
-			return std::nullopt;
-		}
+		ASTNode substituted_body = substituteTemplateParameters(
+			*body_to_substitute,
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_ctor_ref.set_definition(substituted_body);
 
 		ast_nodes_.push_back(new_ctor_node);
 		return new_ctor_node;
@@ -208,19 +197,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			}
 		}
 
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*dtor_decl.get_definition(),
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_dtor_ref.set_definition(substituted_body);
-		} catch (const CompileError&) {
-			throw;  // Phase 1 violations must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(Templates, Error, "Exception during lazy destructor substitution: ", e.what());
-			return std::nullopt;
-		}
+		ASTNode substituted_body = substituteTemplateParameters(
+			*dtor_decl.get_definition(),
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_dtor_ref.set_definition(substituted_body);
 
 		ast_nodes_.push_back(new_dtor_node);
 		return new_dtor_node;
@@ -449,28 +431,18 @@ if (param_decl.has_default_value()) {
 		struct_ctx.struct_node = nullptr;
 		struct_ctx.local_struct_info = nullptr;
 		struct_parsing_context_stack_.push_back(struct_ctx);
-		
-		try {
-			ASTNode substituted_body = substituteTemplateParameters(
-				*body_to_substitute,
-				lazy_info.template_params,
-				converted_template_args
-			);
-			new_func_ref.set_definition(substituted_body);
-		} catch (const std::exception& e) {
-			struct_parsing_context_stack_.pop_back();  // Clean up on error
-			FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
-			          decl.identifier_token().value(), ": ", e.what());
-			throw;
-		} catch (...) {
-			struct_parsing_context_stack_.pop_back();  // Clean up on error
-			FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
-			          decl.identifier_token().value());
-			throw;
-		}
-		
-		// Pop struct parsing context
-		struct_parsing_context_stack_.pop_back();
+		auto pop_struct_ctx = [this](void*) {
+			if (!struct_parsing_context_stack_.empty())
+				struct_parsing_context_stack_.pop_back();
+		};
+		std::unique_ptr<void, decltype(pop_struct_ctx)> struct_ctx_scope(reinterpret_cast<void*>(1), pop_struct_ctx);
+
+		ASTNode substituted_body = substituteTemplateParameters(
+			*body_to_substitute,
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_func_ref.set_definition(substituted_body);
 	}
 
 	copy_function_properties(new_func_ref, func_decl);

@@ -2232,24 +2232,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy member initializers
 				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
-					ASTNode substituted_expr = expr;
-					try {
-						substituted_expr = substituteTemplateParameters(expr, template_params, template_args_for_pattern);
-					} catch (const std::exception& e) {
-						FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for member initializer '{}': {}", StringTable::getStringView(name), e.what());
-					}
-					new_ctor_ref.add_member_initializer(name, substituted_expr);
+					new_ctor_ref.add_member_initializer(name, substituteTemplateParameters(expr, template_params, template_args_for_pattern));
 				}
 				
 				// Copy definition if present (with template parameter substitution)
 				if (orig_ctor.get_definition().has_value()) {
-					ASTNode substituted_body = *orig_ctor.get_definition();
-					try {
-						substituted_body = substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern);
-					} catch (const std::exception& e) {
-						FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for constructor body: {}", e.what());
-					}
-					new_ctor_ref.set_definition(substituted_body);
+					new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern));
 				}
 				
 				instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
@@ -5813,13 +5801,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Copy other properties (with template parameter substitution for initializers)
 					for (const auto& init : ctor_decl.member_initializers()) {
-						ASTNode substituted_expr = init.initializer_expr;
-						try {
-							substituted_expr = substituteTemplateParameters(init.initializer_expr, template_params, template_args_to_use);
-						} catch (const std::exception& e) {
-							FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for member initializer '{}': {}", StringTable::getStringView(init.member_name), e.what());
-						}
-						new_ctor_ref.add_member_initializer(init.member_name, substituted_expr);
+						new_ctor_ref.add_member_initializer(init.member_name,
+							substituteTemplateParameters(init.initializer_expr, template_params, template_args_to_use));
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
 						// Phase 7B: Intern base class name and use StringHandle overload
@@ -5827,11 +5810,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::vector<ASTNode> substituted_args;
 						substituted_args.reserve(init.arguments.size());
 						for (const auto& arg : init.arguments) {
-							ASTNode s = arg;
-							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception& e) {
-								FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for base initializer arg: {}", e.what());
-							}
-							substituted_args.push_back(s);
+							substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args_to_use));
 						}
 						new_ctor_ref.add_base_initializer(base_name_handle, std::move(substituted_args));
 					}
@@ -5840,11 +5819,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::vector<ASTNode> substituted_del_args;
 						substituted_del_args.reserve(del_init.arguments.size());
 						for (const auto& arg : del_init.arguments) {
-							ASTNode s = arg;
-							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception& e) {
-								FLASH_LOG_FORMAT(Templates, Warning, "substituteTemplateParameters failed for delegating initializer arg: {}", e.what());
-							}
-							substituted_del_args.push_back(s);
+							substituted_del_args.push_back(substituteTemplateParameters(arg, template_params, template_args_to_use));
 						}
 						new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 					}

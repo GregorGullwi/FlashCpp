@@ -748,8 +748,9 @@ ASTNode Parser::substituteTemplateParameters(
 					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
 				}
+				// Pack name is genuinely unknown — this is a C++ constraint violation.
 				FLASH_LOG(Parser, Error, "'" , pack_name, "' does not refer to the name of a parameter pack");
-				throw std::runtime_error("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
+				throw CompileError("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
 			
 			// Create an integer literal with the pack size
