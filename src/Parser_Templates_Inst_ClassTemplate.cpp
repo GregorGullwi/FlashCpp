@@ -452,6 +452,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	};
 	
+	// Helper: substitute and copy all constructor initializers (member, base, delegating)
+	// from an original ConstructorDeclarationNode to a new one.
+	auto substituteAndCopyInitializers = [&](
+		const ConstructorDeclarationNode& orig_ctor,
+		ConstructorDeclarationNode& new_ctor,
+		const auto& tmpl_params,
+		const auto& tmpl_args) {
+		for (const auto& [name, expr] : orig_ctor.member_initializers()) {
+			new_ctor.add_member_initializer(name, substituteTemplateParameters(expr, tmpl_params, tmpl_args));
+		}
+		for (const auto& init : orig_ctor.base_initializers()) {
+			std::vector<ASTNode> substituted_args;
+			substituted_args.reserve(init.arguments.size());
+			for (const auto& arg : init.arguments) {
+				substituted_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+			}
+			new_ctor.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
+		}
+		if (orig_ctor.delegating_initializer().has_value()) {
+			const auto& del_init = *orig_ctor.delegating_initializer();
+			std::vector<ASTNode> substituted_del_args;
+			substituted_del_args.reserve(del_init.arguments.size());
+			for (const auto& arg : del_init.arguments) {
+				substituted_del_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+			}
+			new_ctor.set_delegating_initializer(std::move(substituted_del_args));
+		}
+	};
+
 	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
 	// Uses ConstExpr::evaluate_fold_expression for the actual computation
 	auto evaluate_fold_expression = [this](std::string_view op, const std::vector<int64_t>& pack_values) -> std::optional<ASTNode> {
@@ -1418,9 +1447,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 					instantiated_name, orig_ctor.name());
 				substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args);
-				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
-					new_ctor_ref.add_member_initializer(name, substituteTemplateParameters(expr, template_params, template_args));
-				}
+				substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args);
 				if (orig_ctor.get_definition().has_value()) {
 					new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args));
 				}
@@ -2179,10 +2206,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Copy parameters with template parameter substitution
 				substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args_for_pattern);
 				
-				// Copy member initializers
-				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
-					new_ctor_ref.add_member_initializer(name, substituteTemplateParameters(expr, template_params, template_args_for_pattern));
-				}
+				// Copy initializers (member, base, delegating)
+				substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
 				
 				// Copy definition if present (with template parameter substitution)
 				if (orig_ctor.get_definition().has_value()) {
@@ -5712,30 +5737,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
-					// Copy other properties (with template parameter substitution for initializers)
-					for (const auto& init : ctor_decl.member_initializers()) {
-						new_ctor_ref.add_member_initializer(init.member_name,
-							substituteTemplateParameters(init.initializer_expr, template_params, template_args_to_use));
-					}
-					for (const auto& init : ctor_decl.base_initializers()) {
-						// Phase 7B: Intern base class name and use StringHandle overload
-						StringHandle base_name_handle = init.getBaseClassName();
-						std::vector<ASTNode> substituted_args;
-						substituted_args.reserve(init.arguments.size());
-						for (const auto& arg : init.arguments) {
-							substituted_args.push_back(substituteTemplateParameters(arg, template_params, template_args_to_use));
-						}
-						new_ctor_ref.add_base_initializer(base_name_handle, std::move(substituted_args));
-					}
-					if (ctor_decl.delegating_initializer().has_value()) {
-						const auto& del_init = *ctor_decl.delegating_initializer();
-						std::vector<ASTNode> substituted_del_args;
-						substituted_del_args.reserve(del_init.arguments.size());
-						for (const auto& arg : del_init.arguments) {
-							substituted_del_args.push_back(substituteTemplateParameters(arg, template_params, template_args_to_use));
-						}
-						new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
-					}
+					// Copy all initializers (member, base, delegating) with template parameter substitution
+					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					new_ctor_ref.set_definition(substituted_body);
