@@ -10,6 +10,8 @@
 #include "IrGenerator.h"
 
 namespace {
+constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
+
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -352,7 +354,7 @@ private:
 			// uninstantiated template constructor. Its member/base initializers intentionally
 			// contain PackExpansionExprNode that will be resolved during lazy instantiation.
 			// Skip visiting them here to avoid false-positive boundary violations.
-			if (ctor.has_template_body_position() || ctor.struct_name().view().find("$pattern__") != std::string_view::npos) {
+			if (ctor.has_template_body_position() || ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
 				return;
 			}
 			for (const auto& param : ctor.parameter_nodes()) {
@@ -1552,7 +1554,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor) {
 	const auto& def = ctor.get_definition();
 	if (!def.has_value()) return;
-	if (ctor.struct_name().view().find("$pattern__") != std::string_view::npos) return;
+	if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) return;
 
 	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
 		return;
