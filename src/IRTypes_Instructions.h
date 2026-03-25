@@ -737,7 +737,7 @@ public:
 					oss << type_it->second;
 				} else if (arg.type == Type::Struct || arg.type == Type::Enum) {
 					// Try to get the type name from gTypeInfo using type_index
-					if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+					if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 						oss << getTypeInfo(arg.type_index).name();
 					} else {
 						oss << (arg.type == Type::Struct ? "struct" : "enum");
@@ -1214,7 +1214,7 @@ public:
 			if (!op.type_index.is_valid()) {
 				oss << "...";  // catch-all
 			} else {
-				oss << "type_" << op.type_index.value;
+				oss << "type_" << op.type_index.index();
 			}
 			oss << " %" << op.exception_temp.var_number;
 			if (op.is_const) oss << " const";
@@ -1250,7 +1250,7 @@ public:
 				// StringHandle represents a string constant - print as quoted string
 				oss << "\"" << StringTable::getStringView(*string_ptr) << "\"";
 			}
-			oss << " : type_" << op.type_index.value << " (" << op.size_in_bytes << " bytes)";
+			oss << " : type_" << op.type_index.index() << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";
 		}
 		break;

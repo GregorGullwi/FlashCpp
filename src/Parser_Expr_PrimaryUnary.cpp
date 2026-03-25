@@ -616,7 +616,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Phase 2: Ensure the type is instantiated to Layout phase for sizeof
 				// This ensures size/alignment are computed for lazily instantiated classes
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				if (type_spec.type() == Type::Struct && type_spec.type_index().value < getTypeInfoCount()) {
+				if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 					StringHandle type_name = getTypeInfo(type_spec.type_index()).name();
 					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 				}
@@ -686,7 +686,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Phase 2: Ensure the type is instantiated to Layout phase for alignof
 			// This ensures size/alignment are computed for lazily instantiated classes
 			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			if (type_spec.type() == Type::Struct && type_spec.type_index().value < getTypeInfoCount()) {
+			if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 				StringHandle type_name = getTypeInfo(type_spec.type_index()).name();
 				instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 			}

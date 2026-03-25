@@ -1353,7 +1353,7 @@ public:  // Public methods for template instantiation
 
             auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
                 const StructTypeInfo* current_struct_info = local_struct_info;
-                if (!current_struct_info && struct_type_index.is_valid() && struct_type_index.value < getTypeInfoCount()) {
+                if (!current_struct_info && struct_type_index.is_valid() && struct_type_index.index() < getTypeInfoCount()) {
                     current_struct_info = getTypeInfo(struct_type_index).getStructInfo();
                 }
                 if (!current_struct_info) return false;
@@ -1365,7 +1365,7 @@ public:  // Public methods for template instantiation
                 // Only own-declared members are safe to bind eagerly; names inherited from concrete
                 // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
                 bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
-                if (!skip_base_traversal && struct_type_index.is_valid() && struct_type_index.value < getTypeInfoCount()) {
+                if (!skip_base_traversal && struct_type_index.is_valid() && struct_type_index.index() < getTypeInfoCount()) {
                     auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
                     if (!member_result) return false;
                     if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
@@ -1385,7 +1385,7 @@ public:  // Public methods for template instantiation
                 if (!member_function_context_stack_.empty()) {
                     const auto& member_ctx = member_function_context_stack_.back();
                     const StructTypeInfo* struct_info = member_ctx.local_struct_info;
-                    if (!struct_info && member_ctx.struct_type_index.is_valid() && member_ctx.struct_type_index.value < getTypeInfoCount()) {
+                    if (!struct_info && member_ctx.struct_type_index.is_valid() && member_ctx.struct_type_index.index() < getTypeInfoCount()) {
                         struct_info = getTypeInfo(member_ctx.struct_type_index).getStructInfo();
                     }
                     if (bindStaticMemberFromStructInfo(struct_info)) return true;
@@ -1456,7 +1456,7 @@ public:  // Public methods for template instantiation
                 if (decl.type_node().is<TypeSpecifierNode>()) {
                     const auto& ts = decl.type_node().as<TypeSpecifierNode>();
                     if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
-                        size_t enum_idx = ts.type_index().value;
+                        size_t enum_idx = ts.type_index().index();
                         if (enum_idx < getTypeInfoCount()) {
                             const EnumTypeInfo* enum_info = getTypeInfo(TypeIndex{enum_idx}).getEnumInfo();
                             if (enum_info && enum_info->findEnumerator(token.handle())) {

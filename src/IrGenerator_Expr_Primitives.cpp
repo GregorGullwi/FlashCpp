@@ -123,7 +123,7 @@
 		}
 
 		if (is_struct_type(object_type.type())) {
-			size_t struct_type_index = object_type.type_index().value;
+			size_t struct_type_index = object_type.type_index().index();
 			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -289,13 +289,13 @@
 			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
 			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().value < getTypeInfoCount()) {
+			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
 			}
 			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
-			if (type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount()) {
+			if (type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).type_, type_node.type_index());
 			}
 			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
@@ -814,7 +814,7 @@
 
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < getTypeInfoCount()) {
+						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 							const StructTypeInfo* member_si = getTypeInfo(static_member->type_index).getStructInfo();
 							if (member_si) {
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
@@ -847,7 +847,7 @@
 				if (struct_info) {
 					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
-						if (enum_idx.value < getTypeInfoCount()) {
+						if (enum_idx.index() < getTypeInfoCount()) {
 							const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
 								if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(*enum_info, id_handle)) {
@@ -1268,7 +1268,7 @@
 					const auto& decl = local_sym->as<DeclarationNode>();
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().value < getTypeInfoCount())
+						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().index() < getTypeInfoCount())
 							scoped_enum_type_info = &getTypeInfo(ts.type_index());
 					}
 				}
@@ -1365,7 +1365,7 @@
 			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
-				if (!struct_info && struct_type_it->second->type_index_.value < getTypeInfoCount()) {
+				if (!struct_info && struct_type_it->second->type_index_.index() < getTypeInfoCount()) {
 					const TypeInfo* resolved_type = &getTypeInfo(struct_type_it->second->type_index_);
 					if (resolved_type && resolved_type->isStruct()) {
 						struct_info = resolved_type->getStructInfo();
@@ -1402,7 +1402,7 @@
 							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
 							if (accessed_struct) {
 								for (const auto& base : accessed_struct->base_classes) {
-									if (base.type_index.value < getTypeInfoCount()) {
+									if (base.type_index.index() < getTypeInfoCount()) {
 										const TypeInfo& base_type = getTypeInfo(base.type_index);
 										const StructTypeInfo* base_struct = base_type.getStructInfo();
 										if (base_struct && base_struct->getName() == owner_struct->getName()) {
@@ -1434,7 +1434,7 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type &&
-								resolved_type->type_index_.value < getTypeInfoCount() &&
+								resolved_type->type_index_.index() < getTypeInfoCount() &&
 								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
@@ -1488,7 +1488,7 @@
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.value < getTypeInfoCount()) {
+						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 							const StructTypeInfo* qsm_si = getTypeInfo(static_member->type_index).getStructInfo();
 							if (qsm_si) {
 								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
@@ -1534,7 +1534,7 @@
 			if (struct_info_ne) {
 				StringHandle member_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
 				for (TypeIndex enum_idx : struct_info_ne->getNestedEnumIndices()) {
-					if (enum_idx.value < getTypeInfoCount()) {
+					if (enum_idx.index() < getTypeInfoCount()) {
 						const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
 						if (enum_info && !enum_info->is_scoped) {
 							if (std::optional<ExprResult> enumerator_result =

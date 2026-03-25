@@ -16,7 +16,7 @@ namespace {
 			if (b.is_virtual && seen_vb.insert(b.type_index).second) {
 				out.push_back(b.type_index);
 			}
-			if (!b.is_virtual && b.type_index.value < getTypeInfoCount()) {
+			if (!b.is_virtual && b.type_index.index() < getTypeInfoCount()) {
 				const auto* bsi = getTypeInfo(b.type_index).getStructInfo();
 				collectReachableVBases(bsi, out, seen_vb, visited);
 			}
@@ -39,7 +39,7 @@ namespace {
 		// Recurse into all bases (both virtual and non-virtual) to locate deep vbases.
 		// The visited set prevents infinite loops.
 		for (const auto& b : si->base_classes) {
-			if (b.type_index.value < getTypeInfoCount()) {
+			if (b.type_index.index() < getTypeInfoCount()) {
 				const auto* bsi = getTypeInfo(b.type_index).getStructInfo();
 				if (findVBaseOffset(bsi, target_tidx, base_off + b.offset, result, visited))
 					return true;
@@ -323,7 +323,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 
 	// Recursively ensure base class type_infos exist first
 	for (const auto& base : base_classes) {
-		if (base.type_index.value < getTypeInfoCount()) {
+		if (base.type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& base_ti = getTypeInfo(base.type_index);
 			const StructTypeInfo* base_si = base_ti.getStructInfo();
 			if (base_si) {
@@ -397,7 +397,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		// Reloc 3: base type_info
 		const auto& base = base_classes[0];
 		std::string base_zti;
-		if (base.type_index.value < getTypeInfoCount()) {
+		if (base.type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& base_ti = getTypeInfo(base.type_index);
 			const StructTypeInfo* base_si = base_ti.getStructInfo();
 			if (base_si) {
@@ -459,7 +459,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 			std::set<TypeIndex> global_vbases;
 			bool diamond = false;
 			for (const auto& base : base_classes) {
-				if (base.type_index.value >= getTypeInfoCount()) continue;
+				if (base.type_index.index() >= getTypeInfoCount()) continue;
 				const auto* bsi = getTypeInfo(base.type_index).getStructInfo();
 				std::vector<TypeIndex> branch_vbases;
 				std::set<TypeIndex> branch_seen;
@@ -535,7 +535,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		for (uint32_t i = 0; i < n_bases; ++i) {
 			const auto& base = base_classes[i];
 			std::string base_zti;
-			if (base.type_index.value < getTypeInfoCount()) {
+			if (base.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& base_ti = getTypeInfo(base.type_index);
 				const StructTypeInfo* base_si = base_ti.getStructInfo();
 				if (base_si) {

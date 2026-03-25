@@ -146,7 +146,7 @@ ASTNode Parser::substituteTemplateParameters(
 						arg.cv_qualifier = parg.cv_qualifier;
 						
 						// Check if this arg is a template parameter that should be substituted
-						if (parg.type_index.value < getTypeInfoCount()) {
+						if (parg.type_index.index() < getTypeInfoCount()) {
 							std::string_view arg_type_name = StringTable::getStringView(getTypeInfo(parg.type_index).name());
 							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
 								if (!template_params[p].is<TemplateParameterNode>()) continue;
@@ -775,7 +775,7 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((is_struct_type(type_spec.type())) && type_spec.type_index().value < getTypeInfoCount()) {
+					if ((is_struct_type(type_spec.type())) && type_spec.type_index().index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
@@ -898,12 +898,12 @@ ASTNode Parser::substituteTemplateParameters(
 				template_args);
 			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
 				int substituted_size_bits = get_type_size_bits(substituted_type);
-				if (substituted_type_index.is_valid() && substituted_type_index.value < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
+				if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
 				if (substituted_type == Type::Struct || substituted_type == Type::UserDefined) {
-					if (substituted_type_index.is_valid() && substituted_type_index.value < getTypeInfoCount()) {
+					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,
 							StringTable::getStringView(getTypeInfo(substituted_type_index).name()),

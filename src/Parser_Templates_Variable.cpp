@@ -41,7 +41,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			template_param_names.push_back(tparam.nameHandle());
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0);
+				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -158,7 +158,7 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			template_param_names.push_back(tparam.name());
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0);
+				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
 				template_scope.addParameter(&type_info);
 			}
 		}

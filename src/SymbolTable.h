@@ -584,10 +584,10 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (!ti.is_valid() || ti.value >= getTypeInfoCount()) continue;
+			if (!ti.is_valid() || ti.index() >= getTypeInfoCount()) continue;
 			const auto& type_info = getTypeInfo(ti);
 			if (const StructTypeInfo* si = type_info.getStructInfo()) {
-				visited_types.insert(ti.value);
+				visited_types.insert(ti.index());
 				collect_struct_associated_namespaces(si, collect_from_ns, visited_types);
 			} else if (type_info.getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: the associated namespace of an
@@ -630,10 +630,10 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (ti.is_valid() && ti.value < getTypeInfoCount()) {
+			if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
 				const auto& type_info = getTypeInfo(ti);
 				if (const StructTypeInfo* si = type_info.getStructInfo()) {
-					visited_types.insert(ti.value);
+					visited_types.insert(ti.index());
 					collect_struct_associated_namespaces(si, search_ns, visited_types);
 				} else if (type_info.getEnumInfo()) {
 					// C++20 [basic.lookup.argdep]/2: the associated namespace of an
@@ -1118,8 +1118,8 @@ private:
 		if (!si) return;
 		ns_callback(si->namespace_handle);
 		for (const auto& base : si->base_classes) {
-			if (!base.type_index.is_valid() || base.type_index.value >= getTypeInfoCount()) continue;
-			if (!visited_types.insert(base.type_index.value).second) continue;
+			if (!base.type_index.is_valid() || base.type_index.index() >= getTypeInfoCount()) continue;
+			if (!visited_types.insert(base.type_index.index()).second) continue;
 			const StructTypeInfo* bsi = getTypeInfo(base.type_index).getStructInfo();
 			collect_struct_associated_namespaces(bsi, ns_callback, visited_types);
 		}

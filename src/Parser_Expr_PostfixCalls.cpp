@@ -20,7 +20,7 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.type())) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.value >= getTypeInfoCount()) return std::nullopt;
+	if (type_idx.index() >= getTypeInfoCount()) return std::nullopt;
 	auto struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
 	instantiateLazyClassToPhase(getTypeInfo(type_idx).name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
@@ -40,7 +40,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.type())) return nullptr;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.value >= getTypeInfoCount()) return nullptr;
+	if (type_idx.index() >= getTypeInfoCount()) return nullptr;
 
 	StringHandle type_name = getTypeInfo(type_idx).name();
 	instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
@@ -460,7 +460,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
 						const auto& member_ctx = member_function_context_stack_.back();
-						if (member_ctx.struct_type_index.value < getTypeInfoCount()) {
+						if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& struct_type_info = getTypeInfo(member_ctx.struct_type_index);
 							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 							if (struct_info) {
@@ -974,7 +974,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->type_ == Type::Struct && type_info->type_index_.value < getTypeInfoCount()) {
+					if (type_info->type_ == Type::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {
@@ -1284,7 +1284,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
 							if (is_struct_type(type_spec.type())) {
 								TypeIndex type_idx = type_spec.type_index();
-								if (type_idx.value < getTypeInfoCount()) {
+								if (type_idx.index() < getTypeInfoCount()) {
 									object_struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
 									
 									// Phase 2: Ensure the struct is instantiated to Full phase for member access
@@ -1306,7 +1306,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto subst_it = sfinae_type_map_.find(obj_name_handle);
 				if (subst_it != sfinae_type_map_.end()) {
 					TypeIndex concrete_idx = subst_it->second;
-					if (concrete_idx.value < getTypeInfoCount()) {
+					if (concrete_idx.index() < getTypeInfoCount()) {
 						object_struct_name = StringTable::getStringView(getTypeInfo(concrete_idx).name());
 					}
 				}

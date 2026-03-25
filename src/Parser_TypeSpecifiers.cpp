@@ -300,7 +300,7 @@ ParseResult Parser::parse_type_specifier()
 		// For concrete enum types, resolve to the underlying type
 		if (arg_type.type() == Type::Enum) {
 			// Look up the enum type to get its underlying type
-			if (arg_type.type_index().value < getTypeInfoCount()) {
+			if (arg_type.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
 				if (enum_type_info.enum_info_) {
 					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
@@ -314,7 +314,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// If we have a type index, try to look up if it's an enum
-		if (arg_type.type_index().value < getTypeInfoCount()) {
+		if (arg_type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(arg_type.type_index());
 			if (type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
@@ -660,7 +660,7 @@ ParseResult Parser::parse_type_specifier()
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_.value < getTypeInfoCount()) {
+			if (!struct_info && struct_type_info->type_index_.index() < getTypeInfoCount()) {
 				const TypeInfo& actual_struct = getTypeInfo(struct_type_info->type_index_);
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
@@ -1189,7 +1189,7 @@ ParseResult Parser::parse_type_specifier()
 						// The target type will have Type::UserDefined and a type_index pointing to
 						// the TypeInfo we created for the template parameter
 						bool is_template_param = false;
-						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < getTypeInfoCount()) {
+						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
@@ -1213,7 +1213,7 @@ ParseResult Parser::parse_type_specifier()
 							int size_bits = 0;
 							if (is_struct_type(arg.base_type)) {
 								// Look up the struct size from type_index
-								if (arg.type_index.value < getTypeInfoCount()) {
+								if (arg.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& ti = getTypeInfo(arg.type_index);
 									size_bits = static_cast<unsigned char>(ti.type_size_);
 								}
@@ -1256,7 +1256,7 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Get the type name from instantiated_type to look up member
 							std::string_view base_type_name;
-							if (instantiated_type.type_index().value < getTypeInfoCount()) {
+							if (instantiated_type.type_index().index() < getTypeInfoCount()) {
 								base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
 							}
 							
@@ -1600,7 +1600,7 @@ ParseResult Parser::parse_type_specifier()
 							const auto& template_arg_infos = type_info->templateArgs();
 							for (const auto& arg_info : template_arg_infos) {
 								// Check if argument is a UserDefined type (dependent placeholder)
-								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.value < getTypeInfoCount()) {
+								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.index() < getTypeInfoCount()) {
 									has_dependent_args = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;
@@ -1928,7 +1928,7 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
-								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < getTypeInfoCount()) {
+								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().index() < getTypeInfoCount()) {
 									const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;
@@ -1953,7 +1953,7 @@ ParseResult Parser::parse_type_specifier()
 									int size_bits = 0;
 									if (is_struct_type(arg.base_type)) {
 										// Look up the struct size from type_index
-										if (arg.type_index.value < getTypeInfoCount()) {
+										if (arg.type_index.index() < getTypeInfoCount()) {
 											const TypeInfo& ti = getTypeInfo(arg.type_index);
 											size_bits = static_cast<unsigned char>(ti.type_size_);
 										}
@@ -2274,7 +2274,7 @@ ParseResult Parser::parse_type_specifier()
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_.value < getTypeInfoCount()) {
+			if (!struct_info && struct_type_info->type_index_.index() < getTypeInfoCount()) {
 				const TypeInfo& actual_struct = getTypeInfo(struct_type_info->type_index_);
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
@@ -2355,7 +2355,7 @@ ParseResult Parser::parse_type_specifier()
 					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
-			} else if (user_type_index.value < getTypeInfoCount()) {
+			} else if (user_type_index.index() < getTypeInfoCount()) {
 				// Not a typedef - might be a struct type without size set in TypeInfo
 				// Look up actual size from struct info if available
 				const TypeInfo& actual_type_info = getTypeInfo(user_type_index);

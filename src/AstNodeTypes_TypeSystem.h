@@ -582,6 +582,16 @@ constexpr TypeCategory typeToCategory(Type t) noexcept {
 	return static_cast<TypeCategory>(v + 1);
 }
 
+// Convert a TypeCategory back to the legacy Type enum for APIs that still accept Type.
+// Values 0-23 map 1:1.  TypeAlias (24) has no direct Type equivalent — mapped to
+// Type::UserDefined as the closest semantic match.  Values >= 25 are shifted down by 1.
+constexpr Type categoryToType(TypeCategory cat) noexcept {
+	auto v = static_cast<int>(cat);
+	if (v <= 23) return static_cast<Type>(v);
+	if (v == 24) return Type::UserDefined;  // TypeAlias → UserDefined
+	return static_cast<Type>(v - 1);
+}
+
 // --- TypeCategory classification helpers (Milestone 7 Step 2) ---
 // These mirror the Type-based helpers above and allow call sites that have
 // already migrated to TypeIndex to avoid a gTypeInfo lookup for simple queries.
@@ -650,35 +660,38 @@ constexpr bool needs_type_index(TypeCategory cat) {
 // Note: `.value` is retained (not yet renamed to `index_`) to avoid a mechanical
 // rename at ~499 call sites; that rename is deferred to the next Milestone 7 sub-PR.
 struct TypeIndex {
-	uint32_t     value     = 0;
+	uint32_t     index_    = 0;
 	TypeCategory category_ = TypeCategory::Invalid;
 
 	// Non-explicit default ctor: fully-null TypeIndex.
 	constexpr TypeIndex() noexcept = default;
 	// Explicit single-arg ctor (legacy): category stays Invalid.
 	constexpr explicit TypeIndex(size_t v) noexcept
-		: value(static_cast<uint32_t>(v)), category_(TypeCategory::Invalid) {}
+		: index_(static_cast<uint32_t>(v)), category_(TypeCategory::Invalid) {}
 	// Two-arg ctor (preferred going forward): sets both index and category.
 	constexpr TypeIndex(size_t v, TypeCategory cat) noexcept
-		: value(static_cast<uint32_t>(v)), category_(cat) {}
+		: index_(static_cast<uint32_t>(v)), category_(cat) {}
+
+	// Public accessor (read-only raw index).
+	constexpr uint32_t index() const noexcept { return index_; }
 
 	// Increment operators for loop variables (index only).
-	TypeIndex& operator++() noexcept { ++value; return *this; }
-	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++value; return tmp; }
+	TypeIndex& operator++() noexcept { ++index_; return *this; }
+	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++index_; return tmp; }
 
-	// Comparison operators use only `.value` (the category is a cache, not an
+	// Comparison operators use only `.index_` (the category is a cache, not an
 	// identity field) so that legacy TypeIndex{n} still matches stored values.
-	constexpr bool operator==(const TypeIndex& other) const noexcept { return value == other.value; }
-	constexpr bool operator!=(const TypeIndex& other) const noexcept { return value != other.value; }
-	constexpr auto operator<=>(const TypeIndex& other) const noexcept { return value <=> other.value; }
+	constexpr bool operator==(const TypeIndex& other) const noexcept { return index_ == other.index_; }
+	constexpr bool operator!=(const TypeIndex& other) const noexcept { return index_ != other.index_; }
+	constexpr auto operator<=>(const TypeIndex& other) const noexcept { return index_ <=> other.index_; }
 
 	// True when the index is non-zero (i.e., refers to a real type entry).
 	// Semantics unchanged from before Milestone 7.
-	constexpr bool is_valid() const noexcept { return value > 0; }
+	constexpr bool is_valid() const noexcept { return index_ > 0; }
 
 	// True when both index and category are their zero/Invalid defaults.
 	constexpr bool isNull() const noexcept {
-		return value == 0 && category_ == TypeCategory::Invalid;
+		return index_ == 0 && category_ == TypeCategory::Invalid;
 	}
 
 	// --- Category accessors (no gTypeInfo lookup required) ---
@@ -704,19 +717,19 @@ struct TypeIndex {
 namespace std {
 template<>
 struct hash<TypeIndex> {
-	// Hash only `.value` so that hash(a) == hash(b) whenever a == b
-	// (operator== compares only `.value`).
-	size_t operator()(TypeIndex idx) const noexcept { return std::hash<uint32_t>{}(idx.value); }
+	// Hash only `.index_` so that hash(a) == hash(b) whenever a == b
+	// (operator== compares only `.index_`).
+	size_t operator()(TypeIndex idx) const noexcept { return std::hash<uint32_t>{}(idx.index_); }
 };
 template<>
 struct formatter<TypeIndex, char> : formatter<uint32_t, char> {
 	auto format(const TypeIndex& idx, format_context& ctx) const {
-		return formatter<uint32_t, char>::format(idx.value, ctx);
+		return formatter<uint32_t, char>::format(idx.index_, ctx);
 	}
 };
 }  // namespace std
 inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
-	return os << idx.value;
+	return os << idx.index_;
 }
 
 // --- TypeCategory classification helpers continued (Milestone 7 Step 2) ---

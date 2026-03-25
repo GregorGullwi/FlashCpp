@@ -1002,7 +1002,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Register the type alias in getTypesByNameMap()
 					// Create a TypeInfo for the alias that points to the underlying type
-					auto& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
+					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
 					
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();

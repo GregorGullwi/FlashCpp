@@ -769,8 +769,7 @@ struct TypeInfo
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
-		Type base_type = Type::Invalid;  // For primitive types
-		TypeIndex type_index {};        // For user-defined types
+		TypeIndex type_index {};        // Carries both gTypeInfo slot and TypeCategory
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth = 0;        // Pointer indirection level
 		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
@@ -780,6 +779,11 @@ struct TypeInfo
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
 		StringHandle dependent_name;     // Name of the dependent template parameter (for inner deduction)
+
+		// Category accessor (delegates to type_index.category())
+		TypeCategory category() const noexcept { return type_index.category(); }
+		// Legacy Type accessor for code that still needs it
+		Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
@@ -845,6 +849,17 @@ struct TypeInfo
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
+// Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
+// register_type_alias so callers can capture both the TypeInfo reference AND the
+// freshly-minted TypeIndex (with category already embedded) in one call.
+struct TypeCreationResult {
+	TypeInfo& info;
+	TypeIndex index;
+	// Implicit conversion to TypeInfo& for backward-compat with sites that do:
+	//   TypeInfo& x = add_struct_type(...);
+	operator TypeInfo&() const noexcept { return info; }
+};
+
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
@@ -877,7 +892,7 @@ const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap();
 // Type::UserDefined) to their underlying primitive type. This intentionally
 // preserves struct and enum identity.
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (!needs_type_index(type_info.type_)) {
 			return type_info.type_;
@@ -886,13 +901,13 @@ inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	return type;
 }
 
-TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
 void initialize_native_types();
 
@@ -981,6 +996,7 @@ inline int get_wchar_size_bits() {
 }
 
 int get_type_size_bits(Type type);
+int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
 Type promote_integer_type(Type type);
 Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);
@@ -1218,7 +1234,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	Type t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx.is_valid() && idx.value < getTypeInfoCount()) {
+		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(idx);
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
@@ -1244,7 +1260,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 // reference_qualifier, and function_signature from the TypeSpecifierNode, then
 // registers it in gTypesByName.  Returns a reference for callers that need to
 // do additional work (e.g. namespace-qualified registration).
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
 
 class DeclarationNode {
 public:

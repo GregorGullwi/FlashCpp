@@ -302,7 +302,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type, type_index };
 		}
-		if (type == Type::UserDefined && type_index.value < getTypeInfoCount()) {
+		if (type == Type::UserDefined && type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(type_index);
 			std::string_view tn = StringTable::getStringView(ti.name());
 

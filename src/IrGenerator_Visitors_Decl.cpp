@@ -417,7 +417,7 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
@@ -1209,9 +1209,9 @@
 		// local enums in different functions — getTypesByNameMap() uses emplace which
 		// is a no-op on duplicate keys and would return the wrong TypeInfo.
 		const TypeIndex type_idx = node.type_index();
-		if (!type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) {
+		if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) {
 			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
-				node.name(), "' (type_index=", type_idx.value, ") — parser may not have set it");
+				node.name(), "' (type_index=", type_idx.index(), ") — parser may not have set it");
 			return;
 		}
 		TypeInfo& type_info = getTypeInfoMut(type_idx);
@@ -1463,7 +1463,7 @@
 						// For template instantiations, the base initializer stores the un-substituted
 						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
 						// Also match against the base template name.
-						if (base.type_index.value < getTypeInfoCount()) {
+						if (base.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& base_ti = getTypeInfo(base.type_index);
 							if (base_ti.isTemplateInstantiation() && init.getBaseClassName() == base_ti.baseTemplateName()) {
 								base_init = &init;
@@ -1473,7 +1473,7 @@
 					}
 
 					// Get base class type info
-					if (base.type_index.value >= getTypeInfoCount()) {
+					if (base.type_index.index() >= getTypeInfoCount()) {
 						continue;  // Invalid base type index
 					}
 					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
@@ -1580,7 +1580,7 @@
 						// Step 1: Call base class copy/move constructors (in declaration order)
 						for (const auto& base : struct_info->base_classes) {
 							// Get base class type info
-							if (base.type_index.value >= getTypeInfoCount()) {
+							if (base.type_index.index() >= getTypeInfoCount()) {
 								continue;  // Invalid base type index
 							}
 							const TypeInfo& base_type_info = getTypeInfo(base.type_index);
@@ -1623,7 +1623,7 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
@@ -1771,7 +1771,7 @@
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
-									if (member_type_index.value < getTypeInfoCount()) {
+									if (member_type_index.index() < getTypeInfoCount()) {
 										const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 
 										// If this is a struct type, we need to initialize its members
@@ -1811,7 +1811,7 @@
 
 														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
-														if (nested_member_type_index.value < getTypeInfoCount()) {
+														if (nested_member_type_index.index() < getTypeInfoCount()) {
 															const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
 
 															// If this is a struct type, use the recursive helper
@@ -1912,7 +1912,7 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type == Type::Struct && member.type_index.value < getTypeInfoCount()) {
+								if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
@@ -2057,7 +2057,7 @@
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
 										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
 									} else if ((is_struct_type(member.type)) &&
-										member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+										member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 										if (const StructTypeInfo* nested_info = getTypeInfo(member.type_index).getStructInfo()) {
 											const InitializerListNode& agg_init_list = init_expr_node.as<InitializerListNode>();
@@ -2173,7 +2173,7 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type == Type::Struct && member.type_index.value < getTypeInfoCount()) {
+							if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
@@ -2356,7 +2356,7 @@
 					const auto& base = *it;
 
 					// Get base class type info
-					if (base.type_index.value >= getTypeInfoCount()) {
+					if (base.type_index.index() >= getTypeInfoCount()) {
 						continue;  // Invalid base type index
 					}
 					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
@@ -2449,7 +2449,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Step 3: Create the initializer_list struct
 	TypeIndex init_list_type_index = target_type.type_index();
-	if (init_list_type_index.value >= getTypeInfoCount()) {
+	if (init_list_type_index.index() >= getTypeInfoCount()) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
 		return ExprResult{};
 	}
@@ -2577,7 +2577,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.type() == Type::Struct && type_spec.type_index().value < getTypeInfoCount()) {
+	if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 		if (type_info.struct_info_) {
 			actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
@@ -2664,7 +2664,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
 					member.type == Type::Struct &&
-					member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+					member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);

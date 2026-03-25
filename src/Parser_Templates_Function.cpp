@@ -110,7 +110,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
-		if (trailing_ts.type_index().value < getTypeInfoCount()) {
+		if (trailing_ts.type_index().index() < getTypeInfoCount()) {
 			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
 			          StringTable::getStringView(getTypeInfo(trailing_ts.type_index()).name()), 
 			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).type_));
@@ -237,7 +237,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
+				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				getTypesByNameMap().emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
@@ -1065,7 +1065,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
 		
 		// Get TypeInfo and StructTypeInfo for the type
-		const TypeInfo* type_info = (type_idx.value < getTypeInfoCount()) ? &getTypeInfo(type_idx) : nullptr;
+		const TypeInfo* type_info = (type_idx.index() < getTypeInfoCount()) ? &getTypeInfo(type_idx) : nullptr;
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
 		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)

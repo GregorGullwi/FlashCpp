@@ -32,7 +32,7 @@ void registerTypeParamsInScope(
 		if (is_builtin_type(arg.base_type)) {
 			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 		} else {
-			if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+			if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 				type_info.type_size_ = getTypeInfo(arg.type_index).type_size_;
 			} else {
 				type_info.type_size_ = 0;
@@ -93,7 +93,7 @@ void registerOuterBindingInScope(
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
 		Type concrete_type = arg.base_type;
-		uint32_t size = (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount())
+		uint32_t size = (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount())
 			? getTypeInfo(arg.type_index).type_size_
 			: get_type_size_bits(concrete_type);
 		auto& type_info = add_template_param_type(
@@ -374,7 +374,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (i < explicit_types.size()) {
 				const auto& arg = explicit_types[i];
 				// Template arguments are stored as Type::Struct with type_index pointing to the template's TypeInfo
-				if (arg.base_type == Type::Struct && arg.type_index.value < getTypeInfoCount()) {
+				if (arg.base_type == Type::Struct && arg.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(arg.type_index);
 					tpl_name_handle = type_info.name();
 				} else if (arg.is_dependent) {
@@ -431,7 +431,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				TemplateTypeArg arg = explicit_types[constraint_idx];
 				arg.is_template_template_arg = true;
 				// Get the template name from the TypeInfo
-				if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+				if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 					arg.template_name_handle = getTypeInfo(arg.type_index).name();
 				}
 				constraint_eval_args.push_back(arg);
@@ -585,7 +585,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			auto& ts = type_node.as<TypeSpecifierNode>();
 			if (ts.type() != Type::UserDefined) return;
 			TypeIndex idx = ts.type_index();
-			if (idx.value >= getTypeInfoCount()) return;
+			if (idx.index() >= getTypeInfoCount()) return;
 
 			std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());
 			if (const StructTypeInfo* owner_struct = getTypeInfo(idx).getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
@@ -1037,8 +1037,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// to deduce any template parameters that appear as dependent entries.
 			TypeIndex fp_idx = fp_type.type_index();
 			TypeIndex ca_idx = ca_type.type_index();
-			if (fp_idx.is_valid() && fp_idx.value < getTypeInfoCount() &&
-			    ca_idx.is_valid() && ca_idx.value < getTypeInfoCount()) {
+			if (fp_idx.is_valid() && fp_idx.index() < getTypeInfoCount() &&
+			    ca_idx.is_valid() && ca_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& fp_info = getTypeInfo(fp_idx);
 				const TypeInfo& ca_info = getTypeInfo(ca_idx);
 				if (fp_info.isTemplateInstantiation() && ca_info.isTemplateInstantiation() &&
@@ -1142,7 +1142,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (fp_type.pointer_depth() != 0) continue;
 
 				TypeIndex fp_idx = fp_type.type_index();
-				if (!fp_idx.is_valid() || fp_idx.value >= getTypeInfoCount()) continue;
+				if (!fp_idx.is_valid() || fp_idx.index() >= getTypeInfoCount()) continue;
 
 				StringHandle fp_name = getTypeInfo(fp_idx).name();
 				if (!tparam_name_set.count(fp_name)) continue;  // not a template parameter
@@ -1180,7 +1180,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (arg_type.type() == Type::Struct) {
 					// Get the struct name (e.g., "Vector_int")
 					TypeIndex type_index = arg_type.type_index();
-					if (type_index.value < getTypeInfoCount()) {
+					if (type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_index);
 						
 						// Phase 6: Use TypeInfo::isTemplateInstantiation() to check if this is a template instantiation
@@ -1217,7 +1217,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							return std::nullopt;
 						}
 					} else {
-						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index.value));
+						FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Invalid type index ", static_cast<int>(type_index.index()));
 
 						return std::nullopt;
 					}
@@ -1448,7 +1448,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				// UserDefined with type_index=0 is a placeholder (points to void)
 				FLASH_LOG(Templates, Debug, "Return type is UserDefined placeholder (void) - will re-parse");
 				should_reparse = true;
-			} else if (orig_return_type.type_index().value < getTypeInfoCount()) {
+			} else if (orig_return_type.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& orig_type_info = getTypeInfo(orig_return_type.type_index());
 				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
@@ -1560,7 +1560,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (return_type.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
 			
-			if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < getTypeInfoCount()) {
+			if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 				
 				if (type_info.is_incomplete_instantiation_) {
@@ -1597,7 +1597,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		);
 		
 		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
-		if (return_type_index.is_valid() && return_type_index.value < getTypeInfoCount()) {
+		if (return_type_index.is_valid() && return_type_index.index() < getTypeInfoCount()) {
 			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(getTypeInfo(return_type_index).name()), "'");
 		}
 		
@@ -1629,7 +1629,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto& ts = type_node.as<TypeSpecifierNode>();
 		if (ts.type() != Type::UserDefined) return;
 		TypeIndex idx = ts.type_index();
-		if (idx.value >= getTypeInfoCount()) return;
+		if (idx.index() >= getTypeInfoCount()) return;
 		
 		std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());
 			if (const StructTypeInfo* owner_struct = getTypeInfo(idx).getStructInfo(); owner_struct && type_name.find("::") == std::string_view::npos) {
@@ -1941,7 +1941,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// for a single function parameter, breaking the correspondence.
 					if (subst_type == Type::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
-					    subst_type_index.is_valid() && subst_type_index.value < getTypeInfoCount() &&
+					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
 					    i < arg_types.size() &&
 					    arg_types[i].type() == Type::Struct) {

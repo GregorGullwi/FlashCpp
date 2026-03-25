@@ -786,7 +786,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 		return false;  // Type traits need at least one argument
 	}
 	
-	Type arg_type = type_args[0].base_type;
+	Type arg_type = type_args[0].typeEnum();
 	
 	// Handle common type traits
 	if (trait_name == "is_integral_v" || trait_name == "is_integral") {
@@ -876,7 +876,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 				// This is important for placeholder types like "Op<...>::type"
 				std::string_view full_type_name = type_name;
 				TypeIndex type_idx = type_spec.type_index();
-				if (type_idx.is_valid() && type_idx.value < getTypeInfoCount()) {
+				if (type_idx.is_valid() && type_idx.index() < getTypeInfoCount()) {
 					full_type_name = StringTable::getStringView(getTypeInfo(type_idx).name_);
 				}
 				
@@ -886,10 +886,10 @@ inline std::optional<long long> evaluateConstraintExpression(
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
 						const auto& arg = template_args[i];
-						if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+						if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 							return static_cast<long long>((getTypeInfo(arg.type_index).type_size_ + 7) / 8);
 						}
-						long long size = static_cast<long long>(get_type_size_bits(arg.base_type) / 8);
+						long long size = static_cast<long long>(get_type_size_bits(arg.category()) / 8);
 						if (size > 0) {
 							return size;
 						}
@@ -942,20 +942,20 @@ inline std::optional<long long> evaluateConstraintExpression(
 									const auto& pack_arg = template_args[j];
 									if (!pack_arg.is_template_template_arg && !pack_arg.is_value) {
 										// Found a type argument - this is what we instantiate the template with
-										FLASH_LOG(Templates, Debug, "  Pack arg type_index=", pack_arg.type_index, ", base_type=", static_cast<int>(pack_arg.base_type));
+										FLASH_LOG(Templates, Debug, "  Pack arg type_index=", pack_arg.type_index, ", base_type=", static_cast<int>(pack_arg.typeEnum()));
 										
 										// For member "type", we need to look up HasType<T>::type which equals T
 										// For HasType, the using type = T; means ::type is the template argument
 										if (member_part == "type") {
 											// For a simple type alias like HasType<T>::type = T,
 											// return the size of the template argument
-											if (pack_arg.type_index.is_valid() && pack_arg.type_index.value < getTypeInfoCount()) {
+											if (pack_arg.type_index.is_valid() && pack_arg.type_index.index() < getTypeInfoCount()) {
 												long long size = static_cast<long long>((getTypeInfo(pack_arg.type_index).type_size_ + 7) / 8);
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
 												return size;
 											}
 											// For built-in types without type_index
-											long long size = static_cast<long long>(get_type_size_bits(pack_arg.base_type) / 8);
+											long long size = static_cast<long long>(get_type_size_bits(pack_arg.category()) / 8);
 											if (size > 0) {
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size, " (from base_type)");
 												return size;
@@ -975,13 +975,13 @@ inline std::optional<long long> evaluateConstraintExpression(
 					if (template_param_names[i] == type_name) {
 						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
-						if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+						if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 							// type_size_ is in bits, convert to bytes
 							return static_cast<long long>((getTypeInfo(arg.type_index).type_size_ + 7) / 8);
 						}
 						// Fallback for primitive types without type_index (e.g., int, char, etc.)
 						// This handles cases where type_index is 0 but base_type is valid
-						long long size = static_cast<long long>(get_type_size_bits(arg.base_type) / 8);
+						long long size = static_cast<long long>(get_type_size_bits(arg.category()) / 8);
 						if (size > 0) {
 							return size;
 						}
@@ -1035,7 +1035,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		if (i < template_args.size()) {
 			const auto& arg = template_args[i];
 			FLASH_LOG(Templates, Debug, "  param '", template_param_names[i], "' -> is_template_template_arg=", arg.is_template_template_arg, 
-				", base_type=", static_cast<int>(arg.base_type), ", type_index=", arg.type_index);
+				", base_type=", static_cast<int>(arg.typeEnum()), ", type_index=", arg.type_index);
 		}
 	}
 	
@@ -1197,7 +1197,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-								type_arg.base_type = type_it->second->type_;
+								type_arg.setType(type_it->second->type_);
 								type_arg.type_index = type_it->second->type_index_;
 								concept_args.push_back(type_arg);
 							}
@@ -1217,7 +1217,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					TemplateTypeArg type_arg;
-					type_arg.base_type = type_spec.type();
+					type_arg.setType(type_spec.type());
 					type_arg.type_index = type_spec.type_index();
 					type_arg.ref_qualifier = type_spec.reference_qualifier();
 					type_arg.pointer_depth = type_spec.pointer_depth();
@@ -1237,7 +1237,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		FLASH_LOG(Templates, Debug, "FunctionCallNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_param_names.size()=", concept_param_names.size());
 		for (size_t i = 0; i < concept_param_names.size(); ++i) {
 			if (i < concept_args.size()) {
-				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_param_names[i], "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].base_type));
+				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_param_names[i], "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));
 			}
 		}
 		
@@ -1461,7 +1461,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == name) {
 						const auto& arg = template_args[i];
-						return {arg.base_type, arg.type_index, arg.pointer_depth,
+						return {arg.typeEnum(), arg.type_index, arg.pointer_depth,
 						        arg.ref_qualifier, arg.cv_qualifier};
 					}
 				}
@@ -1477,14 +1477,14 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			case TypeTraitKind::IsSame: {
 				if (trait_expr.has_second_type()) {
 					auto second = resolve_type(trait_expr.second_type_node());
-					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type), 
+					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.typeEnum()), 
 						", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
 						", ref_qual=", static_cast<int>(first.ref_qualifier),
-						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type),
+						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.typeEnum()),
 						", idx=", second.type_index, ", ptr=", static_cast<int>(second.pointer_depth),
 						", ref_qual=", static_cast<int>(second.ref_qualifier),
 						", cv=", static_cast<int>(second.cv_qualifier), "}");
-					result = (first.base_type == second.base_type &&
+					result = (first.category() == second.category() &&
 					          first.type_index == second.type_index &&
 					          first.pointer_depth == second.pointer_depth &&
 					          first.ref_qualifier == second.ref_qualifier &&
@@ -1493,15 +1493,15 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				break;
 			}
 			case TypeTraitKind::IsIntegral:
-				result = isIntegralType(first.base_type)
+				result = isIntegralType(first.category())
 				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsFloatingPoint:
-				result = (first.base_type == Type::Float || first.base_type == Type::Double || first.base_type == Type::LongDouble)
+				result = (first.category() == TypeCategory::Float || first.category() == TypeCategory::Double || first.category() == TypeCategory::LongDouble)
 				         && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0;
 				break;
 			case TypeTraitKind::IsVoid:
-				result = (first.base_type == Type::Void && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0);
+				result = (first.category() == TypeCategory::Void && first.ref_qualifier == ReferenceQualifier::None && first.pointer_depth == 0);
 				break;
 			case TypeTraitKind::IsPointer:
 				result = (first.pointer_depth > 0) && first.ref_qualifier == ReferenceQualifier::None;

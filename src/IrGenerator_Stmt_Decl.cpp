@@ -529,7 +529,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
 					if ((is_struct_type(type_node.type())) && !decl.is_array() && !type_node.is_array()
-						&& type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount()) {
+						&& type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 						const StructTypeInfo* struct_info_ptr = getTypeInfo(type_node.type_index()).getStructInfo();
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
@@ -549,7 +549,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
 						if ((is_struct_type(type_node.type())) && type_node.type_index().is_valid() &&
-							type_node.type_index().value < getTypeInfoCount()) {
+							type_node.type_index().index() < getTypeInfoCount()) {
 							const StructTypeInfo* elem_struct = getTypeInfo(type_node.type_index()).getStructInfo();
 							if (elem_struct) {
 								op.init_data.resize(op.element_count * elem_struct->total_size, 0);
@@ -1128,7 +1128,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if this struct has a constructor
 					if (type_node.type() == Type::Struct) {
 						TypeIndex type_index = type_node.type_index();
-						if (type_index.value < getTypeInfoCount()) {
+						if (type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index);
 							if (type_info.struct_info_) {
 								const StructTypeInfo& struct_info = *type_info.struct_info_;
@@ -1366,7 +1366,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
-											if (nested_member_type_index.value < getTypeInfoCount()) {
+											if (nested_member_type_index.index() < getTypeInfoCount()) {
 												const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
 
 												// If this is a struct type, use the recursive helper
@@ -1497,7 +1497,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().value < getTypeInfoCount()) {
+				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
@@ -1546,7 +1546,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
 										TypeIndex source_type_index = sema_->typeContext().get(cast_info.source_type_id).type_index;
-										if (source_type_index.is_valid() && source_type_index.value < getTypeInfoCount()) {
+										if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
 											const TypeInfo& src_info = getTypeInfo(source_type_index);
 											const StructMemberFunction* conv_op = findConversionOperator(
 												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
@@ -1566,7 +1566,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							// Fallback: no sema annotation — search for a conversion operator directly
-							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.value < getTypeInfoCount()) {
+							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& source_type_info = getTypeInfo(init_type_index);
 								const StructMemberFunction* conv_op = findConversionOperator(
 									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
@@ -1597,7 +1597,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Also update init_operands.type so generateTypeConversion sees a
 						// consistent fromType (avoiding Enum vs Int mismatch in the operands).
 						if (init_type == Type::Enum && init_operands.type_index.is_valid()
-							&& init_operands.type_index.value < getTypeInfoCount()) {
+							&& init_operands.type_index.index() < getTypeInfoCount()) {
 							if (const EnumTypeInfo* enum_info = getTypeInfo(init_operands.type_index).getEnumInfo()) {
 								init_type = enum_info->underlying_type;
 								init_operands.type = init_type;
@@ -1660,7 +1660,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 						if (is_rvalue) {
 							const StructTypeInfo* target_struct_info =
-								(type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount())
+								(type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount())
 									? getTypeInfo(type_node.type_index()).getStructInfo()
 									: nullptr;
 							const bool is_same_type_xvalue_init =
@@ -1775,7 +1775,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.type() == Type::Struct && type_node.type_index().value < getTypeInfoCount()) {
+				if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 					struct_info_ptr = getTypeInfo(type_node.type_index()).struct_info_.get();
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
@@ -1819,7 +1819,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
 		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
-			if (type_index.value < getTypeInfoCount()) {
+			if (type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_index);
 
 				// Skip incomplete template instantiations
@@ -2317,7 +2317,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if any base class has constructors that need to be called
 							bool has_base_with_constructors = false;
 							for (const auto& base : type_info.struct_info_->base_classes) {
-								if (base.type_index.value < getTypeInfoCount()) {
+								if (base.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info && base_struct_info->hasAnyConstructor()) {
@@ -2729,8 +2729,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 5: Check for tuple-like decomposition (C++17 protocol)
 		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
 		// Otherwise, fall back to aggregate (struct) decomposition
-		if (init_type_index.value >= getTypeInfoCount()) {
-			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.value);
+		if (init_type_index.index() >= getTypeInfoCount()) {
+			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.index());
 			return;
 		}
 
@@ -2855,7 +2855,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Now look for the get<N>() function
 					// First, try template registry with exact index
 					TemplateTypeArg index_arg;
-					index_arg.base_type = Type::UnsignedLong;
+					index_arg.setType(Type::UnsignedLong);
 					index_arg.is_value = true;
 					index_arg.value = static_cast<int64_t>(i);
 					std::vector<TemplateTypeArg> get_template_args = { index_arg };

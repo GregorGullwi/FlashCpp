@@ -268,7 +268,7 @@
 							annotated_source_type == Type::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
 								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
@@ -307,7 +307,7 @@
 					if (expr_type == Type::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
-						if (expr_type_index.is_valid() && expr_type_index.value < getTypeInfoCount()) {
+						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
 							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};

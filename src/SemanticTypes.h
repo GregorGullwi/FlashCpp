@@ -129,7 +129,7 @@ struct hash<CanonicalTypeDesc> {
 		};
 		size_t h = 0;
 		h = combine(h, static_cast<size_t>(d.base_type));
-		h = combine(h, d.type_index.value);
+		h = combine(h, d.type_index.index());
 		h = combine(h, static_cast<size_t>(d.base_cv));
 		h = combine(h, static_cast<size_t>(d.ref_qualifier));
 		h = combine(h, d.pointer_levels.size());

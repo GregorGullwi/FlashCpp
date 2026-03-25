@@ -753,7 +753,7 @@ ParseResult Parser::parse_template_declaration() {
 		std::vector<ASTNode> target_template_arg_nodes;
 
 		if ((is_struct_type(type_spec.type())) &&
-		    type_spec.type_index().value < getTypeInfoCount()) {
+		    type_spec.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(type_spec.type_index());
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
@@ -847,7 +847,7 @@ ParseResult Parser::parse_template_declaration() {
 							const ASTNode& node = target_template_arg_nodes[i];
 							if (node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
-								if (ts.type_index().value < getTypeInfoCount()) {
+								if (ts.type_index().index() < getTypeInfoCount()) {
 									std::string_view node_type_name = StringTable::getStringView(getTypeInfo(ts.type_index()).name());
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()), 
 									          ", type_name='", node_type_name, "'");
@@ -967,7 +967,7 @@ ParseResult Parser::parse_template_declaration() {
 					TemplateTypeArg arg;
 					arg.is_value = true;
 					arg.value = std::stoll(std::string(value_token.value()));
-					arg.base_type = Type::Int;
+					arg.setType(Type::Int);
 					specialization_pattern.push_back(arg);
 				} else {
 					// Parse the pattern type
@@ -1010,7 +1010,7 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Create template type argument
 					TemplateTypeArg arg;
-					arg.base_type = type_spec.type();
+					arg.setType(type_spec.type());
 					arg.type_index = type_spec.type_index();
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
@@ -4607,7 +4607,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
+				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);
 			}
 		}

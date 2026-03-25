@@ -155,8 +155,7 @@ struct TemplateArgumentValue {
 // Captures base type, references, pointers, cv-qualifiers, etc.
 // Can also represent non-type template parameters (values)
 struct TemplateTypeArg {
-	Type base_type;
-	TypeIndex type_index;  // For user-defined types
+	TypeIndex type_index;  // Carries both the gTypeInfo slot and the TypeCategory
 	ReferenceQualifier ref_qualifier;
 	uint8_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
 	InlineVector<CVQualifier, 4> pointer_cv_qualifiers;  // CV for each pointer level
@@ -179,15 +178,29 @@ struct TemplateTypeArg {
 	// For template template parameters (e.g., template<typename...> class Op)
 	bool is_template_template_arg;  // true if this is a template template argument
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
+
+	// --- Accessors ---
+	// Returns the TypeCategory embedded in type_index.
+	TypeCategory category() const noexcept { return type_index.category(); }
+	// Returns the legacy Type enum value for APIs that still require it.
+	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
+	// Set the type (updates type_index.category_ without changing the index slot).
+	void setType(Type t) noexcept { type_index.category_ = typeToCategory(t); }
+	void setCategory(TypeCategory cat) noexcept { type_index.category_ = cat; }
 	
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
+	// Helper: build a TypeIndex with the correct category for a given Type+index pair.
+	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
+		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : typeToCategory(t);
+		return TypeIndex{idx.index(), cat};
+	}
+
 	TemplateTypeArg()
-		: base_type(Type::Invalid)
-		, type_index(0)
+		: type_index(TypeIndex{0, TypeCategory::Invalid})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -204,8 +217,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: base_type(type_spec.type())
-		, type_index(type_spec.type_index())
+		: type_index(makeTypeIndex(type_spec.type(), type_spec.type_index()))
 		, ref_qualifier(type_spec.reference_qualifier())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
@@ -224,10 +236,9 @@ struct TemplateTypeArg {
 		}
 	}
 
-	// Constructor for non-type template parameters
+	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: base_type(Type::Int)  // Default to int for values
-		, type_index(0)
+		: type_index(TypeIndex{0, TypeCategory::Int})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -244,8 +255,7 @@ struct TemplateTypeArg {
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
-		: base_type(type)
-		, type_index(0)
+		: type_index(TypeIndex{0, typeToCategory(type)})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -260,11 +270,10 @@ struct TemplateTypeArg {
 		, is_template_template_arg(false)
 		, template_name_handle() {}
 	
-	// Factory methods (match the former TemplateTypeArg API)
+	// Factory methods
 	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
 		TemplateTypeArg arg;
-		arg.base_type = t;
-		arg.type_index = idx;
+		arg.type_index = makeTypeIndex(t, idx);
 		return arg;
 	}
 	
@@ -287,11 +296,11 @@ struct TemplateTypeArg {
 	size_t hash() const {
 		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
 		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
-		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
-		    ? Type::Int : base_type;
-		size_t h = std::hash<int>{}(static_cast<int>(effective_type));
-		if (needs_type_index(base_type)) {
-			h ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
+		    ? TypeCategory::Int : category();
+		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
+		if (type_index.needsTypeIndex()) {
+			h ^= std::hash<size_t>{}(type_index.index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -316,7 +325,7 @@ struct TemplateTypeArg {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
 		// For primitive types like int, float, etc., the type_index should be ignored
 		bool type_index_match = true;
-		if (needs_type_index(base_type)) {
+		if (type_index.needsTypeIndex()) {
 			type_index_match = (type_index == other.type_index);
 		}
 		
@@ -328,16 +337,16 @@ struct TemplateTypeArg {
 		// has is_pack=true but should still match the specialization which has is_pack=false.
 		
 		// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
-		bool base_type_match = (base_type == other.base_type);
-		if (!base_type_match && is_value && other.is_value) {
-			bool this_is_bool_or_int = (base_type == Type::Bool || base_type == Type::Int);
-			bool other_is_bool_or_int = (other.base_type == Type::Bool || other.base_type == Type::Int);
+		bool category_match = (category() == other.category());
+		if (!category_match && is_value && other.is_value) {
+			bool this_is_bool_or_int = (category() == TypeCategory::Bool || category() == TypeCategory::Int);
+			bool other_is_bool_or_int = (other.category() == TypeCategory::Bool || other.category() == TypeCategory::Int);
 			if (this_is_bool_or_int && other_is_bool_or_int) {
-				base_type_match = true;
+				category_match = true;
 			}
 		}
 		
-		return base_type_match &&
+		return category_match &&
 		       type_index_match &&
 		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth &&
@@ -367,7 +376,7 @@ struct TemplateTypeArg {
 		if (is_value) {
 			// For boolean values, use "true" or "false" instead of "1" or "0"
 			// This is important for template specialization matching
-			if (base_type == Type::Bool) {
+			if (category() == TypeCategory::Bool) {
 				return value != 0 ? "true" : "false";
 			}
 			// For non-boolean values, return the numeric value as string
@@ -388,26 +397,27 @@ struct TemplateTypeArg {
 		if (is_dependent && dependent_name.isValid()) {
 			result += StringTable::getStringView(dependent_name);
 		} else {
-			switch (base_type) {
-				case Type::Void: result += "void"; break;
-				case Type::Int: result += "int"; break;
-				case Type::Float: result += "float"; break;
-				case Type::Double: result += "double"; break;
-				case Type::Bool: result += "bool"; break;
-				case Type::Char: result += "char"; break;
-				case Type::Long: result += "long"; break;
-				case Type::LongLong: result += "longlong"; break;
-				case Type::Short: result += "short"; break;
-				case Type::UnsignedInt: result += "uint"; break;
-				case Type::UnsignedLong: result += "ulong"; break;
-				case Type::UnsignedLongLong: result += "ulonglong"; break;
-				case Type::UnsignedShort: result += "ushort"; break;
-				case Type::UnsignedChar: result += "uchar"; break;
-				case Type::UserDefined:
-				case Type::Struct:
-				case Type::Enum:
+			switch (category()) {
+				case TypeCategory::Void: result += "void"; break;
+				case TypeCategory::Int: result += "int"; break;
+				case TypeCategory::Float: result += "float"; break;
+				case TypeCategory::Double: result += "double"; break;
+				case TypeCategory::Bool: result += "bool"; break;
+				case TypeCategory::Char: result += "char"; break;
+				case TypeCategory::Long: result += "long"; break;
+				case TypeCategory::LongLong: result += "longlong"; break;
+				case TypeCategory::Short: result += "short"; break;
+				case TypeCategory::UnsignedInt: result += "uint"; break;
+				case TypeCategory::UnsignedLong: result += "ulong"; break;
+				case TypeCategory::UnsignedLongLong: result += "ulonglong"; break;
+				case TypeCategory::UnsignedShort: result += "ushort"; break;
+				case TypeCategory::UnsignedChar: result += "uchar"; break;
+				case TypeCategory::UserDefined:
+				case TypeCategory::TypeAlias:
+				case TypeCategory::Struct:
+				case TypeCategory::Enum:
 					// For user-defined types, look up the name from gTypeInfo
-					if (type_index.value < getTypeInfoCount()) {
+					if (type_index.index() < getTypeInfoCount()) {
 						result += StringTable::getStringView(getTypeInfo(type_index).name());
 					} else {
 						result += "?";
@@ -452,11 +462,11 @@ struct TemplateTypeArg {
 	std::string toHashString() const {
 		// Compute hash using the same algorithm as TemplateTypeArgHash
 		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
-		Type effective_type = (is_value && (base_type == Type::Bool || base_type == Type::Int))
-		    ? Type::Int : base_type;
-		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
-		if (needs_type_index(base_type)) {
-			hash ^= std::hash<size_t>{}(type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
+		    ? TypeCategory::Int : category();
+		size_t hash = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
+		if (type_index.needsTypeIndex()) {
+			hash ^= std::hash<size_t>{}(type_index.index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -486,12 +496,12 @@ struct TemplateTypeArg {
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
 		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
-		Type effective_type = (arg.is_value && (arg.base_type == Type::Bool || arg.base_type == Type::Int))
-		    ? Type::Int : arg.base_type;
-		size_t hash = std::hash<int>{}(static_cast<int>(effective_type));
+		TypeCategory effective_cat = (arg.is_value && (arg.category() == TypeCategory::Bool || arg.category() == TypeCategory::Int))
+		    ? TypeCategory::Int : arg.category();
+		size_t hash = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
 		// Only include type_index in hash for user-defined types (to match operator==)
-		if (needs_type_index(arg.base_type)) {
-			hash ^= std::hash<size_t>{}(arg.type_index.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (arg.type_index.needsTypeIndex()) {
+			hash ^= std::hash<size_t>{}(arg.type_index.index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.ref_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -566,7 +576,7 @@ namespace FlashCpp {
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
 	result.type_index = arg.type_index;
-	result.base_type = arg.base_type;  // Include base_type for primitive types
+	result.base_type = arg.typeEnum();  // TypeIndexArg still uses legacy Type
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));

@@ -335,7 +335,7 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
 		// Check if this template type has template arguments
 		// (indicating it's something like Container<T> rather than just T)
 		TypeIndex idx = type_spec.type_index();
-		if (idx.value < getTypeInfoCount()) {
+		if (idx.index() < getTypeInfoCount()) {
 			const TypeInfo& info = getTypeInfo(idx);
 			// Template template parameters typically have nested template args
 			// indicated by the type name containing '<'
