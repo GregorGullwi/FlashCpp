@@ -87,30 +87,29 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		for (const auto& init : ctor_decl.member_initializers()) {
 			new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
 		}
+		// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
+		// into multiple arguments when present.  Mirrors the eager path's substituteInitArg.
+		auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+				if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+					ChunkedVector<ASTNode> expanded;
+					if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
+						for (size_t ei = 0; ei < expanded.size(); ++ei) {
+							out.push_back(expanded[ei]);
+						}
+						return;
+					}
+				}
+			}
+			out.push_back(substituteInitExpr(arg));
+		};
+
 		for (const auto& init : ctor_decl.base_initializers()) {
 			std::vector<ASTNode> substituted_args;
 			substituted_args.reserve(init.arguments.size());
 			for (const auto& arg : init.arguments) {
-				// Check if this is a pack expansion — expand it properly.
-				// expandPackExpansionArgs handles empty packs (0 args) correctly,
-				// preventing a PackExpansionExprNode from leaking into codegen.
-				// This mirrors the eager path's substituteAndCopyInitializers.
-				bool handled = false;
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						ChunkedVector<ASTNode> expanded;
-						if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
-							for (size_t ei = 0; ei < expanded.size(); ++ei) {
-								substituted_args.push_back(expanded[ei]);
-							}
-							handled = true;
-						}
-					}
-				}
-				if (!handled) {
-					substituted_args.push_back(substituteInitExpr(arg));
-				}
+				substituteInitArg(arg, substituted_args);
 			}
 			new_ctor_ref.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
 		}
@@ -118,7 +117,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			std::vector<ASTNode> substituted_del_args;
 			substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
 			for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
-				substituted_del_args.push_back(substituteInitExpr(arg));
+				substituteInitArg(arg, substituted_del_args);
 			}
 			new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 		}

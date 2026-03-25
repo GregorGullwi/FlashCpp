@@ -482,6 +482,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	};
 	
+	// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
+	// into multiple arguments when present.  Appends result(s) to `out`.
+	auto substituteInitArg = [&](
+		const ASTNode& arg,
+		std::vector<ASTNode>& out,
+		const auto& tmpl_params,
+		const auto& tmpl_args) {
+		if (arg.is<ExpressionNode>()) {
+			const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+			if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+				ChunkedVector<ASTNode> expanded;
+				if (expandPackExpansionArgs(*pack_exp, tmpl_params, tmpl_args, expanded)) {
+					for (size_t ei = 0; ei < expanded.size(); ++ei) {
+						out.push_back(expanded[ei]);
+					}
+					return;
+				}
+			}
+		}
+		out.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+	};
+
 	// Helper: substitute and copy all constructor initializers (member, base, delegating)
 	// from an original ConstructorDeclarationNode to a new one.
 	auto substituteAndCopyInitializers = [&](
@@ -496,25 +518,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<ASTNode> substituted_args;
 			substituted_args.reserve(init.arguments.size());
 			for (const auto& arg : init.arguments) {
-				// Check if this is a pack expansion — expand it properly.
-				// expandPackExpansionArgs handles empty packs (0 args) correctly,
-				// preventing a PackExpansionExprNode from leaking into codegen.
-				bool handled = false;
-				if (arg.is<ExpressionNode>()) {
-					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-					if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-						ChunkedVector<ASTNode> expanded;
-						if (expandPackExpansionArgs(*pack_exp, tmpl_params, tmpl_args, expanded)) {
-							for (size_t ei = 0; ei < expanded.size(); ++ei) {
-								substituted_args.push_back(expanded[ei]);
-							}
-							handled = true;
-						}
-					}
-				}
-				if (!handled) {
-					substituted_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
-				}
+				substituteInitArg(arg, substituted_args, tmpl_params, tmpl_args);
 			}
 			new_ctor.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
 		}
@@ -523,7 +527,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<ASTNode> substituted_del_args;
 			substituted_del_args.reserve(del_init.arguments.size());
 			for (const auto& arg : del_init.arguments) {
-				substituted_del_args.push_back(substituteTemplateParameters(arg, tmpl_params, tmpl_args));
+				substituteInitArg(arg, substituted_del_args, tmpl_params, tmpl_args);
 			}
 			new_ctor.set_delegating_initializer(std::move(substituted_del_args));
 		}
