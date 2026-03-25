@@ -2117,16 +2117,11 @@
 	}
 
 	bool AstToIr::isArithmeticType(Type type) const {
-		// Branchless: arithmetic types are Bool(1) through LongDouble(14)
-		// Using range check instead of multiple comparisons
-		return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
-		(static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
+		return ::isArithmeticType(type);
 	}
 
 	bool AstToIr::isFundamentalType(Type type) const {
-		// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types Bool(1) through LongDouble(14)
-		// Using bitwise OR of conditions for branchless evaluation
-		return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
+		return ::isFundamentalType(type);
 	}
 
 	ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {

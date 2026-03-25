@@ -185,12 +185,12 @@ struct TemplatePattern {
 			return false;
 		}
 		// Check if p is a UserDefined type — could be a param name or a nested template instantiation
-		if (!p.is_value && (p.base_type == Type::UserDefined || p.base_type == Type::Struct)) {
+		if (!p.is_value && (is_struct_type(p.base_type))) {
 			if (p.type_index.is_valid() && p.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& p_ti = gTypeInfo[p.type_index.value];
 				if (p_ti.isTemplateInstantiation()) {
 					// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
-					if (c.base_type != Type::UserDefined && c.base_type != Type::Struct) {
+					if (!is_struct_type(c.base_type)) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested pattern is template instantiation but concrete is not UserDefined/Struct");
 						return false;
 					}
@@ -244,8 +244,7 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type mismatch");
 			return false;
 		}
-		if ((p.base_type == Type::UserDefined || p.base_type == Type::Struct ||
-		     p.base_type == Type::Enum) && p.type_index != c.type_index) {
+		if (needs_type_index(p.base_type) && p.type_index != c.type_index) {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type_index mismatch");
 			return false;
 		}
@@ -443,7 +442,7 @@ struct TemplatePattern {
 				if (pattern_type_info.isTemplateInstantiation()) {
 					// Pattern is a template instantiation — concrete must match base template
 					StringHandle pattern_base = pattern_type_info.baseTemplateName();
-					if (concrete_arg.base_type != Type::UserDefined && concrete_arg.base_type != Type::Struct) {
+					if (!is_struct_type(concrete_arg.base_type)) {
 						FLASH_LOG(Templates, Trace, "  FAILED: pattern is template instantiation '",
 						          StringTable::getStringView(pattern_base), 
 						          "' but concrete is fundamental type");
@@ -609,7 +608,7 @@ struct TemplatePattern {
 				return 0;  // Depth limit reached; stop adding specificity
 			}
 			if (!inner_arg.is_value &&
-			    (inner_arg.base_type == Type::UserDefined || inner_arg.base_type == Type::Struct)) {
+			    (is_struct_type(inner_arg.base_type))) {
 				if (inner_arg.type_index.is_valid() && inner_arg.type_index.value < gTypeInfo.size()) {
 					const TypeInfo& inner_ti = gTypeInfo[inner_arg.type_index.value];
 					if (inner_ti.isTemplateInstantiation()) {
@@ -647,7 +646,7 @@ struct TemplatePattern {
 			// Base score: any pattern parameter = 0
 		
 			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
-			if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) &&
+			if ((is_struct_type(arg.base_type)) &&
 			    arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& ti = gTypeInfo[arg.type_index.value];
 				if (ti.isTemplateInstantiation()) {

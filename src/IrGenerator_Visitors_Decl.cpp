@@ -2056,7 +2056,7 @@
 									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
 										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
-									} else if ((member.type == Type::Struct || member.type == Type::UserDefined) &&
+									} else if ((is_struct_type(member.type)) &&
 										member.type_index.is_valid() && member.type_index.value < gTypeInfo.size()) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 										if (const StructTypeInfo* nested_info = gTypeInfo[member.type_index.value].getStructInfo()) {

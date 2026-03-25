@@ -60,9 +60,8 @@ MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& 
 
 // Helper function to safely get type size from TemplateTypeArg
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
-	// Check if this is a basic type that get_type_size_bits can handle
-	// Basic types range from Void to MemberObjectPointer in the Type enum
-	if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
+	// Check if this is a builtin type that get_type_size_bits can handle
+	if (is_builtin_type(arg.base_type)) {
 		return static_cast<size_t>(get_type_size_bits(arg.base_type));
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup

@@ -533,7 +533,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Also check if the type name contains any template parameter names
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
-				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+				if (is_struct_type(arg.base_type)) {
 					if (arg.type_index.value < gTypeInfo.size()) {
 						StringHandle type_name_handle = gTypeInfo[arg.type_index.value].name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 

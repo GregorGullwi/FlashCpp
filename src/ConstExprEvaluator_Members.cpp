@@ -2069,8 +2069,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
 		// Guard with a type-match check so that cross-struct casts fall through to
 		// the scalar conversion switch (which correctly errors for struct types).
-		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined ||
-			type_spec.type() == Type::Enum) {
+		if (needs_type_index(type_spec.type())) {
 			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
 			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 				inner_result.set_exact_type(type_spec);
@@ -2120,7 +2119,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		const ASTNode& type_node = ctor_call->type_node();
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
+			if ((is_struct_type(type_spec.type())) &&
 				type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
 				return materialize_constructor_object_value(*ctor_call, context, &bindings);
 			}
@@ -3385,7 +3384,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+	if (!is_struct_type(type_spec.type())) {
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct type");
 	}
 
@@ -3462,7 +3461,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 // Helper to get StructTypeInfo from a TypeSpecifierNode
 const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNode& type_spec) {
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+	if (!is_struct_type(type_spec.type())) {
 		return nullptr;
 	}
 	
@@ -3587,8 +3586,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			const bool needs_intermediate_materialization =
 				!intermediate_result.object_type_index.is_valid() &&
 				intermediate_result.object_member_bindings.empty() &&
-				(intermediate_member_info->type == Type::Struct ||
-				 intermediate_member_info->type == Type::UserDefined) &&
+				(is_struct_type(intermediate_member_info->type)) &&
 				intermediate_member_info->type_index.is_valid() &&
 				intermediate_member_info->type_index.value < gTypeInfo.size();
 			if (needs_intermediate_materialization) {
@@ -3684,7 +3682,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 
 	const StructMember* intermediate_member_info = intermediate_member_source.member_info;
-	if (intermediate_member_info->type != Type::Struct && intermediate_member_info->type != Type::UserDefined) {
+	if (!is_struct_type(intermediate_member_info->type)) {
 		return EvalResult::error("Intermediate member is not a struct type");
 	}
 
@@ -4104,7 +4102,7 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
 	
 	// Get the type name - this should be a struct/class type
-	if (return_type.type() != Type::UserDefined && return_type.type() != Type::Struct) {
+	if (!is_struct_type(return_type.type())) {
 		return EvalResult::error("Function return type is not a struct - cannot access member");
 	}
 	
@@ -4263,7 +4261,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			return EvalResult::error("Constructor call without valid type specifier");
 		}
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+		if (!is_struct_type(type_spec.type())) {
 			return EvalResult::error("Member function call requires a struct type");
 		}
 		type_index = type_spec.type_index();
@@ -4422,7 +4420,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+	if (!is_struct_type(type_spec.type())) {
 		return EvalResult::error("Constructor call is not a struct/class type");
 	}
 
@@ -4477,7 +4475,7 @@ EvalResult Evaluator::materialize_array_value(
 	for (const auto& element : init_list.initializers()) {
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
-			(element_type == Type::Struct || element_type == Type::UserDefined) &&
+			(is_struct_type(element_type)) &&
 			element_type_index.is_valid() && element_type_index.value < gTypeInfo.size()) {
 			if (const StructTypeInfo* element_struct_info = gTypeInfo[element_type_index.value].getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
@@ -4701,7 +4699,7 @@ EvalResult materialize_member_initializer_value(
 			return Evaluator::materialize_array_value(member_info.type, member_info.type_index, init_list, context);
 		}
 
-		if ((member_info.type == Type::Struct || member_info.type == Type::UserDefined) &&
+		if ((is_struct_type(member_info.type)) &&
 			member_info.type_index.is_valid() && member_info.type_index.value < gTypeInfo.size()) {
 			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info.type_index.value].getStructInfo()) {
 				return Evaluator::materialize_aggregate_object_value(
@@ -4743,7 +4741,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			const bool is_struct_brace_init =
 				!member_info->is_array &&
 				initializer.is<InitializerListNode>() &&
-				(member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+				(is_struct_type(member_info->type)) &&
 				member_info->type_index.is_valid() &&
 				member_info->type_index.value < gTypeInfo.size();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
@@ -4849,7 +4847,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 						}
 					}
 				}
-			} else if ((member_info->type == Type::Struct || member_info->type == Type::UserDefined) &&
+			} else if ((is_struct_type(member_info->type)) &&
 				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
 				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
@@ -5111,7 +5109,7 @@ EvalResult Evaluator::extract_object_members(
 	
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	
-	if (type_spec.type() != Type::Struct && type_spec.type() != Type::UserDefined) {
+	if (!is_struct_type(type_spec.type())) {
 		return EvalResult::error("Member function call requires a struct type");
 	}
 	
@@ -5419,16 +5417,13 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	return EvalResult::error("Array variable is not initialized with an array initializer");
 }
 
-// Helper functions for branchless type checking
+// Helper functions for type checking
 bool Evaluator::isArithmeticType(Type type) {
-	// Branchless: arithmetic types are Bool(1) through LongDouble(14)
-	return (static_cast<int_fast16_t>(type) >= static_cast<int_fast16_t>(Type::Bool)) &
-	       (static_cast<int_fast16_t>(type) <= static_cast<int_fast16_t>(Type::LongDouble));
+	return ::isArithmeticType(type);
 }
 
 bool Evaluator::isFundamentalType(Type type) {
-	// Branchless: fundamental types are Void(0), Nullptr(28), or arithmetic types
-	return (type == Type::Void) | (type == Type::Nullptr) | isArithmeticType(type);
+	return ::isFundamentalType(type);
 }
 
 // Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
@@ -5574,7 +5569,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			
 			// Check for incomplete class/struct types
 			// A type is incomplete if it's a struct/class with no StructTypeInfo
-			if ((type == Type::Struct || type == Type::UserDefined) && 
+			if (is_struct_type(type) &&
 			    pointer_depth == 0 && !is_reference) {
 				TypeIndex type_idx = type_spec.type_index();
 				if (type_idx.is_valid()) {

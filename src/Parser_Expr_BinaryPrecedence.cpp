@@ -339,7 +339,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!decl) return TypeIndex{};
 						if (!decl->type_node().is<TypeSpecifierNode>()) return TypeIndex{};
 						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						if (type_spec.type() != Type::UserDefined && type_spec.type() != Type::Struct) return TypeIndex{};
+						if (!is_struct_type(type_spec.type())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
 						if (type_idx.value < gTypeInfo.size()) {
@@ -1685,7 +1685,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				size_t type_size_bytes = type_size_bits / 8;
 				
 				// For struct types, look up alignment from struct info
-				if (parsed_type == Type::Struct || parsed_type == Type::UserDefined) {
+				if (is_struct_type(parsed_type)) {
 					TypeIndex type_index = type_spec.type_index();
 					if (type_index.value < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index.value];

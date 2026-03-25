@@ -83,7 +83,7 @@ inline bool isIrPointerLikeType(IrType t) { return t == IrType::FunctionPointer 
 /// Enum, and UserDefined.  Use this when deciding whether to propagate
 /// type_index through ExprResult / TypedValue rather than hard-coding the
 /// three-way disjunction at each call site.
-inline bool carriesSemanticTypeIndex(Type t) { return t == Type::Struct || t == Type::Enum || t == Type::UserDefined; }
+inline bool carriesSemanticTypeIndex(Type t) { return needs_type_index(t); }
 
 // ============================================================================
 // Formatting support for IrType (for FLASH_LOG_FORMAT and std::format)

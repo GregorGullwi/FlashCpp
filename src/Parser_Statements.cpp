@@ -1707,7 +1707,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						if (!compatible) {
 							types_match = false;
 						}
-					} else if (param_type->type() == Type::UserDefined || param_type->type() == Type::Struct) {
+					} else if (is_struct_type(param_type->type())) {
 						// For user-defined/struct types, check type_index
 						if (param_type->type_index() != arg_type.type_index()) {
 							types_match = false;
@@ -1750,7 +1750,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			if (target_member.type_index.is_valid() && target_member.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& member_type_info = gTypeInfo[target_member.type_index.value];
-				if (target_member.type == Type::Struct || target_member.type == Type::UserDefined) {
+				if (is_struct_type(target_member.type)) {
 					member_type_spec = TypeSpecifierNode(
 						member_type_info.type_,
 						target_member.type_index,
@@ -1984,7 +1984,7 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 	// CTAD only applies to unresolved template class names, not already-instantiated structs.
 	// When explicit template args are provided (e.g., Processor<char>), the type has a valid
 	// type_index_ from template instantiation, so CTAD should not override it.
-	if (type_specifier.type() != Type::UserDefined && type_specifier.type() != Type::Struct) {
+	if (!is_struct_type(type_specifier.type())) {
 		return false;
 	}
 

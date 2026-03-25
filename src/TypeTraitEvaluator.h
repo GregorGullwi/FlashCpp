@@ -19,11 +19,11 @@ struct TypeTraitResult {
 };
 
 // Shared helper functions for type checking in an isolated namespace
-// to avoid conflicts with similar functions in other headers
 namespace TypeTraitEval {
 
-bool isArithmeticType(Type type);
-bool isFundamentalType(Type type);
+// isArithmeticType and isFundamentalType are available as global constexpr
+// helpers in AstNodeTypes_TypeSystem.h; the namespace declarations were removed
+// to avoid ambiguity now that both are in scope.
 bool isScalarType(Type type, bool is_reference, size_t pointer_depth);
 bool isIntegral(Type type);
 bool isFloatingPoint(Type type);

@@ -737,7 +737,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			FLASH_LOG(Templates, Debug, "  Namespace '", ns_name, "' is a template parameter, substituting with concrete type");
 			
 			// The concrete type should be a struct type - get its instantiated name
-			if ((concrete_type.base_type == Type::UserDefined || concrete_type.base_type == Type::Struct) &&
+			if ((is_struct_type(concrete_type.base_type)) &&
 			    concrete_type.type_index.is_valid() && concrete_type.type_index.value < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[concrete_type.type_index.value];
 				StringHandle type_name_handle = type_info.name();
@@ -817,7 +817,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			
 			// Check if this arg is a dependent template parameter that needs substitution
 			// (handles cases where dependent_name isn't set but the type itself is a template param)
-			if (!arg.is_value && (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) 
+			if (!arg.is_value && is_struct_type(arg.base_type)
 			    && arg.type_index.value < gTypeInfo.size()) {
 				std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[arg.type_index.value].name());
 				auto subst_it = param_map_.find(arg_type_name);

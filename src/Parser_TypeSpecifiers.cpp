@@ -1211,7 +1211,7 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Get the size in bits for the argument type
 							int size_bits = 0;
-							if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+							if (is_struct_type(arg.base_type)) {
 								// Look up the struct size from type_index
 								if (arg.type_index.value < gTypeInfo.size()) {
 									const TypeInfo& ti = gTypeInfo[arg.type_index.value];
@@ -1951,7 +1951,7 @@ ParseResult Parser::parse_type_specifier()
 									
 									// Get the size in bits for the argument type
 									int size_bits = 0;
-									if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+									if (is_struct_type(arg.base_type)) {
 										// Look up the struct size from type_index
 										if (arg.type_index.value < gTypeInfo.size()) {
 											const TypeInfo& ti = gTypeInfo[arg.type_index.value];

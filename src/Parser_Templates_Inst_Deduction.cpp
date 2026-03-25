@@ -29,7 +29,7 @@ void registerTypeParamsInScope(
 		auto& type_info = gTypeInfo.emplace_back(
 			param_names[i],
 			arg.base_type, TypeIndex{gTypeInfo.size()}, 0);
-		if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
+		if (is_builtin_type(arg.base_type)) {
 			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 		} else {
 			if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
