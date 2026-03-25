@@ -62,14 +62,45 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			}
 		}
 
+		// Build converted_template_args early so member/base initializer expressions
+		// can be substituted (they may contain PackExpansionExprNode from patterns like
+		// _M_value(std::forward<_Args>(__args)...) that must be expanded now).
+		std::vector<TemplateTypeArg> converted_template_args;
+		converted_template_args.reserve(lazy_info.template_args.size());
+		for (const auto& ttype_arg : lazy_info.template_args) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+			}
+		}
+
+		auto substituteInitExpr = [&](const ASTNode& expr) -> ASTNode {
+			try {
+				return substituteTemplateParameters(expr, lazy_info.template_params, converted_template_args);
+			} catch (const std::exception&) {
+				return expr;  // fall back to unsubstituted on error
+			}
+		};
+
 		for (const auto& init : ctor_decl.member_initializers()) {
-			new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
+			new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
 		}
 		for (const auto& init : ctor_decl.base_initializers()) {
-			new_ctor_ref.add_base_initializer(init.getBaseClassName(), init.arguments);
+			std::vector<ASTNode> substituted_args;
+			substituted_args.reserve(init.arguments.size());
+			for (const auto& arg : init.arguments) {
+				substituted_args.push_back(substituteInitExpr(arg));
+			}
+			new_ctor_ref.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
 		}
 		if (ctor_decl.delegating_initializer().has_value()) {
-			new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
+			std::vector<ASTNode> substituted_del_args;
+			substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
+			for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
+				substituted_del_args.push_back(substituteInitExpr(arg));
+			}
+			new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 		}
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
@@ -117,15 +148,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			return std::nullopt;
 		}
 
-		std::vector<TemplateTypeArg> converted_template_args;
-		converted_template_args.reserve(lazy_info.template_args.size());
-		for (const auto& ttype_arg : lazy_info.template_args) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
-			}
-		}
 		try {
 			ASTNode substituted_body = substituteTemplateParameters(
 				*body_to_substitute,

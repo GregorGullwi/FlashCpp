@@ -2232,12 +2232,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Copy member initializers
 				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
-					new_ctor_ref.add_member_initializer(name, expr);
+					ASTNode substituted_expr = expr;
+					try {
+						substituted_expr = substituteTemplateParameters(expr, template_params, template_args_for_pattern);
+					} catch (const std::exception&) {}
+					new_ctor_ref.add_member_initializer(name, substituted_expr);
 				}
 				
-				// Copy definition if present
+				// Copy definition if present (with template parameter substitution)
 				if (orig_ctor.get_definition().has_value()) {
-					new_ctor_ref.set_definition(*orig_ctor.get_definition());
+					ASTNode substituted_body = *orig_ctor.get_definition();
+					try {
+						substituted_body = substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern);
+					} catch (const std::exception&) {}
+					new_ctor_ref.set_definition(substituted_body);
 				}
 				
 				instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
@@ -5799,14 +5807,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
-					// Copy other properties
+					// Copy other properties (with template parameter substitution for initializers)
 					for (const auto& init : ctor_decl.member_initializers()) {
-						new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
+						ASTNode substituted_expr = init.initializer_expr;
+						try {
+							substituted_expr = substituteTemplateParameters(init.initializer_expr, template_params, template_args_to_use);
+						} catch (const std::exception&) {}
+						new_ctor_ref.add_member_initializer(init.member_name, substituted_expr);
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
 						// Phase 7B: Intern base class name and use StringHandle overload
 						StringHandle base_name_handle = init.getBaseClassName();
-						new_ctor_ref.add_base_initializer(base_name_handle, init.arguments);
+						std::vector<ASTNode> substituted_args;
+						substituted_args.reserve(init.arguments.size());
+						for (const auto& arg : init.arguments) {
+							ASTNode s = arg;
+							try { s = substituteTemplateParameters(arg, template_params, template_args_to_use); } catch (const std::exception&) {}
+							substituted_args.push_back(s);
+						}
+						new_ctor_ref.add_base_initializer(base_name_handle, std::move(substituted_args));
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
 						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);

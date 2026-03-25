@@ -1183,9 +1183,105 @@ void Parser::register_builtin_functions() {
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
 	
-	// Wide memory/character functions are provided by the C library headers.
-	// No manual registration here—declarations should come from the standard headers.
-	
+	// Wide-character memory/string functions needed by char_traits<wchar_t>.
+	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
+	// before those headers are explicitly included.
+	//
+	// Helper: register a function that takes (const wchar_t*, const wchar_t*, size_t) and returns int
+	auto register_wmemcmp_builtin = [&](std::string_view name) {
+		auto ret  = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		auto decl = emplace_node<DeclarationNode>(ret, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		// p1: const wchar_t*
+		auto [p1t, p1t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token, CVQualifier::Const);
+		p1t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p1t, dummy_token));
+		// p2: const wchar_t*
+		auto [p2t, p2t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token, CVQualifier::Const);
+		p2t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p2t, dummy_token));
+		// p3: size_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token), dummy_token));
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
+	};
+	// Helper: register wchar_t* fn(const wchar_t*, wchar_t, size_t)  (wmemchr)
+	auto register_wmemchr_builtin = [&](std::string_view name) {
+		auto [pt, pt_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token);
+		pt_ref.add_pointer_level();
+		auto decl = emplace_node<DeclarationNode>(pt, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		// p1: const wchar_t*
+		auto [p1t, p1t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token, CVQualifier::Const);
+		p1t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p1t, dummy_token));
+		// p2: wchar_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token), dummy_token));
+		// p3: size_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token), dummy_token));
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
+	};
+	// Helper: register wchar_t* fn(wchar_t*, const wchar_t*, size_t)  (wmemcpy, wmemmove)
+	auto register_wmemcpy_builtin = [&](std::string_view name) {
+		auto [pt, pt_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token);
+		pt_ref.add_pointer_level();
+		auto decl = emplace_node<DeclarationNode>(pt, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		// p1: wchar_t*
+		auto [p1t, p1t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token);
+		p1t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p1t, dummy_token));
+		// p2: const wchar_t*
+		auto [p2t, p2t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token, CVQualifier::Const);
+		p2t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p2t, dummy_token));
+		// p3: size_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token), dummy_token));
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
+	};
+	// Helper: register wchar_t* fn(wchar_t*, wchar_t, size_t)  (wmemset)
+	auto register_wmemset_builtin = [&](std::string_view name) {
+		auto [pt, pt_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token);
+		pt_ref.add_pointer_level();
+		auto decl = emplace_node<DeclarationNode>(pt, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		// p1: wchar_t*
+		auto [p1t, p1t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token);
+		p1t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p1t, dummy_token));
+		// p2: wchar_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token), dummy_token));
+		// p3: size_t
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token), dummy_token));
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
+	};
+	// Helper: size_t fn(const wchar_t*)  (wcslen)
+	auto register_wcslen_builtin = [&](std::string_view name) {
+		auto ret  = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token);
+		auto decl = emplace_node<DeclarationNode>(ret, Token(Token::Type::Identifier, name, 0, 0, 0));
+		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+		auto [p1t, p1t_ref] = emplace_node_ref<TypeSpecifierNode>(Type::WChar, TypeQualifier::None, 32, dummy_token, CVQualifier::Const);
+		p1t_ref.add_pointer_level();
+		fn_ref.add_parameter_node(emplace_node<DeclarationNode>(p1t, dummy_token));
+		fn_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, fn);
+	};
+	register_wmemcmp_builtin("wmemcmp");
+	register_wmemchr_builtin("wmemchr");
+	register_wmemcpy_builtin("wmemcpy");
+	register_wmemcpy_builtin("wmemmove");
+	register_wmemset_builtin("wmemset");
+	register_wcslen_builtin("wcslen");
+
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling
