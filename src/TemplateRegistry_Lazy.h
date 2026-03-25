@@ -1450,6 +1450,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			uint8_t pointer_depth = 0;
 			ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 			CVQualifier cv_qualifier = CVQualifier::None;
+			TypeCategory category() const noexcept { return typeToCategory(base_type); }
 		};
 		
 		// Helper to resolve a type specifier, substituting template parameters
@@ -1477,10 +1478,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			case TypeTraitKind::IsSame: {
 				if (trait_expr.has_second_type()) {
 					auto second = resolve_type(trait_expr.second_type_node());
-					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.typeEnum()), 
+					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type), 
 						", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
 						", ref_qual=", static_cast<int>(first.ref_qualifier),
-						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.typeEnum()),
+						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type),
 						", idx=", second.type_index, ", ptr=", static_cast<int>(second.pointer_depth),
 						", ref_qual=", static_cast<int>(second.ref_qualifier),
 						", cv=", static_cast<int>(second.cv_qualifier), "}");

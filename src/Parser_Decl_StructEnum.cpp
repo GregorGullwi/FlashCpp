@@ -414,7 +414,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								info.node = emplace_node<ExpressionNode>(tparam_ref);
 							} else {
 								TypeSpecifierNode type_node(
-									targ.base_type,
+									targ.typeEnum(),
 									targ.type_index,
 									64,
 									Token{},
@@ -533,11 +533,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Also check if the type name contains any template parameter names
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
-				if (is_struct_type(arg.base_type)) {
+				if (is_struct_type(arg.category())) {
 					if (arg.type_index.index() < getTypeInfoCount()) {
 						StringHandle type_name_handle = getTypeInfo(arg.type_index).name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
-						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
+						                 static_cast<int>(arg.category()), arg.type_index, StringTable::getStringView(type_name_handle));
 						if (contains_template_param(type_name_handle)) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
 							has_dependent_args = true;

@@ -4078,7 +4078,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 														TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 													targ_nodes_sv.push_back(ASTNode(&dep_expr));
 												} else {
-													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), identifier_token);
+													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
 													targ_nodes_sv.push_back(ASTNode(&tts));
 												}
 											}
@@ -4129,7 +4129,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 											targ_nodes_vt.push_back(ASTNode(&dep_expr));
 										} else {
-											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.base_type, targ.type_index, get_type_size_bits(targ.base_type), identifier_token);
+											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
 											targ_nodes_vt.push_back(ASTNode(&tts));
 										}
 									}

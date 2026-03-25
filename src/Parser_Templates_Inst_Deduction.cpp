@@ -28,9 +28,9 @@ void registerTypeParamsInScope(
 		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
 		auto& type_info = add_template_param_type(
 			param_names[i],
-			arg.base_type, 0);
-		if (is_builtin_type(arg.base_type)) {
-			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+			arg.typeEnum(), 0);
+		if (is_builtin_type(arg.typeEnum())) {
+			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 		} else {
 			if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 				type_info.type_size_ = getTypeInfo(arg.type_index).type_size_;
@@ -65,7 +65,7 @@ void registerTypeParamsInScope(
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
 		if (template_args[i].is_value) continue;
 		if (template_args[i].is_template_template_arg) continue;
-		Type concrete_type = template_args[i].base_type;
+		Type concrete_type = template_args[i].typeEnum();
 		auto& type_info = add_template_param_type(
 			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
 			concrete_type,
@@ -92,7 +92,7 @@ void registerOuterBindingInScope(
 ) {
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
-		Type concrete_type = arg.base_type;
+		Type concrete_type = arg.typeEnum();
 		uint32_t size = (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount())
 			? getTypeInfo(arg.type_index).type_size_
 			: get_type_size_bits(concrete_type);
@@ -141,7 +141,7 @@ void Parser::populateTemplateParamSubstitutions(
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
-			subst.value_type = arg.base_type;
+			subst.value_type = arg.typeEnum();
 		} else {
 			subst.is_value_param = false;
 			subst.is_type_param = true;
@@ -175,7 +175,7 @@ void Parser::populateTemplateParamSubstitutions(
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
-			subst.value_type = arg.base_type;
+			subst.value_type = arg.typeEnum();
 		} else {
 			subst.is_value_param = false;
 			subst.is_type_param = true;
@@ -374,7 +374,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			if (i < explicit_types.size()) {
 				const auto& arg = explicit_types[i];
 				// Template arguments are stored as Type::Struct with type_index pointing to the template's TypeInfo
-				if (arg.base_type == Type::Struct && arg.type_index.index() < getTypeInfoCount()) {
+				if (arg.category() == TypeCategory::Struct && arg.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(arg.type_index);
 					tpl_name_handle = type_info.name();
 				} else if (arg.is_dependent) {
@@ -1058,8 +1058,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// entire pipeline (TemplateTypeArg →
 							// substitute_template_parameter / registerTypeParamsInScope).
 							TypeSpecifierNode synth_ts(
-								c.base_type, c.type_index,
-								get_type_size_bits(c.base_type),
+								c.typeEnum(), c.type_index,
+								get_type_size_bits(c.typeEnum()),
 								Token(), c.cv_qualifier);
 							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
 								CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
@@ -1083,14 +1083,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								"[depth={}]: Pre-deduced type param '{}' = type {}",
 								recursion_depth,
 								StringTable::getStringView(p.dependent_name),
-								static_cast<int>(c.base_type));
+								static_cast<int>(c.typeEnum()));
 						} else {
 							// Concrete argument is a value (c.is_value==true); deduce a non-type param.
 							// We check c.is_value (the concrete arg) rather than p.is_value (the
 							// placeholder), because dependent non-type params are stored as
 							// is_value==false in the placeholder even though they carry an integer value
 							// at instantiation time.
-							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.base_type);
+							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
@@ -1199,7 +1199,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								const auto& stored_args = type_info.templateArgs();
 								for (const auto& stored_arg : stored_args) {
 									if (!stored_arg.is_value) {
-										deduced_type_args.push_back(stored_arg.base_type);
+										deduced_type_args.push_back(stored_arg.typeEnum());
 									}
 								}
 								

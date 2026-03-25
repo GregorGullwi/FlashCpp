@@ -2759,7 +2759,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						FLASH_LOG(ConstExpr, Debug, "Resolved type base template='", StringTable::getStringView(resolved_type_info->baseTemplateName()), "', template args=", resolved_type_info->template_args_.size());
 						for (size_t i = 0; i < resolved_type_info->template_args_.size(); ++i) {
 							const auto& arg = resolved_type_info->template_args_[i];
-							FLASH_LOG(ConstExpr, Debug, "  resolved arg[", i, "] is_value=", arg.is_value, ", base_type=", static_cast<int>(arg.base_type), ", type_index=", arg.type_index, ", value(int)=", arg.intValue());
+							FLASH_LOG(ConstExpr, Debug, "  resolved arg[", i, "] is_value=", arg.is_value, ", category=", static_cast<int>(arg.category()), ", type_index=", arg.type_index, ", value(int)=", arg.intValue());
 						}
 					}
 					for (const auto& base : struct_info->base_classes) {
@@ -2839,7 +2839,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					const auto& arg_info = resolved_type_info->template_args_[0];
 					TraitInput input{
-						.base_type = arg_info.base_type,
+						.base_type = arg_info.typeEnum(),
 						.type_index = arg_info.type_index,
 						.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
 						.ref_qualifier = arg_info.ref_qualifier,
@@ -2874,7 +2874,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 						FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis: template args=", args.size());
 						for (size_t i = 0; i < args.size(); ++i) {
-							FLASH_LOG(ConstExpr, Debug, "  arg[", i, "] is_value=", args[i].is_value, ", base_type=", static_cast<int>(args[i].base_type), ", type_index=", args[i].type_index, ", value(int)=", args[i].intValue());
+							FLASH_LOG(ConstExpr, Debug, "  arg[", i, "] is_value=", args[i].is_value, ", category=", static_cast<int>(args[i].category()), ", type_index=", args[i].type_index, ", value(int)=", args[i].intValue());
 						}
 					}
 					if (args.size() < 2) {
@@ -2889,7 +2889,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 					
 					// Convert the stored value based on the template argument type
-					switch (value_arg.base_type) {
+					switch (value_arg.typeEnum()) {
 						case Type::Bool:
 							return EvalResult::from_bool(value_arg.intValue() != 0);
 						case Type::UnsignedChar:

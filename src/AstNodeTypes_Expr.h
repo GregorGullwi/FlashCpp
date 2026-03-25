@@ -744,7 +744,6 @@ public:
 
 		for (const auto& arg : template_args) {
 			TypeInfo::TemplateArgInfo info;
-			info.base_type = arg.base_type;
 			info.type_index = arg.type_index;
 			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 			info.pointer_depth = arg.pointer_depth;

@@ -565,7 +565,7 @@ inline void appendItaniumTypeTemplateArgs(
 			// Non-type template argument (value)
 			output += 'L';
 			// Use type code based on arg.base_type
-			switch (arg.base_type) {
+			switch (arg.typeEnum()) {
 				case Type::Int: output += 'i'; break;
 				case Type::UnsignedInt: output += 'j'; break;
 				case Type::Long: output += 'l'; break;
@@ -603,7 +603,7 @@ inline void appendItaniumTypeTemplateArgs(
 			}
 			
 			// Basic type code
-			switch (arg.base_type) {
+			switch (arg.typeEnum()) {
 				case Type::Void:       output += 'v'; break;
 				case Type::Bool:       output += 'b'; break;
 				case Type::Char:       output += 'c'; break;

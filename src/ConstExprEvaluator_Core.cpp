@@ -834,8 +834,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 					if (context.template_param_names[i] == type_name) {
 						const TemplateTypeArg& arg = context.template_args[i];
 						if (arg.isTypeArgument()) {
-							size_t param_size = get_type_size_bits(arg.base_type) / 8;
-							if (param_size == 0 && arg.base_type == Type::Struct && arg.type_index.is_valid() &&
+							size_t param_size = get_type_size_bits(arg.category()) / 8;
+							if (param_size == 0 && arg.category() == TypeCategory::Struct && arg.type_index.is_valid() &&
 									arg.type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(arg.type_index).getStructInfo();
 								if (si) param_size = si->total_size;

@@ -58,13 +58,13 @@ ASTNode Parser::substituteTemplateParameters(
 
 					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type),
+						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()),
 						                tparam_ref.token().line(), tparam_ref.token().column(),
 						                tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.base_type;
+						Type value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
@@ -99,11 +99,11 @@ ASTNode Parser::substituteTemplateParameters(
 					
 					if (arg.isTypeArgument()) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, get_type_name(arg.base_type), 0, 0, 0);
+						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()), 0, 0, 0);
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.base_type;
+						Type value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
@@ -139,7 +139,7 @@ ASTNode Parser::substituteTemplateParameters(
 					
 					for (const auto& parg : placeholder_args) {
 						TemplateTypeArg arg;
-						arg.base_type = parg.base_type;
+						arg.setCategory(parg.category());
 						arg.type_index = parg.type_index;
 						arg.ref_qualifier = parg.ref_qualifier;
 						arg.pointer_depth = parg.pointer_depth;
@@ -155,7 +155,7 @@ ASTNode Parser::substituteTemplateParameters(
 									// Substitute with the concrete type
 									const TemplateTypeArg& concrete_arg = template_args[p];
 									if (concrete_arg.isTypeArgument()) {
-										arg.base_type = concrete_arg.base_type;
+										arg.setCategory(concrete_arg.category());
 										arg.type_index = concrete_arg.type_index;
 										arg.is_dependent = false;
 										any_substituted = true;
@@ -232,7 +232,7 @@ ASTNode Parser::substituteTemplateParameters(
 					const TemplateTypeArg& arg = template_args[i];
 					if (arg.isTypeArgument()) {
 						TemplateTypeArg type_arg;
-						type_arg.base_type = arg.base_type;
+						type_arg.setCategory(arg.category());
 						type_arg.type_index = arg.type_index;
 						type_arg.is_value = false;
 						inst_args.push_back(type_arg);
@@ -240,7 +240,7 @@ ASTNode Parser::substituteTemplateParameters(
 						TemplateTypeArg val_arg;
 						val_arg.is_value = true;
 						val_arg.value = arg.value;
-						val_arg.base_type = arg.base_type;
+						val_arg.setCategory(arg.category());
 						inst_args.push_back(val_arg);
 					}
 				}
@@ -787,7 +787,7 @@ ASTNode Parser::substituteTemplateParameters(
 								
 								if (arg.isTypeArgument()) {
 									// Get the size of the concrete type in bytes
-									size_t type_size = get_type_size_bits(arg.base_type) / 8;
+									size_t type_size = get_type_size_bits(arg.category()) / 8;
 									
 									// Create an integer literal with the type size
 									StringBuilder size_builder;

@@ -1005,7 +1005,7 @@ ParseResult Parser::parse_type_specifier()
 						for (size_t i = 0; i < substituted_args.size(); ++i) {
 							const auto& arg = substituted_args[i];
 							FLASH_LOG(Parser, Debug, "  Arg[", i, "]: is_value=", arg.is_value, 
-							          ", base_type=", static_cast<int>(arg.base_type), 
+							          ", category=", static_cast<int>(arg.category()), 
 							          ", value=", arg.value);
 						}
 						
@@ -1211,7 +1211,7 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Get the size in bits for the argument type
 							int size_bits = 0;
-							if (is_struct_type(arg.base_type)) {
+							if (is_struct_type(arg.category())) {
 								// Look up the struct size from type_index
 								if (arg.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& ti = getTypeInfo(arg.type_index);
@@ -1219,12 +1219,12 @@ ParseResult Parser::parse_type_specifier()
 								}
 							} else {
 								// Use standard type sizes
-								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 							}
 							
 							// Create new type with substituted base type
 							instantiated_type = TypeSpecifierNode(
-								arg.base_type,
+								arg.typeEnum(),
 								arg.type_index,
 								size_bits,
 								Token(),  // No token for instantiated type
@@ -1600,7 +1600,7 @@ ParseResult Parser::parse_type_specifier()
 							const auto& template_arg_infos = type_info->templateArgs();
 							for (const auto& arg_info : template_arg_infos) {
 								// Check if argument is a UserDefined type (dependent placeholder)
-								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.index() < getTypeInfoCount()) {
+								if (arg_info.category() == TypeCategory::UserDefined && arg_info.type_index.index() < getTypeInfoCount()) {
 									has_dependent_args = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;
@@ -1951,7 +1951,7 @@ ParseResult Parser::parse_type_specifier()
 									
 									// Get the size in bits for the argument type
 									int size_bits = 0;
-									if (is_struct_type(arg.base_type)) {
+									if (is_struct_type(arg.category())) {
 										// Look up the struct size from type_index
 										if (arg.type_index.index() < getTypeInfoCount()) {
 											const TypeInfo& ti = getTypeInfo(arg.type_index);
@@ -1959,13 +1959,13 @@ ParseResult Parser::parse_type_specifier()
 										}
 									} else {
 										// Use standard type sizes
-										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
+										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 									}
-									FLASH_LOG_FORMAT(Parser, Debug, "Before substitution - arg.base_type={}, size_bits={}", static_cast<int>(arg.base_type), size_bits);
+									FLASH_LOG_FORMAT(Parser, Debug, "Before substitution - arg.category={}, size_bits={}", static_cast<int>(arg.category()), size_bits);
 									
 									// Create new type with substituted base type
 									instantiated_type = TypeSpecifierNode(
-										arg.base_type,
+										arg.typeEnum(),
 										arg.type_index,
 										size_bits,
 										Token(),  // No token for instantiated type

@@ -496,7 +496,7 @@ public:
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const auto& arg = pattern_args[i];
 			std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
-			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.base_type),
+			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
 			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
 			          ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
 		}
@@ -523,7 +523,7 @@ public:
 			
 			// Check: first arg is dependent (template param), second arg is void (from void_t expansion)
 			if (first_arg.is_dependent && !second_arg.is_dependent && 
-			    second_arg.base_type == Type::Void) {
+			    second_arg.category() == TypeCategory::Void) {
 				// This looks like a void_t SFINAE pattern.
 				// Try to extract the member name from available information.
 				StringHandle member_name;
