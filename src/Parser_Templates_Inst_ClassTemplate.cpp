@@ -457,7 +457,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
 						const TemplateTypeArg& elem = tmpl_args[non_variadic + pi];
-						Type elem_type = elem.base_type;
+						Type elem_type = elem.typeEnum();
 						TypeIndex elem_type_index = elem.type_index;
 						TypeSpecifierNode sub_type(
 							elem_type, param_type_spec.qualifier(),
@@ -652,7 +652,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		TemplateTypeArg resolved_arg;
-		resolved_arg.base_type = resolved_base_type;
+		resolved_arg.setType(resolved_base_type);
 		resolved_arg.type_index = TypeIndex{resolved_type_index};
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
@@ -769,7 +769,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Simple case: default is void
 					if (default_type.type() == Type::Void) {
 						TemplateTypeArg void_arg;
-						void_arg.base_type = Type::Void;
+						void_arg.setType(Type::Void);
 						void_arg.type_index = TypeIndex{};
 						filled_args_for_pattern_match.push_back(void_arg);
 						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
@@ -793,7 +793,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (alias_type_spec.type() == Type::Void) {
 								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
-								void_arg.base_type = Type::Void;
+								void_arg.setType(Type::Void);
 								void_arg.type_index = TypeIndex{};
 								filled_args_for_pattern_match.push_back(void_arg);
 								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
@@ -923,12 +923,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											if (prev_param.name() == type_name) {
 												// Found the matching template parameter - use its filled value
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
-												if (filled_arg.base_type != Type::Invalid) {
+												if (filled_arg.typeEnum() != Type::Invalid) {
 													// Calculate the size of the filled type
-													int size_in_bytes = get_type_size_bits(filled_arg.base_type) / 8;
+													int size_in_bytes = get_type_size_bits(filled_arg.category()) / 8;
 													if (size_in_bytes == 0)
 													{
-														switch (filled_arg.base_type) {
+														switch (filled_arg.typeEnum()) {
 															case Type::Struct:
 															case Type::UserDefined:
 																// For struct types, we need to look up the size from TypeInfo
@@ -1372,7 +1372,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.base_type = type_it->second->type_;
+									a.setType(type_it->second->type_);
 									a.type_index = type_it->second->type_index_;
 									resolved_args.push_back(a);
 									resolved = true;
@@ -2178,7 +2178,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (dependent_param_index == param_idx) {
 									// Found it! Substitute with template_args[pattern_idx]
 									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
-									substituted_type = concrete_arg.base_type;
+									substituted_type = concrete_arg.typeEnum();
 									substituted_type_index = concrete_arg.type_index;
 									// Only call get_type_size_bits for basic types
 									if (substituted_type != Type::UserDefined) {
@@ -2383,7 +2383,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// instantiation arguments.
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
-						Type concrete_type = deduced_arg.base_type;
+						Type concrete_type = deduced_arg.typeEnum();
 						auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), concrete_type, get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
 							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
@@ -2913,10 +2913,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (prev_param.name() == sizeof_type_name) {
 											// Found the matching template parameter - use its filled value
 											const TemplateTypeArg& filled_arg = filled_template_args[j];
-											if (filled_arg.base_type != Type::Invalid) {
+											if (filled_arg.typeEnum() != Type::Invalid) {
 												// Calculate the size of the filled type
 												int size_in_bytes = 0;
-												switch (filled_arg.base_type) {
+												switch (filled_arg.typeEnum()) {
 													case Type::Bool:
 													case Type::Char:
 													case Type::UnsignedChar:
@@ -2995,7 +2995,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (param.kind() == TemplateParameterKind::Type) {
 				// Push a void-like placeholder type
 				TemplateTypeArg placeholder;
-				placeholder.base_type = Type::Void;
+				placeholder.setType(Type::Void);
 				filled_template_args.push_back(placeholder);
 				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
 				          " of '", template_name, "', using placeholder");
@@ -3046,7 +3046,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Regular scalar parameter (type or non-type)
 				if (arg_index < template_args_to_use.size()) {
 					name_substitution_map[param_name] = template_args_to_use[arg_index];
-					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index, " is_value=", template_args_to_use[arg_index].is_value);
+					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", static_cast<int>(template_args_to_use[arg_index].typeEnum()), " type_index=", template_args_to_use[arg_index].type_index, " is_value=", template_args_to_use[arg_index].is_value);
 					arg_index++;
 				}
 			}
@@ -3294,7 +3294,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
-									inst_arg.base_type = Type::Struct;
+									inst_arg.setType(Type::Struct);
 									inst_arg.type_index = inst_it->second->type_index_;
 									inst_arg.pointer_depth = type_spec.pointer_depth();
 									inst_arg.ref_qualifier = type_spec.reference_qualifier();
@@ -3373,7 +3373,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									// Substitute the type
 									const TemplateTypeArg& subst = subst_it->second;
 									substituted_type_spec = TypeSpecifierNode(
-										subst.base_type,
+										subst.typeEnum(),
 										subst.type_index,
 										0,  // size will be looked up
 										Token(),
@@ -6683,7 +6683,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					subst.param_name = param.nameHandle();
 					subst.is_value_param = true;
 					subst.value = arg.value;
-					subst.value_type = arg.base_type;
+					subst.value_type = arg.typeEnum();
 					template_param_substitutions_.push_back(subst);
 					
 					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 

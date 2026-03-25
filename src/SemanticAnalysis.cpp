@@ -164,7 +164,7 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
 	CanonicalTypeDesc desc;
-	desc.base_type = arg.base_type;
+	desc.base_type = arg.typeEnum();
 	desc.type_index = arg.type_index;
 	desc.base_cv = arg.cv_qualifier;
 	desc.ref_qualifier = arg.ref_qualifier;

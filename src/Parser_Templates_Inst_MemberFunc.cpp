@@ -298,7 +298,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			if (auto_param_index < template_args.size()) {
 				const auto& arg = template_args[auto_param_index];
 				auto_param_index++;
-				return { arg.base_type, arg.type_index };
+				return { arg.typeEnum(), arg.type_index };
 			}
 			return { type, type_index };
 		}
@@ -310,7 +310,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (size_t i = 0; i < template_params.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == tn && i < template_args.size()) {
-					return { template_args[i].base_type, template_args[i].type_index };
+					return { template_args[i].typeEnum(), template_args[i].type_index };
 				}
 			}
 			// Check outer template params (e.g., T→int from class template)
@@ -318,7 +318,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
 						const auto& arg = outer_binding->param_args[i];
-						return { arg.base_type, arg.type_index };
+						return { arg.typeEnum(), arg.type_index };
 					}
 				}
 			}

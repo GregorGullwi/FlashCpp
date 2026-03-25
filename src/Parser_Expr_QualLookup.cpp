@@ -829,7 +829,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						// 1. The original type (e.g., const T& has const and reference)
 						// 2. The template argument (e.g., T=int* has pointer_depth=1)
 						
-						result_type = arg.base_type;
+						result_type = arg.typeEnum();
 						result_type_index = arg.type_index;
 						
 						// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
@@ -997,7 +997,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								if (tparam.name() == alias_target_name) {
 									// The type alias resolves to a template parameter - substitute!
 									const TemplateTypeArg& arg = template_args[i];
-									result_type = arg.base_type;
+									result_type = arg.typeEnum();
 									result_type_index = arg.type_index;
 									FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name, 
 										"' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type));
@@ -1034,7 +1034,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::vector<TemplateTypeArg> concrete_args;
 								for (const auto& arg_info : placeholder_info.templateArgs()) {
 									TemplateTypeArg ta;
-									ta.base_type = arg_info.base_type;
+									ta.setCategory(arg_info.category());
 									ta.type_index = arg_info.type_index;
 									ta.is_value = arg_info.is_value;
 									ta.value = arg_info.intValue();
@@ -1053,7 +1053,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 									}
 									// Fallback: match by type_index name against param names
 									if (!substituted && !arg_info.is_value &&
-									    (is_struct_type(arg_info.base_type)) &&
+									    (is_struct_type(arg_info.category())) &&
 									    arg_info.type_index.index() < getTypeInfoCount()) {
 										std::string_view arg_type_name = StringTable::getStringView(getTypeInfo(arg_info.type_index).name());
 										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {

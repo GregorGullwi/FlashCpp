@@ -390,11 +390,18 @@ struct TemplatePattern {
 			// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct
 			// template) must reach the template instantiation handler below, not the concrete
 			// type check. Detect that case up front.
-			bool is_struct_template_inst = (pattern_arg.category() == TypeCategory::Struct &&
-				pattern_arg.type_index.is_valid() && pattern_arg.type_index.index() < getTypeInfoCount() &&
-				getTypeInfo(pattern_arg.type_index).isTemplateInstantiation());
+			bool has_valid_type_index = pattern_arg.type_index.is_valid() && pattern_arg.type_index.index() < getTypeInfoCount();
+			bool is_struct_template_inst = (is_struct_type(pattern_arg.category()) || pattern_arg.category() == TypeCategory::Invalid) &&
+				has_valid_type_index &&
+				getTypeInfo(pattern_arg.type_index).isTemplateInstantiation();
 
-			if (pattern_arg.category() != TypeCategory::UserDefined && !is_struct_template_inst) {
+			// pattern_arg is a template parameter placeholder if it is UserDefined, or if category is
+			// Invalid (legacy TypeIndex) and the type_index points to a non-instantiation struct entry.
+			bool is_userdefined_param = (pattern_arg.category() == TypeCategory::UserDefined) ||
+				(pattern_arg.category() == TypeCategory::Invalid && has_valid_type_index &&
+				 !getTypeInfo(pattern_arg.type_index).isTemplateInstantiation());
+
+			if (!is_userdefined_param && !is_struct_template_inst) {
 				// This is a concrete type or value in the pattern
 				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
 				// The concrete type/value must match exactly

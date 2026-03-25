@@ -930,7 +930,7 @@
 							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
 								TemplateTypeArg type_arg;
-								type_arg.base_type = arg_type;
+								type_arg.setType(arg_type);
 								type_arg.type_index = arg_type_index;
 								type_args.push_back(type_arg);
 							}
