@@ -7,30 +7,30 @@
 
 template<typename... Args>
 struct Counter {
-int size() {
-return static_cast<int>(sizeof...(Args));
-}
+	int size() {
+		return static_cast<int>(sizeof...(Args));
+	}
 };
 
 struct Box {
-int value;
-explicit Box(int v) : value(v) {}
-int get() const { return value; }
+	int value;
+	explicit Box(int v) : value(v) {}
+	int get() const { return value; }
 };
 
 Box makeBox(int v) { return Box(v); }
 
 int main() {
-// Brace-init temporary: Template<T>{}
-if (Counter<int, int, int>{}.size() != 3) return 1;
-if (Counter<int>{}.size() != 1) return 2;
-if (Counter<int, int>{}.size() != 2) return 3;
+	// Brace-init temporary: Template<T>{}
+	if (Counter<int, int, int>{}.size() != 3) return 1;
+	if (Counter<int>{}.size() != 1) return 2;
+	if (Counter<int, int>{}.size() != 2) return 3;
 
-// Paren-init temporary: Template<T>()
-if (Counter<int, int, int>().size() != 3) return 4;
+	// Paren-init temporary: Template<T>()
+	if (Counter<int, int, int>().size() != 3) return 4;
 
-// Function-return temporary
-if (makeBox(42).get() != 42) return 5;
+	// Function-return temporary
+	if (makeBox(42).get() != 42) return 5;
 
-return 0;
+	return 0;
 }
