@@ -1412,11 +1412,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Copy member functions from pattern
 		for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 			if (mem_func.is_constructor) {
-				// Handle constructor - it's a ConstructorDeclarationNode, not FunctionDeclarationNode
-				struct_info->addConstructor(
-					mem_func.function_declaration,
-					mem_func.access
-				);
+				// Handle constructor - create a substituted copy so StructTypeInfo
+				// has correct parameter types for name mangling and codegen.
+				const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+				auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+					instantiated_name, orig_ctor.name());
+				substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args);
+				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
+					new_ctor_ref.add_member_initializer(name, expr);
+				}
+				if (orig_ctor.get_definition().has_value()) {
+					new_ctor_ref.set_definition(*orig_ctor.get_definition());
+				}
+				new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
+				new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
+				struct_info->addConstructor(new_ctor_node, mem_func.access);
 			} else if (mem_func.is_destructor) {
 				// Handle destructor
 				struct_info->addDestructor(
