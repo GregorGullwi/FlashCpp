@@ -584,8 +584,8 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (!ti.is_valid() || ti.value >= gTypeInfo.size()) continue;
-			const auto& type_info = gTypeInfo[ti.value];
+			if (!ti.is_valid() || ti.value >= getTypeInfoCount()) continue;
+			const auto& type_info = getTypeInfo(ti);
 			if (const StructTypeInfo* si = type_info.getStructInfo()) {
 				visited_types.insert(ti.value);
 				collect_struct_associated_namespaces(si, collect_from_ns, visited_types);
@@ -630,8 +630,8 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (ti.is_valid() && ti.value < gTypeInfo.size()) {
-				const auto& type_info = gTypeInfo[ti.value];
+			if (ti.is_valid() && ti.value < getTypeInfoCount()) {
+				const auto& type_info = getTypeInfo(ti);
 				if (const StructTypeInfo* si = type_info.getStructInfo()) {
 					visited_types.insert(ti.value);
 					collect_struct_associated_namespaces(si, search_ns, visited_types);
@@ -1118,9 +1118,9 @@ private:
 		if (!si) return;
 		ns_callback(si->namespace_handle);
 		for (const auto& base : si->base_classes) {
-			if (!base.type_index.is_valid() || base.type_index.value >= gTypeInfo.size()) continue;
+			if (!base.type_index.is_valid() || base.type_index.value >= getTypeInfoCount()) continue;
 			if (!visited_types.insert(base.type_index.value).second) continue;
-			const StructTypeInfo* bsi = gTypeInfo[base.type_index.value].getStructInfo();
+			const StructTypeInfo* bsi = getTypeInfo(base.type_index).getStructInfo();
 			collect_struct_associated_namespaces(bsi, ns_callback, visited_types);
 		}
 	}
@@ -1400,7 +1400,7 @@ inline bool validateQualifiedNamespace(NamespaceHandle ns_handle, [[maybe_unused
 	// Also accept if the root name refers to a known type (struct/class with static members)
 	std::string_view root_name = gNamespaceRegistry.getName(root);
 	StringHandle root_handle = StringTable::getOrInternStringHandle(root_name);
-	if (gTypesByName.find(root_handle) != gTypesByName.end()) {
+	if (getTypesByNameMap().find(root_handle) != getTypesByNameMap().end()) {
 		return true;
 	}
 	// In template contexts, accept qualifiers that are symbols in scope (e.g., type aliases)

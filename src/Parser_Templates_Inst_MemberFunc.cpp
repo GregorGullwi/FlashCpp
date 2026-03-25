@@ -111,8 +111,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index {};
 				StructDeclarationNode* struct_node_ptr = nullptr;
-				auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-				if (struct_type_it != gTypesByName.end()) {
+				auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+				if (struct_type_it != getTypesByNameMap().end()) {
 					struct_type_index = struct_type_it->second->type_index_;
 					
 					// Try to find the struct node in the symbol table
@@ -302,8 +302,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type, type_index };
 		}
-		if (type == Type::UserDefined && type_index.value < gTypeInfo.size()) {
-			const TypeInfo& ti = gTypeInfo[type_index.value];
+		if (type == Type::UserDefined && type_index.value < getTypeInfoCount()) {
+			const TypeInfo& ti = getTypeInfo(type_index);
 			std::string_view tn = StringTable::getStringView(ti.name());
 
 			// Check inner template params first
@@ -360,11 +360,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	if (outer_binding) {
 		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 			default_param_map[StringTable::getStringView(outer_binding->param_names[i])] = outer_binding->param_args[i];
-			auto type_it = gTypesByName.find(outer_binding->param_names[i]);
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(outer_binding->param_names[i]);
+			if (type_it != getTypesByNameMap().end()) {
 				default_type_sub_map[type_it->second->type_index_] = outer_binding->param_args[i];
 			} else {
-				default_type_sub_map[TypeIndex{gTypeInfo.size() + default_type_sub_map.size() + 1}] = outer_binding->param_args[i];
+				default_type_sub_map[TypeIndex{getTypeInfoCount() + default_type_sub_map.size() + 1}] = outer_binding->param_args[i];
 			}
 		}
 	}
@@ -373,11 +373,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		const auto& template_param = template_params[i].as<TemplateParameterNode>();
 		default_param_map[template_param.name()] = template_args[i];
 		if (template_param.kind() == TemplateParameterKind::Type && !template_args[i].is_value) {
-			auto type_it = gTypesByName.find(template_param.nameHandle());
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(template_param.nameHandle());
+			if (type_it != getTypesByNameMap().end()) {
 				default_type_sub_map[type_it->second->type_index_] = template_args[i];
 			} else {
-				default_type_sub_map[TypeIndex{gTypeInfo.size() + default_type_sub_map.size() + 1}] = template_args[i];
+				default_type_sub_map[TypeIndex{getTypeInfoCount() + default_type_sub_map.size() + 1}] = template_args[i];
 			}
 		} else if (template_param.kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
 			default_nontype_sub_map[template_param.name()] = template_args[i].value;
@@ -453,7 +453,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 	
 	// Kind::Value and Kind::Template entries are intentionally skipped by registerTypeParamsInScope:
-	// registering them would poison gTypesByName with Invalid/garbage TypeInfo entries.
+	// registering them would poison getTypesByNameMap() with Invalid/garbage TypeInfo entries.
 	registerTypeParamsInScope(param_names, template_args, template_scope);
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
@@ -469,8 +469,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	restore_lexer_position_only(func_decl.template_body_position());
 
 	// Look up the struct type info
-	auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
-	if (struct_type_it == gTypesByName.end()) {
+	auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	if (struct_type_it == getTypesByNameMap().end()) {
 		FLASH_LOG(Templates, Debug, "Struct type not found: ", struct_name);
 		restore_token_position(current_pos);
 		return std::nullopt;

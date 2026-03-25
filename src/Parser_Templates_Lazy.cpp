@@ -312,11 +312,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
 	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
-		if (type == Type::Struct && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-			if (gTypeInfo[type_index.value].name() == lazy_info.identity.template_owner_name) {
+		if (type == Type::Struct && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+			if (getTypeInfo(type_index).name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
-				auto it = gTypesByName.find(lazy_info.identity.instantiated_owner_name);
-				if (it != gTypesByName.end()) {
+				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+				if (it != getTypesByNameMap().end()) {
 					type_index = it->second->type_index_;
 				}
 			}
@@ -618,9 +618,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	ast_nodes_.push_back(new_func_node);
 	
 	// Also update the StructTypeInfo to replace the signature-only function with the full definition
-	// Find the struct in gTypesByName
-	auto struct_it = gTypesByName.find(lazy_info.identity.instantiated_owner_name);
-	if (struct_it != gTypesByName.end()) {
+	// Find the struct in getTypesByNameMap()
+	auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+	if (struct_it != getTypesByNameMap().end()) {
 		TypeInfo* struct_type_info = struct_it->second;
 		StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 		if (struct_info) {
@@ -667,8 +667,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
 	
 	// Find the struct_info to add the member to
-	auto type_it = gTypesByName.find(instantiated_class_name);
-	if (type_it == gTypesByName.end()) {
+	auto type_it = getTypesByNameMap().find(instantiated_class_name);
+	if (type_it == getTypesByNameMap().end()) {
 		FLASH_LOG(Templates, Error, "Failed to find struct info for: ", instantiated_class_name);
 		return false;
 	}
@@ -935,9 +935,9 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 	    target_phase >= ClassInstantiationPhase::Layout) {
 		
 		// Look up the type info
-		auto type_it = gTypesByName.find(instantiated_name);
-		if (type_it == gTypesByName.end()) {
-			FLASH_LOG(Templates, Error, "Type not found in gTypesByName: ", instantiated_name);
+		auto type_it = getTypesByNameMap().find(instantiated_name);
+		if (type_it == getTypesByNameMap().end()) {
+			FLASH_LOG(Templates, Error, "Type not found in getTypesByNameMap(): ", instantiated_name);
 			return false;
 		}
 		
@@ -968,8 +968,8 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 	    target_phase >= ClassInstantiationPhase::Full) {
 		
 		// Force instantiate all static members
-		auto type_it = gTypesByName.find(instantiated_name);
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+		auto type_it = getTypesByNameMap().find(instantiated_name);
+		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 			if (struct_info) {
 				// Trigger lazy instantiation of all static members
@@ -1067,8 +1067,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	std::string_view qualified_name = StringTable::getStringView(lazy_info->qualified_name);
 	
 	// Check if type already exists (may have been instantiated through another path)
-	auto existing_type_it = gTypesByName.find(lazy_info->qualified_name);
-	if (existing_type_it != gTypesByName.end()) {
+	auto existing_type_it = getTypesByNameMap().find(lazy_info->qualified_name);
+	if (existing_type_it != getTypesByNameMap().end()) {
 		TypeIndex existing_index = existing_type_it->second->type_index_;
 		registry.markInstantiated(parent_class_name, nested_type_name);
 		return existing_index;
@@ -1080,8 +1080,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// look up the parent class's NamespaceHandle which correctly gives "ns".
 	NamespaceHandle decl_ns = gSymbolTable.get_current_namespace_handle();
 	{
-		auto parent_it = gTypesByName.find(lazy_info->parent_class_name);
-		if (parent_it != gTypesByName.end()) {
+		auto parent_it = getTypesByNameMap().find(lazy_info->parent_class_name);
+		if (parent_it != getTypesByNameMap().end()) {
 			NamespaceHandle parent_ns = parent_it->second->namespaceHandle();
 			if (parent_ns.isValid()) {
 				decl_ns = parent_ns;
@@ -1107,8 +1107,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get size for the member
 		size_t member_size = 0;
-		if (substituted_type_index.value < gTypeInfo.size()) {
-			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
+		if (substituted_type_index.value < getTypeInfoCount()) {
+			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
 			if (member_type_info.getStructInfo()) {
 				member_size = member_type_info.getStructInfo()->total_size;
 			} else {
@@ -1120,8 +1120,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get alignment for the member
 		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (substituted_type_index.value < gTypeInfo.size()) {
-			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index.value];
+		if (substituted_type_index.value < getTypeInfoCount()) {
+			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
 			if (member_type_info.getStructInfo()) {
 				member_alignment = member_type_info.getStructInfo()->alignment;
 			}

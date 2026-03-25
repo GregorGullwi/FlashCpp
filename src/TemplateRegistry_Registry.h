@@ -64,7 +64,7 @@ public:
 
 	// Returns true if 'name' (exact StringHandle) was registered as a class template.
 	// Used in codegen to skip uninstantiated class template pattern structs in
-	// gTypesByName without accidentally skipping non-template structs that share an
+	// getTypesByNameMap() without accidentally skipping non-template structs that share an
 	// unqualified name with a template in a different namespace.
 	bool isClassTemplate(StringHandle name) const {
 		return class_template_names_.count(name) > 0;
@@ -541,8 +541,8 @@ public:
 				}
 				
 				// If no member name was extracted, check the type name via type_index
-				if (!member_name.isValid() && first_arg.type_index.is_valid() && first_arg.type_index.value < gTypeInfo.size()) {
-					std::string_view type_name = StringTable::getStringView(gTypeInfo[first_arg.type_index.value].name());
+				if (!member_name.isValid() && first_arg.type_index.is_valid() && first_arg.type_index.value < getTypeInfoCount()) {
+					std::string_view type_name = StringTable::getStringView(getTypeInfo(first_arg.type_index).name());
 					size_t scope_pos = type_name.rfind("::");
 					if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
 						std::string_view extracted_member = type_name.substr(scope_pos + 2);
@@ -898,14 +898,14 @@ extern TemplateRegistry gTemplateRegistry;
 /**
  * Extract the base template name from an instantiated name.
  *
- * Checks gTypesByName for the name — if the TypeInfo has
+ * Checks getTypesByNameMap() for the name — if the TypeInfo has
  * isTemplateInstantiation() metadata, returns baseTemplateName() directly.
  * Returns empty string_view if the name is not a template instantiation.
  */
 inline std::string_view extractBaseTemplateName(std::string_view name) {
 	auto name_handle = StringTable::getOrInternStringHandle(name);
-	auto type_it = gTypesByName.find(name_handle);
-	if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+	auto type_it = getTypesByNameMap().find(name_handle);
+	if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 		return StringTable::getStringView(type_it->second->baseTemplateName());
 	}
 	return {};

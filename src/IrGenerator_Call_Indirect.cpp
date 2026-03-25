@@ -304,8 +304,8 @@
 							// assume the parameter has the closure type of the current lambda.
 							// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
 							// where self's type is deduced to __lambda_N&& when called
-							auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
-							if (type_it != gTypesByName.end()) {
+							auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* closure_type = type_it->second;
 								int closure_size = closure_type->getStructInfo()
 									? closure_type->getStructInfo()->total_size * 8
@@ -440,8 +440,8 @@
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
 					// Get the struct info for the member's type
-					if (resolved_member->type_index.value < gTypeInfo.size()) {
-						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index.value];
+					if (resolved_member->type_index.value < getTypeInfoCount()) {
+						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
 						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 						if (member_struct_info) {
 							// Look for the called function name in this struct's members
@@ -681,8 +681,8 @@
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 
-		if (struct_type_index < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[struct_type_index];
+		if (struct_type_index < getTypeInfoCount()) {
+			const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
 			struct_info = type_info.getStructInfo();
 
 			if (struct_info) {
@@ -721,8 +721,8 @@
 				if (!called_member_func && !struct_info->base_classes.empty()) {
 					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
-							if (base_spec.type_index.value < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
+							if (base_spec.type_index.value < getTypeInfoCount()) {
+								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {
@@ -1114,8 +1114,8 @@
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
 				auto struct_name = struct_info->getName();
-				auto type_it = gTypesByName.find(struct_name);
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(struct_name);
+				if (type_it != getTypesByNameMap().end()) {
 					struct_name = type_it->second->name();
 				}
 				auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
@@ -1194,8 +1194,8 @@
 												// For auto&& parameters inside lambdas (recursive lambda pattern),
 												// assume the parameter has the closure type of the current lambda.
 												// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
-												auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
-												if (type_it != gTypesByName.end()) {
+												auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+												if (type_it != getTypesByNameMap().end()) {
 													const TypeInfo* closure_type = type_it->second;
 													int closure_size = closure_type->getStructInfo()
 														? closure_type->getStructInfo()->total_size * 8

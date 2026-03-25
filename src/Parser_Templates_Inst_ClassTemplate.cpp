@@ -33,9 +33,9 @@ static StringHandle computeInstantiatedLookupName(
 				}
 				// User-defined type (struct/enum/any named type with a valid TypeIndex)
 				if (substituted_return_type_index.is_valid()
-				    && substituted_return_type_index.value < gTypeInfo.size()) {
+				    && substituted_return_type_index.value < getTypeInfoCount()) {
 					std::string_view udt_name = StringTable::getStringView(
-						gTypeInfo[substituted_return_type_index.value].name());
+						getTypeInfo(substituted_return_type_index).name());
 					if (!udt_name.empty()) {
 						return StringTable::getOrInternStringHandle(
 							StringBuilder().append("operator ").append(udt_name).commit());
@@ -79,11 +79,11 @@ static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 		return found;
 	}
 
-	auto struct_type_it = gTypesByName.find(struct_info->name);
-	if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
+	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
 		const TypeInfo* struct_type = struct_type_it->second;
-		auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
-		if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
+		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
 			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
 				return found;
 			}
@@ -314,17 +314,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// without needing string parsing (find('$')).
 			std::string_view inst_name = get_instantiated_class_name(template_name, template_args);
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
-			if (gTypesByName.find(inst_handle) == gTypesByName.end()) {
-				auto& type_info = gTypeInfo.emplace_back();
+			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
+				auto& type_info = add_empty_type_entry();
 				type_info.type_ = Type::UserDefined;
-				type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+				type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 				type_info.type_size_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
 				type_info.setTemplateInstantiationInfo(
 					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 					template_args_info);
-				gTypesByName[inst_handle] = &type_info;
+				getTypesByNameMap()[inst_handle] = &type_info;
 				FLASH_LOG_FORMAT(Templates, Debug, "Registered dependent placeholder '{}' with base template '{}'", inst_name, template_name);
 			}
 			
@@ -349,7 +349,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Build InstantiationKey for cycle detection
-	// Note: Caching is handled by gTypesByName check later in the function
+	// Note: Caching is handled by getTypesByNameMap() check later in the function
 	FlashCpp::InstantiationKey inst_key = FlashCpp::InstantiationQueue::makeKey(template_name, template_args);
 	
 	// Create RAII guard for in-progress tracking (handles cycle detection)
@@ -389,7 +389,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto get_substituted_type_size_bytes = [&](Type substituted_type, TypeIndex substituted_type_index) -> size_t {
 		if (substituted_type_index.is_valid()) {
-			for (const auto& ti : gTypeInfo) {
+			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == substituted_type_index) {
 					if (substituted_type == Type::Struct) {
 						if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
@@ -629,8 +630,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
 		
 		// Look up the member type
-		auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
-		if (resolved_type_it == gTypesByName.end()) {
+		auto resolved_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
+		if (resolved_type_it == getTypesByNameMap().end()) {
 			return std::nullopt;
 		}
 		
@@ -643,9 +644,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if this is an alias to a concrete type
 		if (resolved_type_info->type_ == Type::UserDefined && 
 		    resolved_type_index != resolved_type_info->type_index_ && 
-		    resolved_type_index.value < gTypeInfo.size()) {
+		    resolved_type_index.value < getTypeInfoCount()) {
 			// Follow the alias
-			const TypeInfo& aliased_type = gTypeInfo[resolved_type_index.value];
+			const TypeInfo& aliased_type = getTypeInfo(resolved_type_index);
 			resolved_base_type = aliased_type.type_;
 			resolved_type_index = aliased_type.type_index_;
 		}
@@ -729,8 +730,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 	// Check if we already have this instantiation
-	auto existing_type = gTypesByName.find(instantiated_name);
-	if (existing_type != gTypesByName.end()) {
+	auto existing_type = getTypesByNameMap().find(instantiated_name);
+	if (existing_type != getTypesByNameMap().end()) {
 		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name));
 		return std::nullopt;
 	}
@@ -804,8 +805,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Check if this is a dependent qualified type (like wrapper<T>::type)
 					// that needs resolution based on already-filled template arguments
 					if (default_type.type() == Type::UserDefined && default_type.type_index().is_valid() && 
-					    default_type.type_index().value < gTypeInfo.size()) {
-						const TypeInfo& default_type_info = gTypeInfo[default_type.type_index().value];
+					    default_type.type_index().value < getTypeInfoCount()) {
+						const TypeInfo& default_type_info = getTypeInfo(default_type.type_index());
 						std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
 						
 						// Try to resolve using each filled argument
@@ -848,8 +849,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
 								
 								// Look up the instantiated type
-								auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-								if (type_it != gTypesByName.end()) {
+								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+								if (type_it != getTypesByNameMap().end()) {
 									const TypeInfo* type_info = type_it->second;
 									if (type_info->getStructInfo()) {
 										const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -908,9 +909,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								// Try to get the type name from the token first (most reliable for template params)
 								if (type_spec.token().type() == Token::Type::Identifier) {
 									type_name = type_spec.token().value();
-								} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
+								} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < getTypeInfoCount()) {
 									// Fall back to gTypeInfo for fully resolved types
-									const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+									const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 									type_name = StringTable::getStringView(type_info.name());
 								}
 								
@@ -931,8 +932,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															case Type::Struct:
 															case Type::UserDefined:
 																// For struct types, we need to look up the size from TypeInfo
-																if (filled_arg.type_index.value < gTypeInfo.size()) {
-																	const TypeInfo& ti = gTypeInfo[filled_arg.type_index.value];
+																if (filled_arg.type_index.value < getTypeInfoCount()) {
+																	const TypeInfo& ti = getTypeInfo(filled_arg.type_index);
 																	if (ti.isStruct()) {
 																		const StructTypeInfo* si = ti.getStructInfo();
 																		if (si) {
@@ -981,8 +982,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
 		
 		// Check again if we already have this instantiation (with filled-in defaults)
-		auto existing_type_with_defaults = gTypesByName.find(instantiated_name);
-		if (existing_type_with_defaults != gTypesByName.end()) {
+		auto existing_type_with_defaults = getTypesByNameMap().find(instantiated_name);
+		if (existing_type_with_defaults != getTypesByNameMap().end()) {
 			FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
 			return std::nullopt;
 		}
@@ -1189,8 +1190,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// it with the concrete template arguments.
 			// Use TypeInfo metadata to detect incomplete instantiations and extract the base template name.
 			StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_name_str);
-			auto incomplete_type_it = gTypesByName.find(base_name_handle);
-			bool base_is_incomplete = incomplete_type_it != gTypesByName.end()
+			auto incomplete_type_it = getTypesByNameMap().find(base_name_handle);
+			bool base_is_incomplete = incomplete_type_it != getTypesByNameMap().end()
 				&& incomplete_type_it->second->is_incomplete_instantiation_;
 			if (base_is_incomplete && incomplete_type_it->second->isTemplateInstantiation()) {
 				std::string_view base_template_name = StringTable::getStringView(
@@ -1252,12 +1253,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string_view base_class_name = StringTable::getStringView(base_class_handle);
 			
 			// Look up the base class type
-			auto base_type_it = gTypesByName.find(base_class_handle);
-			if (base_type_it != gTypesByName.end()) {
+			auto base_type_it = getTypesByNameMap().find(base_class_handle);
+			if (base_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* base_type_info = base_type_it->second;
 				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
 			} else {
-				FLASH_LOG(Templates, Error, "Base class ", base_class_name, " not found in gTypesByName");
+				FLASH_LOG(Templates, Error, "Base class ", base_class_name, " not found in getTypesByNameMap()");
 			}
 		}
 
@@ -1318,8 +1319,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						} else if (arg_info.node.is<TypeSpecifierNode>()) {
 							TypeIndex idx = arg_info.node.as<TypeSpecifierNode>().type_index();
-							if (idx.value < gTypeInfo.size()) {
-								expanded = try_expand(gTypeInfo[idx.value].name_);
+							if (idx.value < getTypeInfoCount()) {
+								expanded = try_expand(getTypeInfo(idx).name_);
 							}
 						}
 						if (!expanded) {
@@ -1335,8 +1336,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					bool resolved = false;
 					if (arg_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
-						if ((is_struct_type(ts.type())) && ts.type_index().value < gTypeInfo.size()) {
-							std::string_view tname = StringTable::getStringView(gTypeInfo[ts.type_index().value].name());
+						if ((is_struct_type(ts.type())) && ts.type_index().value < getTypeInfoCount()) {
+							std::string_view tname = StringTable::getStringView(getTypeInfo(ts.type_index()).name());
 							auto it = spec_name_subst_map.find(tname);
 							if (it != spec_name_subst_map.end()) {
 								TemplateTypeArg a = it->second;
@@ -1360,7 +1361,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved = true;
 							}
 						} else if (std::holds_alternative<IdentifierNode>(expr)) {
-							// Identifier that may refer to a type in the substitution map or in gTypesByName
+							// Identifier that may refer to a type in the substitution map or in getTypesByNameMap()
 							std::string_view iname = std::get<IdentifierNode>(expr).name();
 							auto sit = spec_name_subst_map.find(iname);
 							if (sit != spec_name_subst_map.end()) {
@@ -1368,8 +1369,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved = true;
 							} else {
 								StringHandle h = StringTable::getOrInternStringHandle(iname);
-								auto type_it = gTypesByName.find(h);
-								if (type_it != gTypesByName.end()) {
+								auto type_it = getTypesByNameMap().find(h);
+								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
 									a.base_type = type_it->second->type_;
 									a.type_index = type_it->second->type_index_;
@@ -1414,8 +1415,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				std::string_view base_inst_name = get_instantiated_class_name(base_tpl_name, resolved_args);
 				StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
-				auto base_it = gTypesByName.find(base_inst_handle);
-				if (base_it != gTypesByName.end()) {
+				auto base_it = getTypesByNameMap().find(base_inst_handle);
+				if (base_it != getTypesByNameMap().end()) {
 					struct_info->addBaseClass(base_inst_name, base_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
 					FLASH_LOG_FORMAT(Templates, Debug, "Added deferred template base '{}' -> '{}'", base_tpl_name, base_inst_name);
 				} else {
@@ -1452,7 +1453,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -1477,7 +1479,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual alignment from gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -1640,8 +1643,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
 		// Get the pattern's StructTypeInfo
-		auto pattern_type_it = gTypesByName.find(pattern_struct.name());
-		if (pattern_type_it != gTypesByName.end()) {
+		auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
+		if (pattern_type_it != getTypesByNameMap().end()) {
 			const TypeInfo* pattern_type_info = pattern_type_it->second;
 			const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 			if (pattern_struct_info) {
@@ -2125,7 +2128,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append(type_alias.alias_name));
 			
 			// Check if already registered
-			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
+			if (getTypesByNameMap().find(qualified_alias_name) != getTypesByNameMap().end()) {
 				continue;  // Already registered
 			}
 			
@@ -2183,8 +2186,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									} else {
 										// For UserDefined types, look up the size from the type registry
 										substituted_size = 0;
-										if (substituted_type_index.value < gTypeInfo.size()) {
-											substituted_size = gTypeInfo[substituted_type_index.value].type_size_;
+										if (substituted_type_index.value < getTypeInfoCount()) {
+											substituted_size = getTypeInfo(substituted_type_index).type_size_;
 										}
 									}
 									FLASH_LOG(Templates, Debug, "Substituted template parameter '", 
@@ -2200,18 +2203,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			// Register the type alias globally with its qualified name
-			auto& alias_type_info = gTypeInfo.emplace_back(
+			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
 				substituted_type,
 				TypeIndex{substituted_type_index},
 				substituted_size
 			);
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+			(void)alias_type_info;
 
 			// If this alias refers to an unscoped enum, track its TypeIndex so that
 			// Struct::Enumerator qualified access (e.g. Tagged<int>::None) works in codegen.
-			if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
-				const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo();
+			if (substituted_type == Type::Enum && substituted_type_index.value < getTypeInfoCount()) {
+				const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo();
 				if (enum_info && !enum_info->is_scoped) {
 					struct_info->addNestedEnumIndex(substituted_type_index);
 				}
@@ -2381,10 +2384,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
 						Type concrete_type = deduced_arg.base_type;
-						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, TypeIndex{gTypeInfo.size()}, get_type_size_bits(concrete_type));
+						auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), concrete_type, get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
 							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-						gTypesByName.emplace(type_info.name(), &type_info);
 						template_scope.addParameter(&type_info);
 					}
 					
@@ -2636,8 +2638,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// that needs resolution based on already-filled template arguments
 				bool resolved = false;
 				if (default_type.type() == Type::UserDefined && default_type.type_index().is_valid() && 
-				    default_type.type_index().value < gTypeInfo.size()) {
-					const TypeInfo& default_type_info = gTypeInfo[default_type.type_index().value];
+				    default_type.type_index().value < getTypeInfoCount()) {
+					const TypeInfo& default_type_info = getTypeInfo(default_type.type_index());
 					std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
 					
 					// Try to resolve using each filled argument
@@ -2763,8 +2765,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 							
 							// Look up the instantiated type
-							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-							if (type_it != gTypesByName.end()) {
+							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
 								if (type_info->getStructInfo()) {
 									const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -2847,8 +2849,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								try_instantiate_class_template(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 								
 								// Look up the instantiated type
-								auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-								if (type_it != gTypesByName.end()) {
+								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+								if (type_it != getTypesByNameMap().end()) {
 									const TypeInfo* type_info = type_it->second;
 									if (type_info->getStructInfo()) {
 										const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -2897,9 +2899,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Try to get the type name from the token first (most reliable for template params)
 							if (type_spec.token().type() == Token::Type::Identifier) {
 								sizeof_type_name = type_spec.token().value();
-							} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
+							} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < getTypeInfoCount()) {
 								// Fall back to gTypeInfo for fully resolved types
-								const TypeInfo& sizeof_type_info = gTypeInfo[type_spec.type_index().value];
+								const TypeInfo& sizeof_type_info = getTypeInfo(type_spec.type_index());
 								sizeof_type_name = StringTable::getStringView(sizeof_type_info.name());
 							}
 							
@@ -2938,8 +2940,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														break;
 													case Type::Struct:
 														// For struct types, we need to look up the actual size
-														if (filled_arg.type_index.value < gTypeInfo.size()) {
-															const TypeInfo& struct_type = gTypeInfo[filled_arg.type_index.value];
+														if (filled_arg.type_index.value < getTypeInfoCount()) {
+															const TypeInfo& struct_type = getTypeInfo(filled_arg.type_index);
 															if (struct_type.getStructInfo()) {
 																size_in_bytes = struct_type.getStructInfo()->total_size;
 															}
@@ -3057,8 +3059,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
 	// Check if we already have this instantiation (after filling defaults)
-	existing_type = gTypesByName.find(instantiated_name);
-	if (existing_type != gTypesByName.end()) {
+	existing_type = getTypesByNameMap().find(instantiated_name);
+	if (existing_type != getTypesByNameMap().end()) {
 		FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
 		// Already instantiated, return the existing struct node
 		// We need to find the struct node in the AST
@@ -3130,10 +3132,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TemplateTypeArg& concrete_arg = subst_it->second;
 				
 				// Validate that the concrete type is a struct/class
-				if (concrete_arg.type_index.value >= gTypeInfo.size()) {
+				if (concrete_arg.type_index.value >= getTypeInfoCount()) {
 					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
 				} else {
-					const TypeInfo& concrete_type = gTypeInfo[concrete_arg.type_index.value];
+					const TypeInfo& concrete_type = getTypeInfo(concrete_arg.type_index);
 					if (concrete_type.type_ != Type::Struct) {
 						FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
 					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
@@ -3155,8 +3157,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto pack_it = pack_substitution_map.find(base_name_handle);
 				if (pack_it != pack_substitution_map.end()) {
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
-						if (pack_arg.type_index.value < gTypeInfo.size()) {
-							const TypeInfo& concrete_type = gTypeInfo[pack_arg.type_index.value];
+						if (pack_arg.type_index.value < getTypeInfoCount()) {
+							const TypeInfo& concrete_type = getTypeInfo(pack_arg.type_index);
 							if (concrete_type.type_ == Type::Struct &&
 							    !(concrete_type.struct_info_ && concrete_type.struct_info_->is_final)) {
 								struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), pack_arg.type_index, base.access, base.is_virtual);
@@ -3173,13 +3175,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else {
 			// Regular (non-deferred) base class
 			// Look up the base class type (may need to resolve type aliases)
-			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-			if (base_type_it != gTypesByName.end()) {
+			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
+			if (base_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* base_type_info = base_type_it->second;
 				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
 				FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
 			} else {
-				FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+				FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in getTypesByNameMap()");
 			}
 		}
 	}
@@ -3243,8 +3245,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (arg_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
 						TypeIndex idx = type_spec.type_index();
-						if (idx.value < gTypeInfo.size()) {
-							StringHandle pack_name = gTypeInfo[idx.value].name_;
+						if (idx.value < getTypeInfoCount()) {
+							StringHandle pack_name = getTypeInfo(idx).name_;
 							auto pack_it = pack_substitution_map.find(pack_name);
 							if (pack_it != pack_substitution_map.end()) {
 								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
@@ -3264,8 +3266,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeIndex resolved_index = type_spec.type_index();
 					bool resolved = false;
 					
-					if ((is_struct_type(resolved_type)) && resolved_index.value < gTypeInfo.size()) {
-						std::string_view type_name = StringTable::getStringView(gTypeInfo[resolved_index.value].name());
+					if ((is_struct_type(resolved_type)) && resolved_index.value < getTypeInfoCount()) {
+						std::string_view type_name = StringTable::getStringView(getTypeInfo(resolved_index).name());
 						auto subst_it = name_substitution_map.find(type_name);
 						if (subst_it != name_substitution_map.end()) {
 							TemplateTypeArg subst = subst_it->second;
@@ -3289,8 +3291,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									ast_nodes_.push_back(*instantiated);
 								}
 								std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
-								auto inst_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-								if (inst_it != gTypesByName.end()) {
+								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
 									inst_arg.base_type = Type::Struct;
 									inst_arg.type_index = inst_it->second->type_index_;
@@ -3364,8 +3366,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							[[maybe_unused]] bool substituted = false;
 							TypeSpecifierNode substituted_type_spec = type_spec;
 							
-							if ((is_struct_type(base_type)) && type_idx.value < gTypeInfo.size()) {
-								std::string_view type_name = StringTable::getStringView(gTypeInfo[type_idx.value].name());
+							if ((is_struct_type(base_type)) && type_idx.value < getTypeInfoCount()) {
+								std::string_view type_name = StringTable::getStringView(getTypeInfo(type_idx).name());
 								auto subst_it = name_substitution_map.find(type_name);
 								if (subst_it != name_substitution_map.end()) {
 									// Substitute the type
@@ -3437,8 +3439,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								} else if (targ_node.is<TypeSpecifierNode>()) {
 									const TypeSpecifierNode& type_spec = targ_node.as<TypeSpecifierNode>();
-									if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
-										std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index().value].name());
+									if (type_spec.type() == Type::UserDefined && type_spec.type_index().value < getTypeInfoCount()) {
+										std::string_view type_name = StringTable::getStringView(getTypeInfo(type_spec.type_index()).name());
 										auto subst_it = name_substitution_map.find(type_name);
 										if (subst_it != name_substitution_map.end()) {
 											substituted_func_template_args.push_back(subst_it->second);
@@ -3602,8 +3604,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				alias_builder.append(member_name);
 				std::string_view alias_name = alias_builder.commit();
 				
-				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
-				if (alias_it == gTypesByName.end()) {
+				auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
+				if (alias_it == getTypesByNameMap().end()) {
 					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
 					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
 					if (inherited_alias == nullptr) {
@@ -3616,8 +3618,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					// The inherited_alias is a type alias - resolve it to the underlying type
 					// If type_index_ is valid, use it to get the actual type name
-					if (inherited_alias->type_index_.value < gTypeInfo.size()) {
-						const TypeInfo& underlying_type = gTypeInfo[inherited_alias->type_index_.value];
+					if (inherited_alias->type_index_.value < getTypeInfoCount()) {
+						const TypeInfo& underlying_type = getTypeInfo(inherited_alias->type_index_);
 						final_base_name = StringTable::getStringView(underlying_type.name());
 					} else {
 						// Fallback: use the alias name if type_index is invalid
@@ -3633,8 +3635,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			}
 			
-			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(final_base_name));
-			if (base_type_it != gTypesByName.end()) {
+			auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(final_base_name));
+			if (base_type_it != getTypesByNameMap().end()) {
 				struct_info->addBaseClass(final_base_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
 			} else {
 				FLASH_LOG(Templates, Warning, "Deferred template base type not found: ", final_base_name);
@@ -3669,8 +3671,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex base_type_index = base_type_spec.type_index();
 				
 				// Look up the base class type by its type index
-				if (base_type == Type::Struct && base_type_index.value < gTypeInfo.size()) {
-					const TypeInfo& base_type_info = gTypeInfo[base_type_index.value];
+				if (base_type == Type::Struct && base_type_index.value < getTypeInfoCount()) {
+					const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 					std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 					
 					// Add the base class to the instantiated struct
@@ -3693,8 +3695,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			TypeIndex base_type_index = base_type_spec.type_index();
 			
 			// Look up the base class type by its type index
-			if (base_type == Type::Struct && base_type_index.value < gTypeInfo.size()) {
-				const TypeInfo& base_type_info = gTypeInfo[base_type_index.value];
+			if (base_type == Type::Struct && base_type_index.value < getTypeInfoCount()) {
+				const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 				
 				// Add the base class to the instantiated struct
@@ -3725,8 +3727,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		//   template<typename T> struct TD { TC<T> c; }; 
 		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
 		// We need to instantiate TC with the concrete args when instantiating TD.
-		if ((is_struct_type(member_type)) && member_type_index.value < gTypeInfo.size()) {
-			const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
+		if ((is_struct_type(member_type)) && member_type_index.value < getTypeInfoCount()) {
+			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
 			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name, 
@@ -3762,8 +3764,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// If instantiation succeeded, look up the instantiated type
 				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, template_args_to_use);
 				std::string inst_name(inst_name_view);
-				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-				if (inst_type_it != gTypesByName.end()) {
+				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+				if (inst_type_it != getTypesByNameMap().end()) {
 					// Update member_type_index to point to the instantiated type
 					member_type_index = inst_type_it->second->type_index_;
 					// Update member_type to match the instantiated type's actual type
@@ -3775,8 +3777,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// After template refactoring, instantiated templates may have Type::UserDefined
 		// but gTypeInfo correctly stores them as Type::Struct. Synchronize member_type.
-		if (member_type_index.value < gTypeInfo.size() && member_type_index.is_valid()) {
-			const TypeInfo& member_type_info = gTypeInfo[member_type_index.value];
+		if (member_type_index.value < getTypeInfoCount() && member_type_index.is_valid()) {
+			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			if (member_type_info.getStructInfo() && member_type == Type::UserDefined) {
 				// Fix Type::UserDefined to Type::Struct for instantiated templates
 				member_type = member_type_info.type_;
@@ -3880,7 +3882,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				member_size = 8;  // Pointers and references are 64-bit on x64
 			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3961,7 +3964,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				element_size = 8;
 			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3983,7 +3987,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -4012,7 +4017,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else if (member_type == Type::Struct && member_type_index.is_valid()) {
 			// For struct types, look up the actual alignment from gTypeInfo
 			const TypeInfo* member_struct_info = nullptr;
-			for (const auto& ti : gTypeInfo) {
+			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == member_type_index) {
 					member_struct_info = &ti;
 					break;
@@ -4072,9 +4078,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// We need to check both.
 	
 	// First, try to get static members from the template's StructTypeInfo
-	auto template_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
+	auto template_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
 	const StructTypeInfo* template_struct_info = nullptr;
-	if (template_type_it != gTypesByName.end() && template_type_it->second->getStructInfo()) {
+	if (template_type_it != getTypesByNameMap().end() && template_type_it->second->getStructInfo()) {
 		template_struct_info = template_type_it->second->getStructInfo();
 	}
 	
@@ -4633,7 +4639,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						element_size = 8;
 					} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
 						const TypeInfo* member_struct_info = nullptr;
-						for (const auto& ti : gTypeInfo) {
+						for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 							if (ti.type_index_ == substituted_type_index) {
 								member_struct_info = &ti;
 								break;
@@ -4652,7 +4659,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_size = 8;
 				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
-					for (const auto& ti : gTypeInfo) {
+					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == substituted_type_index) {
 							member_struct_info = &ti;
 							break;
@@ -4671,7 +4679,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_alignment = 8;
 				} else if (substituted_type == Type::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
-					for (const auto& ti : gTypeInfo) {
+					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == substituted_type_index) {
 							member_struct_info = &ti;
 							break;
@@ -4767,12 +4776,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringBuilder original_nested_name_builder;
 			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
 			std::string_view original_nested_name = original_nested_name_builder.commit();
-			auto original_nested_it = gTypesByName.find(StringTable::getOrInternStringHandle(original_nested_name));
-			if (original_nested_it != gTypesByName.end() && original_nested_it->second->getStructInfo()) {
+			auto original_nested_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(original_nested_name));
+			if (original_nested_it != getTypesByNameMap().end() && original_nested_it->second->getStructInfo()) {
 				copy_nested_static_members(*original_nested_it->second->getStructInfo());
 			} else {
-				auto simple_nested_it = gTypesByName.find(nested_struct.name());
-				if (simple_nested_it != gTypesByName.end() && simple_nested_it->second->getStructInfo()) {
+				auto simple_nested_it = getTypesByNameMap().find(nested_struct.name());
+				if (simple_nested_it != getTypesByNameMap().end() && simple_nested_it->second->getStructInfo()) {
 					copy_nested_static_members(*simple_nested_it->second->getStructInfo());
 				}
 			}
@@ -4792,13 +4801,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_name, qualified_name, template_params, template_args_to_use);
 
 			// Register the nested class in the type system
-			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, TypeIndex{gTypeInfo.size()}, 0); // Placeholder size
+			auto& nested_type_info = add_instantiated_type(qualified_name, Type::Struct, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
-			gTypesByName.emplace(qualified_name, &nested_type_info);
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
@@ -4825,8 +4833,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Check if already registered - skip only if it has actual members (from inline definition)
 		// Forward-declared nested classes are registered with no members; those need to be replaced.
-		auto existing_it = gTypesByName.find(qualified_name);
-		if (existing_it != gTypesByName.end()) {
+		auto existing_it = getTypesByNameMap().find(qualified_name);
+		if (existing_it != getTypesByNameMap().end()) {
 			TypeInfo* existing_nested_type = existing_it->second;
 			if (existing_nested_type->getStructInfo() && !existing_nested_type->getStructInfo()->members.empty()) {
 				FLASH_LOG(Templates, Debug, "Out-of-line nested class already has members: ", StringTable::getStringView(qualified_name));
@@ -4884,8 +4892,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (si) {
 			bool had_fixup = false;
 			for (auto& member : si->members) {
-				if (member.size == 0 && member.type_index.value < gTypeInfo.size()) {
-					const TypeInfo& mem_type_info = gTypeInfo[member.type_index.value];
+				if (member.size == 0 && member.type_index.value < getTypeInfoCount()) {
+					const TypeInfo& mem_type_info = getTypeInfo(member.type_index);
 					std::string_view mem_type_name = StringTable::getStringView(mem_type_info.name());
 					// Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
 					if (mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
@@ -4894,8 +4902,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						StringBuilder sb;
 						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
 							sb.append(instantiated_name).append("::").append(nested_name).commit());
-						auto resolved_it = gTypesByName.find(resolved_handle);
-						if (resolved_it != gTypesByName.end()) {
+						auto resolved_it = getTypesByNameMap().find(resolved_handle);
+						if (resolved_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_type = resolved_it->second;
 							member.type = resolved_type->type_;
 							member.type_index = resolved_type->type_index_;
@@ -4950,16 +4958,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Handle both UserDefined and Struct types (template types are often registered as Struct)
 		if (is_struct_type(substituted_type)) {
 			TypeIndex type_idx = alias_type_spec.type_index();
-			if (type_idx.value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_idx.value];
+			if (type_idx.value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(type_idx);
 				std::string_view type_name = StringTable::getStringView(type_info.name());
 				
 				// Check for self-referential type alias (e.g., "using type = bool_constant;" inside bool_constant template)
 				// When the template is instantiated (e.g., bool_constant_true), this should point to the instantiated type
 				if (type_name == template_name) {
 					// Self-referential type alias - point to the instantiated type
-					auto inst_it = gTypesByName.find(instantiated_name);
-					if (inst_it != gTypesByName.end()) {
+					auto inst_it = getTypesByNameMap().find(instantiated_name);
+					if (inst_it != getTypesByNameMap().end()) {
 						// Use the type_index_ field directly instead of pointer arithmetic
 						// Pointer arithmetic on deque elements is undefined behavior
 						TypeIndex inst_idx = inst_it->second->type_index_;
@@ -4982,24 +4990,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
-		// Register the type alias in gTypesByName
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
-		if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
-			if (const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo()) {
+		// Register the type alias in getTypesByNameMap()
+		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
+		if (substituted_type == Type::Enum && substituted_type_index.value < getTypeInfoCount()) {
+			if (const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo()) {
 				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 			}
 		}
 		// Use insert_or_assign so that a stale placeholder entry (e.g., from a
 		// prior partial instantiation that pointed at TTT$hash) is overwritten
 		// with the concrete type (e.g., MakeMid$hash).
-		gTypesByName.insert_or_assign(qualified_alias_name, &alias_type_info);
+		getTypesByNameMap().insert_or_assign(qualified_alias_name, &alias_type_info);
 		FLASH_LOG_FORMAT(Templates, Debug, "Registered type alias '{}' -> type={}, type_index={}",
 			StringTable::getStringView(qualified_alias_name), static_cast<int>(substituted_type), substituted_type_index);
 
 		// If this alias refers to an unscoped enum, track its TypeIndex so that
 		// Struct::Enumerator qualified access works in codegen.
-		if (substituted_type == Type::Enum && substituted_type_index.value < gTypeInfo.size()) {
-			const EnumTypeInfo* enum_info = gTypeInfo[substituted_type_index.value].getEnumInfo();
+		if (substituted_type == Type::Enum && substituted_type_index.value < getTypeInfoCount()) {
+			const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo();
 			if (enum_info && !enum_info->is_scoped) {
 				struct_info->addNestedEnumIndex(substituted_type_index);
 			}
@@ -5977,11 +5985,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (!template_params[i].is<TemplateParameterNode>()) continue;
 								const auto& template_param = template_params[i].as<TemplateParameterNode>();
 								if (template_param.kind() == TemplateParameterKind::Type && !template_args_to_use[i].is_value) {
-									auto type_it = gTypesByName.find(template_param.nameHandle());
-									if (type_it != gTypesByName.end()) {
+									auto type_it = getTypesByNameMap().find(template_param.nameHandle());
+									if (type_it != getTypesByNameMap().end()) {
 										type_sub_map[type_it->second->type_index_] = template_args_to_use[i];
 									} else {
-										type_sub_map[TypeIndex{gTypeInfo.size() + type_sub_map.size() + 1}] = template_args_to_use[i];
+										type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args_to_use[i];
 									}
 								} else if (template_param.kind() == TemplateParameterKind::NonType && template_args_to_use[i].is_value) {
 									nontype_sub_map[template_param.name()] = template_args_to_use[i].value;
@@ -6328,8 +6336,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Copy static members from the primary template
 	// Get the primary template's StructTypeInfo
-	auto primary_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
-	if (primary_type_it != gTypesByName.end()) {
+	auto primary_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
+	if (primary_type_it != getTypesByNameMap().end()) {
 		const TypeInfo* primary_type_info = primary_type_it->second;
 		const StructTypeInfo* primary_struct_info = primary_type_info->getStructInfo();
 		if (primary_struct_info) {
@@ -6586,7 +6594,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// PHASE 2: Parse deferred template member function bodies (two-phase lookup)
-	// Now that TypeInfo is fully created and registered in gTypesByName,
+	// Now that TypeInfo is fully created and registered in getTypesByNameMap(),
 	// we can parse the member function bodies that were deferred during template definition
 	// This allows static member lookups to work correctly
 	if (!template_class.deferred_bodies().empty()) {

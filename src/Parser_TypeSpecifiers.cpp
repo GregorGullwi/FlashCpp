@@ -75,8 +75,8 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	} else {
 		// User-defined type - look it up
 		StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-		auto type_it = gTypesByName.find(type_handle);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(type_handle);
+		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
 			cast_type = type_info->type_;
 			type_size = type_info->type_size_;
@@ -300,8 +300,8 @@ ParseResult Parser::parse_type_specifier()
 		// For concrete enum types, resolve to the underlying type
 		if (arg_type.type() == Type::Enum) {
 			// Look up the enum type to get its underlying type
-			if (arg_type.type_index().value < gTypeInfo.size()) {
-				const TypeInfo& enum_type_info = gTypeInfo[arg_type.type_index().value];
+			if (arg_type.type_index().value < getTypeInfoCount()) {
+				const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
 				if (enum_type_info.enum_info_) {
 					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
 					Type underlying = enum_info->underlying_type;
@@ -314,8 +314,8 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// If we have a type index, try to look up if it's an enum
-		if (arg_type.type_index().value < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[arg_type.type_index().value];
+		if (arg_type.type_index().value < getTypeInfoCount()) {
+			const TypeInfo& type_info = getTypeInfo(arg_type.type_index());
 			if (type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
 				Type underlying = enum_info->underlying_type;
@@ -653,15 +653,15 @@ ParseResult Parser::parse_type_specifier()
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name_builder.commit());
 
 		// Look up the struct type
-		auto type_it = gTypesByName.find(type_name_handle);
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_.value < gTypeInfo.size()) {
-				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
+			if (!struct_info && struct_type_info->type_index_.value < getTypeInfoCount()) {
+				const TypeInfo& actual_struct = getTypeInfo(struct_type_info->type_index_);
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
 					struct_info = actual_struct.getStructInfo();
@@ -696,8 +696,8 @@ ParseResult Parser::parse_type_specifier()
 		Token va_list_token = peek_info();
 		advance();
 		auto type_name_handle = va_list_token.handle();
-		auto type_it = gTypesByName.find(type_name_handle);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				Type::UserDefined, TypeQualifier::None,
 				static_cast<int>(type_it->second->type_size_),
@@ -765,8 +765,8 @@ ParseResult Parser::parse_type_specifier()
 
 		// Look up the type by its unqualified name
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
-		auto type_it = gTypesByName.find(type_name_handle);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
 			TypeIndex user_type_index = type_info->type_index_;
 			int type_size_bits = static_cast<int>(type_info->type_size_);
@@ -843,16 +843,16 @@ ParseResult Parser::parse_type_specifier()
 
 			if (is_dependent_qualified_type) {
 				StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-				auto type_it = gTypesByName.find(type_handle);
+				auto type_it = getTypesByNameMap().find(type_handle);
 				TypeIndex type_idx;
-				if (type_it == gTypesByName.end()) {
-					auto& placeholder_type = gTypeInfo.emplace_back();
+				if (type_it == getTypesByNameMap().end()) {
+					auto& placeholder_type = add_empty_type_entry();
 					placeholder_type.type_ = Type::UserDefined;
-					placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+					placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 					placeholder_type.type_size_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
-					gTypesByName[type_handle] = &placeholder_type;
+					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
 				} else {
 					type_idx = type_it->second->type_index_;
@@ -1086,13 +1086,13 @@ ParseResult Parser::parse_type_specifier()
 								instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
 							}
 							
-							// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
+							// Find the type by scanning gTypeInfo (safer than using getTypesByNameMap() pointer)
 							TypeIndex type_idx {};
 							bool found = false;
 							StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
 							
-							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
-								if (gTypeInfo[i].name() == target_handle) {
+							for (size_t i = 0; i < getTypeInfoCount(); ++i) {
+								if (getTypeInfo(TypeIndex{i}).name() == target_handle) {
 									type_idx = TypeIndex{i};
 									found = true;
 									break;
@@ -1100,7 +1100,7 @@ ParseResult Parser::parse_type_specifier()
 							}
 							
 							if (found) {
-								const TypeInfo& new_ti = gTypeInfo[type_idx.value];
+								const TypeInfo& new_ti = getTypeInfo(type_idx);
 								
 								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
 								
@@ -1125,8 +1125,8 @@ ParseResult Parser::parse_type_specifier()
 										FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias resolution");
 										
 										// Look up the member type
-										auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
-										if (member_type_it != gTypesByName.end()) {
+										auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+										if (member_type_it != getTypesByNameMap().end()) {
 											const TypeInfo* member_type_info = member_type_it->second;
 											FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1136,13 +1136,13 @@ ParseResult Parser::parse_type_specifier()
 										} else {
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-											auto& placeholder_type = gTypeInfo.emplace_back();
+											auto& placeholder_type = add_empty_type_entry();
 											placeholder_type.type_ = Type::UserDefined;
-											placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+											placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
-											gTypesByName[placeholder_type.name_] = &placeholder_type;
+											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
 												Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
 										}
@@ -1189,8 +1189,8 @@ ParseResult Parser::parse_type_specifier()
 						// The target type will have Type::UserDefined and a type_index pointing to
 						// the TypeInfo we created for the template parameter
 						bool is_template_param = false;
-						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < gTypeInfo.size()) {
-							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index().value];
+						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < getTypeInfoCount()) {
+							const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
 							}
@@ -1213,8 +1213,8 @@ ParseResult Parser::parse_type_specifier()
 							int size_bits = 0;
 							if (is_struct_type(arg.base_type)) {
 								// Look up the struct size from type_index
-								if (arg.type_index.value < gTypeInfo.size()) {
-									const TypeInfo& ti = gTypeInfo[arg.type_index.value];
+								if (arg.type_index.value < getTypeInfoCount()) {
+									const TypeInfo& ti = getTypeInfo(arg.type_index);
 									size_bits = static_cast<unsigned char>(ti.type_size_);
 								}
 							} else {
@@ -1256,8 +1256,8 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Get the type name from instantiated_type to look up member
 							std::string_view base_type_name;
-							if (instantiated_type.type_index().value < gTypeInfo.size()) {
-								base_type_name = StringTable::getStringView(gTypeInfo[instantiated_type.type_index().value].name());
+							if (instantiated_type.type_index().value < getTypeInfoCount()) {
+								base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
 							}
 							
 							// Build qualified type name
@@ -1271,8 +1271,8 @@ ParseResult Parser::parse_type_specifier()
 							FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after non-deferred alias resolution");
 							
 							// Look up the member type
-							auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
-							if (member_type_it != gTypesByName.end()) {
+							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+							if (member_type_it != getTypesByNameMap().end()) {
 								const TypeInfo* member_type_info = member_type_it->second;
 								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1282,13 +1282,13 @@ ParseResult Parser::parse_type_specifier()
 							} else {
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-								auto& placeholder_type = gTypeInfo.emplace_back();
+								auto& placeholder_type = add_empty_type_entry();
 								placeholder_type.type_ = Type::UserDefined;
-								placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+								placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
-								gTypesByName[placeholder_type.name_] = &placeholder_type;
+								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									Type::UserDefined, placeholder_type.type_index_, 0, member_token, cv_qualifier));
 							}
@@ -1340,17 +1340,17 @@ ParseResult Parser::parse_type_specifier()
 						
 						// Create or look up a placeholder type for this dependent type
 						auto type_handle = StringTable::getOrInternStringHandle(dependent_type_name);
-						auto type_it = gTypesByName.find(type_handle);
+						auto type_it = getTypesByNameMap().find(type_handle);
 						TypeIndex type_idx;
-						if (type_it == gTypesByName.end()) {
+						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
-							auto& placeholder_type = gTypeInfo.emplace_back();
+							auto& placeholder_type = add_empty_type_entry();
 							placeholder_type.type_ = Type::UserDefined;
-							placeholder_type.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+							placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
-							gTypesByName[type_handle] = &placeholder_type;
+							getTypesByNameMap()[type_handle] = &placeholder_type;
 							type_idx = placeholder_type.type_index_;
 							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
 						} else {
@@ -1376,19 +1376,19 @@ ParseResult Parser::parse_type_specifier()
 						auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
 
 						// Reuse existing placeholder if already created
-						auto existing = gTypesByName.find(type_handle);
-						if (existing != gTypesByName.end()) {
+						auto existing = getTypesByNameMap().find(type_handle);
+						if (existing != getTypesByNameMap().end()) {
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
 								Type::UserDefined, existing->second->type_index_, 0, type_name_token, CVQualifier::None));
 						}
 
 						// Create a new dependent placeholder with template instantiation metadata
-						auto& type_info = gTypeInfo.emplace_back();
+						auto& type_info = add_empty_type_entry();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+						type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 						type_info.type_size_ = 0;
 						type_info.name_ = type_handle;
-						gTypesByName[type_handle] = &type_info;
+						getTypesByNameMap()[type_handle] = &type_info;
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);
 						type_info.setTemplateInstantiationInfo(
@@ -1402,9 +1402,9 @@ ParseResult Parser::parse_type_specifier()
 					}
 
 					// Fallback: no template args - just reference the template parameter type
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-					if (type_it != gTypesByName.end()) {
-						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &gTypeInfo[0])};
+					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+					if (type_it != getTypesByNameMap().end()) {
+						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &getTypeInfo(TypeIndex{0}))};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							Type::UserDefined,
 							type_idx,
@@ -1512,8 +1512,8 @@ ParseResult Parser::parse_type_specifier()
 											try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 											
 											// Look up the instantiated type
-											auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-											if (type_it != gTypesByName.end()) {
+											auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+											if (type_it != getTypesByNameMap().end()) {
 												const TypeInfo* type_info = type_it->second;
 												if (type_info->getStructInfo()) {
 													const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -1592,15 +1592,15 @@ ParseResult Parser::parse_type_specifier()
 				// Also check if the instantiated name itself contains dependent template arguments
 				// (e.g., remove_cv<remove_reference<T>::type> where the arg is a dependent placeholder)
 				if (!has_dependent_args) {
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-					if (type_it != gTypesByName.end()) {
+					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+					if (type_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_info = type_it->second;
 						// Check if this instantiation has template arguments and any are dependent
 						if (type_info->isTemplateInstantiation()) {
 							const auto& template_arg_infos = type_info->templateArgs();
 							for (const auto& arg_info : template_arg_infos) {
 								// Check if argument is a UserDefined type (dependent placeholder)
-								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.value < gTypeInfo.size()) {
+								if (arg_info.base_type == Type::UserDefined && arg_info.type_index.value < getTypeInfoCount()) {
 									has_dependent_args = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;
@@ -1674,8 +1674,8 @@ ParseResult Parser::parse_type_specifier()
 							}
 						}
 						
-						auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
-						if (qual_type_it == gTypesByName.end()) {
+						auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+						if (qual_type_it == getTypesByNameMap().end()) {
 							// Type not found
 							// If there are template arguments, we need to parse them and include in the type name
 							// BUT: Check if the member is actually a known template first.
@@ -1770,13 +1770,13 @@ ParseResult Parser::parse_type_specifier()
 							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
-							auto& type_info = gTypeInfo.emplace_back();
+							auto& type_info = add_empty_type_entry();
 							type_info.type_ = Type::UserDefined;
-							type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+							type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
-							gTypesByName[type_idx] = &type_info;
+							getTypesByNameMap()[type_idx] = &type_info;
 							
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
 								Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
@@ -1785,8 +1785,8 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
-					auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
-					if (qual_type_it != gTypesByName.end()) {
+					auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+					if (qual_type_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_info = qual_type_it->second;
 						
 						// Handle both struct types and type aliases
@@ -1817,8 +1817,8 @@ ParseResult Parser::parse_type_specifier()
 						// while lookups here use the instantiated name (e.g., Outer$hash::Inner).
 						// Fall back to the primary outer template name when available.
 						if (!member_template_opt.has_value()) {
-							auto parent_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-							if (parent_type_it != gTypesByName.end() && parent_type_it->second->isTemplateInstantiation()) {
+							auto parent_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+							if (parent_type_it != getTypesByNameMap().end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
 								std::string_view template_member_name = template_member_builder.append(parent_type_it->second->baseTemplateName())
 									.append("::")
@@ -1841,8 +1841,8 @@ ParseResult Parser::parse_type_specifier()
 							}
 							
 							std::string_view member_instantiated_name = get_instantiated_class_name(StringTable::getStringView(member_template_name_handle), *member_template_args);
-							auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(member_instantiated_name));
-							if (member_type_it != gTypesByName.end()) {
+							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
+							if (member_type_it != getTypesByNameMap().end()) {
 								const TypeInfo* member_type_info = member_type_it->second;
 								int member_type_size = 0;
 								if (member_type_info->isStruct()) {
@@ -1928,8 +1928,8 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
-								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < gTypeInfo.size()) {
-									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index().value];
+								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().value < getTypeInfoCount()) {
+									const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;
 									}
@@ -1953,8 +1953,8 @@ ParseResult Parser::parse_type_specifier()
 									int size_bits = 0;
 									if (is_struct_type(arg.base_type)) {
 										// Look up the struct size from type_index
-										if (arg.type_index.value < gTypeInfo.size()) {
-											const TypeInfo& ti = gTypeInfo[arg.type_index.value];
+										if (arg.type_index.value < getTypeInfoCount()) {
+											const TypeInfo& ti = getTypeInfo(arg.type_index);
 											size_bits = static_cast<unsigned char>(ti.type_size_);
 										}
 									} else {
@@ -1991,8 +1991,8 @@ ParseResult Parser::parse_type_specifier()
 					// If we're in a template body and the instantiated name is an incomplete instantiation,
 					// this is likely a template-dependent nested type that can't be resolved yet.
 					StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-					auto inst_type_it = gTypesByName.find(inst_name_handle);
-					bool inst_is_incomplete = inst_type_it != gTypesByName.end()
+					auto inst_type_it = getTypesByNameMap().find(inst_name_handle);
+					bool inst_is_incomplete = inst_type_it != getTypesByNameMap().end()
 						&& inst_type_it->second->is_incomplete_instantiation_;
 					if (parsing_template_depth_ > 0 && inst_is_incomplete) {
 						// Create a placeholder UserDefined type for template-dependent nested types
@@ -2016,8 +2016,8 @@ ParseResult Parser::parse_type_specifier()
 					return ParseResult::error(std::string(error_msg), type_name_token);
 				}
 				
-				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-				if (inst_type_it != gTypesByName.end()) {
+				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+				if (inst_type_it != getTypesByNameMap().end()) {
 					const TypeInfo* existing_type = inst_type_it->second;
 					if (existing_type->isStruct()) {
 						// Return existing struct type
@@ -2042,12 +2042,12 @@ ParseResult Parser::parse_type_specifier()
 				if (has_dependent_args) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
-					auto& type_info = gTypeInfo.emplace_back();
+					auto& type_info = add_empty_type_entry();
 					type_info.type_ = Type::UserDefined;
-					type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+					type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
-					gTypesByName[type_idx] = &type_info;
+					getTypesByNameMap()[type_idx] = &type_info;
 					
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
 					// This is needed for deferred alias template detection
@@ -2121,8 +2121,8 @@ ParseResult Parser::parse_type_specifier()
 										
 										try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 										
-										auto type_it_inner = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-										if (type_it_inner != gTypesByName.end()) {
+										auto type_it_inner = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+										if (type_it_inner != getTypesByNameMap().end()) {
 											const TypeInfo* type_info = type_it_inner->second;
 											if (type_info->getStructInfo()) {
 												const StructTypeInfo* struct_info_inner = type_info->getStructInfo();
@@ -2169,8 +2169,8 @@ ParseResult Parser::parse_type_specifier()
 				
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
-				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+				if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
 					const TypeInfo* struct_type_info = inst_type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -2186,10 +2186,10 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check if the identifier is a template parameter (e.g., _Tp in template<typename _Tp>)
-		// This must be checked BEFORE looking up in gTypesByName to handle patterns like:
+		// This must be checked BEFORE looking up in getTypesByNameMap() to handle patterns like:
 		// __has_trivial_destructor(_Tp) where _Tp is a template parameter
 		// IMPORTANT: Skip this check during SFINAE context (in_sfinae_context_), because in that case
-		// the template parameters have been substituted with concrete types in gTypesByName, and we
+		// the template parameters have been substituted with concrete types in getTypesByNameMap(), and we
 		// should use the substituted types instead of creating dependent type placeholders.
 		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty() && !in_sfinae_context_) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
@@ -2198,8 +2198,8 @@ ParseResult Parser::parse_type_specifier()
 					// This is a template parameter - create a dependent type placeholder
 					// Look up the TypeInfo for this parameter (it should have been registered when
 					// the template parameters were parsed)
-					auto param_type_it = gTypesByName.find(param_name);
-					if (param_type_it != gTypesByName.end()) {
+					auto param_type_it = getTypesByNameMap().find(param_name);
+					if (param_type_it != getTypesByNameMap().end()) {
 						TypeIndex param_type_idx = param_type_it->second->type_index_;
 						FLASH_LOG_FORMAT(Templates, Debug, 
 							"parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}", 
@@ -2207,18 +2207,18 @@ ParseResult Parser::parse_type_specifier()
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, param_type_idx, 0, type_name_token, cv_qualifier));
 					} else {
-						// Template parameter not yet in gTypesByName - create a placeholder
+						// Template parameter not yet in getTypesByNameMap() - create a placeholder
 						// This can happen when parsing the template parameter list itself
 						FLASH_LOG_FORMAT(Templates, Debug, 
 							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
 							type_name);
-						auto& type_info = gTypeInfo.emplace_back();
+						auto& type_info = add_empty_type_entry();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = TypeIndex{gTypeInfo.size() - 1};
+						type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
-						gTypesByName[type_name_handle] = &type_info;
+						getTypesByNameMap()[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 					}
@@ -2232,7 +2232,7 @@ ParseResult Parser::parse_type_specifier()
 		// Before the global lookup, try struct-scoped typedef lookup.
 		// When multiple template specializations (e.g., char_traits<char> and char_traits<wchar_t>)
 		// each define a member typedef with the same simple name (e.g., char_type), both
-		// registrations insert into gTypesByName with the simple key.  gTypesByName.emplace()
+		// registrations insert into getTypesByNameMap() with the simple key.  getTypesByNameMap().emplace()
 		// won't overwrite, so only the FIRST specialization's entry survives under the simple key.
 		// This causes a wrong-type error (e.g., wchar_t body resolves char_type to char).
 		// Fix: prefer the struct-qualified name "StructName::type_name" when we are inside a
@@ -2243,8 +2243,8 @@ ParseResult Parser::parse_type_specifier()
 				StringBuilder sb;
 				StringHandle qualified = StringTable::getOrInternStringHandle(
 					sb.append(struct_name).append("::").append(type_name).commit());
-				auto it = gTypesByName.find(qualified);
-				if (it == gTypesByName.end()) return nullptr;
+				auto it = getTypesByNameMap().find(qualified);
+				if (it == getTypesByNameMap().end()) return nullptr;
 				const TypeInfo* info = it->second;
 				// Only accept concrete typedef entries (non-struct, non-placeholder)
 				if (info->isStruct() || info->is_incomplete_instantiation_) return nullptr;
@@ -2274,8 +2274,8 @@ ParseResult Parser::parse_type_specifier()
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
 			// follow the type_index to get the actual struct TypeInfo
-			if (!struct_info && struct_type_info->type_index_.value < gTypeInfo.size()) {
-				const TypeInfo& actual_struct = gTypeInfo[struct_type_info->type_index_.value];
+			if (!struct_info && struct_type_info->type_index_.value < getTypeInfoCount()) {
+				const TypeInfo& actual_struct = getTypeInfo(struct_type_info->type_index_);
 				if (actual_struct.isStruct() && actual_struct.getStructInfo()) {
 					struct_type_info = &actual_struct;
 					struct_info = actual_struct.getStructInfo();
@@ -2355,10 +2355,10 @@ ParseResult Parser::parse_type_specifier()
 					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
-			} else if (user_type_index.value < gTypeInfo.size()) {
+			} else if (user_type_index.value < getTypeInfoCount()) {
 				// Not a typedef - might be a struct type without size set in TypeInfo
 				// Look up actual size from struct info if available
-				const TypeInfo& actual_type_info = gTypeInfo[user_type_index.value];
+				const TypeInfo& actual_type_info = getTypeInfo(user_type_index);
 				if (actual_type_info.isStruct()) {
 					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
 					if (struct_info) {

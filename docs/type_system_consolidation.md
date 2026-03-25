@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-25  
-**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done.  
+**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -24,7 +24,7 @@
 | 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ⬜ TODO |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
-| 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ⬜ TODO |
+| 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
 | 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | ⬜ TODO |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
@@ -568,11 +568,12 @@ This is a behavior-preserving PR that establishes the encapsulation boundary for
 
 **Scope**: 1,624 external `gTypeInfo` accesses, 455 `.value < gTypeInfo.size()` checks, ~30 `TypeIndex{gTypeInfo.size()}` construction sites.
 
-- [ ] Add `getTypeInfo(TypeIndex)`, `getTypeInfoMut(TypeIndex)`, `findTypeByName()`, `findNativeType()` in `AstNodeTypes.h` / `AstNodeTypes.cpp`.
-- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}`.
-- [ ] Write a Python migration script to replace `gTypeInfo[x.value]` → `getTypeInfo(x)`, `x.value < gTypeInfo.size()` → `x.isValid()`, etc. across all files outside `AstNodeTypes.cpp`.
-- [ ] Hand-review the ~30 `TypeIndex{gTypeInfo.size()}` construction sites and convert them to use the returned index from `add*()`.
-- [ ] Remove `extern` declarations of `gTypeInfo`, `gTypesByName`, `gNativeTypes` from public headers so no new code can access them directly.
+- [x] Add `getTypeInfo(TypeIndex)`, `getTypeInfoMut(TypeIndex)`, `findTypeByName()`, `findNativeType()`, `getTypeInfoCount()`, `forEachTypeInfo<Fn>()` in `AstNodeTypes_DeclNodes.h` / `AstNodeTypes.cpp`.
+- [x] Add `add_template_param_type()`, `add_instantiated_type()`, `add_type_alias_copy()`, `add_empty_type_entry()` helpers for sites that previously called `gTypeInfo.emplace_back()` directly outside `AstNodeTypes.cpp`.
+- [x] Replace all external `gTypeInfo[x.value]` reads with `getTypeInfo(x)`, mutable accesses with `getTypeInfoMut(x)`, `gTypeInfo.size()` with `getTypeInfoCount()`.
+- [x] Replace external `gTypesByName` access with `findTypeByName()` / `getTypesByNameMap()`, external `gNativeTypes` access with `findNativeType()` / `getNativeTypesMap()`.
+- [x] Remove `extern` declarations of `gTypeInfo`, `gTypesByName`, `gNativeTypes` from `AstNodeTypes_DeclNodes.h` so no new code can access them directly.
+- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred to Milestone 7).
 
 #### Milestone 7 (Option D Steps 1-3) — Introduce `TypeCategory` and unify identity
 

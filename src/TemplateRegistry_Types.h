@@ -407,8 +407,8 @@ struct TemplateTypeArg {
 				case Type::Struct:
 				case Type::Enum:
 					// For user-defined types, look up the name from gTypeInfo
-					if (type_index.value < gTypeInfo.size()) {
-						result += StringTable::getStringView(gTypeInfo[type_index.value].name());
+					if (type_index.value < getTypeInfoCount()) {
+						result += StringTable::getStringView(getTypeInfo(type_index).name());
 					} else {
 						result += "?";
 					}

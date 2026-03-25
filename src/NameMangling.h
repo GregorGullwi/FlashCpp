@@ -177,8 +177,8 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			// Struct/class types use format: V<name>@@ (V for class/struct)
 			// Enum types use format: W4<name>@@
 			// Get the type name from the global type registry
-			if (type_node.type_index().value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
+			if (type_node.type_index().value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 				if (type_node.type() == Type::Enum) {
 					output += "W4";
 				} else {
@@ -318,8 +318,8 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			// For structs/classes/enums, use the type name
 			// For nested types, we need to split the name into components
 			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
-			if (type_node.type_index().value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
+			if (type_node.type_index().value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 				auto struct_name = StringTable::getStringView(type_info.name());
 				
 				// Check if this is a nested class (contains "::")
@@ -623,8 +623,8 @@ inline void appendItaniumTypeTemplateArgs(
 				case Type::UserDefined:
 				case Type::Enum: {
 					// For structs/classes/enums, use the type name from gTypeInfo
-					if (arg.type_index.value < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[arg.type_index.value];
+					if (arg.type_index.value < getTypeInfoCount()) {
+						const TypeInfo& type_info = getTypeInfo(arg.type_index);
 						auto struct_name = StringTable::getStringView(type_info.name());
 						output += std::to_string(struct_name.size());
 						output += struct_name;

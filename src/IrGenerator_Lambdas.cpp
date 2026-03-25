@@ -28,14 +28,14 @@
 		info.lambda_token = lambda.lambda_token();
 		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
 		if (current_struct_name_.isValid()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it != gTypesByName.end()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
 		} else if (current_lambda_context_.enclosing_struct_type_index.is_valid() &&
-			current_lambda_context_.enclosing_struct_type_index.value < gTypeInfo.size()) {
+			current_lambda_context_.enclosing_struct_type_index.value < getTypeInfoCount()) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
-			info.enclosing_struct_name = StringTable::getStringView(gTypeInfo[info.enclosing_struct_type_index.value].name());
+			info.enclosing_struct_name = StringTable::getStringView(getTypeInfo(info.enclosing_struct_type_index).name());
 		}
 
 		info.lambda_body = lambda.body();
@@ -135,8 +135,8 @@
 		LambdaInfo lambda_info = collectLambdaForDeferredGeneration(lambda);
 
 		// Look up the closure type (registered during parsing)
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
-		if (type_it == gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
+		if (type_it == getTypesByNameMap().end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
 			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -219,7 +219,8 @@
 						if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
 							// Copy each member of the enclosing struct into __copy_this
 							const TypeInfo* enclosing_type = nullptr;
-							for (const auto& ti : gTypeInfo) {
+							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 								if (ti.type_index_ == lambda_info.enclosing_struct_type_index) {
 									enclosing_type = &ti;
 									break;
@@ -376,8 +377,8 @@
 									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
 									int enclosing_offset = -1;
-									auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
-									if (enclosing_type_it != gTypesByName.end()) {
+									auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+									if (enclosing_type_it != getTypesByNameMap().end()) {
 										const TypeInfo* enclosing_type = enclosing_type_it->second;
 										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
 											const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
@@ -441,8 +442,8 @@
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
 								int enclosing_offset = -1;
-								auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
-								if (enclosing_type_it != gTypesByName.end()) {
+								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+								if (enclosing_type_it != getTypesByNameMap().end()) {
 									const TypeInfo* enclosing_type = enclosing_type_it->second;
 									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
 										const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
@@ -513,8 +514,8 @@
 		if (lambda_info.closure_type_name.empty()) {
 			return;  // No closure type, can't add member functions
 		}
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
+		if (type_it != getTypesByNameMap().end()) {
 			TypeInfo* closure_type = type_it->second;
 			StructTypeInfo* struct_info = closure_type->getStructInfo();
 			if (struct_info) {
@@ -961,8 +962,8 @@ const StructTypeInfo* AstToIr::getCurrentClosureStruct() const {
 	if (!current_lambda_context_.isActive()) {
 		return nullptr;
 	}
-	auto it = gTypesByName.find(current_lambda_context_.closure_type);
-	if (it == gTypesByName.end() || !it->second->isStruct()) {
+	auto it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+	if (it == getTypesByNameMap().end() || !it->second->isStruct()) {
 		return nullptr;
 	}
 	return it->second->getStructInfo();
@@ -1085,8 +1086,8 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 			}
 			// If type still not set, try to get it from closure struct member
 			if (current_lambda_context_.capture_types.find(var_name) == current_lambda_context_.capture_types.end()) {
-				auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
-				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+				if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
 						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
@@ -1201,8 +1202,8 @@ const Token& fallback_token) const {
 	}
 
 	StringHandle closure_type_name = lambda_ptr->generate_lambda_name();
-	auto type_it = gTypesByName.find(closure_type_name);
-	if (type_it == gTypesByName.end()) {
+	auto type_it = getTypesByNameMap().find(closure_type_name);
+	if (type_it == getTypesByNameMap().end()) {
 		return std::nullopt;
 	}
 

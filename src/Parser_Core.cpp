@@ -65,8 +65,8 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 		return static_cast<size_t>(get_type_size_bits(arg.base_type));
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
-	if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[arg.type_index.value];
+	if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(arg.type_index);
 		if (type_info.type_size_ > 0) {
 			return type_info.type_size_;
 		}
@@ -101,8 +101,8 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 // Returns: {is_dependent, base_template_name}
 std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name) {
 	// First try TypeInfo-based detection (O(1), preferred)
-	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-	if (type_it != gTypesByName.end()) {
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+	if (type_it != getTypesByNameMap().end()) {
 		const TypeInfo* type_info = type_it->second;
 		if (type_info->isTemplateInstantiation()) {
 			return {true, StringTable::getStringView(type_info->baseTemplateName())};
@@ -435,8 +435,8 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
-	if (type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
+	if (type_index.value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (type_info.struct_info_) {
 			return static_cast<int>(type_info.struct_info_->total_size * 8);
 		}

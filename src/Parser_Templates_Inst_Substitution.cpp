@@ -187,14 +187,14 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// If not found by type_index, try to find by matching type name with any substitution value
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
-			if (type_node.type() == Type::UserDefined && type_node.type_index().value < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[type_node.type_index().value].name());
+			if (type_node.type() == Type::UserDefined && type_node.type_index().value < getTypeInfoCount()) {
+				std::string_view type_name = StringTable::getStringView(getTypeInfo(type_node.type_index()).name());
 				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
 				
 				// Search substitution map for any entry where the key type_index has the same name
 				for (const auto& [key_type_index, arg] : type_substitution_map) {
-					if (key_type_index.value < gTypeInfo.size()) {
-						std::string_view param_name = StringTable::getStringView(gTypeInfo[key_type_index.value].name());
+					if (key_type_index.value < getTypeInfoCount()) {
+						std::string_view param_name = StringTable::getStringView(getTypeInfo(key_type_index).name());
 						if (param_name == type_name) {
 							FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
 							
@@ -419,8 +419,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			}
 		}
 		if (!arg.is_dependent && is_struct_type(arg.base_type) &&
-		    arg.type_index.value < gTypeInfo.size()) {
-			StringHandle type_name = gTypeInfo[arg.type_index.value].name();
+		    arg.type_index.value < getTypeInfoCount()) {
+			StringHandle type_name = getTypeInfo(arg.type_index).name();
 			for (const auto& subst : template_param_substitutions_) {
 				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
 					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
@@ -595,8 +595,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// when multiple templates use the same parameter name (e.g., 'T').
 			if (orig_type.type() == Type::UserDefined) {
 				// Check if orig_type's type name matches this template parameter
-				if (orig_type.type_index().value < gTypeInfo.size()) {
-					std::string_view orig_type_name = StringTable::getStringView(gTypeInfo[orig_type.type_index().value].name());
+				if (orig_type.type_index().value < getTypeInfoCount()) {
+					std::string_view orig_type_name = StringTable::getStringView(getTypeInfo(orig_type.type_index()).name());
 					if (orig_type_name == param_name) {
 						// Use the type_index from orig_type directly
 						param_type_index = orig_type.type_index();
@@ -610,9 +610,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			if (!found_param) {
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
-				for (TypeIndex ti {}; ti.value < gTypeInfo.size(); ++ti) {
-					if (gTypeInfo[ti.value].type_ == Type::UserDefined || gTypeInfo[ti.value].type_ == Type::Template) {
-						if (StringTable::getStringView(gTypeInfo[ti.value].name()) == param_name) {
+				for (TypeIndex ti {}; ti.value < getTypeInfoCount(); ++ti) {
+					if (getTypeInfo(ti).type_ == Type::UserDefined || getTypeInfo(ti).type_ == Type::Template) {
+						if (StringTable::getStringView(getTypeInfo(ti).name()) == param_name) {
 							param_type_index = TypeIndex{ti};
 							found_param = true;
 							break;
@@ -807,7 +807,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				.append(type_alias.alias_name));
 			
 			// Check if already registered
-			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
+			if (getTypesByNameMap().find(qualified_alias_name) != getTypesByNameMap().end()) {
 				continue;  // Already registered
 			}
 			
@@ -815,18 +815,17 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 			
 			// Register the type alias globally with its qualified name
-			auto& alias_type_info = gTypeInfo.emplace_back(
+			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
 				alias_type_spec.type(),
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
-			if (alias_type_spec.type() == Type::Enum && alias_type_spec.type_index().value < gTypeInfo.size()) {
-				if (const EnumTypeInfo* enum_info = gTypeInfo[alias_type_spec.type_index().value].getEnumInfo()) {
+			if (alias_type_spec.type() == Type::Enum && alias_type_spec.type_index().value < getTypeInfoCount()) {
+				if (const EnumTypeInfo* enum_info = getTypeInfo(alias_type_spec.type_index()).getEnumInfo()) {
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}
 			}
-			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name), 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
@@ -835,8 +834,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	};
 	
 	// Check if we already have this instantiation
-	auto existing_type = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-	if (existing_type != gTypesByName.end()) {
+	auto existing_type = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+	if (existing_type != getTypesByNameMap().end()) {
 		FLASH_LOG(Templates, Debug, "Full spec already instantiated: ", instantiated_name);
 		
 		// Even if the struct is already instantiated, we need to register type aliases
@@ -862,8 +861,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				// Look up the template's registered TypeInfo to get its declaration-site
 				// NamespaceHandle. This handles global-scope full specializations
 				// (e.g., template<> struct Foo<int> {}) instantiated from a non-global namespace.
-				auto tmpl_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
-				if (tmpl_it != gTypesByName.end()) {
+				auto tmpl_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
+				if (tmpl_it != getTypesByNameMap().end()) {
 					decl_ns = tmpl_it->second->namespaceHandle();
 				}
 			}
@@ -922,8 +921,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Look up the specialization's StructTypeInfo to get static members
 	// (The specialization should have been parsed and its TypeInfo registered already)
 	auto spec_name_lookup = spec_struct.name();
-	auto spec_type_it = gTypesByName.find(spec_name_lookup);
-	if (spec_type_it != gTypesByName.end()) {
+	auto spec_type_it = getTypesByNameMap().find(spec_name_lookup);
+	if (spec_type_it != getTypesByNameMap().end()) {
 		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
 		if (spec_struct_info) {
 			for (const auto& static_member : spec_struct_info->static_members) {

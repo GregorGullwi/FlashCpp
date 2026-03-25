@@ -17,8 +17,8 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 		return value.exact_type;
 	}
 
-	if (value.object_type_index.is_valid() && value.object_type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[value.object_type_index.value];
+	if (value.object_type_index.is_valid() && value.object_type_index.value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(value.object_type_index);
 		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);
 	}
 
@@ -742,10 +742,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			return std::nullopt;
 		}
 		bound_type_index = object_it->second.object_type_index;
-		if (bound_type_index.value >= gTypeInfo.size()) {
+		if (bound_type_index.value >= getTypeInfoCount()) {
 			return EvalResult::error("Invalid bound object type for constexpr member function call");
 		}
-		const TypeInfo& type_info = gTypeInfo[bound_type_index.value];
+		const TypeInfo& type_info = getTypeInfo(bound_type_index);
 		bound_struct_info = type_info.getStructInfo();
 		if (!bound_struct_info) {
 			return EvalResult::error("Bound constexpr object is not a struct");
@@ -820,7 +820,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	} else if (object_name == "this") {
 		try_load_current_struct_template_bindings(context);
 	} else {
-		load_template_bindings_from_type(&gTypeInfo[bound_type_index.value], context);
+		load_template_bindings_from_type(&getTypeInfo(bound_type_index), context);
 	}
 
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -838,8 +838,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
-		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
-			context.return_type_info = &gTypeInfo[ret_idx.value];
+		if (ret_idx.is_valid() && ret_idx.value < getTypeInfoCount())
+			context.return_type_info = &getTypeInfo(ret_idx);
 	}
 	context.current_depth++;
 	auto result = evaluate_block_with_bindings(
@@ -885,10 +885,10 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	const EvalResult& object,
 	std::string_view func_name,
 	EvaluationContext& context) {
-	if (!object.object_type_index.is_valid() || object.object_type_index.value >= gTypeInfo.size())
+	if (!object.object_type_index.is_valid() || object.object_type_index.value >= getTypeInfoCount())
 		return EvalResult::error("Object has no valid type info for member function '" + std::string(func_name) + "'");
 
-	const TypeInfo& type_info = gTypeInfo[object.object_type_index.value];
+	const TypeInfo& type_info = getTypeInfo(object.object_type_index);
 	const StructTypeInfo* struct_info = type_info.getStructInfo();
 	if (!struct_info)
 		return EvalResult::error("Object is not a struct type for member function '" + std::string(func_name) + "'");
@@ -909,11 +909,11 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	if ((!match.function && !match.ambiguous) ||
 		(match.function && !match.function->get_definition().has_value())) {
 		// Try the base template's struct info for template instantiations.
-		auto struct_type_it = gTypesByName.find(struct_info->name);
-		if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+		auto struct_type_it = getTypesByNameMap().find(struct_info->name);
+		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
 			const TypeInfo* struct_type = struct_type_it->second;
-			auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
-			if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+			auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
+			if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
 				match = find_member_function_candidate(
 					template_type_it->second->getStructInfo(),
 					func_name_handle,
@@ -967,8 +967,8 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	if (match.function->decl_node().type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
-		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
-			context.return_type_info = &gTypeInfo[ret_idx.value];
+		if (ret_idx.is_valid() && ret_idx.value < getTypeInfoCount())
+			context.return_type_info = &getTypeInfo(ret_idx);
 	}
 	context.current_depth++;
 
@@ -1112,11 +1112,11 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		return result;
 	}
 
-	auto struct_type_it = gTypesByName.find(context.struct_info->name);
-	if (struct_type_it != gTypesByName.end() && struct_type_it->second->isTemplateInstantiation()) {
+	auto struct_type_it = getTypesByNameMap().find(context.struct_info->name);
+	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
 		const TypeInfo* struct_type = struct_type_it->second;
-		auto template_type_it = gTypesByName.find(struct_type->baseTemplateName());
-		if (template_type_it != gTypesByName.end() && template_type_it->second->isStruct()) {
+		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
+		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
 			return find_member_function_candidate(
 				template_type_it->second->getStructInfo(),
 				function_name_handle,
@@ -1924,7 +1924,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					EvalResult this_obj = EvalResult::from_int(0);
 					// Use the cached type index; validate it before trusting it.
 					if (context.struct_type_index.is_valid() &&
-						context.struct_type_index.value < gTypeInfo.size()) {
+						context.struct_type_index.value < getTypeInfoCount()) {
 						this_obj.object_type_index = context.struct_type_index;
 					} else {
 						// struct_type_index must be set alongside struct_info when entering a
@@ -2120,7 +2120,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 			if ((is_struct_type(type_spec.type())) &&
-				type_spec.type_index().is_valid() && type_spec.type_index().value < gTypeInfo.size()) {
+				type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
 				return materialize_constructor_object_value(*ctor_call, context, &bindings);
 			}
 		}
@@ -2675,20 +2675,20 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", StringTable::getStringView(struct_handle), "' for member '", qualified_id.name(), "'");
 			}
 			
-			// Look up the struct in gTypesByName
-			auto struct_type_it = gTypesByName.find(struct_handle);
+			// Look up the struct in getTypesByNameMap()
+			auto struct_type_it = getTypesByNameMap().find(struct_handle);
 			
 			// If not found with the full qualified name (e.g., "std::is_integral$hash"),
 			// try without the namespace prefix (e.g., "is_integral$hash") since template
 			// instantiations are often registered with just the short name
-			if (struct_type_it == gTypesByName.end()) {
+			if (struct_type_it == getTypesByNameMap().end()) {
 				std::string_view full_name = StringTable::getStringView(struct_handle);
 				size_t last_colon = full_name.rfind("::");
 				if (last_colon != std::string_view::npos) {
 					std::string_view short_name = full_name.substr(last_colon + 2);
 					StringHandle short_handle = StringTable::getOrInternStringHandle(short_name);
-					struct_type_it = gTypesByName.find(short_handle);
-					if (struct_type_it != gTypesByName.end()) {
+					struct_type_it = getTypesByNameMap().find(short_handle);
+					if (struct_type_it != getTypesByNameMap().end()) {
 						FLASH_LOG(ConstExpr, Debug, "Found type using short name '", short_name, "'");
 					}
 				}
@@ -2699,7 +2699,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			const StructTypeInfo* struct_info = nullptr;
 			const TypeInfo* resolved_type_info = nullptr;
 			
-			if (struct_type_it != gTypesByName.end()) {
+			if (struct_type_it != getTypesByNameMap().end()) {
 				const TypeInfo* type_info = struct_type_it->second;
 				
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
@@ -2712,13 +2712,13 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				// Limit iterations to prevent infinite loops from cycles
 				constexpr size_t MAX_ALIAS_CHAIN_DEPTH = 100;
 				size_t alias_depth = 0;
-				while (type_info && type_info->type_index_.is_valid() && type_info->type_index_.value < gTypeInfo.size() && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
+				while (type_info && type_info->type_index_.is_valid() && type_info->type_index_.value < getTypeInfoCount() && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
 					// Check if we already have StructInfo - if so, we're done
 					if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 						break;
 					}
 					// Follow the type_index_ to find the underlying type
-					const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
+					const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
 					if (&underlying == type_info) break;  // Avoid direct self-reference
 					if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 						FLASH_LOG(ConstExpr, Debug, "Following type alias to index ", type_info->type_index_);
@@ -2734,10 +2734,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 			
 			// If still not found, try resolving by checking if there's a type alias in gTypeInfo
-			// Note: This linear search is a fallback for edge cases; primary lookup uses gTypesByName
+			// Note: This linear search is a fallback for edge cases; primary lookup uses getTypesByNameMap()
 			if (!struct_info) {
 				// Try looking up by iterating through gTypeInfo to find a type with matching name
-				for (const auto& type_info : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& type_info = getTypeInfo(TypeIndex{_gti_i_});
 					if (type_info.isStruct()) {
 						const StructTypeInfo* si = type_info.getStructInfo();
 						if (si && si->name == struct_handle) {
@@ -2762,8 +2763,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 					for (const auto& base : struct_info->base_classes) {
-						if (base.type_index.value < gTypeInfo.size()) {
-							FLASH_LOG(ConstExpr, Debug, "  base type_index=", base.type_index, " name='", StringTable::getStringView(gTypeInfo[base.type_index.value].name_), "'");
+						if (base.type_index.value < getTypeInfoCount()) {
+							FLASH_LOG(ConstExpr, Debug, "  base type_index=", base.type_index, " name='", StringTable::getStringView(getTypeInfo(base.type_index).name_), "'");
 						}
 					}
 					FLASH_LOG(ConstExpr, Debug, "  static members=", struct_info->static_members.size(), ", non-static members=", struct_info->members.size());
@@ -2849,8 +2850,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						.struct_info = nullptr
 					};
 					
-					if (input.type_index.is_valid() && input.type_index.value < gTypeInfo.size()) {
-						input.type_info = &gTypeInfo[input.type_index.value];
+					if (input.type_index.is_valid() && input.type_index.value < getTypeInfoCount()) {
+						input.type_info = &getTypeInfo(input.type_index);
 						input.base_type = input.type_info->type_;
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
@@ -2925,8 +2926,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 					for (const auto& base : struct_info->base_classes) {
-						if (base.type_index.value < gTypeInfo.size()) {
-							if (auto synthesized = evaluate_integral_constant_value(gTypeInfo[base.type_index.value])) {
+						if (base.type_index.value < getTypeInfoCount()) {
+							if (auto synthesized = evaluate_integral_constant_value(getTypeInfo(base.type_index))) {
 								FLASH_LOG(ConstExpr, Debug, "Synthesized integral_constant value from base template args");
 								return *synthesized;
 							}
@@ -3059,8 +3060,8 @@ EvalResult Evaluator::evaluate_arrow_member_from_pointer_var(
 			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
 			ptr_type_index = var_type_spec.type_index();
 
-			if (check_static && ptr_type_index.is_valid() && ptr_type_index.value < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[ptr_type_index.value];
+			if (check_static && ptr_type_index.is_valid() && ptr_type_index.value < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(ptr_type_index);
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
@@ -3192,8 +3193,8 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
 			var_type_index = var_type_spec.type_index();
 			
-			if (var_type_index.is_valid() && var_type_index.value < gTypeInfo.size()) {
-				const TypeInfo& var_type_info = gTypeInfo[var_type_index.value];
+			if (var_type_index.is_valid() && var_type_index.value < getTypeInfoCount()) {
+				const TypeInfo& var_type_info = getTypeInfo(var_type_index);
 				const StructTypeInfo* struct_info = var_type_info.getStructInfo();
 				
 				if (struct_info) {
@@ -3302,11 +3303,11 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 	const ASTNode& initializer = object_initializer.value();
 	if (initializer.is<InitializerListNode>()) {
-		if (!declared_type_index.is_valid() || declared_type_index.value >= gTypeInfo.size()) {
+		if (!declared_type_index.is_valid() || declared_type_index.value >= getTypeInfoCount()) {
 			return EvalResult::error("Invalid type index in " + std::string(usage_name));
 		}
 
-		const StructTypeInfo* struct_info = gTypeInfo[declared_type_index.value].getStructInfo();
+		const StructTypeInfo* struct_info = getTypeInfo(declared_type_index).getStructInfo();
 		if (!struct_info) {
 			return EvalResult::error("Aggregate-initialized constexpr object is not a struct in " + std::string(usage_name));
 		}
@@ -3389,11 +3390,11 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	if (type_index.value >= getTypeInfoCount()) {
 		return EvalResult::error("Invalid type index in " + std::string(usage_name));
 	}
 
-	const StructTypeInfo* struct_info = gTypeInfo[type_index.value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(type_index).getStructInfo();
 	if (!struct_info) {
 		return EvalResult::error("Type is not a struct in " + std::string(usage_name));
 	}
@@ -3466,11 +3467,11 @@ const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNo
 	}
 	
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	if (type_index.value >= getTypeInfoCount()) {
 		return nullptr;
 	}
 	
-	const TypeInfo& type_info = gTypeInfo[type_index.value];
+	const TypeInfo& type_info = getTypeInfo(type_index);
 	return type_info.getStructInfo();
 }
 
@@ -3553,11 +3554,11 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			}
 
 			if (!base_result.object_type_index.is_valid() ||
-				base_result.object_type_index.value >= gTypeInfo.size()) {
+				base_result.object_type_index.value >= getTypeInfoCount()) {
 				return EvalResult::error("Base expression has invalid or out-of-bounds type index in nested member access");
 			}
 
-			const StructTypeInfo* base_struct_info = gTypeInfo[base_result.object_type_index.value].getStructInfo();
+			const StructTypeInfo* base_struct_info = getTypeInfo(base_result.object_type_index).getStructInfo();
 			if (!base_struct_info) {
 				return EvalResult::error("Base expression in nested member access is not a struct object");
 			}
@@ -3588,10 +3589,10 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				intermediate_result.object_member_bindings.empty() &&
 				(is_struct_type(intermediate_member_info->type)) &&
 				intermediate_member_info->type_index.is_valid() &&
-				intermediate_member_info->type_index.value < gTypeInfo.size();
+				intermediate_member_info->type_index.value < getTypeInfoCount();
 			if (needs_intermediate_materialization) {
 				if (const StructTypeInfo* intermediate_struct_info =
-					gTypeInfo[intermediate_member_info->type_index.value].getStructInfo()) {
+					getTypeInfo(intermediate_member_info->type_index).getStructInfo()) {
 					auto ctor_resolution = resolve_constructor_overload_arity(*intermediate_struct_info, 1, true);
 					const ConstructorDeclarationNode* matching_ctor = ctor_resolution.selected_overload;
 					if (matching_ctor) {
@@ -3734,11 +3735,11 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		return evaluate(final_member_source.initializer.value(), context);
 	}
 
-	if (inner_type_index.value >= gTypeInfo.size()) {
+	if (inner_type_index.value >= getTypeInfoCount()) {
 		return EvalResult::error("Invalid inner type index");
 	}
 
-	const StructTypeInfo* inner_struct_info = gTypeInfo[inner_type_index.value].getStructInfo();
+	const StructTypeInfo* inner_struct_info = getTypeInfo(inner_type_index).getStructInfo();
 	if (!inner_struct_info) {
 		return EvalResult::error("Inner member type is not a struct");
 	}
@@ -4108,11 +4109,11 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	
 	// Get the struct type name
 	TypeIndex type_index = return_type.type_index();
-	if (type_index.value >= gTypeInfo.size()) {
+	if (type_index.value >= getTypeInfoCount()) {
 		return EvalResult::error("Invalid type index for function return type");
 	}
 	
-	const TypeInfo& type_info = gTypeInfo[type_index.value];
+	const TypeInfo& type_info = getTypeInfo(type_index);
 	const StructTypeInfo* struct_info = type_info.getStructInfo();
 	if (!struct_info) {
 		return EvalResult::error("Return type is not a struct");
@@ -4265,20 +4266,20 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			return EvalResult::error("Member function call requires a struct type");
 		}
 		type_index = type_spec.type_index();
-		if (type_index.value < gTypeInfo.size()) {
-			struct_info = gTypeInfo[type_index.value].getStructInfo();
+		if (type_index.value < getTypeInfoCount()) {
+			struct_info = getTypeInfo(type_index).getStructInfo();
 		}
-		if (!struct_info && declared_type_index.is_valid() && declared_type_index.value < gTypeInfo.size()) {
+		if (!struct_info && declared_type_index.is_valid() && declared_type_index.value < getTypeInfoCount()) {
 			type_index = TypeIndex{declared_type_index};
-			struct_info = gTypeInfo[type_index.value].getStructInfo();
+			struct_info = getTypeInfo(type_index).getStructInfo();
 		}
 	} else {
 		// Brace-initialized object: resolve type from the declared object type.
-		if (!declared_type_index.is_valid() || declared_type_index.value >= gTypeInfo.size()) {
+		if (!declared_type_index.is_valid() || declared_type_index.value >= getTypeInfoCount()) {
 			return EvalResult::error("Brace-initialized object has invalid type in member function call");
 		}
 		type_index = TypeIndex{declared_type_index};
-		struct_info = gTypeInfo[type_index.value].getStructInfo();
+		struct_info = getTypeInfo(type_index).getStructInfo();
 	}
 	
 	if (!struct_info) {
@@ -4355,7 +4356,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			context.template_args.push_back(toTemplateTypeArg(arg));
 		}
 	} else {
-		load_template_bindings_from_type(&gTypeInfo[type_index.value], context);
+		load_template_bindings_from_type(&getTypeInfo(type_index), context);
 	}
 		auto saved_struct_info = context.struct_info;
 		auto saved_struct_type_index = context.struct_type_index;
@@ -4367,8 +4368,8 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
-		if (ret_idx.is_valid() && ret_idx.value < gTypeInfo.size())
-			context.return_type_info = &gTypeInfo[ret_idx.value];
+		if (ret_idx.is_valid() && ret_idx.value < getTypeInfoCount())
+			context.return_type_info = &getTypeInfo(ret_idx);
 	}
 	
 	// Increase recursion depth
@@ -4425,11 +4426,11 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	}
 
 	TypeIndex type_index = type_spec.type_index();
-	if (!type_index.is_valid() || type_index.value >= gTypeInfo.size()) {
+	if (!type_index.is_valid() || type_index.value >= getTypeInfoCount()) {
 		return EvalResult::error("Constructor call has invalid struct/class type");
 	}
 
-	const StructTypeInfo* struct_info = gTypeInfo[type_index.value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(type_index).getStructInfo();
 	if (!struct_info) {
 		return EvalResult::error("Constructor call type is not a struct/class");
 	}
@@ -4476,8 +4477,8 @@ EvalResult Evaluator::materialize_array_value(
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
 			(is_struct_type(element_type)) &&
-			element_type_index.is_valid() && element_type_index.value < gTypeInfo.size()) {
-			if (const StructTypeInfo* element_struct_info = gTypeInfo[element_type_index.value].getStructInfo()) {
+			element_type_index.is_valid() && element_type_index.value < getTypeInfoCount()) {
+			if (const StructTypeInfo* element_struct_info = getTypeInfo(element_type_index).getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
 					element_struct_info,
 					element_type_index,
@@ -4700,8 +4701,8 @@ EvalResult materialize_member_initializer_value(
 		}
 
 		if ((is_struct_type(member_info.type)) &&
-			member_info.type_index.is_valid() && member_info.type_index.value < gTypeInfo.size()) {
-			if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info.type_index.value].getStructInfo()) {
+			member_info.type_index.is_valid() && member_info.type_index.value < getTypeInfoCount()) {
+			if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info.type_index).getStructInfo()) {
 				return Evaluator::materialize_aggregate_object_value(
 					member_struct_info,
 					member_info.type_index,
@@ -4743,7 +4744,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				initializer.is<InitializerListNode>() &&
 				(is_struct_type(member_info->type)) &&
 				member_info->type_index.is_valid() &&
-				member_info->type_index.value < gTypeInfo.size();
+				member_info->type_index.value < getTypeInfoCount();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
@@ -4757,7 +4758,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				// Nested InitializerListNode for a struct member — use aggregate materializer
 				// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
-				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
+				if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info->type_index).getStructInfo()) {
 					val = Evaluator::materialize_aggregate_object_value(
 						member_struct_info,
 						member_info->type_index,
@@ -4848,8 +4849,8 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 					}
 				}
 			} else if ((is_struct_type(member_info->type)) &&
-				member_info->type_index.is_valid() && member_info->type_index.value < gTypeInfo.size()) {
-				if (const StructTypeInfo* member_struct_info = gTypeInfo[member_info->type_index.value].getStructInfo()) {
+				member_info->type_index.is_valid() && member_info->type_index.value < getTypeInfoCount()) {
+				if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info->type_index).getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
 						member_struct_info, member_info->type_index, init_list, context, &ctor_param_bindings);
 				} else {
@@ -5084,10 +5085,10 @@ EvalResult Evaluator::extract_object_members(
 	
 	// Handle brace-initialized objects (aggregate init): extract member values by position.
 	if ((*initializer)->is<InitializerListNode>()) {
-		if (!declared_type_index.is_valid() || declared_type_index.value >= gTypeInfo.size()) {
+		if (!declared_type_index.is_valid() || declared_type_index.value >= getTypeInfoCount()) {
 			return EvalResult::error("Brace-initialized object has invalid type");
 		}
-		const StructTypeInfo* agg_struct_info = gTypeInfo[declared_type_index.value].getStructInfo();
+		const StructTypeInfo* agg_struct_info = getTypeInfo(declared_type_index).getStructInfo();
 		if (!agg_struct_info)
 			return EvalResult::error("Brace-initialized object is not a struct");
 		const InitializerListNode& init_list = (*initializer)->as<InitializerListNode>();
@@ -5116,13 +5117,13 @@ EvalResult Evaluator::extract_object_members(
 	TypeIndex type_index = type_spec.type_index();
 	const TypeInfo* struct_type_info = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_index.value < gTypeInfo.size()) {
-		struct_type_info = &gTypeInfo[type_index.value];
+	if (type_index.value < getTypeInfoCount()) {
+		struct_type_info = &getTypeInfo(type_index);
 		struct_info = struct_type_info->getStructInfo();
 	}
-	if (!struct_info && declared_type_index.is_valid() && declared_type_index.value < gTypeInfo.size()) {
+	if (!struct_info && declared_type_index.is_valid() && declared_type_index.value < getTypeInfoCount()) {
 		type_index = TypeIndex{declared_type_index};
-		struct_type_info = &gTypeInfo[type_index.value];
+		struct_type_info = &getTypeInfo(type_index);
 		struct_info = struct_type_info->getStructInfo();
 	}
 	if (!struct_info) {
@@ -5573,7 +5574,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			    pointer_depth == 0 && !is_reference) {
 				TypeIndex type_idx = type_spec.type_index();
 				if (type_idx.is_valid()) {
-					const TypeInfo& type_info = gTypeInfo[type_idx.value];
+					const TypeInfo& type_info = getTypeInfo(type_idx);
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					// If no struct_info, the type is incomplete
 					if (!struct_info) {

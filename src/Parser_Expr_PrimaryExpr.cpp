@@ -492,8 +492,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
-			if (member_ctx.struct_type_index.value < gTypeInfo.size()) {
-				TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index.value];
+			if (member_ctx.struct_type_index.value < getTypeInfoCount()) {
+				TypeInfo& type_info = getTypeInfoMut(member_ctx.struct_type_index);
 				if (type_info.struct_info_) {
 					// Search for the operator member function
 					for (auto& member_func : type_info.struct_info_->member_functions) {
@@ -1376,9 +1376,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// The target type is the i-th template parameter
 								// Substitute it with the actual argument
 								const TemplateTypeArg& arg = (*template_args)[i];
-								if (!arg.is_value && arg.type_index.value < gTypeInfo.size()) {
+								if (!arg.is_value && arg.type_index.value < getTypeInfoCount()) {
 									// It's a type argument - get the type name and create an identifier
-									StringHandle type_name_handle = gTypeInfo[arg.type_index.value].name();
+									StringHandle type_name_handle = getTypeInfo(arg.type_index).name();
 									std::string_view type_name = StringTable::getStringView(type_name_handle);
 									FLASH_LOG_FORMAT(Templates, Debug, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
 									
@@ -1398,7 +1398,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Try to instantiate the template with these arguments
-				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
+				// Note: try_instantiate_class_template returns nullopt on success (type registered in getTypesByNameMap())
 				// Try class template instantiation first (for struct/class templates)
 				auto instantiation_result = try_instantiate_class_template(qual_id.name(), *template_args);
 				if (instantiation_result.has_value()) {
@@ -1458,8 +1458,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												
 												try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 												
-												auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-												if (type_it != gTypesByName.end()) {
+												auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+												if (type_it != getTypesByNameMap().end()) {
 													const TypeInfo* type_info = type_it->second;
 													if (type_info->getStructInfo()) {
 														const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -1568,8 +1568,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						if (!decl_ptr) {
 							// Member may not be in namespace symbol table - resolve from instantiated struct members.
-							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-							if (type_it != gTypesByName.end() && type_it->second) {
+							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+							if (type_it != getTypesByNameMap().end() && type_it->second) {
 								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 								if (struct_info) {
 									StringHandle member_name_handle = member_token.handle();
@@ -1597,8 +1597,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
 							const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
 							StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-							auto inst_type_it = gTypesByName.find(class_name_handle);
-							if (!func_decl.get_definition().has_value() && inst_type_it != gTypesByName.end() && inst_type_it->second->isTemplateInstantiation()) {
+							auto inst_type_it = getTypesByNameMap().find(class_name_handle);
+							if (!func_decl.get_definition().has_value() && inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isTemplateInstantiation()) {
 								StringHandle member_name_handle = member_token.handle();
 								const bool member_is_const = func_decl.is_const_member_function();
 								if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle, member_is_const)) {
@@ -1663,11 +1663,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!template_args.has_value() && current_token_.value() == "{") {
 			std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 			StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
-			auto type_it = gTypesByName.find(qualified_handle);
-			if (type_it == gTypesByName.end()) {
-				type_it = gTypesByName.find(final_identifier.handle());
+			auto type_it = getTypesByNameMap().find(qualified_handle);
+			if (type_it == getTypesByNameMap().end()) {
+				type_it = getTypesByNameMap().find(final_identifier.handle());
 			}
-			if (type_it != gTypesByName.end()) {
+			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* type_info_ptr = type_it->second;
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 				TypeIndex type_index = type_info_ptr->type_index_;
@@ -1866,8 +1866,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!found_member_function_in_context) {
 					// Get the struct's base classes and search recursively
 					TypeIndex struct_type_index = mf_ctx.struct_type_index;
-					if (struct_type_index.value < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
+					if (struct_type_index.value < getTypeInfoCount()) {
+						const TypeInfo& type_info = getTypeInfo(struct_type_index);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info) {
 							// Collect base classes to search (breadth-first to handle multiple inheritance)
@@ -1879,9 +1879,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Search through base classes
 							for (size_t i = 0; i < base_classes_to_search.size() && !found_member_function_in_context; ++i) {
 								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx.value >= gTypeInfo.size()) continue;
+								if (base_idx.value >= getTypeInfoCount()) continue;
 								
-								const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
+								const TypeInfo& base_type_info = getTypeInfo(base_idx);
 								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 								if (!base_struct_info) continue;
 								
@@ -2043,7 +2043,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 		}
 		
-		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in gTypesByName
+		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in getTypesByNameMap()
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
@@ -2051,7 +2051,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && !peek().is_eof()) {
 			std::string_view peek = peek_info().value();
-			// Check gTypesByName if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
+			// Check getTypesByNameMap() if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
 			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
 			
 			// In template argument context, also check for various tokens that indicate a type context.
@@ -2065,9 +2065,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			if (should_check_types) {
 				StringHandle identifier_handle = identifier_token.handle();
-				auto type_it = gTypesByName.find(identifier_handle);
-				if (type_it != gTypesByName.end()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
+				auto type_it = getTypesByNameMap().find(identifier_handle);
+				if (type_it != getTypesByNameMap().end()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in getTypesByNameMap() (peek='{}', context={})", 
 						identifier_token.value(), peek, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
@@ -2078,9 +2078,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 					if (!current_namespace.isGlobal()) {
 						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, identifier_handle);
-						auto qualified_type_it = gTypesByName.find(qualified_handle);
-						if (qualified_type_it != gTypesByName.end()) {
-							FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as namespace-qualified type alias '{}' in gTypesByName", 
+						auto qualified_type_it = getTypesByNameMap().find(qualified_handle);
+						if (qualified_type_it != getTypesByNameMap().end()) {
+							FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as namespace-qualified type alias '{}' in getTypesByNameMap()", 
 								identifier_token.value(), StringTable::getStringView(qualified_handle));
 							found_as_type_alias = true;
 						}
@@ -2149,11 +2149,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 						
-						// Finally check StructTypeInfo from gTypesByName (for already-registered types)
+						// Finally check StructTypeInfo from getTypesByNameMap() (for already-registered types)
 						if (!found_as_type_alias) {
 							StringHandle struct_name_handle = StringTable::getOrInternStringHandle(ctx.struct_name);
-							auto struct_type_it = gTypesByName.find(struct_name_handle);
-							if (struct_type_it != gTypesByName.end() && struct_type_it->second->getStructInfo()) {
+							auto struct_type_it = getTypesByNameMap().find(struct_name_handle);
+							if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->getStructInfo()) {
 								const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 								for (const auto& static_member : struct_info->static_members) {
 									if (static_member.getName() == identifier_handle) {
@@ -2374,8 +2374,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						// Look up the instantiated type
 						auto type_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(inst_struct.name()));
-						auto type_it = gTypesByName.find(type_handle);
-						if (type_it != gTypesByName.end()) {
+						auto type_it = getTypesByNameMap().find(type_handle);
+						if (type_it != getTypesByNameMap().end()) {
 							// Create TypeSpecifierNode for the instantiated class
 							const TypeInfo& type_info = *type_it->second;
 							TypeIndex type_index = type_info.type_index_;
@@ -2473,8 +2473,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!func_decl.get_definition().has_value()) {
 						std::string_view qualified_scope = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_scope);
-						auto scope_type_it = gTypesByName.find(class_name_handle);
-						if (scope_type_it != gTypesByName.end() && scope_type_it->second->isTemplateInstantiation()) {
+						auto scope_type_it = getTypesByNameMap().find(class_name_handle);
+						if (scope_type_it != getTypesByNameMap().end() && scope_type_it->second->isTemplateInstantiation()) {
 							StringHandle member_name_handle = qual_id.identifier_token().handle();
 							const bool member_is_const = identifierType->as<FunctionDeclarationNode>().is_const_member_function();
 							if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, member_name_handle, member_is_const)) {
@@ -2530,8 +2530,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
-			auto type_it = gTypesByName.find(identifier_token.handle());
-			if (type_it != gTypesByName.end() && peek() == "("_tok) {
+			auto type_it = getTypesByNameMap().find(identifier_token.handle());
+			if (type_it != getTypesByNameMap().end() && peek() == "("_tok) {
 				// This is a constructor call - handle it directly here
 				advance();  // consume '('
 				
@@ -2880,8 +2880,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Also check base class members
 					for (const auto& base : struct_node->base_classes()) {
 						// Look up the base class type
-						auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
-						if (base_type_it != gTypesByName.end()) {
+						auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base.name));
+						if (base_type_it != getTypesByNameMap().end()) {
 							const TypeInfo* base_type_info = base_type_it->second;
 							TypeIndex base_type_index = base_type_info->type_index_;
 
@@ -2913,8 +2913,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 					
 					// Fall back to TypeInfo lookup if no local_struct_info
-					if (!struct_info && member_func_ctx.struct_type_index.is_valid() && member_func_ctx.struct_type_index.value < gTypeInfo.size()) {
-						const TypeInfo& struct_type_info = gTypeInfo[member_func_ctx.struct_type_index.value];
+					if (!struct_info && member_func_ctx.struct_type_index.is_valid() && member_func_ctx.struct_type_index.value < getTypeInfoCount()) {
+						const TypeInfo& struct_type_info = getTypeInfo(member_func_ctx.struct_type_index);
 						struct_info = struct_type_info.getStructInfo();
 					}
 					
@@ -3031,8 +3031,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!found) {
 						// Get the struct's base classes and search recursively
 						TypeIndex struct_type_index = mf_ctx.struct_type_index;
-						if (struct_type_index.value < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
+						if (struct_type_index.value < getTypeInfoCount()) {
+							const TypeInfo& type_info = getTypeInfo(struct_type_index);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								// Collect base classes to search (breadth-first to handle multiple inheritance)
@@ -3044,9 +3044,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Search through base classes
 								for (size_t i = 0; i < base_classes_to_search.size() && !found; ++i) {
 									TypeIndex base_idx = base_classes_to_search[i];
-									if (base_idx.value >= gTypeInfo.size()) continue;
+									if (base_idx.value >= getTypeInfoCount()) continue;
 									
-									const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
+									const TypeInfo& base_type_info = getTypeInfo(base_idx);
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (!base_struct_info) continue;
 									
@@ -3104,10 +3104,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (type_spec.type() == Type::Struct) {
 							// Get the type index to look up the type name
 							TypeIndex type_idx = type_spec.type_index();
-							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, gTypeInfo.size()={}", 
-								identifier_token.value(), type_idx, gTypeInfo.size());
-							if (type_idx.value < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_idx.value];
+							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, getTypeInfoCount()={}", 
+								identifier_token.value(), type_idx, getTypeInfoCount());
+							if (type_idx.value < getTypeInfoCount()) {
+								const TypeInfo& type_info = getTypeInfo(type_idx);
 								if (type_info.struct_info_) {
 									// Check if the struct name starts with "__lambda_"
 									std::string_view type_name = StringTable::getStringView(type_info.struct_info_->name);
@@ -3347,8 +3347,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
 			if (!is_lambda_variable && consume("("_tok)) {
 				// First, check if this is a type name (constructor call)
-				auto type_it = gTypesByName.find(identifier_token.handle());
-				if (type_it != gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(identifier_token.handle());
+				if (type_it != getTypesByNameMap().end()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
 					ChunkedVector<ASTNode> args;
@@ -3705,8 +3705,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 														
 														try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 														
-														auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
-														if (type_it != gTypesByName.end()) {
+														auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+														if (type_it != getTypesByNameMap().end()) {
 															const TypeInfo* type_info = type_it->second;
 															if (type_info->getStructInfo()) {
 																const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -3872,26 +3872,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								
 								// Look up the instantiated type
 								auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
-								auto type_it = gTypesByName.find(type_handle);
+								auto type_it = getTypesByNameMap().find(type_handle);
 								
 								// If not found, the type may have been registered with filled-in default template args
 								// (e.g., basic_string_view<char> → basic_string_view<char, char_traits<char>>)
 								// Check the cache for the instantiated struct node to get the correct name
-								if (type_it == gTypesByName.end()) {
+								if (type_it == getTypesByNameMap().end()) {
 									auto cached = gTemplateRegistry.getInstantiation(
 										StringTable::getOrInternStringHandle(identifier_token.value()),
 										*explicit_template_args);
 									if (cached.has_value() && cached->is<StructDeclarationNode>()) {
 										StringHandle cached_name = cached->as<StructDeclarationNode>().name();
-										auto cached_it = gTypesByName.find(cached_name);
-										if (cached_it != gTypesByName.end()) {
+										auto cached_it = getTypesByNameMap().find(cached_name);
+										if (cached_it != getTypesByNameMap().end()) {
 											type_handle = cached_name;
 											type_it = cached_it;
 										}
 									}
 								}
 								
-								if (type_it != gTypesByName.end()) {
+								if (type_it != getTypesByNameMap().end()) {
 									// Found the instantiated type - now parse the brace initializer
 									advance(); // consume '{'
 									
@@ -3983,9 +3983,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 								                      identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 								auto inst_type_handle = StringTable::getOrInternStringHandle(instantiated_type_name);
-								auto inst_type_it = gTypesByName.find(inst_type_handle);
+								auto inst_type_it = getTypesByNameMap().find(inst_type_handle);
 								ASTNode type_spec_node;
-								if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
+								if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
 									const TypeInfo& inst_type_info = *inst_type_it->second;
 									TypeIndex inst_type_index = inst_type_info.type_index_;
 									int inst_type_size = 0;
@@ -4182,8 +4182,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											               concept_token.line(), concept_token.column(), concept_token.file_index());
 											auto dep_node = emplace_node<ExpressionNode>(IdentifierNode(dep_token));
 											template_arg_nodes.push_back(dep_node);
-										} else if (arg.type_index.is_valid() && arg.type_index.value < gTypeInfo.size()) {
-											std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index.value].name_);
+										} else if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+											std::string_view type_name = StringTable::getStringView(getTypeInfo(arg.type_index).name_);
 											Token type_token(Token::Type::Identifier, type_name,
 											                concept_token.line(), concept_token.column(), concept_token.file_index());
 											auto type_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
@@ -4241,8 +4241,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									
 									// If not found in current struct, check base classes
 									for (const auto& base : struct_node->base_classes()) {
-										auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
-										if (base_type_it != gTypesByName.end()) {
+										auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base.name));
+										if (base_type_it != getTypesByNameMap().end()) {
 											const TypeInfo* base_type_info = base_type_it->second;
 											const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 											if (base_struct_info) {
@@ -4424,8 +4424,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (!member_function_context_stack_.empty()) {
 									const auto& mf_ctx2 = member_function_context_stack_.back();
 									TypeIndex struct_type_index = mf_ctx2.struct_type_index;
-									if (struct_type_index.value < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[struct_type_index.value];
+									if (struct_type_index.value < getTypeInfoCount()) {
+										const TypeInfo& type_info = getTypeInfo(struct_type_index);
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
 											// Search through base classes for member template functions
@@ -4437,9 +4437,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											StringHandle id_handle = identifier_token.handle();
 											for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
 												TypeIndex base_idx = base_classes_to_search[i];
-												if (base_idx.value >= gTypeInfo.size()) continue;
+												if (base_idx.value >= getTypeInfoCount()) continue;
 												
-												const TypeInfo& base_type_info = gTypeInfo[base_idx.value];
+												const TypeInfo& base_type_info = getTypeInfo(base_idx);
 												const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 												if (!base_struct_info) continue;
 												
@@ -4486,8 +4486,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										StringHandle id_handle = identifier_token.handle();
 										for (const auto& base : struct_node->base_classes()) {
 											// Look up the base class type
-											auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
-											if (base_type_it != gTypesByName.end()) {
+											auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base.name));
+											if (base_type_it != getTypesByNameMap().end()) {
 												const TypeInfo* base_type_info = base_type_it->second;
 												const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 												if (base_struct_info) {
@@ -4742,17 +4742,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
 				// Look up the actual type info to determine if this is an aggregate
 				StringHandle identifier_handle = identifier_token.handle();
-				auto type_it = gTypesByName.find(identifier_handle);
-				if (type_it == gTypesByName.end()) {
+				auto type_it = getTypesByNameMap().find(identifier_handle);
+				if (type_it == getTypesByNameMap().end()) {
 					// Try namespace-qualified lookup
 					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
 					if (!current_namespace.isGlobal()) {
 						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, identifier_handle);
-						type_it = gTypesByName.find(qualified_handle);
+						type_it = getTypesByNameMap().find(qualified_handle);
 					}
 				}
 
-				if (type_it != gTypesByName.end()) {
+				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* type_info_ptr = type_it->second;
 					const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 					TypeIndex type_index = type_info_ptr->type_index_;
@@ -4892,8 +4892,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						isPlaceholderAutoType(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
-						if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index.value];
+						if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+							const TypeInfo& type_info = getTypeInfo(type_index);
 							if (type_info.struct_info_) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions", 
 									StringTable::getStringView(type_info.struct_info_->name), type_info.struct_info_->member_functions.size());
@@ -5007,7 +5007,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					TypeIndex type_index = type_node.type_index();
-					const TypeInfo& type_info = gTypeInfo[type_index.value];
+					const TypeInfo& type_info = getTypeInfo(type_index);
 					if (!type_info.struct_info_) {
 						return ParseResult::error("operator() not found in struct", identifier_token);
 					}

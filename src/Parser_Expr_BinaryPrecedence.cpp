@@ -242,8 +242,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 								instantiated_class_name = get_instantiated_class_name(base_name, *template_args);
 							}
 
-							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_class_name));
-							if (type_it != gTypesByName.end() && type_it->second) {
+							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_class_name));
+							if (type_it != getTypesByNameMap().end() && type_it->second) {
 								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 								if (struct_info) {
 									StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_token.value());
@@ -342,8 +342,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!is_struct_type(type_spec.type())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
-						if (type_idx.value < gTypeInfo.size()) {
-							StringHandle type_name_handle = gTypeInfo[type_idx.value].name();
+						if (type_idx.value < getTypeInfoCount()) {
+							StringHandle type_name_handle = getTypeInfo(type_idx).name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
 								type_idx = subst_it->second;
@@ -356,8 +356,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto resolve_sfinae_type_index = [&](TypeIndex type_idx) -> TypeIndex {
-						if (type_idx.is_valid() && type_idx.value < gTypeInfo.size()) {
-							StringHandle type_name_handle = gTypeInfo[type_idx.value].name();
+						if (type_idx.is_valid() && type_idx.value < getTypeInfoCount()) {
+							StringHandle type_name_handle = getTypeInfo(type_idx).name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
 								return subst_it->second;
@@ -367,9 +367,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
-						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) return;
+						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
-						Type resolved_type = gTypeInfo[type_idx.value].type_;
+						Type resolved_type = getTypeInfo(type_idx).type_;
 						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
 							resolved_type = Type::Struct;
 						}
@@ -1283,9 +1283,9 @@ bool Parser::parse_static_member_function(
 		SaveHandle body_start = save_token_position();
 
 		// Look up the struct type
-		auto type_it = gTypesByName.find(struct_name_handle);
+		auto type_it = getTypesByNameMap().find(struct_name_handle);
 		TypeIndex struct_type_idx{};
-		if (type_it != gTypesByName.end()) {
+		if (type_it != getTypesByNameMap().end()) {
 			struct_type_idx = type_it->second->type_index_;
 		}
 
@@ -1430,8 +1430,8 @@ ParseResult Parser::parse_static_member_block(
 		// Push struct context so static member references can be resolved
 		// This enables expressions like `!is_signed` to find `is_signed` as a static member
 		TypeIndex struct_type_index{};
-		auto type_it = gTypesByName.find(struct_name_handle);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(struct_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
 			struct_type_index = type_it->second->type_index_;
 		}
 		
@@ -1453,8 +1453,8 @@ ParseResult Parser::parse_static_member_block(
 		// Brace initialization: static constexpr int x{42};
 
 		TypeIndex struct_type_index{};
-		auto type_it = gTypesByName.find(struct_name_handle);
-		if (type_it != gTypesByName.end()) {
+		auto type_it = getTypesByNameMap().find(struct_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
 			struct_type_index = type_it->second->type_index_;
 		}
 		member_function_context_stack_.push_back({struct_name_handle, struct_type_index, &struct_ref, struct_info});
@@ -1485,8 +1485,8 @@ ParseResult Parser::parse_static_member_block(
 	if (use_struct_type_info) {
 		// For template specializations that use struct_type_info.getStructInfo()
 		// We need to get it from the global map
-		auto type_it = gTypesByName.find(struct_name_handle);
-		if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
+		auto type_it = getTypesByNameMap().find(struct_name_handle);
+		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
 			type_it->second->getStructInfo()->addStaticMember(
 				static_member_name_handle,
 				type_spec.type(),
@@ -1687,8 +1687,8 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				// For struct types, look up alignment from struct info
 				if (is_struct_type(parsed_type)) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index.value < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index.value];
+					if (type_index.value < getTypeInfoCount()) {
+						const TypeInfo& type_info = getTypeInfo(type_index);
 						if (type_info.isStruct()) {
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {

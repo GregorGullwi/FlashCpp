@@ -68,11 +68,11 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 }
 
 const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= gTypeInfo.size()) {
+	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().value >= getTypeInfoCount()) {
 		return nullptr;
 	}
 
-	const StructTypeInfo* struct_info = gTypeInfo[iterator_type.type_index().value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(iterator_type.type_index()).getStructInfo();
 	if (!struct_info) {
 		return nullptr;
 	}
@@ -186,12 +186,12 @@ const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
 	}
 
 	const StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
-	auto exact_it = gTypesByName.find(struct_name_handle);
-	if (exact_it != gTypesByName.end() && exact_it->second && exact_it->second->getStructInfo()) {
+	auto exact_it = getTypesByNameMap().find(struct_name_handle);
+	if (exact_it != getTypesByNameMap().end() && exact_it->second && exact_it->second->getStructInfo()) {
 		return exact_it->second;
 	}
 
-	for (const auto& [handle, type_info] : gTypesByName) {
+	for (const auto& [handle, type_info] : getTypesByNameMap()) {
 		if (!type_info || !type_info->getStructInfo()) {
 			continue;
 		}
@@ -1181,11 +1181,11 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 
 	if (range_type->type() != Type::Struct ||
 		!range_type->type_index().is_valid() ||
-		range_type->type_index().value >= gTypeInfo.size()) {
+		range_type->type_index().value >= getTypeInfoCount()) {
 		return original_var_decl.declaration_node();
 	}
 
-	const StructTypeInfo* struct_info = gTypeInfo[range_type->type_index().value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(range_type->type_index()).getStructInfo();
 	if (!struct_info) {
 		return original_var_decl.declaration_node();
 	}
@@ -1760,8 +1760,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
 				if (ts.type() == Type::Struct && ts.type_index().is_valid() &&
-					ts.type_index().value < gTypeInfo.size()) {
-					const StructTypeInfo* si = gTypeInfo[ts.type_index().value].getStructInfo();
+					ts.type_index().value < getTypeInfoCount()) {
+					const StructTypeInfo* si = getTypeInfo(ts.type_index()).getStructInfo();
 					if (si && si->hasAnyConstructor()) {
 						const InitializerListNode& il = init->as<InitializerListNode>();
 						tryAnnotateInitListConstructorArgs(il, *si);
@@ -2362,8 +2362,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					!member_context_stack_.empty()) {
 					const TypeIndex current_struct_type = member_context_stack_.back();
 					if (current_struct_type.is_valid() &&
-						current_struct_type.value < gTypeInfo.size()) {
-						const StructTypeInfo* struct_info = gTypeInfo[current_struct_type.value].getStructInfo();
+						current_struct_type.value < getTypeInfoCount()) {
+						const StructTypeInfo* struct_info = getTypeInfo(current_struct_type).getStructInfo();
 						if (struct_info) {
 							if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, e.nameHandle())) {
 								return type_context_.intern(canonicalTypeDescFromStructMember(
@@ -2413,10 +2413,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
 				if (object_desc.base_type != Type::Struct ||
 					!object_desc.type_index.is_valid() ||
-					object_desc.type_index.value >= gTypeInfo.size()) {
+					object_desc.type_index.value >= getTypeInfoCount()) {
 					return {};
 				}
-				const StructTypeInfo* struct_info = gTypeInfo[object_desc.type_index.value].getStructInfo();
+				const StructTypeInfo* struct_info = getTypeInfo(object_desc.type_index).getStructInfo();
 				if (!struct_info) {
 					return {};
 				}
@@ -2580,8 +2580,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
 				if (callee_desc.base_type == Type::Struct &&
 					callee_desc.type_index.is_valid() &&
-					callee_desc.type_index.value < gTypeInfo.size()) {
-					const StructTypeInfo* struct_info = gTypeInfo[callee_desc.type_index.value].getStructInfo();
+					callee_desc.type_index.value < getTypeInfoCount()) {
+					const StructTypeInfo* struct_info = getTypeInfo(callee_desc.type_index).getStructInfo();
 					if (!struct_info) {
 						return {};
 					}
@@ -2650,13 +2650,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				NamespaceHandle ns_handle = e.namespace_handle();
 				if (!ns_handle.isGlobal()) {
 					std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
-					auto owner_it = gTypesByName.find(StringTable::getOrInternStringHandle(owner_name));
-					if (owner_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+					auto owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(owner_name));
+					if (owner_it == getTypesByNameMap().end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
 						std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-						owner_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
+						owner_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(full_qualified_name));
 					}
 
-					if (owner_it != gTypesByName.end()) {
+					if (owner_it != getTypesByNameMap().end()) {
 						if (owner_it->second->isStruct()) {
 							const StructTypeInfo* struct_info = owner_it->second->getStructInfo();
 							if (struct_info) {
@@ -2728,10 +2728,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			}
 			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				// Lambda expression: its type is a unique closure class.
-				// Look up the generated __lambda_N struct in gTypesByName.
+				// Look up the generated __lambda_N struct in getTypesByNameMap().
 				const StringHandle lambda_name = e.generate_lambda_name();
-				auto it = gTypesByName.find(lambda_name);
-				if (it != gTypesByName.end() && it->second) {
+				auto it = getTypesByNameMap().find(lambda_name);
+				if (it != getTypesByNameMap().end() && it->second) {
 					CanonicalTypeDesc desc;
 					desc.base_type = Type::Struct;
 					desc.type_index = it->second->type_index_;
@@ -2795,15 +2795,15 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 	if (from_desc.base_type != Type::Enum) return;
 	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
 	if (to_desc.base_type == Type::Enum && from_desc.type_index == to_desc.type_index) return;
-	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size()) return;
+	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= getTypeInfoCount()) return;
 
-	if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+	if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
 		if (ei->is_scoped) {
 			// Build target type name: use enum name if target is an enum, otherwise use primitive name.
 			std::string target_name;
 			if (to_desc.base_type == Type::Enum && to_desc.type_index.is_valid() &&
-				to_desc.type_index.value < gTypeInfo.size()) {
-				if (const EnumTypeInfo* target_ei = gTypeInfo[to_desc.type_index.value].getEnumInfo())
+				to_desc.type_index.value < getTypeInfoCount()) {
+				if (const EnumTypeInfo* target_ei = getTypeInfo(to_desc.type_index).getEnumInfo())
 					target_name = StringTable::getStringView(target_ei->name);
 			}
 			if (target_name.empty())
@@ -2822,15 +2822,15 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 
 static bool isScopedEnum(const CanonicalTypeDesc& desc) {
 	if (desc.base_type != Type::Enum) return false;
-	if (!desc.type_index.is_valid() || desc.type_index.value >= gTypeInfo.size()) return false;
-	if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
+	if (!desc.type_index.is_valid() || desc.type_index.value >= getTypeInfoCount()) return false;
+	if (const EnumTypeInfo* ei = getTypeInfo(desc.type_index).getEnumInfo())
 		return ei->is_scoped;
 	return false;
 }
 
 static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
-	if (desc.type_index.is_valid() && desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[desc.type_index.value].getEnumInfo())
+	if (desc.type_index.is_valid() && desc.type_index.value < getTypeInfoCount()) {
+		if (const EnumTypeInfo* ei = getTypeInfo(desc.type_index).getEnumInfo())
 			return std::string(StringTable::getStringView(ei->name));
 	}
 	return "scoped enum";
@@ -2884,17 +2884,17 @@ static bool structHasConversionOperatorTo(
 	// Guard against infinite recursion in pathological inheritance graphs.
 	static constexpr int kMaxInheritanceDepth = 8;
 	if (depth > kMaxInheritanceDepth) return false;
-	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= gTypeInfo.size())
+	if (!from_desc.type_index.is_valid() || from_desc.type_index.value >= getTypeInfoCount())
 		return false;
-	const StructTypeInfo* struct_info = gTypeInfo[from_desc.type_index.value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(from_desc.type_index).getStructInfo();
 	if (!struct_info) return false;
 
 	// Determine the expected "operator X" suffix.
 	std::string_view target_name;
 	if (to_desc.type_index.is_valid()) {
-		if (to_desc.type_index.value >= gTypeInfo.size())
+		if (to_desc.type_index.value >= getTypeInfoCount())
 			return false;
-		target_name = StringTable::getStringView(gTypeInfo[to_desc.type_index.value].name());
+		target_name = StringTable::getStringView(getTypeInfo(to_desc.type_index).name());
 	} else {
 		target_name = getTypeName(to_desc.base_type);
 		if (target_name.empty()) return false;
@@ -2923,11 +2923,11 @@ static bool structHasConversionOperatorTo(
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			Type resolved_type = type_spec.type();
 			// Resolve UserDefined type aliases through gTypeInfo chain (same as codegen).
-			if (resolved_type == Type::UserDefined && type_spec.type_index().value < gTypeInfo.size()) {
+			if (resolved_type == Type::UserDefined && type_spec.type_index().value < getTypeInfoCount()) {
 				TypeIndex current_idx = type_spec.type_index();
 				int max_depth = 10;
-				while (resolved_type == Type::UserDefined && current_idx.value < gTypeInfo.size() && max_depth-- > 0) {
-					const TypeInfo& alias_info = gTypeInfo[current_idx.value];
+				while (resolved_type == Type::UserDefined && current_idx.value < getTypeInfoCount() && max_depth-- > 0) {
+					const TypeInfo& alias_info = getTypeInfo(current_idx);
 					if (alias_info.type_ != Type::Void && alias_info.type_ != Type::UserDefined) {
 						resolved_type = alias_info.type_;
 						break;
@@ -3004,8 +3004,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
 	if (from_desc.base_type == Type::Enum && from_desc.type_index.is_valid() &&
-		from_desc.type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* ei = gTypeInfo[from_desc.type_index.value].getEnumInfo()) {
+		from_desc.type_index.value < getTypeInfoCount()) {
+		if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
 			if (ei->is_scoped)
 				return false;
 		}
@@ -3077,9 +3077,9 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		from_desc.base_type == Type::Invalid || isPlaceholderAutoType(from_desc.base_type)) {
 		return false;
 	}
-	if (to_desc.type_index.value >= gTypeInfo.size()) return false;
+	if (to_desc.type_index.value >= getTypeInfoCount()) return false;
 
-	const StructTypeInfo* struct_info = gTypeInfo[to_desc.type_index.value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(to_desc.type_index).getStructInfo();
 	if (!struct_info || !struct_info->hasAnyConstructor()) return false;
 
 	auto arg_type_opt = buildOverloadResolutionArgType(expr_node, nullptr);
@@ -3445,9 +3445,9 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
 	if (callee_desc.base_type != Type::Struct) return;
 	if (!callee_desc.type_index.is_valid()) return;
-	if (callee_desc.type_index.value >= gTypeInfo.size()) return;
+	if (callee_desc.type_index.value >= getTypeInfoCount()) return;
 
-	const StructTypeInfo* struct_info = gTypeInfo[callee_desc.type_index.value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(callee_desc.type_index).getStructInfo();
 	if (!struct_info) return;
 
 	const size_t arg_count = call_node.arguments().size();
@@ -3685,16 +3685,16 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 				if (scope_sep != std::string_view::npos) {
 					const auto struct_name_sv = qname.substr(0, scope_sep);
 					const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
-					auto struct_it = gTypesByName.find(struct_name_handle);
-					if (struct_it != gTypesByName.end()) {
+					auto struct_it = getTypesByNameMap().find(struct_name_handle);
+					if (struct_it != getTypesByNameMap().end()) {
 						searchStructMembers(struct_it->second->getStructInfo());
 					}
-					// Phase 17: if direct name lookup failed, scan gTypesByName for
+					// Phase 17: if direct name lookup failed, scan getTypesByNameMap() for
 					// entries whose name ends with the struct name fragment. Template
 					// specializations may be registered under different namespace-qualified
 					// or template-argument-decorated keys.
 					if (!func_decl) {
-						for (const auto& [handle, ti] : gTypesByName) {
+						for (const auto& [handle, ti] : getTypesByNameMap()) {
 							if (!ti) continue;
 							const std::string_view registered_name = handle.view();
 							// Match if the registered name equals or ends with the struct name
@@ -3853,9 +3853,9 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) return;
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	if (type_spec.type() != Type::Struct || !type_spec.type_index().is_valid()) return;
-	if (type_spec.type_index().value >= gTypeInfo.size()) return;
+	if (type_spec.type_index().value >= getTypeInfoCount()) return;
 
-	const StructTypeInfo* struct_info = gTypeInfo[type_spec.type_index().value].getStructInfo();
+	const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 	if (!struct_info || !struct_info->hasAnyConstructor()) return;
 
 	// Resolve the matching constructor via overload resolution.
@@ -3954,8 +3954,8 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			if (!arg_type_id) continue;
 			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
 			if (arg_desc.base_type != Type::Enum) continue;
-			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.value >= gTypeInfo.size()) continue;
-			const EnumTypeInfo* ei = gTypeInfo[arg_desc.type_index.value].getEnumInfo();
+			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.value >= getTypeInfoCount()) continue;
+			const EnumTypeInfo* ei = getTypeInfo(arg_desc.type_index).getEnumInfo();
 			if (!ei || !ei->is_scoped) continue;
 			// Found a scoped enum arg that caused the no-match.
 			// Use the parameter type from the closest arity match for a precise error message.

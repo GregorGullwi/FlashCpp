@@ -1205,8 +1205,8 @@ ParseResult Parser::parse_lambda_expression() {
                 if (!member_function_context_stack_.empty()) {
                     const auto& context = member_function_context_stack_.back();
                     StringHandle struct_name = context.struct_name;
-                    auto type_it = gTypesByName.find(struct_name);
-                    if (type_it != gTypesByName.end()) {
+                    auto type_it = getTypesByNameMap().find(struct_name);
+                    if (type_it != getTypesByNameMap().end()) {
                         const TypeInfo* enclosing_type = type_it->second;
                         const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
                         if (enclosing_struct) {
@@ -1314,7 +1314,8 @@ ParseResult Parser::parse_lambda_expression() {
 				referenced_size_bits = var_type.size_in_bits();
 				if (referenced_size_bits == 0 && var_type.type() == Type::Struct) {
 					const TypeInfo* member_type_info = nullptr;
-					for (const auto& ti : gTypeInfo) {
+					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == var_type.type_index()) {
 							member_type_info = &ti;
 							break;

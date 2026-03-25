@@ -274,8 +274,8 @@
 			result.final_type = type_node->type();
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
 			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
-				type_node->type_index().is_valid() && type_node->type_index().value < gTypeInfo.size()) {
-				if (const StructTypeInfo* struct_info = gTypeInfo[type_node->type_index().value].getStructInfo()) {
+				type_node->type_index().is_valid() && type_node->type_index().value < getTypeInfoCount()) {
+				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
 				}
 			}
@@ -304,7 +304,7 @@
 			}
 
 			// Look up member information
-			if (!type_index.is_valid() || type_index.value >= gTypeInfo.size() || object_type != Type::Struct) {
+			if (!type_index.is_valid() || type_index.value >= getTypeInfoCount() || object_type != Type::Struct) {
 				return std::nullopt;
 			}
 
@@ -364,8 +364,8 @@
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
 					} else if (type_node.type() == Type::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
-						if (type_index_from_decl.is_valid() && type_index_from_decl.value < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_index_from_decl.value];
+						if (type_index_from_decl.is_valid() && type_index_from_decl.value < getTypeInfoCount()) {
+							const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -500,7 +500,7 @@
 							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 							// Get struct name for mangling
-							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index().value].name());
+							std::string_view struct_name = StringTable::getStringView(getTypeInfo(type_node->type_index()).name());
 
 							// Get the return type from the function declaration
 							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
@@ -698,8 +698,8 @@
 									} else if (type_node.type() == Type::Struct) {
 										// Array of structs
 										TypeIndex type_index_from_decl = type_node.type_index();
-										if (type_index_from_decl.is_valid() && type_index_from_decl.value < gTypeInfo.size()) {
-											const TypeInfo& type_info = gTypeInfo[type_index_from_decl.value];
+										if (type_index_from_decl.is_valid() && type_index_from_decl.value < getTypeInfoCount()) {
+											const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
 											const StructTypeInfo* struct_info = type_info.getStructInfo();
 											if (struct_info) {
 												element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -722,7 +722,7 @@
 							}
 
 							// Look up member information
-							if (type_index.is_valid() && type_index.value < gTypeInfo.size() && element_type == Type::Struct) {
+							if (type_index.is_valid() && type_index.value < getTypeInfoCount() && element_type == Type::Struct) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -784,7 +784,7 @@
 						}
 
 						// Look up member information
-						if (type_index.is_valid() && type_index.value < gTypeInfo.size() && object_type == Type::Struct) {
+						if (type_index.is_valid() && type_index.value < getTypeInfoCount() && object_type == Type::Struct) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -968,8 +968,8 @@
 						} else if (type_node.type() == Type::Struct) {
 							// Array of structs
 							TypeIndex type_index = type_node.type_index();
-							if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_index.value];
+							if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+								const TypeInfo& type_info = getTypeInfo(type_index);
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
 									element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -1110,8 +1110,8 @@
 				// Check if this is a captured variable
 				if (current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 					// Look up the closure struct type
-					auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
-					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 						TypeIndex closure_type_index = type_it->second->type_index_;
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
 						if (member_result) {
@@ -1150,7 +1150,7 @@
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
 								if (is_struct_type(object_type.type())) {
 									TypeIndex type_index = object_type.type_index();
-									if (type_index.value < gTypeInfo.size()) {
+									if (type_index.value < getTypeInfoCount()) {
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
 										if (member_result) {
 											return generateMemberIncDec(object_name, member_result.member, false,
@@ -1194,8 +1194,8 @@
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
-					if (type_node.type() == Type::Struct && type_node.type_index().value < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_node.type_index().value];
+					if (type_node.type() == Type::Struct && type_node.type_index().value < getTypeInfoCount()) {
+						const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info && isLambdaClosureStruct(*struct_info)) {
 							lambda_struct_info = struct_info;
@@ -1244,8 +1244,8 @@
 					std::string_view member_name = qualIdNode.name();
 
 					// Look up the class type
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
-					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(class_name));
+					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 						TypeIndex struct_type_index = type_it->second->type_index_;
 						// Try to find the member (non-static)
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
@@ -1291,8 +1291,8 @@
 					}
 				}
 			}
-			if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index];
+			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
+				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info && isLambdaClosureStruct(*struct_info)) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
@@ -1663,8 +1663,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	size_t expected_param_count = is_prefix ? 0 : 1;
 	const StructMemberFunction* matched_func = nullptr;
 	const StructMemberFunction* fallback_func = nullptr;
-	if (operand_type_index.value < gTypeInfo.size()) {
-		const StructTypeInfo* struct_info = gTypeInfo[operand_type_index.value].getStructInfo();
+	if (operand_type_index.value < getTypeInfoCount()) {
+		const StructTypeInfo* struct_info = getTypeInfo(operand_type_index).getStructInfo();
 		if (struct_info) {
 			for (const auto& mf : struct_info->member_functions) {
 				if (mf.operator_kind == op_kind) {
@@ -1686,7 +1686,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	const StructMemberFunction& member_func = *matched_func;
 	const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-	std::string_view struct_name = StringTable::getStringView(gTypeInfo[operand_type_index.value].name());
+	std::string_view struct_name = StringTable::getStringView(getTypeInfo(operand_type_index).name());
 	TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	resolveSelfReferentialType(return_type, operand_type_index);
 
@@ -1714,8 +1714,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 	call_op.return_type = return_type.type();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().value < gTypeInfo.size() && gTypeInfo[return_type.type_index().value].struct_info_) {
-		call_op.return_size_in_bits = SizeInBits{static_cast<int>(gTypeInfo[return_type.type_index().value].struct_info_->total_size * 8)};
+	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().value < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
+		call_op.return_size_in_bits = SizeInBits{static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8)};
 	}
 	call_op.return_type_index = return_type.type_index();
 	call_op.is_member_function = true;
@@ -1841,8 +1841,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (auto lvalue_info = getTempVarLValueInfo(operand_temp);
 			lvalue_info.has_value() && lvalue_info->kind == LValueInfo::Kind::Member &&
 			lvalue_info->member_name.has_value() && current_struct_name_.isValid()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it != gTypesByName.end() && type_it->second && type_it->second->getStructInfo()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end() && type_it->second && type_it->second->getStructInfo()) {
 				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					TypeIndex{type_it->second->type_index_},
 					lvalue_info->member_name.value());
@@ -1875,8 +1875,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			if (!current_struct_name_.isValid()) {
 				return false;
 			}
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it == gTypesByName.end() || !type_it->second || !type_it->second->getStructInfo()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it == getTypesByNameMap().end() || !type_it->second || !type_it->second->getStructInfo()) {
 				return false;
 			}
 			auto member_result = FlashCpp::gLazyMemberResolver.resolve(
@@ -1932,8 +1932,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				const ExpressionNode& object_expr = member_access.object().as<ExpressionNode>();
 				if (const auto* identifier = std::get_if<IdentifierNode>(&object_expr)) {
 					if (identifier->name() == "this" && current_struct_name_.isValid()) {
-						auto type_it = gTypesByName.find(current_struct_name_);
-						if (type_it != gTypesByName.end() && type_it->second) {
+						auto type_it = getTypesByNameMap().find(current_struct_name_);
+						if (type_it != getTypesByNameMap().end() && type_it->second) {
 							const TypeInfo& type_info = *type_it->second;
 							object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
 						}
@@ -1949,7 +1949,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&
-				object_type_opt->type_index().is_valid() && object_type_opt->type_index().value < gTypeInfo.size()) {
+				object_type_opt->type_index().is_valid() && object_type_opt->type_index().value < getTypeInfoCount()) {
 				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					object_type_opt->type_index(),
 					StringTable::getOrInternStringHandle(member_access.member_name()));
@@ -2361,8 +2361,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					// set flag immediately so the fallback doesn't duplicate this lookup.
 					sema_applied_bool_conv = true;
 					TypeIndex source_type_idx = from_desc.type_index;
-					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
-						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+					if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
@@ -2389,8 +2389,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
 		if (!sema_applied_bool_conv && condition.type == Type::Struct) {
 			TypeIndex cond_type_idx = condition.type_index;
-			if (cond_type_idx.is_valid() && cond_type_idx.value < gTypeInfo.size()) {
-				const TypeInfo& src_type_info = gTypeInfo[cond_type_idx.value];
+			if (cond_type_idx.is_valid() && cond_type_idx.value < getTypeInfoCount()) {
+				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
 				const StructMemberFunction* conv_op = findConversionOperator(
 					src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
 				if (conv_op) {
@@ -2426,8 +2426,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					from_desc.base_type == Type::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
-					if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
-						const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+					if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
@@ -2505,10 +2505,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (value_result.type != Type::Struct || !value_result.type_index.is_valid()) {
 				return;
 			}
-			if (value_result.type_index.value >= gTypeInfo.size()) {
+			if (value_result.type_index.value >= getTypeInfoCount()) {
 				return;
 			}
-			const TypeInfo& type_info = gTypeInfo[value_result.type_index.value];
+			const TypeInfo& type_info = getTypeInfo(value_result.type_index);
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (!struct_info || !struct_info->hasDestructor()) {
 				return;
@@ -2644,11 +2644,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
 			return std::nullopt;
 		}
-		if (target_type.type_index().value >= gTypeInfo.size()) {
+		if (target_type.type_index().value >= getTypeInfoCount()) {
 			return std::nullopt;
 		}
 
-		const TypeInfo& target_type_info = gTypeInfo[target_type.type_index().value];
+		const TypeInfo& target_type_info = getTypeInfo(target_type.type_index());
 		const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
 		if (!target_struct_info) {
 			return std::nullopt;

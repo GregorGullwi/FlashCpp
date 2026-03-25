@@ -5,12 +5,12 @@
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
 const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
-	if (!type_idx.is_valid() || type_idx.value >= gTypeInfo.size()) return nullptr;
-	const TypeInfo* ti = &gTypeInfo[type_idx.value];
+	if (!type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) return nullptr;
+	const TypeInfo* ti = &getTypeInfo(type_idx);
 	// Chase aliases up to 64 levels deep.
 	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
-		if (!ti->type_index_.is_valid() || ti->type_index_.value >= gTypeInfo.size()) break;
-		ti = &gTypeInfo[ti->type_index_.value];
+		if (!ti->type_index_.is_valid() || ti->type_index_.value >= getTypeInfoCount()) break;
+		ti = &getTypeInfo(ti->type_index_);
 	}
 	return ti;
 }
@@ -276,7 +276,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 			if (func_type.type() == Type::Struct &&
 				func_type.type_index().is_valid() &&
-				func_type.type_index().value < gTypeInfo.size()) {
+				func_type.type_index().value < getTypeInfoCount()) {
 				// Check for a sema-pre-resolved operator() first.
 				const FunctionDeclarationNode* operator_call =
 					sema_ ? sema_->getResolvedOpCall(&functionCallNode) : nullptr;
@@ -285,7 +285,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// not reached by the semantic pass (e.g. template instantiation paths
 				// that create FunctionCallNodes after sema has run).
 				if (!operator_call) {
-					const StructTypeInfo* struct_info = gTypeInfo[func_type.type_index().value].getStructInfo();
+					const StructTypeInfo* struct_info = getTypeInfo(func_type.type_index()).getStructInfo();
 					if (struct_info) {
 						const FunctionDeclarationNode* sole_operator_call = nullptr;
 						size_t operator_call_count = 0;
@@ -337,8 +337,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			bool is_recursive_lambda_self = false;
 			if (current_lambda_context_.isActive() && func_type.type() == Type::Struct &&
 				func_type.is_rvalue_reference()) {
-				auto closure_type_it = gTypesByName.find(current_lambda_context_.closure_type);
-				if (closure_type_it != gTypesByName.end() &&
+				auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+				if (closure_type_it != getTypesByNameMap().end() &&
 					func_type.type_index() == closure_type_it->second->type_index_) {
 					is_recursive_lambda_self = true;
 				}
@@ -380,8 +380,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					// Look up the closure type to get the proper type_index
 					TypeIndex closure_type_index {};
-					auto it = gTypesByName.find(current_lambda_context_.closure_type);
-					if (it != gTypesByName.end()) {
+					auto it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+					if (it != getTypesByNameMap().end()) {
 						closure_type_index = it->second->type_index_;
 					}
 
@@ -479,8 +479,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						std::vector<std::string> ns_path;
 						if (struct_name.find("::") == std::string_view::npos) {
 							auto name_handle = StringTable::getOrInternStringHandle(struct_name);
-							auto type_it = gTypesByName.find(name_handle);
-							if (type_it != gTypesByName.end()) {
+							auto type_it = getTypesByNameMap().find(name_handle);
+							if (type_it != getTypesByNameMap().end()) {
 								auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
 								ns_path.reserve(ns_views.size());
 								for (auto sv : ns_views) ns_path.emplace_back(sv);
@@ -494,8 +494,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 		auto resolveQualifiedCallStruct = [&](std::string_view struct_part) -> const TypeInfo* {
 			auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
-				auto it = gTypesByName.find(handle);
-				return it != gTypesByName.end() ? it->second : nullptr;
+				auto it = getTypesByNameMap().find(handle);
+				return it != getTypesByNameMap().end() ? it->second : nullptr;
 			};
 
 			const TypeInfo* type_info = nullptr;
@@ -528,10 +528,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
-				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= gTypeInfo.size()) {
+				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= getTypeInfoCount()) {
 					break;
 				}
-				const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
+				const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
 				if (&underlying == type_info) {
 					break;
 				}
@@ -651,8 +651,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 		// Final fallback: if we're in a member function, check the current struct's member functions
 		if (!matched_func_decl && current_struct_name_.isValid() && !functionCallNode.has_qualified_name()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					for (const auto& member_func : struct_info->member_functions) {
@@ -674,8 +674,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
 						for (const auto& base_spec : current_struct->base_classes) {
 							// Look up base class in gTypeInfo
-							if (base_spec.type_index.value < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
+							if (base_spec.type_index.value < getTypeInfoCount()) {
+								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 									if (base_struct_info) {
@@ -713,7 +713,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			size_t expected_param_count = 0;
 			functionCallNode.arguments().visit([&](ASTNode) { ++expected_param_count; });
 
-			for (const auto& [name_handle, type_info_ptr] : gTypesByName) {
+			for (const auto& [name_handle, type_info_ptr] : getTypesByNameMap()) {
 				if (!type_info_ptr->isStruct()) continue;
 				const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 				if (!struct_info) continue;
@@ -802,7 +802,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (scope_pos != std::string_view::npos) {
 				base_template_name = extractBaseTemplateName(lookup_name_view.substr(0, scope_pos));
 			}
-			// Direct lookup: if the struct qualifier is directly in gTypesByName (e.g., "Mid$hash::get"),
+			// Direct lookup: if the struct qualifier is directly in getTypesByNameMap() (e.g., "Mid$hash::get"),
 			// find it immediately rather than only checking base classes.
 			if (scope_pos != std::string_view::npos && !matched_func_decl) {
 				std::string_view struct_part = lookup_name_view.substr(0, scope_pos);
@@ -911,13 +911,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Search current struct's base classes for a matching template instantiation
 				if (current_struct_name_.isValid()) {
-					auto type_it = gTypesByName.find(current_struct_name_);
-					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					auto type_it = getTypesByNameMap().find(current_struct_name_);
+					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
 						if (curr_struct) {
 							for (const auto& base_spec : curr_struct->base_classes) {
-								if (base_spec.type_index.value < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index.value];
+								if (base_spec.type_index.value < getTypeInfoCount()) {
+									const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 									if (base_type_info.isTemplateInstantiation() &&
 									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
 									base_type_info.isStruct()) {
@@ -1151,8 +1151,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							from_type == Type::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.value < gTypeInfo.size()) {
-								const TypeInfo& src_type_info = gTypeInfo[source_type_idx.value];
+							if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
@@ -1214,8 +1214,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
-					if (param_type_index.is_valid() && param_type_index.value < gTypeInfo.size()) {
-						const TypeInfo& target_type_info = gTypeInfo[param_type_index.value];
+					if (param_type_index.is_valid() && param_type_index.value < getTypeInfoCount()) {
+						const TypeInfo& target_type_info = getTypeInfo(param_type_index);
 						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
 
 						// Look for a converting constructor that takes the argument type
@@ -1284,8 +1284,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					if (arg_type_index.is_valid() && arg_type_index.value < gTypeInfo.size()) {
-						const TypeInfo& source_type_info = gTypeInfo[arg_type_index.value];
+					if (arg_type_index.is_valid() && arg_type_index.value < getTypeInfoCount()) {
+						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
 						const int param_size = static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
@@ -1517,8 +1517,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			std::string_view parent_struct = matched_func_decl->parent_struct_name();
 			if (!parent_struct.empty()) {
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
-				auto parent_it = gTypesByName.find(parent_struct_handle);
-				if (parent_it != gTypesByName.end() && parent_it->second != nullptr) {
+				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
+				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
 					this_type = parent_it->second->type_;
 					this_type_index = parent_it->second->type_index_;
 				}

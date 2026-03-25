@@ -124,8 +124,8 @@ ASTNode Parser::substituteTemplateParameters(
 			if (id_name.find('$') != std::string_view::npos) {
 			// Look up the type info for this identifier
 			StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
-			auto type_it = gTypesByName.find(id_handle);
-			if (type_it != gTypesByName.end() && type_it->second->isTemplateInstantiation()) {
+			auto type_it = getTypesByNameMap().find(id_handle);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 				const TypeInfo* placeholder_type = type_it->second;
 				std::string_view base_template = StringTable::getStringView(placeholder_type->baseTemplateName());
 				
@@ -146,8 +146,8 @@ ASTNode Parser::substituteTemplateParameters(
 						arg.cv_qualifier = parg.cv_qualifier;
 						
 						// Check if this arg is a template parameter that should be substituted
-						if (parg.type_index.value < gTypeInfo.size()) {
-							std::string_view arg_type_name = StringTable::getStringView(gTypeInfo[parg.type_index.value].name());
+						if (parg.type_index.value < getTypeInfoCount()) {
+							std::string_view arg_type_name = StringTable::getStringView(getTypeInfo(parg.type_index).name());
 							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
 								if (!template_params[p].is<TemplateParameterNode>()) continue;
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -775,8 +775,8 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((is_struct_type(type_spec.type())) && type_spec.type_index().value < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_spec.type_index().value];
+					if ((is_struct_type(type_spec.type())) && type_spec.type_index().value < getTypeInfoCount()) {
+						const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
 						// Check if this type name matches a template parameter
@@ -898,15 +898,15 @@ ASTNode Parser::substituteTemplateParameters(
 				template_args);
 			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
 				int substituted_size_bits = get_type_size_bits(substituted_type);
-				if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size() && gTypeInfo[substituted_type_index.value].type_size_ > 0) {
-					substituted_size_bits = gTypeInfo[substituted_type_index.value].type_size_;
+				if (substituted_type_index.is_valid() && substituted_type_index.value < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
+					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
 				if (substituted_type == Type::Struct || substituted_type == Type::UserDefined) {
-					if (substituted_type_index.is_valid() && substituted_type_index.value < gTypeInfo.size()) {
+					if (substituted_type_index.is_valid() && substituted_type_index.value < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,
-							StringTable::getStringView(gTypeInfo[substituted_type_index.value].name()),
+							StringTable::getStringView(getTypeInfo(substituted_type_index).name()),
 							type_spec.token().line(),
 							type_spec.token().column(),
 							type_spec.token().file_index());
@@ -1160,8 +1160,8 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
 	while (ns_handle.isValid()) {
 		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
-		auto q_it = gTypesByName.find(qualified);
-		if (q_it != gTypesByName.end()) {
+		auto q_it = getTypesByNameMap().find(qualified);
+		if (q_it != getTypesByNameMap().end()) {
 			return q_it->second;
 		}
 		if (ns_handle.isGlobal()) {
@@ -1171,8 +1171,8 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	}
 
 	// Fallback: direct unqualified lookup
-	auto it = gTypesByName.find(type_handle);
-	if (it != gTypesByName.end()) {
+	auto it = getTypesByNameMap().find(type_handle);
+	if (it != getTypesByNameMap().end()) {
 		return it->second;
 	}
 
@@ -1180,8 +1180,8 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	for (NamespaceHandle using_ns : gSymbolTable.get_current_using_directive_handles()) {
 		if (!using_ns.isValid()) continue;
 		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(using_ns, type_handle);
-		auto u_it = gTypesByName.find(qualified);
-		if (u_it != gTypesByName.end()) {
+		auto u_it = getTypesByNameMap().find(qualified);
+		if (u_it != getTypesByNameMap().end()) {
 			return u_it->second;
 		}
 	}
@@ -1189,7 +1189,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	// Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
 	std::string_view type_name_sv = StringTable::getStringView(type_handle);
 	const TypeInfo* suffix_match = nullptr;
-	for (const auto& [handle, info] : gTypesByName) {
+	for (const auto& [handle, info] : getTypesByNameMap()) {
 		std::string_view full_name = StringTable::getStringView(handle);
 		if (full_name.size() <= type_name_sv.size() + 2) continue;
 		if (!full_name.ends_with(type_name_sv)) continue;

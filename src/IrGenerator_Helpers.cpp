@@ -338,10 +338,10 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 namespace {
 Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 	Type canonical_type = semantic_type;
-	if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
+	if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
 		// Prefer the canonical type stored in gTypeInfo when available. This keeps
 		// typedef / alias lowering consistent with the resolved type table entry.
-		canonical_type = gTypeInfo[type_index.value].type_;
+		canonical_type = getTypeInfo(type_index).type_;
 	}
 	return resolve_type_alias(canonical_type, type_index);
 }
@@ -355,8 +355,8 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
 	if (isIrStructType(toIrType(type))) {
-		if (type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-			const TypeInfo& type_info = gTypeInfo[type_index.value];
+		if (type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+			const TypeInfo& type_info = getTypeInfo(type_index);
 			if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 				return struct_info->total_size;
 			}
@@ -385,8 +385,8 @@ Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, Poin
 
 	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		if (const EnumTypeInfo* enum_info = gTypeInfo[type_index.value].getEnumInfo()) {
+	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
 			return enum_info->underlying_type;
 		}
 	}
@@ -401,8 +401,8 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 
 	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[type_index.value];
+	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
 			return static_cast<int>(enum_info->underlying_size);
 		}
@@ -412,9 +412,9 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 		}
 	}
 
-	if (semantic_type == Type::UserDefined && type_index.is_valid() && type_index.value < gTypeInfo.size()) {
-		if (gTypeInfo[type_index.value].type_size_ > 0) {
-			return gTypeInfo[type_index.value].type_size_;
+	if (semantic_type == Type::UserDefined && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		if (getTypeInfo(type_index).type_size_ > 0) {
+			return getTypeInfo(type_index).type_size_;
 		}
 	}
 
@@ -426,11 +426,11 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const TypeSpeci
 		return std::nullopt;
 	}
 
-	if (!type_node.type_index().is_valid() || type_node.type_index().value >= gTypeInfo.size()) {
+	if (!type_node.type_index().is_valid() || type_node.type_index().value >= getTypeInfoCount()) {
 		return std::nullopt;
 	}
 
-	const EnumTypeInfo* enum_info = gTypeInfo[type_node.type_index().value].getEnumInfo();
+	const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo();
 	if (!enum_info) {
 		return std::nullopt;
 	}

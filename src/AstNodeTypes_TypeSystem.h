@@ -516,7 +516,7 @@ inline bool isUnsignedIntegralType(Type type) {
 	}
 }
 
-// Strong wrapper for type indices into gTypeInfo[].
+// Strong wrapper for type indices into getTypeInfo(TypeIndex{}).
 // Explicit construction prevents accidental int/size_t → TypeIndex implicit
 // conversion at write sites; read sites use .value explicitly.
 struct TypeIndex {

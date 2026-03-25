@@ -492,7 +492,7 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // Phase 6: Shared helper for template function declaration parsing
 // This eliminates duplication between parse_template_declaration() and parse_member_function_template()
 // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
-// Template parameters must already be registered in gTypesByName via TemplateParameterScope
+// Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
@@ -759,8 +759,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					    (peek() == ">"_tok || peek() == ","_tok)) {
 						const auto& qi = std::get<QualifiedIdentifierNode>(expr);
 						std::string_view qname = buildQualifiedNameFromHandle(qi.namespace_handle(), qi.name());
-						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qname));
-						if (type_it != gTypesByName.end() && type_it->second->struct_info_ != nullptr) {
+						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qname));
+						if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_ != nullptr) {
 							FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
 							          "' is a concrete type, falling through to type parsing");
 							is_concrete_qualified_type = true;
@@ -927,8 +927,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					bool is_concrete_type = false;
 					if (std::holds_alternative<IdentifierNode>(expr)) {
 						const auto& id = std::get<IdentifierNode>(expr);
-						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
-						if (type_it != gTypesByName.end()) {
+						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
+						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* type_info = type_it->second;
 							// Check if it's a concrete struct (has struct_info_)
 							// OR if it's a type alias that resolves to a concrete type
@@ -936,10 +936,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							if (type_info->struct_info_ != nullptr) {
 								is_concrete_type = true;
 								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
-							} else if (type_info->type_index_.value < gTypeInfo.size()) {
+							} else if (type_info->type_index_.value < getTypeInfoCount()) {
 								// Check if this is a type alias (type_index points to underlying type)
 								// and the underlying type is concrete (not a template parameter)
-								const TypeInfo& underlying = gTypeInfo[type_info->type_index_.value];
+								const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
 								// A type is concrete if:
 								// 1. It has struct_info_ (it's a defined struct/class), OR
 								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
@@ -967,10 +967,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// or a template instantiation like ns::Inner<int> (when the template has already been
 						// instantiated during expression parsing).
 						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-						// Build the qualified name and check if it exists in gTypesByName
+						// Build the qualified name and check if it exists in getTypesByNameMap()
 						std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
-						if (type_it != gTypesByName.end()) {
+						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
+						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* type_info = type_it->second;
 							if (type_info->struct_info_ != nullptr) {
 								is_concrete_type = true;
@@ -1062,9 +1062,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						StringHandle param_name = tparam_ref.param_name();
 						// Store the dependent name for placeholder type generation
 						dependent_arg.dependent_name = param_name;
-						// Look up the template parameter type in gTypesByName
-						auto type_it = gTypesByName.find(param_name);
-						if (type_it != gTypesByName.end()) {
+						// Look up the template parameter type in getTypesByNameMap()
+						auto type_it = getTypesByNameMap().find(param_name);
+						if (type_it != getTypesByNameMap().end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
 							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for template parameter '", StringTable::getStringView(param_name), "'");
@@ -1074,8 +1074,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Store the dependent name for placeholder type generation
 						dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
 						// Check if this identifier is a template parameter by looking it up
-						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
-						if (type_it != gTypesByName.end()) {
+						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
+						if (type_it != getTypesByNameMap().end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
 							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for identifier '", id.name(), "'");
@@ -1461,8 +1461,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
 			std::string_view full_type_name;
 			TypeIndex idx = type_node.type_index();
-			if (idx.value < gTypeInfo.size()) {
-				full_type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
+			if (idx.value < getTypeInfoCount()) {
+				full_type_name = StringTable::getStringView(getTypeInfo(idx).name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
 			}
 			
@@ -1503,7 +1503,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || (idx.value < gTypeInfo.size() && gTypeInfo[idx.value].is_incomplete_instantiation_)) {
+				if (is_template_param || (idx.value < getTypeInfoCount() && getTypeInfo(idx).is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -1553,8 +1553,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
-			if (idx.value < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx.value].name());
+			if (idx.value < getTypeInfoCount()) {
+				std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {

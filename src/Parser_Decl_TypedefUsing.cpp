@@ -416,15 +416,15 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// the same struct body (e.g., using A = int; using B = A;).
 			TypeInfo& alias_info = register_type_alias(alias_name, final_type_spec, current_ns);
 			// Also add struct-chain-relative entry pointing to the same TypeInfo.
-			gTypesByName.emplace(struct_relative_handle, &alias_info);
+			getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
 
 			if (!current_ns_name.empty()) {
 				// Also register namespace-qualified name "ns::Container::AliasStatus"
 				// so that ADL and type lookups work from outside the namespace.
 				StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 					current_ns, struct_relative_handle);
-				if (gTypesByName.find(ns_qualified_handle) == gTypesByName.end()) {
-					gTypesByName.emplace(ns_qualified_handle, &alias_info);
+				if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
+					getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 				}
 			}
 			return ParseResult::success();
@@ -615,7 +615,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// For struct types, get the actual size from TypeInfo
 				if (member_type_spec.type() == Type::Struct) {
 					TypeInfo* member_type_info = nullptr;
-					for (auto& ti : gTypeInfo) {
+					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
 						if (ti.type_index_ == member_type_spec.type_index()) {
 							member_type_info = &ti;
 							break;
@@ -881,8 +882,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 				// Look up the original enum TypeInfo by its type_index
 				TypeInfo* original_enum_type_info = nullptr;
-				if (enum_type_index.value < gTypeInfo.size()) {
-					original_enum_type_info = &gTypeInfo[enum_type_index.value];
+				if (enum_type_index.value < getTypeInfoCount()) {
+					original_enum_type_info = &getTypeInfoMut(enum_type_index);
 				}
 
 				StringBuilder chain_builder;
@@ -894,14 +895,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 				// Register struct-relative name ("Container::Status") pointing to original enum
 				if (original_enum_type_info) {
-					gTypesByName.emplace(struct_relative_handle, original_enum_type_info);
+					getTypesByNameMap().emplace(struct_relative_handle, original_enum_type_info);
 				}
 
 				if (!current_ns_name.empty() && original_enum_type_info) {
 					// Also register namespace-qualified name "ns::Container::Status"
 					StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 						current_ns, struct_relative_handle);
-					gTypesByName.emplace(ns_qualified_handle, original_enum_type_info);
+					getTypesByNameMap().emplace(ns_qualified_handle, original_enum_type_info);
 				}
 
 				// Track the enum in the struct's nested enum list so that unscoped
@@ -1051,13 +1052,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 		chain_builder.append(alias_name);
 		StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(chain_builder.commit());
-		gTypesByName.emplace(struct_relative_handle, &alias_info);
+		getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
 
 		if (!current_ns_name.empty()) {
 			StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 				current_ns, struct_relative_handle);
-			if (gTypesByName.find(ns_qualified_handle) == gTypesByName.end()) {
-				gTypesByName.emplace(ns_qualified_handle, &alias_info);
+			if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
+				getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 			}
 		}
 		return ParseResult::success();
@@ -1220,7 +1221,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Store enum info early so ConstExprEvaluator can look up values during parsing
-		auto& enum_type_info_ref = gTypeInfo[enum_type_index.value];
+		auto& enum_type_info_ref = getTypeInfoMut(enum_type_index);
 		enum_type_info_ref.setEnumInfo(std::move(enum_info));
 		auto* live_enum_info = enum_type_info_ref.getEnumInfo();
 
@@ -1843,7 +1844,8 @@ ParseResult Parser::parse_typedef_declaration()
 
 			if (member_type_spec.type() == Type::Struct) {
 				const TypeInfo* member_type_info = nullptr;
-				for (const auto& ti : gTypeInfo) {
+				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_spec.type_index()) {
 						member_type_info = &ti;
 						break;
