@@ -1564,7 +1564,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 				if (orig_func.get_definition().has_value()) {
-					new_func_ref.set_definition(*orig_func.get_definition());
+					new_func_ref.set_definition(substituteTemplateParameters(*orig_func.get_definition(), template_params, template_args));
 				}
 
 				// Add the function to the struct info (with substituted signature)
