@@ -1155,10 +1155,13 @@
 					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));
 				} else {
 					// Regular member function (not a template) - generate proper mangled name
-					// Use the function declaration from struct_info if available (has correct parameters)
+					// Prefer the function declaration from struct_info (has correctly substituted
+					// parameter types for template instantiations). The MemberFunctionCallNode's
+					// embedded func_decl may still reference the unsubstituted pattern declaration
+					// (e.g., with T& instead of int&) because MemberFunctionCallNode stores a
+					// const reference that cannot be rebound during template substitution.
 					const FunctionDeclarationNode* func_for_mangling = &func_decl;
-					if (func_for_mangling->parameter_nodes().empty() &&
-						called_member_func &&
+					if (called_member_func &&
 						called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 						func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 					}
@@ -1334,8 +1337,7 @@
 
 			// Get the actual function declaration to check if it's variadic
 			const FunctionDeclarationNode* actual_func_decl_for_variadic = &func_decl;
-			if (actual_func_decl_for_variadic->parameter_nodes().empty() &&
-				called_member_func &&
+			if (called_member_func &&
 				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 			}
@@ -1421,8 +1423,7 @@
 			// bindings. struct_info may still point at the original uninstantiated
 			// template declaration.
 			const FunctionDeclarationNode* actual_func_decl = &func_decl;
-			if (actual_func_decl->parameter_nodes().empty() &&
-				called_member_func &&
+			if (called_member_func &&
 				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 				actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 			}
