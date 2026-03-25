@@ -1419,10 +1419,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_name, orig_ctor.name());
 				substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args);
 				for (const auto& [name, expr] : orig_ctor.member_initializers()) {
-					new_ctor_ref.add_member_initializer(name, expr);
+					new_ctor_ref.add_member_initializer(name, substituteTemplateParameters(expr, template_params, template_args));
 				}
 				if (orig_ctor.get_definition().has_value()) {
-					new_ctor_ref.set_definition(*orig_ctor.get_definition());
+					new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args));
 				}
 				new_ctor_ref.set_is_implicit(orig_ctor.is_implicit());
 				new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
