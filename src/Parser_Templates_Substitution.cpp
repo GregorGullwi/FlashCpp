@@ -826,8 +826,9 @@ ASTNode Parser::substituteTemplateParameters(
 				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
 			}
 			return emplace_node<ExpressionNode>(
-			return emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(substituted_object, member_call.function_declaration(),
+				MemberFunctionCallNode(substituted_object,
+					const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
+					std::move(substituted_args), member_call.called_from()));
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is
