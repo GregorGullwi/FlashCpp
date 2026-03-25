@@ -1751,8 +1751,12 @@ ParseResult Parser::parse_template_declaration() {
 										if (auto arg_node = arg_result.node()) {
 											// Check for pack expansion: expr...
 											if (peek() == "..."_tok) {
+												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
-												// Mark this as a pack expansion - actual expansion happens at instantiation
+												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+													PackExpansionExprNode(*arg_node, ellipsis_token));
+												init_args.push_back(ASTNode(&pack_expansion));
+												continue;
 											}
 											init_args.push_back(*arg_node);
 										}
@@ -3202,8 +3206,12 @@ ParseResult Parser::parse_template_declaration() {
 										if (auto arg_node = arg_result.node()) {
 											// Check for pack expansion: expr...
 											if (peek() == "..."_tok) {
+												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
-												// Mark this as a pack expansion - actual expansion happens at instantiation
+												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+													PackExpansionExprNode(*arg_node, ellipsis_token));
+												init_args.push_back(ASTNode(&pack_expansion));
+												continue;
 											}
 											init_args.push_back(*arg_node);
 										}
