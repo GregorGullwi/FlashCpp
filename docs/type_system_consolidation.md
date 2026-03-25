@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-25  
-**Status**: Phase 1 (Option A) complete. Phases 2-5 (Option C) pending.  
+**Status**: Phase 1 (Option A) complete. Phases 2-5 (Option C) pending. Option D evaluated and documented.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -17,15 +17,17 @@
 | 1 | Add `is_builtin_type(Type)` helper; replace 2 enum-order range checks | ✅ Done (this PR) |
 | 1 | Add canonical `constexpr isArithmeticType`/`isFundamentalType`; deduplicate 3 local copies | ✅ Done (this PR) |
 | 2 | Add `TypeInfo` query helpers (`isStructLike`, `isPrimitive`, `needsTypeIndex`, `isTemplatePlaceholder`) | ⬜ TODO |
-| 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§6.1) | ⬜ TODO |
-| 2 | Add `static_assert` enum-count sentinel for `Type` (§6.3) | ⬜ TODO |
+| 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§7.1) | ⬜ TODO |
+| 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ⬜ TODO |
 | 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
-| 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§6.6) | ⬜ TODO |
-| 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§6.2) | ⬜ TODO |
+| 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ⬜ TODO |
+| 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ⬜ TODO |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ⬜ TODO |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
-| — | Resolve `Type::UserDefined` semantic ambiguity (§6.1) — prerequisite for Milestone 3 | ⬜ TODO |
-| — | Migrate `buildConversionPlan` with dedicated test coverage (§6.2) | ⬜ TODO |
+| 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ⬜ TODO |
+| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | ⬜ TODO |
+| — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
+| — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
 
 ---
 
@@ -280,11 +282,248 @@ The `IrType` enum already models this correctly for IR/codegen (`docs/2026-03-12
 
 ---
 
-## 5. Recommendation and migration plan
+## 5. Option D: Embed `TypeCategory` inside `TypeIndex`, hide `gTypeInfo` behind accessors
 
-### Recommended path: **Option C, staged through remaining Option A TODOs**
+### Proposal overview
 
-Option A is done. The recommended next steps follow the Option C progression:
+Option D was proposed as a concrete next step after Option C. It makes two reinforcing changes:
+
+1. **Add a new `TypeCategory` enum** (mirroring the values of `Type`, but a distinct C++ type) and embed it as a field inside `TypeIndex` alongside the index. Every `TypeIndex` becomes self-describing — no `gTypeInfo` lookup needed for category queries, and no separate `Type` field to keep in sync.
+
+2. **Hide `gTypeInfo` behind accessor functions** (`getTypeInfo()`, `addStructType()`, `isValid()`, etc.) so that no code outside `AstNodeTypes.cpp` touches the global table directly.
+
+The old `Type` enum stays in place initially. Because `TypeCategory` is a **different C++ type** from `Type`, the compiler reports every site that still uses the old enum — giving a completely mechanical migration path.
+
+### Proposed `TypeCategory` enum
+
+```cpp
+// Distinct from Type so the compiler enforces migration site-by-site.
+// Explicit values match Type 0-23 exactly, then TypeAlias=24 is inserted,
+// shifting Auto and later values by 1.
+enum class TypeCategory : uint8_t {
+    Invalid             = 0,
+    Void                = 1,
+    Bool                = 2,
+    Char                = 3,
+    UnsignedChar        = 4,
+    WChar               = 5,
+    Char8               = 6,
+    Char16              = 7,
+    Char32              = 8,
+    Short               = 9,
+    UnsignedShort       = 10,
+    Int                 = 11,
+    UnsignedInt         = 12,
+    Long                = 13,
+    UnsignedLong        = 14,
+    LongLong            = 15,
+    UnsignedLongLong    = 16,
+    Float               = 17,
+    Double              = 18,
+    LongDouble          = 19,
+    FunctionPointer     = 20,
+    MemberFunctionPointer = 21,
+    MemberObjectPointer = 22,
+    UserDefined         = 23,
+    TypeAlias           = 24,  // NEW — split from old Type::UserDefined (see §7.1)
+    Auto                = 25,
+    DeclTypeAuto        = 26,
+    Function            = 27,
+    Struct              = 28,
+    Enum                = 29,
+    Nullptr             = 30,
+    Template            = 31,
+};
+
+// Correspondence checks: values 0-23 match the old Type enum exactly.
+static_assert(static_cast<int>(TypeCategory::Int)  == static_cast<int>(Type::Int));
+static_assert(static_cast<int>(TypeCategory::Struct) == static_cast<int>(Type::Struct) + 1);
+// The +1 for Struct and later reflects TypeAlias insertion; document prominently.
+```
+
+### Proposed `TypeIndex` struct
+
+```cpp
+struct TypeIndex {
+    uint32_t     index_    = 0;
+    TypeCategory category_ = TypeCategory::Invalid;
+
+    constexpr TypeIndex() noexcept = default;
+    constexpr TypeIndex(uint32_t idx, TypeCategory cat) noexcept
+        : index_(idx), category_(cat) {}
+
+    // Cheap sentinel: "was this TypeIndex ever set?"
+    constexpr bool isNull() const noexcept {
+        return index_ == 0 && category_ == TypeCategory::Invalid;
+    }
+    // Runtime bounds check: "can I call getTypeInfo() safely?"
+    // Replaces scattered idx.value < gTypeInfo.size() checks.
+    bool isValid() const noexcept;  // defined in AstNodeTypes.cpp
+
+    // Classification — no gTypeInfo lookup needed.
+    constexpr TypeCategory category()   const noexcept { return category_; }
+    constexpr bool isStruct()           const noexcept { return category_ == TypeCategory::Struct; }
+    constexpr bool isEnum()             const noexcept { return category_ == TypeCategory::Enum; }
+    constexpr bool isTypeAlias()        const noexcept { return category_ == TypeCategory::TypeAlias; }
+    constexpr bool isStructLike()       const noexcept {
+        return category_ == TypeCategory::Struct
+            || category_ == TypeCategory::UserDefined
+            || category_ == TypeCategory::TypeAlias;
+    }
+    constexpr bool isPrimitive()        const noexcept;  // switch on category_
+    constexpr bool isTemplatePlaceholder() const noexcept {
+        return category_ == TypeCategory::Template;
+    }
+
+    // Identity: both index and category must match.
+    constexpr auto operator<=>(const TypeIndex&) const noexcept = default;
+};
+// Size: uint32_t(4) + uint8_t(1) + 3 padding = 8 bytes — same as current size_t TypeIndex.
+```
+
+Note: the current `is_valid()` method (sentinel check: `value > 0`) maps to `!isNull()` in Option D. The new `isValid()` is a stricter runtime bounds check. Every call site needs to understand which semantics it needs — this rename has wide impact (see §5 Risk 4 below).
+
+### Proposed `gTypeInfo` accessor API
+
+No code outside `AstNodeTypes.cpp` touches `gTypeInfo` directly:
+
+```cpp
+// --- Reads (declared in AstNodeTypes.h, defined in AstNodeTypes.cpp) ---
+const TypeInfo& getTypeInfo(TypeIndex idx);       // asserts in range
+TypeInfo&       getTypeInfoMut(TypeIndex idx);
+const TypeInfo* findTypeByName(StringHandle name);   // replaces gTypesByName access
+const TypeInfo* findNativeType(TypeCategory cat);    // replaces gNativeTypes access
+
+// --- Writes ---
+struct TypeCreationResult {
+    TypeInfo& info;
+    TypeIndex index;
+};
+TypeCreationResult addStructType(StringHandle name, NamespaceHandle ns = {});
+TypeCreationResult addEnumType  (StringHandle name, NamespaceHandle ns = {});
+TypeCreationResult addUserType  (StringHandle name, int size_bits = 0, NamespaceHandle ns = {});
+TypeCreationResult addFunctionType(StringHandle name, NamespaceHandle ns = {});
+TypeCreationResult registerTypeAlias(StringHandle name, const TypeSpecifierNode& spec, NamespaceHandle ns = {});
+TypeCreationResult addNativeType(StringHandle name, TypeCategory cat, int size_bits);
+```
+
+The key payoff: callers never compute `TypeIndex{gTypeInfo.size(), ...}` manually — the `add*` functions do it and return the result. This eliminates the most error-prone antipattern in the current codebase.
+
+### Migration strategy: 4 steps
+
+**Step 0 — Create the accessor boundary (zero semantic risk, scriptable)**
+
+Replace all direct `gTypeInfo` accesses with function calls. This step is pure mechanical refactoring with no behavioral change:
+
+- `gTypeInfo[x.value]` → `getTypeInfo(x)` (const context) / `getTypeInfoMut(x)` (mutable context)
+- `x.value < gTypeInfo.size()` → `x.isValid()`
+- `x.value >= gTypeInfo.size()` → `!x.isValid()`
+- Direct `gTypesByName[name]` → `findTypeByName(name)`
+- Direct `gNativeTypes[type]` → `findNativeType(TypeCategory::X)`
+- `TypeIndex{gTypeInfo.size()}` → replaced by `addXxx(...).index` at write sites
+
+Current scope: **1,624** external `gTypeInfo` accesses (outside `AstNodeTypes.cpp`), **455** `.value < gTypeInfo.size()` checks. A Python migration script is realistic for the bulk replacement; manual review is needed for the ~30 `TypeIndex{gTypeInfo.size()}` construction sites.
+
+**Step 1 — Add `TypeCategory` and embed it in `TypeIndex`**
+
+- Define `TypeCategory` with the explicit values shown above.
+- Change `TypeIndex` layout from `{ size_t value; }` to `{ uint32_t index_; TypeCategory category_; }`.
+- Update `getTypeInfo()` to use `idx.index_` instead of `idx.value`.
+- Update all `add*` / `addNativeType` functions to construct `TypeIndex` with the correct category.
+- Update `std::hash<TypeIndex>` and `std::formatter<TypeIndex>` specializations.
+- Keep `Type` enum untouched — it still compiles, still works.
+
+**Step 2 — Add `TypeCategory`-based classification helpers**
+
+Mirror every `Type`-based helper with a `TypeCategory` version:
+
+```cpp
+constexpr bool is_primitive_type(TypeCategory cat);
+constexpr bool isArithmeticType(TypeCategory cat);
+constexpr bool isFundamentalType(TypeCategory cat);
+constexpr bool is_builtin_type(TypeCategory cat);
+// etc.
+```
+
+And add the convenience methods on `TypeIndex` itself (`isPrimitive()`, `isStruct()`, etc. — see struct above).
+
+**Step 3 — Incrementally replace `Type` usage with `TypeCategory`/`TypeIndex` queries**
+
+Because `TypeCategory ≠ Type`, the compiler flags every remaining old-enum site. Migrate file by file:
+
+- `type == Type::Struct` → `idx.isStruct()`
+- `type == Type::Enum` → `idx.isEnum()`
+- Fields carrying `Type` alongside `TypeIndex` (e.g., `TemplateTypeArg::base_type`) → remove the field, use `idx.category()` instead
+- `buildConversionPlan(Type, Type)` → add a `buildConversionPlan(TypeCategory, TypeCategory)` overload, migrate callers one by one (see §7.2)
+- `gNativeTypes` (keyed on `Type`) → re-key on `TypeCategory` using `findNativeType(cat)`
+
+Once all references to `Type::` are gone, delete the old `Type` enum.
+
+### What Option D solves that Option C leaves open
+
+| Problem | Option C | Option D |
+| --- | --- | --- |
+| `Type` + `TypeIndex` drifting out of sync | Mitigated by `TypeInfo` helpers | **Eliminated**: `TypeIndex` is the only token |
+| `Type::UserDefined` ambiguity (§7.1) | Requires `TypeInfo::is_type_alias` flag | **Built-in**: `TypeCategory::TypeAlias` |
+| `gTypeInfo` scattered throughout call sites | Unchanged | **Hidden**: accessor API |
+| `TypeIndex{gTypeInfo.size()}` error-prone pattern | Unchanged (455 sites) | **Eliminated**: `add*()` returns `TypeCreationResult` |
+| Compiler-enforced migration tracking | Manual grep | **Automatic**: `TypeCategory ≠ Type` |
+| `isArithmeticType` without gTypeInfo lookup | Partial (current) | **Full**: `idx.isPrimitive()` etc. |
+
+### Evaluation
+
+**Strengths of Option D:**
+
+1. **Architecturally cleaner than Option C** — Single identity token, no parallel fields to sync, no hidden `gTypeInfo` access patterns.
+
+2. **Solves §7.1 structurally** — `TypeCategory::TypeAlias` vs `TypeCategory::UserDefined` from day one. The ambiguity that §7.1 flags as the single most important issue is resolved by the enum definition, not by documentation or runtime flags.
+
+3. **Compiler-enforced migration** — Every remaining `Type::` site is a compile error after `TypeCategory` is in use. This is far more reliable than grep-based tracking.
+
+4. **`TypeCreationResult` pattern eliminates the biggest antipattern** — The `TypeIndex{gTypeInfo.size()}` expression appears in ~30 files. Under Option D, callers never compute this themselves; they receive the index from the `add*` function.
+
+5. **Log-comparable numeric values** — Values 0-23 match the old `Type` enum. A debug print showing `category=11` means `Int` in both old and new systems.
+
+**Risks and complications:**
+
+1. **`TemplateTypeArg::base_type` is `Type`** — `TemplateTypeArg` (`src/TemplateRegistry_Types.h:157`) carries a `Type base_type` field alongside `TypeIndex type_index`. This is a heavily used structure (122+ write sites). Under Option D, `base_type` would eventually be replaced by reading `type_index.category()`, but this field is also used for primitive types where `type_index` may be invalid/zero. The migration here requires care.
+
+2. **`TypeInfo::TemplateArgInfo::base_type` is also `Type`** — The lightweight template arg storage in `TypeInfo` (`src/AstNodeTypes_DeclNodes.h:769`) has the same dual-field pattern. Same migration challenge.
+
+3. **`gNativeTypes` key type** — `gNativeTypes` is `std::unordered_map<Type, const TypeInfo*>` (`src/AstNodeTypes.cpp:72`). It would need to become `unordered_map<TypeCategory, const TypeInfo*>` or be replaced entirely by the `findNativeType(cat)` accessor.
+
+4. **`is_valid()` rename** — The current `TypeIndex::is_valid()` returns `value > 0` (a sentinel/null check). The proposal renames this to `isNull()` and defines a new `isValid()` as a runtime bounds check. This rename touches every one of the 455+ sites that currently call `.is_valid()`. Many of those sites really want the sentinel check, not the bounds check — careful inspection is needed at each site.
+
+5. **`TypeCategory::TypeAlias = 24` shifts values ≥ 24 by 1** — Any code comparing `TypeCategory` values numerically (including serialization, debug output, or hardcoded switch cases without explicit labels) would silently get wrong results. The `static_assert` correspondence checks in the proposal help, but all switch statements need review.
+
+6. **Step 0 scope is large** — 1,624 external `gTypeInfo` accesses outside `AstNodeTypes.cpp` is a very large Step 0. A Python migration script is necessary, not optional. The script needs to handle const vs mutable contexts correctly (`getTypeInfo` vs `getTypeInfoMut`), and the hand-off between the script output and human review should be planned.
+
+7. **`TypeIndex` increment operators** — The current `TypeIndex` has `operator++` used in loop variables that walk the type table. After the layout change, `++idx` would increment `index_` (not `category_`), which is correct. But the increment operators still use `++value` internally and would need updating to `++index_`.
+
+### Option D vs Option C: decision guidance
+
+Option D is **architecturally superior** to Option C for the long run. Option C is a safe incremental path, but it intentionally avoids the hard problems (dual field, `gTypeInfo` encapsulation, `UserDefined` ambiguity). Option D addresses all three.
+
+**Option D is the right final destination. Option C is a valid staging area on the way there.**
+
+The practical recommendation is:
+
+- **Continue with Option C Milestones 2-3** (add `TypeInfo` helpers, migrate hot spots) — these make Option D Step 1 cheaper because they reduce the number of sites that need simultaneous migration.
+- **Execute Option D Step 0** (accessor API) as a separate PR once Milestone 2 is done. This is the highest-value, lowest-risk change in the whole roadmap: it does not change behavior but encapsulates `gTypeInfo` so future layout changes only touch the accessor implementations.
+- **Then execute Option D Steps 1-3** after Step 0 is merged. At that point the codebase is already accessor-only, the `TypeInfo` helpers exist, and the `TypeCategory` introduction is a much smaller diff.
+
+---
+
+## 6. Recommendation and migration plan
+
+### Recommended path: **Option C now → Option D Step 0 → Option D Steps 1-3**
+
+Option A is done. The remaining milestones below follow Option C until the accessor boundary is established, then switch to Option D for the full unification. See §5 for the full Option D evaluation.
+
+The updated recommendation relative to the previous version of this document:
+- **Milestones 1-3 below** are still Option C work and remain the right immediate path.
+- **Milestone 4 (new)** is Option D Step 0: create the `gTypeInfo` accessor API as a standalone, behavior-preserving PR. This gates all subsequent Option D work.
+- **Milestone 5+ (new)** introduces `TypeCategory`, embeds it in `TypeIndex`, and executes the full unification.
 
 #### Milestone 1 — Complete Option A remaining TODOs (low risk, high value)
 
@@ -296,12 +535,12 @@ Option A is done. The recommended next steps follow the Option C progression:
 
 - [ ] Add `isStructLike()`, `isPrimitive()`, `needsTypeIndex()`, `isTemplatePlaceholder()` to `TypeInfo` in `AstNodeTypes_DeclNodes.h`.
 - [ ] Replace the most redundant `gTypeInfo[idx].type_ == Type::X` patterns with the new helpers. Priority: `TemplateRegistry_Types.h` and `OverloadResolution.h`.
-- [ ] Evaluate splitting `Type::UserDefined` into `TypeAlias` + `UserDefined`, or adding an `is_type_alias` flag to `TypeInfo` (see §6.1). This decision gates the safety of Milestone 3 alias-resolution changes.
-- [ ] Add a `static_assert` enum-count sentinel to catch new `Type` values (see §6.3).
+- [ ] Evaluate splitting `Type::UserDefined` into `TypeAlias` + `UserDefined`, or adding an `is_type_alias` flag to `TypeInfo` (see §7.1). This decision gates the safety of Milestone 3 alias-resolution changes.
+- [ ] Add a `static_assert` enum-count sentinel to catch new `Type` values (see §7.3).
 
 #### Milestone 2.5 — Resolve the `Type::UserDefined` ambiguity (prerequisite for Milestone 3)
 
-- [ ] Decide between option (a) split `UserDefined` into `TypeAlias`/`OpaqueUserType`, option (b) make `resolve_type_alias()` recursive, or option (c) accept and document. See §6.1.
+- [ ] Decide between option (a) split `UserDefined` into `TypeAlias`/`OpaqueUserType`, option (b) make `resolve_type_alias()` recursive, or option (c) accept and document. See §7.1.
 - [ ] If option (b): add cycle detection (max-depth guard) and update `resolve_type_alias()` to follow `UserDefined` → `UserDefined` chains. Verify that `buildConversionPlan` still passes all overload resolution tests.
 - [ ] If option (a): define the new enum variants, update `is_struct_type()` and `needs_type_index()`, and migrate call sites incrementally.
 
@@ -309,9 +548,9 @@ Option A is done. The recommended next steps follow the Option C progression:
 
 - [ ] Convert the mixed-identity sites in `ExpressionSubstitutor.cpp` and `SemanticAnalysis.cpp` to use `TypeIndex` as primary, reading category from `TypeInfo` methods.
 - [ ] Replace the alias-resolution pattern in `AstNodeTypes_DeclNodes.h:837-845` with explicit `TypeInfo` helper calls.
-- [ ] **Sub-milestone 3a**: Migrate `buildConversionPlan` separately with dedicated test coverage (see §6.2). Do not batch this with mechanical helper replacements.
-- [ ] Upgrade `resolve_type_alias()` to chase alias chains (bounded depth) or document why the shallow version is intentional (see §6.6).
-- [ ] Document `buildConversionPlan` as a legitimate `Type`-primary consumer — do not attempt to migrate its core dispatch to `TypeIndex` (see §6.2).
+- [ ] **Sub-milestone 3a**: Migrate `buildConversionPlan` separately with dedicated test coverage (see §7.2). Do not batch this with mechanical helper replacements.
+- [ ] Upgrade `resolve_type_alias()` to chase alias chains (bounded depth) or document why the shallow version is intentional (see §7.1 option b).
+- [ ] Document `buildConversionPlan` as a legitimate `Type`-primary consumer — do not attempt to migrate its core dispatch to `TypeIndex` (see §7.2).
 
 #### Milestone 4 — Settle `Type::Template` (Option C Step D)
 
@@ -323,18 +562,44 @@ Option A is done. The recommended next steps follow the Option C progression:
 - [ ] Audit `NameMangling.h`, `IrType.cpp`, and codegen `!= Type::Struct` single-type checks.
 - [ ] Decide whether `Type` should be narrowed to a smaller `TypeCategory` enum covering only the codegen-relevant categories, or left as-is with clear documentation that it is a cache, not an identity system.
 
+#### Milestone 6 (Option D Step 0) — Create `gTypeInfo` accessor API
+
+This is a behavior-preserving PR that establishes the encapsulation boundary for Option D. No semantic changes; the entire value is decoupling call sites from `gTypeInfo` internals.
+
+**Scope**: 1,624 external `gTypeInfo` accesses, 455 `.value < gTypeInfo.size()` checks, ~30 `TypeIndex{gTypeInfo.size()}` construction sites.
+
+- [ ] Add `getTypeInfo(TypeIndex)`, `getTypeInfoMut(TypeIndex)`, `findTypeByName()`, `findNativeType()` in `AstNodeTypes.h` / `AstNodeTypes.cpp`.
+- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}`.
+- [ ] Write a Python migration script to replace `gTypeInfo[x.value]` → `getTypeInfo(x)`, `x.value < gTypeInfo.size()` → `x.isValid()`, etc. across all files outside `AstNodeTypes.cpp`.
+- [ ] Hand-review the ~30 `TypeIndex{gTypeInfo.size()}` construction sites and convert them to use the returned index from `add*()`.
+- [ ] Remove `extern` declarations of `gTypeInfo`, `gTypesByName`, `gNativeTypes` from public headers so no new code can access them directly.
+
+#### Milestone 7 (Option D Steps 1-3) — Introduce `TypeCategory` and unify identity
+
+These steps can be split into separate PRs once Milestone 6 is merged.
+
+- [ ] Add `TypeCategory` enum with explicit values (§5); add `static_assert` correspondence checks with old `Type` values.
+- [ ] Change `TypeIndex` layout to `{ uint32_t index_; TypeCategory category_; }`. Update accessors, hash, and formatter. Keep `Type` untouched.
+- [ ] Update all `add*` / `addNativeType` to pass the correct `TypeCategory` when constructing `TypeIndex`.
+- [ ] Add `TypeCategory`-based classification helpers mirroring the existing `Type` helpers.
+- [ ] Migrate `TemplateTypeArg::base_type` (122+ write sites) from `Type` to relying on `type_index.category()`.
+- [ ] Migrate `TypeInfo::TemplateArgInfo::base_type` similarly.
+- [ ] Re-key `gNativeTypes` from `Type` to `TypeCategory`.
+- [ ] Migrate remaining `Type::` sites to `TypeCategory::`/`TypeIndex` queries file by file. Use compile errors to track remaining sites.
+- [ ] Delete the `Type` enum once all references are gone.
+
 ### `Type::Template` decision (immediate)
 
 Do **not** fold `Type::Template` into `needs_type_index()` yet. Template placeholders are semantically different from concrete `Struct` / `Enum` / `UserDefined` types and require different handling during substitution. Adding `isTemplatePlaceholder()` to `TypeInfo` (Milestone 4) is the right way to make this boundary explicit.
 
 ---
 
-## 6. Known risks and gaps in the Option C roadmap
+## 7. Known risks and gaps in the Option C roadmap
 
 This section captures structural issues that the milestones above do not fully address.
 They should be evaluated before committing to Milestones 3–5.
 
-### 6.1 The `Type::UserDefined` semantic ambiguity
+### 7.1 The `Type::UserDefined` semantic ambiguity
 
 **This is the single most important architectural issue in the type system, and the
 current roadmap underweights it.**
@@ -383,7 +648,7 @@ contexts: a `UserDefined` might actually be an alias for `int`, not a struct at 
 Option (b) is probably the best cost/benefit for the near term. Option (a) is the right
 long-term answer but should be its own milestone.
 
-### 6.2 `buildConversionPlan` is deeply entangled with raw `Type` comparisons
+### 7.2 `buildConversionPlan` is deeply entangled with raw `Type` comparisons
 
 Milestone 3 says "convert mixed `Type` + `TypeIndex` hot spots in `OverloadResolution.h`"
 but understates the difficulty. `buildConversionPlan` (both the `Type,Type` overload at
@@ -410,7 +675,7 @@ carefully tested milestone rather than part of a bulk migration.
 - UserDefined alias resolution through pointer and reference layers
 - Enum-to-integral promotion paths
 
-### 6.3 Enum exhaustiveness is not enforced for classification helpers
+### 7.3 Enum exhaustiveness is not enforced for classification helpers
 
 The `constexpr` switch-based helpers (`is_primitive_type`, `is_builtin_type`,
 `isArithmeticType`, `needs_type_index`) use `default: return false;`. This means that
@@ -434,7 +699,7 @@ enum count check (e.g., `static_assert` on the number of `Type` variants) that f
 a manual audit of all helpers whenever the enum grows. Alternatively, periodically
 verify that the helpers' positive + negative cases cover all enum values.
 
-### 6.4 `is_integral_type` vs `isIntegralType` — semantically identical, safe to merge
+### 7.4 `is_integral_type` vs `isIntegralType` — semantically identical, safe to merge
 
 The document's TODO 3 says "consolidate" but doesn't confirm whether the two functions
 have identical semantics. They do:
@@ -449,7 +714,7 @@ So `is_integral_type(x)` ≡ `isIntegralType(x)` for all `Type` values. The merg
 safe: replace all `is_integral_type` call sites (5 in `src/OverloadResolution.h`) with
 `isIntegralType`, then delete the `is_integral_type` definition.
 
-### 6.5 Global mutable state (`gTypeInfo`) constrains future parallelism
+### 7.5 Global mutable state (`gTypeInfo`) constrains future parallelism
 
 `gTypeInfo` is a global `std::deque<TypeInfo>` (`src/AstNodeTypes.cpp:70`), and
 `gTypesByName` is a global `std::unordered_map` (`src/AstNodeTypes.cpp:71`). The
