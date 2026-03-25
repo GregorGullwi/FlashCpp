@@ -474,7 +474,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
 				substituted_param_type_node, param_decl.identifier_token());
 			if (param_decl.has_default_value()) {
-				substituted_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+				// Substitute template parameters in the default value expression.
+				// Without this, template-dependent defaults like T{} or T(0) remain
+				// unsubstituted after instantiation.
+				std::unordered_map<std::string_view, TemplateTypeArg> default_param_map;
+				for (size_t i = 0; i < tmpl_params.size() && i < tmpl_args.size(); ++i) {
+					if (tmpl_params[i].template is<TemplateParameterNode>()) {
+						const TemplateParameterNode& tp = tmpl_params[i].template as<TemplateParameterNode>();
+						default_param_map[tp.name()] = tmpl_args[i];
+					}
+				}
+				if (!default_param_map.empty()) {
+					ExpressionSubstitutor substitutor(default_param_map, *this);
+					std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
+					if (substituted_default.has_value()) {
+						substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
+					}
+				} else {
+					substituted_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
+				}
 			}
 			target_node.add_parameter_node(substituted_param_decl);
 		}
