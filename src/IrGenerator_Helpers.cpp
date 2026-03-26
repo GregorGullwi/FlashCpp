@@ -509,7 +509,7 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 void AstToIr::emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
 	ReturnOp ret_op;
 	ret_op.return_value = return_value;
-	ret_op.return_type = return_type;
+	ret_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type, {});
 	ret_op.return_size = return_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 }

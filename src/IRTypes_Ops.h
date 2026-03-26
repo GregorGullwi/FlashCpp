@@ -484,10 +484,11 @@ struct CallOp {
 	StringHandle function_name;  // Pure StringHandle
 	std::vector<TypedValue> args;         // 24 bytes (using TypedValue instead of CallArg)
 	TempVar result;                       // 4 bytes
-	Type return_type;                     // 4 bytes
 	SizeInBits return_size_in_bits;              // 4 bytes
 	SizeInBits referenced_value_size_in_bits {}; // Referenced object size for T&/T&& returns
-	TypeIndex return_type_index {};      // Type index for struct/class return types
+	TypeIndex return_type_index {};      // TypeCategory embedded; replaces Type return_type
+
+	Type returnType() const { return categoryToType(return_type_index.category()); }
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
@@ -565,8 +566,10 @@ struct BranchOp {
 // Return statement
 struct ReturnOp {
 	std::optional<IrValue> return_value;    // ~40 bytes
-	std::optional<Type> return_type;        // ~8 bytes
+	TypeIndex return_type_index {};         // TypeCategory embedded; replaces optional<Type> return_type; category() != Invalid means non-void
 	int return_size = 0;                    // 4 bytes
+
+	Type returnType() const { return categoryToType(return_type_index.category()); }
 };
 
 // Array access (load element from array)
@@ -741,10 +744,11 @@ struct FunctionParam {
 
 // Function declaration
 struct FunctionDeclOp {
-	Type return_type = Type::Void;
 	SizeInBits return_size_in_bits;
 	PointerDepth return_pointer_depth = PointerDepth{};
-	TypeIndex return_type_index {};  // Type index for struct/class return types
+	TypeIndex return_type_index {};  // TypeCategory embedded; replaces Type return_type
+
+	Type returnType() const { return categoryToType(return_type_index.category()); }
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
 	StringHandle function_name;  // Pure StringHandle

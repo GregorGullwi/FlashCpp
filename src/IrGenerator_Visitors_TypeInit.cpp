@@ -1143,7 +1143,7 @@
 				FunctionDeclOp ctor_decl_op;
 				ctor_decl_op.function_name = type_info->name();
 				ctor_decl_op.struct_name = type_info->name();
-				ctor_decl_op.return_type = Type::Void;
+				ctor_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});
 				ctor_decl_op.return_size_in_bits = SizeInBits{0};
 				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
@@ -1795,7 +1795,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	func_decl_op.return_type = return_type.type();
+	func_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 

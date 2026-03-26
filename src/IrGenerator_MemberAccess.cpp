@@ -973,7 +973,7 @@
 
 						CallOp call_op;
 						call_op.result = ptr_result;
-						call_op.return_type = return_type.type();
+						call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 						if (!call_op.return_size_in_bits.is_set()) {
 						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
@@ -3777,9 +3777,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type = target_type;
+	call_op.return_type_index = TypeIndex::fromTypeAndIndex(target_type, target_type_index);
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
-	call_op.return_type_index = target_type_index;
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
 

@@ -3994,7 +3994,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Determine effective return size; fall back to type size if not provided
 			int return_size_bits = call_op.return_size_in_bits.value;
 			if (return_size_bits == 0) {
-				int computed_size = get_type_size_bits(call_op.return_type);
+				int computed_size = get_type_size_bits(call_op.returnType());
 				if (computed_size > 0) {
 					return_size_bits = computed_size;
 				} else {
@@ -4497,14 +4497,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 			// Store return value - RAX for integers, XMM0 for floats
 			// For struct returns using return slot, the struct is already in place - no copy needed
-			if (call_op.return_type != Type::Void && !call_op.usesReturnSlot()) {
-				if (is_floating_point_type(call_op.return_type)) {
+			if (call_op.return_type_index.category() != TypeCategory::Void && !call_op.usesReturnSlot()) {
+				if (isFloatingPointType(call_op.return_type_index.category())) {
 					// Float return value is in XMM0
-					bool is_float = (call_op.return_type == Type::Float);
+					bool is_float = (call_op.return_type_index.category() == TypeCategory::Float);
 					emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 				} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
-					if (call_op.return_type == Type::Struct && return_size_bits > 64 && return_size_bits <= 128) {
+					if (call_op.return_type_index.category() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
 						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 						emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);  // Store low 8 bytes
 						emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);  // Store high 8 bytes
@@ -4515,14 +4515,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Single-register return (≤64 bits) in RAX
 						emitMovToFrameSized(
 							SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-							SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
+							SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}  // dest
 						);
 					}
 				} else {
 					// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 					emitMovToFrameSized(
 						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
+						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}  // dest
 					);
 				}
 			} else if (call_op.usesReturnSlot()) {
@@ -4537,10 +4537,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// 64-bit value is a true object reference and what size object it refers to.
 			// Function references are different: they carry a callable address and must
 			// not be registered as implicitly-dereferenced object references.
-			if (call_op.returns_reference && call_op.return_type != Type::Function) {
+			if (call_op.returns_reference && call_op.return_type_index.category() != TypeCategory::Function) {
 				registerObjectReferenceCallResult(
 					result_offset,
-					call_op.return_type,
+					call_op.returnType(),
 					call_op.referenced_value_size_in_bits,
 					call_op.returns_reference,
 					call_op.returns_rvalue_reference);
@@ -6887,7 +6887,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 
 		// Construct return type
-		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
+		TypeSpecifierNode return_type(func_decl.returnType(), TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
 		for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 			return_type.add_pointer_level();
 		}
@@ -7193,7 +7193,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
-		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(func_decl.return_type, func_decl.return_type_index);
+		current_function_return_type_index_ = func_decl.return_type_index;
 		current_function_return_size_in_bits_ = func_decl.return_size_in_bits.value;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
@@ -8244,8 +8244,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						return_var.name(), (it != current_scope.variables.end()));
 
 					// Check if return type is float/double
-					bool is_float_return = ret_op.return_type.has_value() &&
-					                        is_floating_point_type(ret_op.return_type.value());
+					bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
 					bool handled_reference_return = false;
 					{
@@ -8539,7 +8538,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 							} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-								if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct &&
+								if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 									var_size > 64 && var_size <= 128) {
 									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8619,7 +8618,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-							if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct &&
+							if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 								var_size > 64 && var_size <= 128) {
 								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8680,8 +8679,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							int var_size = getActualVariableSize(var_name_handle, ret_op.return_size);
 
 							// Check if return type is float/double
-							bool is_float_return = ret_op.return_type.has_value() &&
-							                        is_floating_point_type(ret_op.return_type.value());
+							bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
 							// Check if function uses hidden return parameter (for struct returns)
 							if (current_function_has_hidden_return_param_) {

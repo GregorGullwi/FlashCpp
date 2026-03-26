@@ -527,7 +527,7 @@
 							// Create CallOp
 							CallOp call_op;
 							call_op.result = ret_var;
-							call_op.return_type = return_type.type();
+							call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 							// For pointer return types, use 64-bit size (pointer size on x64)
 							if (return_type.pointer_depth() > 0) {
 								call_op.return_size_in_bits = SizeInBits{64};
@@ -1712,12 +1712,11 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op;
 	call_op.result = ret_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type = return_type.type();
+	call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 		call_op.return_size_in_bits = SizeInBits{static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8)};
 	}
-	call_op.return_type_index = return_type.type_index();
 	call_op.is_member_function = true;
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
@@ -1756,7 +1755,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	int result_size = call_op.return_size_in_bits.value;
 	TypeIndex result_type_index = call_op.return_type_index;
-	Type result_type = call_op.return_type;
+	Type result_type = call_op.returnType();
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
 	return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, ret_var, result_type_index, PointerDepth{}, ValueStorage::ContainsData);
 }

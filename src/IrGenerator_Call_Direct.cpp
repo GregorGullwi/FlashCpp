@@ -368,7 +368,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// Build the call operands
 					CallOp call_op;
 					call_op.result = ret_var;
-					call_op.return_type = Type::Int;  // Default, will be refined
+					call_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Int, {});  // Default, will be refined
 					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
 
@@ -1501,14 +1501,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
 		}
 		const auto& return_type = *best_return_type;
-		call_op.return_type = return_type.type();
+		call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits())};
 		populateReferenceReturnInfo(call_op, return_type);
-		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;

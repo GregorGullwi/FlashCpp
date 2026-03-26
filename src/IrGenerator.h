@@ -90,9 +90,10 @@ struct LambdaInfo {
 	std::string_view operator_call_name;     // e.g., "__lambda_0_operator_call" (persistent via StringBuilder)
 	std::string_view invoke_name;            // e.g., "__lambda_0_invoke" (persistent via StringBuilder)
 	std::string_view conversion_op_name;     // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
-	Type return_type;
+	TypeIndex return_type_index {};    // TypeCategory embedded; replaces Type return_type
 	int return_size;
-	TypeIndex return_type_index {};    // Type index for struct/enum return types
+
+	Type returnType() const { return categoryToType(return_type_index.category()); }
 	bool returns_reference = false;     // True if lambda returns a reference type (T& or T&&)
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table

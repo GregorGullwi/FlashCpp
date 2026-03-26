@@ -1084,11 +1084,10 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		}
 	}
 
-	if (isPlaceholderAutoType(lambda_info.return_type)) {
-		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.return_type);
+	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
+		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
 			deduced_type.has_value()) {
-			lambda_info.return_type = deduced_type->type();
-			lambda_info.return_type_index = deduced_type->type_index();
+			lambda_info.return_type_index = TypeIndex::fromTypeAndIndex(deduced_type->type(), deduced_type->type_index());
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);
@@ -1097,9 +1096,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	}
 
 	SemanticContext lambda_ctx;
-	if (!isPlaceholderAutoType(lambda_info.return_type)) {
+	if (!isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		TypeSpecifierNode lambda_return_type(
-			lambda_info.return_type,
+			lambda_info.returnType(),
 			lambda_info.return_type_index,
 			lambda_info.return_size,
 			lambda_info.lambda_token);

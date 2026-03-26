@@ -184,9 +184,9 @@ public:
 			const auto& op = getTypedPayload<ReturnOp>();
 			oss << "ret ";
 
-			if (op.return_value.has_value() && op.return_type.has_value()) {
+			if (op.return_value.has_value() && op.return_type_index.category() != TypeCategory::Invalid) {
 				// Return with value
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.return_type.value()))) {
+				if (const TypeInfo* type_info = findNativeType(op.return_type_index.category())) {
 					oss << type_info->name();
 				}
 				oss << op.return_size << " ";
@@ -219,7 +219,7 @@ public:
 			}
 
 			// Return type
-			if (const TypeInfo* ret_type_info = findNativeType(typeToCategory(op.return_type))) {
+			if (const TypeInfo* ret_type_info = findNativeType(op.return_type_index.category())) {
 				oss << ret_type_info->name();
 			}
 			for (int i = 0; i < op.return_pointer_depth.value; ++i) {

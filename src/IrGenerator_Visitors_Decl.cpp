@@ -125,7 +125,7 @@
 		FunctionDeclOp func_decl_op;
 
 		// Return type information
-		func_decl_op.return_type = ret_type.type();
+		func_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
 
 		int actual_return_size = getTypeSpecSizeBits(ret_type);
 
@@ -136,7 +136,6 @@
 			? 64
 			: actual_return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};
-		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
 		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
 
@@ -471,7 +470,7 @@
 								CallOp call_op;
 								call_op.function_name = member_spaceship_mangled;
 								call_op.is_member_function = true;
-								call_op.return_type = Type::Int;
+								call_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Int, {});
 								call_op.return_size_in_bits = SizeInBits{32};
 								call_op.result = call_result;
 
@@ -670,7 +669,7 @@
 				CallOp call_op;
 				call_op.function_name = spaceship_mangled;
 				call_op.is_member_function = true;
-				call_op.return_type = Type::Int;
+				call_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Int, {});
 				call_op.return_size_in_bits = SizeInBits{32};
 				call_op.result = call_result;
 
@@ -1299,7 +1298,7 @@
 
 		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
-		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
+		ctor_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 		ctor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
@@ -2272,7 +2271,7 @@
 	FunctionDeclOp dtor_decl_op;
 	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
 	dtor_decl_op.struct_name = node.struct_name();
-	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
+	dtor_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors

@@ -85,15 +85,13 @@
 			}
 		}
 
-		info.return_type = Type::Void;
+		info.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});
 		info.return_size = 0;
-		info.return_type_index = TypeIndex{};
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-			info.return_type = ret_type_node.type();
+			info.return_type_index = TypeIndex::fromTypeAndIndex(ret_type_node.type(), ret_type_node.type_index());
 			info.return_size = ret_type_node.size_in_bits();
-			info.return_type_index = ret_type_node.type_index();
 			info.returns_reference = ret_type_node.is_reference();
 			if (info.returns_reference) {
 				info.return_size = 64;
@@ -521,7 +519,7 @@
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()
 				// We need this so member function calls can generate the correct mangled name
-				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index,
+				TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index,
 					lambda_info.return_size, lambda_info.lambda_token);
 				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 
@@ -570,7 +568,7 @@
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
-		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_type_index = lambda_info.return_type_index;
 		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
@@ -578,8 +576,8 @@
 
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
-		bool returns_struct_by_value = returnsStructByValue(lambda_info.return_type, 0, lambda_info.returns_reference);
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+		bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returns_reference);
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track hidden return parameter flag for current function context
@@ -598,7 +596,7 @@
 		}
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
+		TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -675,7 +673,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(lambda_info.return_type, lambda_info.return_type_index);
+		current_function_return_type_index_ = lambda_info.return_type_index;
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
@@ -709,7 +707,7 @@
 		}
 
 		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
@@ -728,7 +726,7 @@
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
 		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
-		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_type_index = lambda_info.return_type_index;
 		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
@@ -736,14 +734,14 @@
 
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track hidden return parameter flag for current function context
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
+		TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -815,7 +813,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(lambda_info.return_type, lambda_info.return_type_index);
+		current_function_return_type_index_ = lambda_info.return_type_index;
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
@@ -850,7 +848,7 @@
 		}
 
 		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}

@@ -73,11 +73,11 @@
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
-					call_op.return_type = ret_type.type();
+					call_op.return_type_index = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
 					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-					call_op.return_type = Type::Void;
+					call_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});
 					call_op.return_size_in_bits = SizeInBits{0};
 				}
 
@@ -235,7 +235,7 @@
 				});
 
 				// Capture return type info before moving call_op (use-after-move is UB)
-				Type lambda_return_type = call_op.return_type;
+				Type lambda_return_type = call_op.returnType();
 				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
@@ -1258,9 +1258,9 @@
 
 						if (matched_lambda_info && sema_) {
 							sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
-							if (!isPlaceholderAutoType(matched_lambda_info->return_type)) {
+							if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
 								resolved_generic_return_type.emplace(
-									matched_lambda_info->return_type,
+									matched_lambda_info->returnType(),
 									matched_lambda_info->return_type_index,
 									matched_lambda_info->return_size,
 									matched_lambda_info->lambda_token);
@@ -1326,7 +1326,7 @@
 				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();
 			}
 			const auto& return_type = *return_type_ptr;
-			call_op.return_type = return_type.type();
+			call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
 			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
 			populateReferenceReturnInfo(call_op, return_type);
@@ -1350,14 +1350,12 @@
 
 			if (needs_hidden_return_param) {
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
-				call_op.return_type_index = return_type.type_index();
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
 			} else if (returns_struct_by_value) {
 				// Small struct return - no return slot needed
-				call_op.return_type_index = return_type.type_index();
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
 					StringTable::getStringView(function_name), return_type.size_in_bits());

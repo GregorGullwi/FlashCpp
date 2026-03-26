@@ -2954,9 +2954,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						CallOp call_op;
 						call_op.result = result_temp;
-						call_op.return_type = element_type;
+						call_op.return_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
 						call_op.return_size_in_bits = SizeInBits{element_size};
-						call_op.return_type_index = TypeIndex{element_type_index};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
 
