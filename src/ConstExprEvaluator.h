@@ -551,7 +551,7 @@ public:
 	struct ResolvedConstexprObject {
 		const VariableDeclarationNode* var_decl = nullptr;
 		const std::optional<ASTNode>* initializer = nullptr;
-		TypeIndex declared_type_index{0};
+		TypeIndex declared_type_index{};
 	};
 
 	struct ExtractedIdentifier {

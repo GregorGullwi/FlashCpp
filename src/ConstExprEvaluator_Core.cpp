@@ -996,9 +996,9 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			
 			// For struct types, look up alignment from type info
 			if (type_spec.type() == Type::Struct) {
-				size_t type_index = type_spec.type_index().index();
-				if (type_index < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
+				TypeIndex type_index = type_spec.type_index();
+				if (type_index.index() < getTypeInfoCount()) {
+					const TypeInfo& type_info = getTypeInfo(type_index);
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
 						return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -1042,9 +1042,9 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								
 								// Handle struct types
 								if (type_spec.type() == Type::Struct) {
-									size_t type_index = type_spec.type_index().index();
-									if (type_index < getTypeInfoCount()) {
-										const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
+									TypeIndex type_index = type_spec.type_index();
+									if (type_index.index() < getTypeInfoCount()) {
+										const TypeInfo& type_info = getTypeInfo(type_index);
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
 											return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
@@ -2919,8 +2919,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// without an instance (parameter count mismatch or missing 'this' context).
 		// Static member functions have no implicit 'this' parameter, so they work correctly.
 		
-		for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& type_info = getTypeInfo(TypeIndex{_gti_i_});
+		for (TypeIndex _gti_i_{}; _gti_i_.index() < getTypeInfoCount(); ++_gti_i_) {
+			const TypeInfo& type_info = getTypeInfo(_gti_i_);
 			if (!type_info.struct_info_) continue;
 			
 			// Search member functions in this struct
@@ -3416,9 +3416,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (si) {
 				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
 				TypeIndex return_type_index {};
-				for (size_t ti = 0; ti < getTypeInfoCount(); ++ti) {
-					if (&getTypeInfo(TypeIndex{ti}) == context.return_type_info) {
-						return_type_index = TypeIndex{ti};
+				for (TypeIndex ti{}; ti.index() < getTypeInfoCount(); ++ti) {
+					if (&getTypeInfo(ti) == context.return_type_info) {
+						return_type_index = ti;
 						break;
 					}
 				}
