@@ -1010,8 +1010,7 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Create template type argument
 					TemplateTypeArg arg;
-					arg.setType(type_spec.type());
-					arg.type_index = type_spec.type_index();
+					arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.type(), type_spec.type_index());
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
 					arg.pointer_depth = type_spec.pointer_depth();

@@ -182,8 +182,8 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: matchNestedArg recursion depth limit exceeded (", depth, ")");
 			return false;
 		}
-		// Check if p is a UserDefined type — could be a param name or a nested template instantiation
-		if (!p.is_value && (is_struct_type(p.category()))) {
+		// Check if p is a UserDefined/Struct type (or legacy Invalid category) — could be a param name or a nested template instantiation
+		if (!p.is_value && (is_struct_type(p.category()) || p.category() == TypeCategory::Invalid)) {
 			if (p.type_index.is_valid() && p.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& p_ti = getTypeInfo(p.type_index);
 				if (p_ti.isTemplateInstantiation()) {
@@ -232,6 +232,14 @@ struct TemplatePattern {
 				return false;
 			}
 			return true;
+		}
+		// Handle non-type template parameter placeholder stored without is_value=true:
+		// When p is a dependent name placeholder (category=Invalid or no valid type_index)
+		// and the concrete arg is a value, treat p as a non-type param and deduce.
+		if (!p.is_value && c.is_value) {
+			if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
+				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
+			}
 		}
 		if (p.is_value != c.is_value) {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner arg value/type mismatch");
