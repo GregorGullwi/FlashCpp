@@ -75,6 +75,9 @@ struct ConversionPlan {
 // StandardConversionKind (for semantic annotation) in a single call.
 // Implements C++20 [conv], [conv.prom], [conv.rank] rules.
 inline ConversionPlan buildConversionPlan(Type from, Type to) {
+	const TypeCategory from_category = typeToCategory(from);
+	const TypeCategory to_category = typeToCategory(to);
+
 	// Exact match (including Struct==Struct — same type, different struct variants
 	// are handled by the TypeSpecifierNode overload which has type_index).
 	if (from == to) {
@@ -82,11 +85,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	}
 
 	// --- Target is bool: BooleanConversion [conv.bool] ---
-	if (to == Type::Bool) {
-		if (isIntegralType(from) || is_floating_point_type(from) || from == Type::Enum) {
+	if (to_category == TypeCategory::Bool) {
+		if (isIntegralType(from_category) || isFloatingPointType(from_category) || from_category == TypeCategory::Enum) {
 			return {ConversionRank::Conversion, StandardConversionKind::BooleanConversion, true};
 		}
-		if (from == Type::Struct) {
+		if (from_category == TypeCategory::Struct) {
 			// Struct → Bool: fall through to user-defined conversion check below (operator bool()).
 		} else {
 			return ConversionPlan::no_match();
@@ -94,20 +97,20 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	}
 
 	// --- Source is bool ---
-	if (from == Type::Bool) {
+	if (from_category == TypeCategory::Bool) {
 		// Bool -> int is integral promotion [conv.prom]/6
-		if (to == Type::Int) {
+		if (to_category == TypeCategory::Int) {
 			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
 		// Bool -> other integral type is integral conversion
-		if (is_integer_type(to)) {
+		if (isIntegralType(to_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
 		}
 		// Bool -> floating-point is floating-integral conversion
-		if (is_floating_point_type(to)) {
+		if (isFloatingPointType(to_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 		}
-		if (to == Type::Struct) {
+		if (to_category == TypeCategory::Struct) {
 			// Bool → Struct: fall through to user-defined conversion check below (converting constructor).
 		} else {
 			return ConversionPlan::no_match();
@@ -115,7 +118,7 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	}
 
 	// --- Integral -> Integral ---
-	if (is_integer_type(from) && is_integer_type(to)) {
+	if (isIntegralType(from_category) && isIntegralType(to_category)) {
 		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
 		const int from_rank = get_integer_rank(from);
 		const int to_rank = get_integer_rank(to);
@@ -129,34 +132,34 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	}
 
 	// --- Floating-point promotion: float -> double [conv.fpprom] ---
-	if (from == Type::Float && to == Type::Double) {
+	if (from_category == TypeCategory::Float && to_category == TypeCategory::Double) {
 		return {ConversionRank::Promotion, StandardConversionKind::FloatingPromotion, true};
 	}
 
 	// --- Floating-point -> Floating-point ---
-	if (is_floating_point_type(from) && is_floating_point_type(to)) {
+	if (isFloatingPointType(from_category) && isFloatingPointType(to_category)) {
 		return {ConversionRank::Conversion, StandardConversionKind::FloatingConversion, true};
 	}
 
 	// --- Integral -> Floating-point ---
-	if (is_integer_type(from) && is_floating_point_type(to)) {
+	if (isIntegralType(from_category) && isFloatingPointType(to_category)) {
 		return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 	}
 
 	// --- Floating-point -> Integral ---
-	if (is_floating_point_type(from) && is_integer_type(to)) {
+	if (isFloatingPointType(from_category) && isIntegralType(to_category)) {
 		return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 	}
 
 	// --- Unscoped enum -> integer/floating-point [conv.prom]/4, [conv.integral] ---
-	if (from == Type::Enum) {
-		if (to == Type::Int) {
+	if (from_category == TypeCategory::Enum) {
+		if (to_category == TypeCategory::Int) {
 			return {ConversionRank::Promotion, StandardConversionKind::IntegralPromotion, true};
 		}
-		if (isIntegralType(to)) {
+		if (isIntegralType(to_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::IntegralConversion, true};
 		}
-		if (is_floating_point_type(to)) {
+		if (isFloatingPointType(to_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::FloatingIntegralConversion, true};
 		}
 		// Enum → Struct: falls through to user-defined conversion check below.
@@ -168,11 +171,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 
 	// --- User-defined conversions ---
 	// Struct-to-primitive: optimistically assume conversion operator exists, CodeGen will verify
-	if (from == Type::Struct && to != Type::Struct) {
+	if (from_category == TypeCategory::Struct && to_category != TypeCategory::Struct) {
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 	// Primitive-to-struct: converting constructors
-	if (to == Type::Struct && from != Type::Struct) {
+	if (to_category == TypeCategory::Struct && from_category != TypeCategory::Struct) {
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 
@@ -346,6 +349,10 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	auto resolvedTypeIndex = [](Type resolved_type, TypeIndex type_index) {
+		return TypeIndex::fromTypeAndIndex(resolved_type, type_index);
+	};
+
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
@@ -363,6 +370,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
+		TypeIndex from_resolved_index = resolvedTypeIndex(from_resolved, from.type_index());
+		TypeIndex to_resolved_index = resolvedTypeIndex(to_resolved, to.type_index());
 
 		// Helper to check if the pointed-to type is const for first-level pointers.
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
@@ -390,9 +399,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
 			// For struct pointer types, "same resolved Type" is not sufficient —
 			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
-			if (from_resolved == Type::Struct &&
-				from.type_index().is_valid() && to.type_index().is_valid() &&
-				from.type_index() != to.type_index()) {
+			if (from_resolved_index.isStruct() &&
+				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+				from_resolved_index != to_resolved_index) {
 				return ConversionPlan::no_match();
 			}
 			return ConversionPlan::exact_match();
@@ -401,9 +410,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// If base types match but const qualifiers differ.
 		// For struct pointer types, different type_index means different types — no match.
 		if (from_resolved == to_resolved) {
-			if (from_resolved == Type::Struct &&
-				from.type_index().is_valid() && to.type_index().is_valid() &&
-				from.type_index() != to.type_index()) {
+			if (from_resolved_index.isStruct() &&
+				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+				from_resolved_index != to_resolved_index) {
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is a qualification conversion (C++20 [conv.qual]).
@@ -424,7 +433,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// This allows template parameter types to match concrete types during instantiation
 		// Use resolved types here to ensure that resolved typedefs still go through
 		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
-		if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
+		if (from_resolved_index.category() == TypeCategory::UserDefined ||
+			to_resolved_index.category() == TypeCategory::UserDefined) {
 			// Still enforce const-correctness: const T* → T* is not allowed
 			if (from_pointee_is_const && !to_pointee_is_const) {
 				return ConversionPlan::no_match();
@@ -441,7 +451,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via pointee const),
 		//       while "T* const" would have const on the pointer level itself.
-		if (to_resolved == Type::Void) {
+		if (to_resolved_index.category() == TypeCategory::Void) {
 			// Check const-correctness for the pointed-to type
 			// from_pointee_is_const checks if the pointee is const (e.g., "const char*")
 			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
@@ -471,13 +481,15 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
+				TypeIndex from_base_index = resolvedTypeIndex(from_base, from.type_index());
+				TypeIndex to_base_index = resolvedTypeIndex(to_base, to.type_index());
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
 					// For struct types, "same base type" requires the same type_index.
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
 					// Type::Struct, so we must also compare type_index.
-					if (from_base == Type::Struct &&
-						from.type_index().is_valid() && to.type_index().is_valid() &&
-						from.type_index() != to.type_index()) {
+					if (from_base_index.isStruct() &&
+						from_base_index.is_valid() && to_base_index.is_valid() &&
+						from_base_index != to_base_index) {
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
@@ -523,11 +535,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
+				TypeIndex from_base_index = resolvedTypeIndex(from_base, from.type_index());
+				TypeIndex to_base_index = resolvedTypeIndex(to_base, to.type_index());
 				bool types_match = (from_base == to_base);
 				// For struct types, "same base type" requires the same type_index.
-				if (types_match && from_base == Type::Struct &&
-					from.type_index().is_valid() && to.type_index().is_valid() &&
-					from.type_index() != to.type_index()) {
+				if (types_match && from_base_index.isStruct() &&
+					from_base_index.is_valid() && to_base_index.is_valid() &&
+					from_base_index != to_base_index) {
 					types_match = false;
 				}
 				if (!types_match) {
@@ -570,14 +584,16 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 			Type to_resolved = resolve_type_alias(to.type(), to.type_index());
+			TypeIndex from_resolved_index = resolvedTypeIndex(from_resolved, from.type_index());
+			TypeIndex to_resolved_index = resolvedTypeIndex(to_resolved, to.type_index());
 			
 			if (from_resolved == to_resolved) {
 				// For struct types, "same base type" requires the same type_index.
 				// Two different struct types (e.g. Bar& → Foo) both resolve to
 				// Type::Struct, so we must also compare type_index.
-				if (from_resolved == Type::Struct &&
-					from.type_index().is_valid() && to.type_index().is_valid() &&
-					from.type_index() != to.type_index()) {
+				if (from_resolved_index.isStruct() &&
+					from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+					from_resolved_index != to_resolved_index) {
 					// Different struct types: a converting constructor (e.g. Target(const Source&))
 					// may allow this conversion. Check gTypeInfo if available.
 					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
@@ -594,7 +610,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			}
 			// If one type is still UserDefined after resolution attempt, accept as conversion
 			// This handles unresolved template parameter type aliases
-			if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
+			if (from_resolved_index.category() == TypeCategory::UserDefined ||
+				to_resolved_index.category() == TypeCategory::UserDefined) {
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
@@ -625,18 +642,20 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	Type from_type = resolve_type_alias(from.type(), from.type_index());
 	Type to_type = resolve_type_alias(to.type(), to.type_index());
+	TypeIndex from_type_index = resolvedTypeIndex(from_type, from.type_index());
+	TypeIndex to_type_index = resolvedTypeIndex(to_type, to.type_index());
 	
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
-	if (from_type == Type::UserDefined && !from.type_index().is_valid()) {
+	if (from_type_index.category() == TypeCategory::UserDefined && !from.type_index().is_valid()) {
 		// 'from' is an unresolved type alias - allow if 'to' is integral
-		if (isIntegralType(to_type)) {
+		if (isIntegralType(typeToCategory(to_type))) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
-	if (to_type == Type::UserDefined && !to.type_index().is_valid()) {
+	if (to_type_index.category() == TypeCategory::UserDefined && !to.type_index().is_valid()) {
 		// 'to' is an unresolved type alias - allow if 'from' is integral
-		if (isIntegralType(from_type)) {
+		if (isIntegralType(typeToCategory(from_type))) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
@@ -644,9 +663,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Non-pointer, non-reference types: use basic type conversion with resolved types.
 	// For struct-to-struct, use type_index to distinguish same struct (ExactMatch) from
 	// different struct (UserDefined if a converting constructor exists, else no_match).
-	if (from_type == Type::Struct && to_type == Type::Struct &&
-		from.type_index().is_valid() && to.type_index().is_valid()) {
-		if (from.type_index() == to.type_index()) {
+	if (from_type_index.isStruct() && to_type_index.isStruct() &&
+		from_type_index.is_valid() && to_type_index.is_valid()) {
+		if (from_type_index == to_type_index) {
 			return ConversionPlan::exact_match();
 		}
 		// Different struct types: check for a converting constructor
