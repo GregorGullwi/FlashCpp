@@ -737,4 +737,72 @@ helpers should be `const` methods that read only from the `TypeInfo` instance, n
 global state. This keeps the door open for a future where `TypeInfo` objects are owned
 per-compilation-unit rather than globally.
 
+### 7.6 `setType()` / `setCategory()` + `type_index =` overwrite anti-pattern
+
+After the removal of `TemplateTypeArg::base_type` (Milestone 7), the type category
+lives exclusively inside `type_index.category_`. This introduces a subtle bug pattern
+that did not exist before: calling `setType()` or `setCategory()` and then assigning a
+new `TypeIndex` to `type_index` on the same object **silently discards the category**
+because the assignment overwrites the entire `TypeIndex` struct (both `index_` and
+`category_`).
+
+**Old code (safe — `base_type` was an independent field):**
+```cpp
+arg.base_type = Type::Int;       // sets base_type
+arg.type_index = some_index;     // sets type_index; base_type is unaffected
+```
+
+**New code (buggy — category is lost):**
+```cpp
+arg.setType(Type::Int);          // sets type_index.category_ = TypeCategory::Int
+arg.type_index = some_index;     // OVERWRITES entire type_index, including category_!
+// arg.category() is now whatever some_index.category_ was (often Invalid)
+```
+
+**Symptoms**: `TemplateTypeArg::category()` returns `TypeCategory::Invalid` instead of
+the expected type. This causes:
+- Hash/equality mismatches in template specialization lookup (§1, `TemplateRegistry_Types.h:296-362`)
+- Wrong mangling output (`toString()` / `toHashString()` fall through to `default: "?"`)
+- Pattern matching failures in `TemplateRegistry_Pattern.h` (placeholder args not recognized)
+
+**Correct patterns** (use one of these instead):
+```cpp
+// Option 1: Use the factory that merges category from Type when index has Invalid
+arg.type_index = TemplateTypeArg::makeTypeIndex(type, some_index);
+
+// Option 2: Use the TemplateTypeArg factory method
+arg = TemplateTypeArg::makeType(type, some_index);
+
+// Option 3: Construct TypeIndex with explicit category
+arg.type_index = TypeIndex{some_index.index(), typeToCategory(type)};
+```
+
+**Detection**: `setType()` is only safe when there is **no subsequent `type_index =`
+assignment** on the same object. To find violations, grep for `setType` or `setCategory`
+calls and verify no `type_index =` follows on the same variable. A debug assertion in
+`TemplateTypeArg::category()` can also catch this at runtime:
+
+```cpp
+TypeCategory category() const noexcept {
+    assert(type_index.category() != TypeCategory::Invalid
+        || is_dependent || is_template_template_arg
+        || type_index.index() == 0  // legitimate sentinel
+        && "TemplateTypeArg has Invalid category — possible setType+overwrite bug");
+    return type_index.category();
+}
+```
+
+Note: this assertion cannot live on `TypeIndex::operator=` because `TypeIndex{}` with
+`Invalid` category is a valid sentinel used pervasively throughout the codebase
+(default member initialization, "no type" return values, `is_valid()` checks, etc.).
+An `operator=` that rejects `Invalid`-category assignments would fire on hundreds of
+legitimate sites.  The bug is semantic to `TemplateTypeArg`, not to `TypeIndex`.
+
+**Longer-term mitigation**: make `TemplateTypeArg::type_index` private and route all
+writes through a setter that asserts the incoming `TypeIndex` has a non-`Invalid`
+category (or that the arg is in a legitimately-unset state like default-constructed
+or `is_template_template_arg`).  This is a larger refactor (~100+ direct `.type_index =`
+sites on `TemplateTypeArg`) but would make the anti-pattern a compile error rather than
+a runtime assert.
+
 
