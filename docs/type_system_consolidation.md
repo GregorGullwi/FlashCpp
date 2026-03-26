@@ -674,18 +674,27 @@ rule. Migrating them to `TypeInfo` query helpers requires understanding the conv
 semantics, not just the classification API. This should be treated as a separate,
 carefully tested milestone rather than part of a bulk migration.
 
-**Status (2026-03-26): documented holdout.** The surrounding mechanical Milestone 7 work
-has landed, but `buildConversionPlan` remains intentionally `Type`-primary for now.
-Bulk `Type::` → `TypeCategory::` migration PRs should explicitly skip it and reference
-this section instead. A future PR should change only `buildConversionPlan` (and its
-closest callers), with dedicated conversion-coverage tests added in the same patch.
+**Status (2026-03-26): isolated migration landed.** This holdout is now split into its
+own focused patch instead of being bundled with the rest of the Milestone 7 `Type::`
+cleanup. The patch added dedicated regression coverage for:
 
-**Recommendation**: Add a dedicated sub-milestone under Milestone 3 for
-`buildConversionPlan` specifically, with its own test plan covering:
-- Primitive-to-primitive promotions and conversions
-- Struct-to-struct identity (same TypeIndex vs different TypeIndex)
-- UserDefined alias resolution through pointer and reference layers
-- Enum-to-integral promotion paths
+- Primitive promotion ranking (`tests/test_conversion_primitive_promotions_ret0.cpp`)
+- Enum-to-integral promotion/conversion paths (`tests/test_conversion_enum_to_integral_ret0.cpp`)
+- Struct identity by same vs different `TypeIndex` across value/pointer/reference paths
+  (`tests/test_conversion_struct_typeindex_identity_ret0.cpp`)
+- Alias resolution through pointer/reference layers
+  (`tests/test_conversion_alias_pointer_reference_ret0.cpp`)
+
+The implementation change in `src/OverloadResolution.h` stays deliberately narrow:
+only the safe classification checks inside `buildConversionPlan(Type, Type)` and
+`buildConversionPlan(TypeSpecifierNode, TypeSpecifierNode)` now use `TypeCategory`
+and stamped `TypeIndex` helpers. The conversion rules, ranking, and optimistic
+parse-time fallbacks were preserved branch-for-branch.
+
+**Recommendation for the next PR**: keep following the same isolation rule and move
+only one nearby holdout at a time. The next piece of work should likely be recursive
+alias canonicalization for unresolved `Type::UserDefined` chains before classification,
+without mixing in broader `Type` cleanup.
 
 ### 7.3 Enum exhaustiveness is not enforced for classification helpers
 
