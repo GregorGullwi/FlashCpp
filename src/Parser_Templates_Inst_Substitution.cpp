@@ -510,7 +510,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				init_expr = *spec_var_decl.initializer();
 			}
 		} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
-		           spec_decl.type_node().as<TypeSpecifierNode>().type() == Type::Bool) {
+		           spec_decl.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 			init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 		}

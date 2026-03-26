@@ -274,7 +274,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				}
 			}
 
-			if (func_type.type() == Type::Struct &&
+			if (func_type.category() == TypeCategory::Struct &&
 				func_type.type_index().is_valid() &&
 				func_type.type_index().index() < getTypeInfoCount()) {
 				// Check for a sema-pre-resolved operator() first.
@@ -330,12 +330,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
-			if (func_type.type() == Type::DeclTypeAuto) {
+			if (func_type.category() == TypeCategory::DeclTypeAuto) {
 				throw CompileError("'decltype(auto)' is not allowed as a parameter type");
 			}
 
 			bool is_recursive_lambda_self = false;
-			if (current_lambda_context_.isActive() && func_type.type() == Type::Struct &&
+			if (current_lambda_context_.isActive() && func_type.category() == TypeCategory::Struct &&
 				func_type.is_rvalue_reference()) {
 				auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (closure_type_it != getTypesByNameMap().end() &&
@@ -1493,7 +1493,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		const TypeSpecifierNode* best_return_type = nullptr;
 		if (matched_func_decl) {
 			const auto& mrt = matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
-			if (mrt.type() != Type::UserDefined) {
+			if (mrt.category() != TypeCategory::UserDefined) {
 				best_return_type = &mrt;
 			}
 		}

@@ -891,7 +891,7 @@ ASTNode Parser::substituteTemplateParameters(
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
 
 		// Check if this is a user-defined type that matches a template parameter
-		if (type_spec.type() == Type::UserDefined) {
+		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
 			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 				type_spec,
 				template_params,

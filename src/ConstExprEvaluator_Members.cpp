@@ -856,7 +856,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 							  result.error_message == "Constexpr function return statement has no expression")) {
 		if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& ret_spec = actual_func->decl_node().type_node().as<TypeSpecifierNode>();
-			if (ret_spec.type() == Type::Void) {
+			if (ret_spec.category() == TypeCategory::Void) {
 				result = EvalResult::from_int(0LL);
 			}
 		}

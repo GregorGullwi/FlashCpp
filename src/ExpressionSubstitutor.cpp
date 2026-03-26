@@ -182,7 +182,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					substituted_template_args.push_back(it->second);
 				}
 				// Check if this is a template parameter type (Type::Template)
-				else if (type_spec.type() == Type::Template) {
+				else if (type_spec.category() == TypeCategory::Template) {
 					// This is a template parameter - we need to substitute it
 					// The type_index should point to a template parameter
 					FLASH_LOG(Templates, Debug, "    Type is Template, looking up in substitution map");
@@ -425,7 +425,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		FLASH_LOG(Templates, Debug, "  TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 		
 		// If this is a struct type, it might be a template instantiation
-		if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
+		if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 			std::string_view type_name = StringTable::getStringView(type_info.name());
 			FLASH_LOG(Templates, Debug, "  Type name: ", type_name);
@@ -978,7 +978,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
-	if (type.type() == Type::Template || isPlaceholderAutoType(type.type()) || type.type() == Type::UserDefined) {
+	if (type.category() == TypeCategory::Template || isPlaceholderAutoType(type.category()) || type.category() == TypeCategory::UserDefined || type.category() == TypeCategory::TypeAlias) {
 		std::string_view type_name = type.token().value();
 		if (type_name.empty() && type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(type.type_index());
@@ -1039,7 +1039,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	}
 	
 	// Check if this is a struct/class type that might have template arguments
-	if (type.type() == Type::Struct && type.type_index().index() < getTypeInfoCount()) {
+	if (type.category() == TypeCategory::Struct && type.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type.type_index());
 		std::string_view type_name = StringTable::getStringView(type_info.name());
 		FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());

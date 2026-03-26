@@ -628,7 +628,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Check for user-defined conversion operators
 	// If 'from' is a struct type and 'to' is a different type, assume conversion might be possible
 	// The actual conversion operator existence will be checked during CodeGen
-	if (from.type() == Type::Struct && to.type() != Type::Struct) {
+	if (from.category() == TypeCategory::Struct && to.category() != TypeCategory::Struct) {
 		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
 		// CodeGen will verify and generate the actual call
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -636,7 +636,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept)
-	if (to.type() == Type::Struct && from.type() != Type::Struct) {
+	if (to.category() == TypeCategory::Struct && from.category() != TypeCategory::Struct) {
 		// Could be a converting constructor in 'to' struct - accept it tentatively
 		// CodeGen will handle the actual constructor call
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -978,7 +978,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 		if (!ptype_node.is<TypeSpecifierNode>()) return false;
 		const auto& ptype = ptype_node.as<TypeSpecifierNode>();
 		if (!(ptype.is_reference() || ptype.is_rvalue_reference())) return false;
-		if (ptype.type() != Type::Struct) return false;
+		if (ptype.category() != TypeCategory::Struct) return false;
 		return struct_info.isOwnTypeIndex(ptype.type_index());
 	};
 

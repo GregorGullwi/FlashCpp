@@ -54,7 +54,7 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 	}
 
 	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	if (placeholder_type.type() == Type::Auto) {
+	if (placeholder_type.category() == TypeCategory::Auto) {
 		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
 		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
 			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
@@ -1759,7 +1759,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// matching constructor parameter type.
 			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.type() == Type::Struct && ts.type_index().is_valid() &&
+				if (ts.category() == TypeCategory::Struct && ts.type_index().is_valid() &&
 					ts.type_index().index() < getTypeInfoCount()) {
 					const StructTypeInfo* si = getTypeInfo(ts.type_index()).getStructInfo();
 					if (si && si->hasAnyConstructor()) {
@@ -3842,7 +3842,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	const ASTNode& type_node = call_node.type_node();
 	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) return;
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct || !type_spec.type_index().is_valid()) return;
+	if (type_spec.category() != TypeCategory::Struct || !type_spec.type_index().is_valid()) return;
 	if (type_spec.type_index().index() >= getTypeInfoCount()) return;
 
 	const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();

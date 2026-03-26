@@ -888,7 +888,7 @@
 
 		if (!ends_with_return) {
 			// Add implicit return for void functions
-			if (ret_type.type() == Type::Void) {
+			if (ret_type.category() == TypeCategory::Void) {
 				emitVoidReturn(func_decl.identifier_token());
 			}
 			// Special case: main() implicitly returns 0 if no return statement
@@ -1565,7 +1565,7 @@
 					if (node.parameter_nodes().size() == 1) {
 						const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-						if (param_type.type() == Type::Struct) {
+						if (param_type.category() == TypeCategory::Struct) {
 							if (param_type.is_rvalue_reference()) {
 								is_move_constructor = true;
 							} else if (param_type.is_lvalue_reference()) {
@@ -2531,7 +2531,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
-	if (!is_struct_type(type_spec.type()) && type_spec.type() != Type::UserDefined) {
+	if (!is_struct_type(type_spec.category()) && type_spec.category() != TypeCategory::UserDefined) {
 		const int type_size_bits = get_type_size_bits(type_spec.type());
 		if (num_args == 0) {
 			if (is_floating_point_type(type_spec.type())) {
@@ -2577,7 +2577,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
+	if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 		if (type_info.struct_info_) {
 			actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);

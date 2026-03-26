@@ -2176,7 +2176,7 @@
 						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Both types must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
+						if (type == Type::Struct && derived_spec.category() == TypeCategory::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
 						type_spec.type_index().index() < getTypeInfoCount() &&
@@ -2715,7 +2715,7 @@
 										const auto& param_type = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										const auto& arg_type = arg_types[i].as<TypeSpecifierNode>();
 										if (param_type.type() != arg_type.type()) { match = false; break; }
-										if (param_type.type() == Type::Struct &&
+										if (param_type.category() == TypeCategory::Struct &&
 											param_type.type_index() != arg_type.type_index()) { match = false; break; }
 										if (param_type.reference_qualifier() != arg_type.reference_qualifier()) { match = false; break; }
 									}
@@ -2838,7 +2838,7 @@
 										const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 									// Match: same base type, (for structs) same type_index, and same reference qualifier
 										if (param_type.type() != from_spec.type()) continue;
-										if (param_type.type() == Type::Struct &&
+										if (param_type.category() == TypeCategory::Struct &&
 											param_type.type_index() != from_spec.type_index()) continue;
 										if (param_type.reference_qualifier() != from_spec.reference_qualifier()) continue;
 										selected_op = &mf;
@@ -3014,7 +3014,7 @@
 						const TypeSpecifierNode& derived_spec = derived_node.as<TypeSpecifierNode>();
 
 						// Both must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
+						if (type == Type::Struct && derived_spec.category() == TypeCategory::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
 						type_spec.type_index().index() < getTypeInfoCount() &&

@@ -918,7 +918,7 @@
 
 			// Get type information
 			StringHandle type_name;
-			if (type_node.type() == Type::Struct) {
+			if (type_node.category() == TypeCategory::Struct) {
 				TypeIndex type_idx = type_node.type_index();
 				if (type_idx.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_idx);
@@ -984,7 +984,7 @@
 
 		// Get target struct type information
 		std::string target_type_name;
-		if (target_type_node.type() == Type::Struct) {
+		if (target_type_node.category() == TypeCategory::Struct) {
 			TypeIndex type_idx = target_type_node.type_index();
 			if (type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_idx);

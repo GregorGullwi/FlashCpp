@@ -277,7 +277,7 @@ ParseResult Parser::parse_type_specifier()
 		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
 
 		// If the argument is a template parameter or dependent type, create a dependent type placeholder
-		if (arg_type.type() == Type::UserDefined && !arg_type.type_index().is_valid()) {
+		if ((arg_type.category() == TypeCategory::UserDefined || arg_type.category() == TypeCategory::TypeAlias || arg_type.category() == TypeCategory::Template) && !arg_type.type_index().is_valid()) {
 			// Dependent type - return a placeholder that will be resolved during template instantiation
 			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -298,7 +298,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// For concrete enum types, resolve to the underlying type
-		if (arg_type.type() == Type::Enum) {
+		if (arg_type.category() == TypeCategory::Enum) {
 			// Look up the enum type to get its underlying type
 			if (arg_type.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
@@ -1187,7 +1187,7 @@ ParseResult Parser::parse_type_specifier()
 						// The target type will have Type::UserDefined and a type_index pointing to
 						// the TypeInfo we created for the template parameter
 						bool is_template_param = false;
-						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().index() < getTypeInfoCount()) {
+						if ((instantiated_type.category() == TypeCategory::UserDefined || instantiated_type.category() == TypeCategory::TypeAlias || instantiated_type.category() == TypeCategory::Template) && instantiated_type.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
@@ -1922,7 +1922,7 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
-								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index().index() < getTypeInfoCount()) {
+								if ((instantiated_type.category() == TypeCategory::UserDefined || instantiated_type.category() == TypeCategory::TypeAlias || instantiated_type.category() == TypeCategory::Template) && instantiated_type.type_index().index() < getTypeInfoCount()) {
 									const TypeInfo& ti = getTypeInfo(instantiated_type.type_index());
 									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;

@@ -868,8 +868,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 			const auto& type_spec = type_or_expr.as<TypeSpecifierNode>();
 			
 			// Check if it's a template parameter that needs substitution
-			if (type_spec.type() == Type::UserDefined) {
-				// Get the type name from the token
+			if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
 				std::string_view type_name = type_spec.token().value();
 				
 				// Also check the actual type name from gTypeInfo using the type_index
@@ -1455,7 +1454,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		auto resolve_type = [&](const ASTNode& type_node) -> ResolvedTypeInfo {
 			if (!type_node.is<TypeSpecifierNode>()) return {};
 			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
-			if (ts.type() == Type::UserDefined) {
+			if (ts.category() == TypeCategory::UserDefined || ts.category() == TypeCategory::TypeAlias || ts.category() == TypeCategory::Template) {
 				std::string_view name = ts.token().value();
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == name) {

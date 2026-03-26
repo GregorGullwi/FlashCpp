@@ -3101,7 +3101,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (type_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = type_node.as<TypeSpecifierNode>();
 						// Check if it's a struct type (lambdas are represented as structs)
-						if (type_spec.type() == Type::Struct) {
+						if (type_spec.category() == TypeCategory::Struct) {
 							// Get the type index to look up the type name
 							TypeIndex type_idx = type_spec.type_index();
 							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, getTypeInfoCount()={}", 

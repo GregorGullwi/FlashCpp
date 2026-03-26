@@ -1464,7 +1464,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 					if (!lambda_ptr) {
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+						if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1507,7 +1507,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
-		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
+		if (op == "+" && operand_type.category() == TypeCategory::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(operand_type.type_index());
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -2069,7 +2069,7 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	}
 	
 	// For user-defined types (Struct, Enum), check type index
-	if (type1.type() == Type::Struct || type1.type() == Type::Enum) {
+	if (type1.category() == TypeCategory::Struct || type1.category() == TypeCategory::Enum) {
 		if (type1.type_index() != type2.type_index()) {
 			return false;
 		}

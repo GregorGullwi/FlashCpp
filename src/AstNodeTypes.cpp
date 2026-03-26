@@ -127,7 +127,7 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
     if (type_spec.has_function_signature()) {
         info.function_signature_ = type_spec.function_signature();
     }
-    if (type_spec.type() == Type::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
+    if (type_spec.category() == TypeCategory::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
         if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
             info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
         }
@@ -858,7 +858,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 			continue;
 		}
 		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-		if (param_type.type() != Type::Struct || !isOwnTypeIndex(param_type.type_index())) {
+		if (param_type.category() != TypeCategory::Struct || !isOwnTypeIndex(param_type.type_index())) {
 			continue;
 		}
 
@@ -951,7 +951,7 @@ namespace {
 			? param_type.is_rvalue_reference()
 			: param_type.is_lvalue_reference();
 		return matches_reference
-			&& param_type.type() == Type::Struct
+			&& param_type.category() == TypeCategory::Struct
 			&& struct_info.isOwnTypeIndex(param_type.type_index());
 	}
 }
