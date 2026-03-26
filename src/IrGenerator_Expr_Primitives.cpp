@@ -122,7 +122,7 @@
 			}
 		}
 
-		if (is_struct_type(object_type.type())) {
+		if (is_struct_type(object_type.category())) {
 			size_t struct_type_index = object_type.type_index().index();
 			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
@@ -259,7 +259,7 @@
 			// be resolved before codegen reaches identifier lowering.
 			if (size_bits == 0) {
 				requireResolvedCodegenType(type_node.type(), "identifier size calculation");
-				const int fallback_size = get_type_size_bits(type_node.type());
+				const int fallback_size = get_type_size_bits(type_node.category());
 				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
 					"' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation (fallback_size=",
 					fallback_size, ")");
@@ -288,8 +288,8 @@
 			// keeps enum values identifiable after integral lowering and keeps enum pointers usable
 			// for still-unmigrated pointer-depth consumers.
 			Type result_type = type_node.type();
-			const bool is_enum_pointer = type_node.type() == Type::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.type() == Type::Enum && type_node.type_index().index() < getTypeInfoCount()) {
+			const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
+			if (!is_enum_pointer && type_node.category() == TypeCategory::Enum && type_node.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
 					result_type = enum_info->underlying_type;
 				}
@@ -372,7 +372,7 @@
 							);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : TypeIndex{};
+							TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : TypeIndex{};
 							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 						}
 
@@ -1268,7 +1268,7 @@
 					const auto& decl = local_sym->as<DeclarationNode>();
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-						if (ts.type() == Type::Enum && ts.type_index().is_valid() && ts.type_index().index() < getTypeInfoCount())
+						if (ts.category() == TypeCategory::Enum && ts.type_index().is_valid() && ts.type_index().index() < getTypeInfoCount())
 							scoped_enum_type_info = &getTypeInfo(ts.type_index());
 					}
 				}
@@ -1598,11 +1598,11 @@
 					}
 
 				// Return the temp variable that will hold the loaded value
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
 					return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// Local variable - just return the name
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
 				return makeExprResult(type_node.type(), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
@@ -1638,7 +1638,7 @@
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : TypeIndex{};
+			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
 			return makeExprResult(type_node.type(), SizeInBits{size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 		}
 

@@ -362,7 +362,7 @@
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
-					} else if (type_node.type() == Type::Struct) {
+					} else if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
 						if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
@@ -374,7 +374,7 @@
 					} else {
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(type_node.type());
+							element_size_bits = get_type_size_bits(type_node.category());
 						}
 					}
 				}
@@ -487,7 +487,7 @@
 				if (decl) {
 					const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 
-					if (type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+					if (type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
 						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
 
@@ -534,7 +534,7 @@
 							} else {
 								call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 								if (!call_op.return_size_in_bits.is_set()) {
-									call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
+									call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 								}
 							}
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
@@ -695,7 +695,7 @@
 									if (type_node.pointer_depth() > 0) {
 										// Array of pointers
 										element_size_bits = 64;
-									} else if (type_node.type() == Type::Struct) {
+									} else if (type_node.category() == TypeCategory::Struct) {
 										// Array of structs
 										TypeIndex type_index_from_decl = type_node.type_index();
 										if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
@@ -709,7 +709,7 @@
 										// Regular array - use type size
 										element_size_bits = static_cast<int>(type_node.size_in_bits());
 										if (element_size_bits == 0) {
-											element_size_bits = get_type_size_bits(type_node.type());
+											element_size_bits = get_type_size_bits(type_node.category());
 										}
 									}
 								}
@@ -965,7 +965,7 @@
 						if (type_node.pointer_depth() > 0) {
 							// Array of pointers
 							element_size_bits = 64;
-						} else if (type_node.type() == Type::Struct) {
+						} else if (type_node.category() == TypeCategory::Struct) {
 							// Array of structs
 							TypeIndex type_index = type_node.type_index();
 							if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
@@ -979,7 +979,7 @@
 							// Regular array - use type size
 							element_size_bits = static_cast<int>(type_node.size_in_bits());
 							if (element_size_bits == 0) {
-								element_size_bits = get_type_size_bits(type_node.type());
+								element_size_bits = get_type_size_bits(type_node.category());
 							}
 						}
 					}
@@ -1148,7 +1148,7 @@
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 							if (object_decl) {
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
-								if (is_struct_type(object_type.type())) {
+								if (is_struct_type(object_type.category())) {
 									TypeIndex type_index = object_type.type_index();
 									if (type_index.index() < getTypeInfoCount()) {
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
@@ -1194,7 +1194,7 @@
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
-					if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+					if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1864,7 +1864,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.type()));
+			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.category()));
 			if (element_size == 0) {
 				element_size = 1;
 			}
@@ -2641,7 +2641,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const ConstructorDeclarationNode& selected_ctor,
 		const Token& source_token,
 		bool use_return_slot) {
-		if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+		if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 			return std::nullopt;
 		}
 		if (target_type.type_index().index() >= getTypeInfoCount()) {
@@ -2698,7 +2698,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		} else if (param_type.is_reference()) {
 			init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 		}
-		if (param_type.type() == Type::Struct && param_type.type_index().is_valid()) {
+		if (param_type.category() == TypeCategory::Struct && param_type.type_index().is_valid()) {
 			init_arg.type_index = param_type.type_index();
 		}
 
@@ -2724,7 +2724,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const Token& source_token,
 		bool use_return_slot) {
 		if (!sema_ || !source_expr.is<ExpressionNode>() ||
-			target_type.type() != Type::Struct ||
+			target_type.category() != TypeCategory::Struct ||
 			target_type.is_reference() ||
 			target_type.is_rvalue_reference()) {
 			return std::nullopt;

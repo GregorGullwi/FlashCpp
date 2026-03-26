@@ -583,7 +583,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		auto resolve_dependent_member_alias_local = [&](ASTNode& type_node) {
 			if (!type_node.is<TypeSpecifierNode>()) return;
 			auto& ts = type_node.as<TypeSpecifierNode>();
-			if (ts.type() != Type::UserDefined) return;
+			if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template) return;
 			TypeIndex idx = ts.type_index();
 			if (idx.index() >= getTypeInfoCount()) return;
 
@@ -1177,7 +1177,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeSpecifierNode& arg_type = arg_types[arg_index];
 				
 				// Template template parameters can only be deduced from struct types
-				if (arg_type.type() == Type::Struct) {
+				if (arg_type.category() == TypeCategory::Struct) {
 					// Get the struct name (e.g., "Vector_int")
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index.index() < getTypeInfoCount()) {
@@ -1439,11 +1439,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	
 	// Only re-parse if the return type is a placeholder for template-dependent types
 	if (should_reparse) {
-		if (orig_return_type.type() == Type::Void) {
+		if (orig_return_type.category() == TypeCategory::Void) {
 			// Void return type - re-parse
 			FLASH_LOG(Templates, Debug, "Return type is void - will re-parse");
 			should_reparse = true;
-		} else if (orig_return_type.type() == Type::UserDefined) {
+		} else if (orig_return_type.category() == TypeCategory::UserDefined || orig_return_type.category() == TypeCategory::TypeAlias || orig_return_type.category() == TypeCategory::Template) {
 			if (!orig_return_type.type_index().is_valid()) {
 				// UserDefined with type_index=0 is a placeholder (points to void)
 				FLASH_LOG(Templates, Debug, "Return type is UserDefined placeholder (void) - will re-parse");
@@ -1560,7 +1560,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (return_type.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
 			
-			if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+			if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 				
 				if (type_info.is_incomplete_instantiation_) {
@@ -1627,7 +1627,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
 		if (!type_node.is<TypeSpecifierNode>()) return;
 		auto& ts = type_node.as<TypeSpecifierNode>();
-		if (ts.type() != Type::UserDefined) return;
+		if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template) return;
 		TypeIndex idx = ts.type_index();
 		if (idx.index() >= getTypeInfoCount()) return;
 		
@@ -1880,7 +1880,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				// Regular parameter - substitute template parameters in the parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				ASTNode param_type;
-				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
+				if (orig_param_type.category() == TypeCategory::Auto && arg_type_index < arg_types.size()) {
 					// Abbreviated function template parameter (concept auto / auto):
 					// use the deduced argument type as the concrete instantiated parameter type.
 					//
@@ -1944,7 +1944,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
 					    i < arg_types.size() &&
-					    arg_types[i].type() == Type::Struct) {
+					    arg_types[i].category() == TypeCategory::Struct) {
 						subst_type = Type::Struct;
 						subst_type_index = arg_types[i].type_index();
 						FLASH_LOG_FORMAT(Templates, Debug,

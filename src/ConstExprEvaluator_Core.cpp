@@ -21,7 +21,7 @@ namespace {
 	}
 
 	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
-		return !isPlaceholderAutoType(type_spec.type());
+		return !isPlaceholderAutoType(type_spec.category());
 	}
 
 	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
@@ -995,7 +995,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			const auto& type_spec = type_node.as<TypeSpecifierNode>();
 			
 			// For struct types, look up alignment from type info
-			if (type_spec.type() == Type::Struct) {
+			if (type_spec.category() == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1010,7 +1010,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			// For primitive types, use standard alignment calculation
 			int size_bits = type_spec.size_in_bits();
 			if (size_bits == 0) {
-				size_bits = get_type_size_bits(type_spec.type());
+				size_bits = get_type_size_bits(type_spec.category());
 			}
 			size_t size_in_bytes = size_bits / 8;
 			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
@@ -1041,7 +1041,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								const auto& type_spec = type_node.as<TypeSpecifierNode>();
 								
 								// Handle struct types
-								if (type_spec.type() == Type::Struct) {
+								if (type_spec.category() == TypeCategory::Struct) {
 									TypeIndex type_index = type_spec.type_index();
 									if (type_index.index() < getTypeInfoCount()) {
 										const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1055,7 +1055,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								// For primitive types
 								int size_bits = type_spec.size_in_bits();
 								if (size_bits == 0) {
-									size_bits = get_type_size_bits(type_spec.type());
+									size_bits = get_type_size_bits(type_spec.category());
 								}
 								size_t size_in_bytes = size_bits / 8;
 								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
@@ -1085,7 +1085,7 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct) {
+	if (type_spec.category() != TypeCategory::Struct) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
 
@@ -1366,7 +1366,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	// Handle struct types with arguments: delegate to materialize_constructor_object_value
 	// which first attempts user-defined constructor matching and falls back to aggregate
 	// initialization only when no matching constructor is found.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		return materialize_constructor_object_value(ctor_call, context);
 	}
 
@@ -1476,7 +1476,7 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 
 // Helper: default-initialize a value of the given type (used by new-expression evaluation).
 static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
-	if (type_spec.type() == Type::Bool) {
+	if (type_spec.category() == TypeCategory::Bool) {
 		EvalResult r = EvalResult::from_bool(false);
 		r.set_exact_type(type_spec);
 		return r;
@@ -1486,8 +1486,8 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 		r.set_exact_type(type_spec);
 		return r;
 	}
-	if (type_spec.type() == Type::Float || type_spec.type() == Type::Double ||
-	    type_spec.type() == Type::LongDouble) {
+	if (type_spec.category() == TypeCategory::Float || type_spec.category() == TypeCategory::Double ||
+	    type_spec.category() == TypeCategory::LongDouble) {
 		EvalResult r = EvalResult::from_double(0.0);
 		r.set_exact_type(type_spec);
 		return r;
@@ -1543,7 +1543,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const auto& ctor_args = new_expr.constructor_args();
 
 	// Handle struct/class types via the constructor materialization path.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		TypeIndex type_index = type_spec.type_index();
 		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 			return EvalResult::error("new-expression: invalid struct type index");
@@ -1781,7 +1781,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		const DeclarationNode& decl = symbol_node.as<DeclarationNode>();
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-			if (type_spec.type() == Type::Enum) {
+			if (type_spec.category() == TypeCategory::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
 				if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
@@ -1847,7 +1847,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (initializer->is<InitializerListNode>() &&
 			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if ((is_struct_type(type_spec.type())) &&
+			if ((is_struct_type(type_spec.category())) &&
 				type_spec.type_index().is_valid() &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo()) {
@@ -3530,7 +3530,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if ((is_struct_type(type_spec.type())) &&
+						if ((is_struct_type(type_spec.category())) &&
 							type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
@@ -3591,7 +3591,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 				if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-					if (is_struct_type(type_spec.type())) {
+					if (is_struct_type(type_spec.category())) {
 						auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
 						if (!object_result.success()) {
 							return object_result;
@@ -3618,7 +3618,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Uninitialized variable — check if it's a struct/class type requiring default construction
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				if ((is_struct_type(type_spec.type())) &&
+				if ((is_struct_type(type_spec.category())) &&
 					type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {

@@ -310,7 +310,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto type_spec_opt = get_expression_type(*expr_result.node());
 			
 			if (type_spec_opt.has_value() && 
-			    type_spec_opt->type() == Type::Struct && 
+			    type_spec_opt->category() == TypeCategory::Struct && 
 			    type_spec_opt->type_index().is_valid() &&
 			    type_spec_opt->type_index().index() < getTypeInfoCount()) {
 				// Successfully evaluated - add as regular base class
@@ -1228,7 +1228,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 						
 						// For struct types, get size and alignment from the struct type info
-						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
+						if (anon_member_type_spec.category() == TypeCategory::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
 							const TypeInfo* member_type_info = nullptr;
 							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -2678,7 +2678,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		size_t referenced_size_bits = type_spec.size_in_bits();
 
 		// For struct types, get size and alignment from the struct type info
-		if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
+		if (type_spec.category() == TypeCategory::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
 			// Look up the struct type by type_index
 			const TypeInfo* member_type_info = nullptr;
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -2775,10 +2775,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					const auto& param_decl = params[0].as<DeclarationNode>();
 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-					if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct
+					if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct
 						&& param_type.type_index() == struct_type_info.type_index_) {
 						has_user_defined_copy_constructor = true;
-					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+					} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct
 						&& param_type.type_index() == struct_type_info.type_index_) {
 						has_user_defined_move_constructor = true;
 					}
@@ -2803,9 +2803,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						computeMinRequiredArgs(params) <= 1 &&
 						params[0].is<DeclarationNode>()) {
 						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct) {
+						if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
-						} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::MoveAssign;
 						}
 					}
@@ -2925,7 +2925,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						const auto& param_decl = base_params[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						if ((param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
-							param_type.type() == Type::Struct &&
+							param_type.category() == TypeCategory::Struct &&
 							base_struct_info->isOwnTypeIndex(param_type.type_index())) {
 							// This is a copy or move constructor of the base class - skip it
 							continue;
@@ -3805,7 +3805,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	const DeclarationNode& decl = result.node()->as<DeclarationNode>();
 	const TypeSpecifierNode& fp_type = decl.type_node().as<TypeSpecifierNode>();
 	
-	if (fp_type.type() != Type::FunctionPointer) {
+	if (fp_type.category() != TypeCategory::FunctionPointer) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
 	}
