@@ -1823,13 +1823,13 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
 				Type concrete_type = inst_info.template_args[i];
-				func_param.type = concrete_type;
+				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_type, {});
 				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_type)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				func_param.type = param_type.type();
+				func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}

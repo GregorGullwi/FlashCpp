@@ -829,9 +829,9 @@ private:
 	// Static local variable information
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
-		Type type;
 		SizeInBits size_in_bits;
-		TypeIndex type_index {};
+		TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
+		Type type() const { return categoryToType(type_index.category()); }
 	};
 
 	// Map from local static variable name to info

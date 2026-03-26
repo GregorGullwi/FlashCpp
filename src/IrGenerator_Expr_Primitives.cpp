@@ -457,25 +457,25 @@
 			// For LValueAddress context (assignment LHS), return the mangled name directly
 			// This allows the assignment instruction to store to the global variable
 			if (context == ExpressionContext::LValueAddress) {
-				return makeExprResult(info.type, info.size_in_bits, IrOperand{info.mangled_name}, info.type_index, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(info.type(), info.size_in_bits, IrOperand{info.mangled_name}, info.type_index, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
-			op.result.type = info.type;
-			op.result.ir_type = toIrType(info.type);
+			op.result.type = info.type();
+			op.result.ir_type = toIrType(info.type());
 			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 				LValueInfo(LValueInfo::Kind::Global, info.mangled_name),
-				info.type,
+				info.type(),
 				info.size_in_bits.value));
 
 			// Return the temp variable that will hold the loaded value
-			return makeExprResult(info.type, info.size_in_bits, IrOperand{result_temp}, info.type_index, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(info.type(), info.size_in_bits, IrOperand{result_temp}, info.type_index, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Fast-path: if binding is resolved as Global, try a direct lookup to skip the

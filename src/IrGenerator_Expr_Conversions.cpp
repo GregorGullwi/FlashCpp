@@ -606,7 +606,7 @@
 			if (static_local_it != static_local_names_.end()) {
 				constexpr TypeIndex kStaticLocalTypeIndex {};
 				out = makeExprResult(
-					static_local_it->second.type,
+					static_local_it->second.type(),
 					static_local_it->second.size_in_bits,
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,

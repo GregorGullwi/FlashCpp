@@ -104,7 +104,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		info.is_global_or_static = true;
 		info.store_name = it->second.mangled_name;
-		info.type = it->second.type;
+		info.type = it->second.type();
 		info.size_in_bits = it->second.size_in_bits;
 		return info;
 	}
@@ -156,7 +156,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 	if (static_local_it != static_local_names_.end()) {
 		info.is_global_or_static = true;
 		info.store_name = static_local_it->second.mangled_name;
-		info.type = static_local_it->second.type;
+		info.type = static_local_it->second.type();
 		info.size_in_bits = static_local_it->second.size_in_bits;
 		return info;
 	}

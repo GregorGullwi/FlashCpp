@@ -289,7 +289,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam param_info;
-			param_info.type = param_type.type();
+			param_info.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
 			param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
@@ -1341,7 +1341,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam func_param;
-			func_param.type = param_type.type();
+			func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
 			func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 

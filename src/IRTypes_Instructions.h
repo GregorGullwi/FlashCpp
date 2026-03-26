@@ -253,7 +253,7 @@ public:
 				const auto& param = op.parameters[i];
 
 				// Type
-				if (const TypeInfo* param_type_info = findNativeType(typeToCategory(param.type))) {
+				if (const TypeInfo* param_type_info = findNativeType(param.type_index.category())) {
 					oss << param_type_info->name();
 				}
 				// Print pointer levels, but exclude the extra level added for lvalue references

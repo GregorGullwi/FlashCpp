@@ -725,12 +725,13 @@ struct LoopBeginOp {
 
 // Function parameter information
 struct FunctionParam {
-	Type type = Type::Invalid;
 	SizeInBits size_in_bits = SizeInBits{0};
 	PointerDepth pointer_depth = PointerDepth{};
 	StringHandle name;  // Pure StringHandle
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
+	Type paramType() const { return categoryToType(type_index.category()); }
 	
 	// Helper to get name as StringHandle
 	StringHandle getName() const {
