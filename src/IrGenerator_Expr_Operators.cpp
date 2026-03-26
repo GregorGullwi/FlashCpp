@@ -4601,7 +4601,7 @@ std::string_view op) {
 		// Create ArrayAccessOp to load current value
 		ArrayAccessOp load_op;
 		load_op.result = current_value_temp;
-		load_op.element_type = lhs_operands.type;
+		load_op.element_type_index = TypeIndex::fromTypeAndIndex(lhs_operands.type, lhs_operands.type_index);
 		load_op.element_size_in_bits = lhs_operands.size_in_bits.value;
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;

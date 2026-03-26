@@ -244,7 +244,7 @@
 
 				ArrayAccessOp payload;
 				payload.result = result_var;
-				payload.element_type = element_type;
+				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 				payload.element_size_in_bits = base_element_size;
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
@@ -380,7 +380,7 @@
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
-					payload.element_type = element_type;
+					payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
 					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
@@ -468,7 +468,7 @@
 									// Create typed payload for ArrayAccess with qualified member name
 									ArrayAccessOp payload;
 									payload.result = result_var;
-									payload.element_type = element_type;
+									payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, member->type_index);
 									payload.element_size_in_bits = element_size_bits;
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
@@ -704,7 +704,7 @@
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
 		payload.result = result_var;
-		payload.element_type = element_type;
+		payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;

@@ -2430,7 +2430,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	array_decl.type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
-	array_decl.array_element_type = element_type;
+	array_decl.array_element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 	array_decl.array_element_size = element_size_bits;
 	array_decl.array_count = array_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
@@ -2438,7 +2438,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
-		store_op.element_type = element_type;
+		store_op.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
 		store_op.index = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));

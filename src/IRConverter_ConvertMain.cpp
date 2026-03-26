@@ -2147,7 +2147,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 										if (catch_op->type_index.is_valid() && catch_op->type_index.index() < getTypeInfoCount()) {
 											catch_size_bits = getTypeInfo(catch_op->type_index).type_size_;
 										} else {
-											catch_size_bits = get_type_size_bits(catch_op->exception_type);
+											catch_size_bits = get_type_size_bits(catch_op->exceptionType());
 										}
 										if (catch_size_bits > 0) {
 											if (current_function_reserved_catch_obj_padding_size_ == 0) {
@@ -11643,7 +11643,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		TempVar result_var = op.result;
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
-		Type element_type = op.element_type;
+		Type element_type = op.elementType();
 		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
 		bool is_float = (element_type == Type::Float);
 		bool is_struct = is_struct_type(element_type);
@@ -11758,7 +11758,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 					} else {
 						emitMovFromFrameSized(
 							SizedRegister{base_reg, 64, false},
-							SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
+							SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.elementType())}
 						);
 					}
 				}
@@ -12079,7 +12079,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
-			bool is_float_store = is_floating_point_type(op.element_type);
+			bool is_float_store = is_floating_point_type(op.elementType());
 
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
 				// Constant value
@@ -14091,7 +14091,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exception_type,
+				setReferenceInfo(stack_offset, catch_op.exceptionType(),
 				                 64,
 				                 catch_op.is_rvalue_reference(),
 				                 catch_op.exception_temp);
@@ -14099,10 +14099,10 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 			}
 
 			int type_size_bits = 0;
-			bool is_builtin = is_builtin_type(catch_op.exception_type);
+			bool is_builtin = is_builtin_type(catch_op.exceptionType());
 
 			if (is_builtin) {
-				type_size_bits = get_type_size_bits(catch_op.exception_type);
+				type_size_bits = get_type_size_bits(catch_op.exceptionType());
 			} else if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(catch_op.type_index);
 				type_size_bits = type_info.type_size_;
@@ -14110,7 +14110,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 			size_t type_size = type_size_bits / 8;
 
 			if (g_enable_debug_output) {
-				std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
+				std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exceptionType())
 				          << " type_size_bits=" << type_size_bits
 				          << " type_size=" << type_size << std::endl;
 			}
@@ -14126,7 +14126,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exception_type,
+				setReferenceInfo(stack_offset, catch_op.exceptionType(),
 				                 type_size_bits > 0 ? type_size_bits : 64,
 				                 false,
 				                 catch_op.exception_temp);
@@ -14243,7 +14243,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 				try_block.cleanup_vars = catch_op.cleanup_vars;
 			}
 			handler.type_index = catch_op.type_index;
-			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
+			handler.exception_type = catch_op.exceptionType();
 			handler.is_const = catch_op.is_const;
 			handler.ref_qualifier = catch_op.ref_qualifier;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
@@ -14259,7 +14259,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 					if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
 						catch_storage_bits = getTypeInfo(catch_op.type_index).type_size_;
 					} else {
-						int builtin_size = get_type_size_bits(catch_op.exception_type);
+						int builtin_size = get_type_size_bits(catch_op.exceptionType());
 						if (builtin_size > 0) {
 							catch_storage_bits = builtin_size;
 						}
@@ -14403,7 +14403,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// the address of the slot itself.
 			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-				setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+				setReferenceInfo(stack_offset, catch_op.exceptionType(), 64, false, catch_op.exception_temp);
 			}
 
 			if (current_catch_handler_) {
@@ -14609,12 +14609,12 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
+				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
 					TypedValue source_value;
-					source_value.type = throw_op.exception_type;
+					source_value.type = throw_op.exceptionType();
 					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
@@ -14701,7 +14701,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 
 			// RSI = type_info* - generate type_info for the thrown type
 			std::string typeinfo_symbol;
-			Type exception_type = throw_op.exception_type;
+			Type exception_type = throw_op.exceptionType();
 
 				// Check if it's a built-in type or user-defined type
 				if (thrown_exception_struct_info) {
@@ -14760,9 +14760,9 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			}
 
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
+				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
 					TypedValue source_value;
-					source_value.type = throw_op.exception_type;
+					source_value.type = throw_op.exceptionType();
 					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
 					source_value.type_index = throw_op.type_index;
 					source_value.value = throw_op.exception_value;
@@ -14843,7 +14843,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 				} else {
-					throw_type_name = std::string(getTypeName(throw_op.exception_type));
+					throw_type_name = std::string(getTypeName(throw_op.exceptionType()));
 				}
 
 				std::string throw_info_symbol;

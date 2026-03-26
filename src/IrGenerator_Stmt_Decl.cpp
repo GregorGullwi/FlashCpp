@@ -1689,7 +1689,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
-			decl_op.array_element_type = std::get<Type>(operands[7]);
+			decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(std::get<Type>(operands[7]), {});
 			decl_op.array_element_size = std::get<int>(operands[8]);
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 				decl_op.array_count = *ull_val;
@@ -1719,7 +1719,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.element_type = elem_type;
+					addr_op.element_type_index = TypeIndex::fromTypeAndIndex(elem_type, {});
 					addr_op.element_size_in_bits = elem_size;
 					addr_op.array = lv_info.base;
 
@@ -1799,7 +1799,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
-					store_op.element_type = type_node.type();
+					store_op.element_type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
 					store_op.element_size_in_bits = size_in_bits;
 					store_op.array = decl.identifier_token().handle();
 					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
@@ -2531,7 +2531,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			hidden_decl_op.type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 			hidden_decl_op.is_array = true;
-			hidden_decl_op.array_element_type = array_element_type;
+			hidden_decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 			hidden_decl_op.array_element_size = array_element_size;
 			hidden_decl_op.array_count = array_size;
 			// Don't set initializer here for arrays - we'll copy element by element
@@ -2594,7 +2594,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					access_op.result = element_temp;
 					access_op.array = source_array;
 					access_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					access_op.element_type = array_element_type;
+					access_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
 					access_op.member_offset = 0;
@@ -2603,7 +2603,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Store element to hidden array
 					ArrayStoreOp store_op;
-					store_op.element_type = array_element_type;
+					store_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 					store_op.element_size_in_bits = array_element_size;
 					store_op.array = hidden_var_handle;
 					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
@@ -2669,7 +2669,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					addr_op.result = element_addr;
 					addr_op.array = hidden_var_handle;
 					addr_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					addr_op.element_type = array_element_type;
+					addr_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
 
@@ -2697,7 +2697,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					load_op.result = element_val;
 					load_op.array = hidden_var_handle;
 					load_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					load_op.element_type = array_element_type;
+					load_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
 					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
 					load_op.member_offset = 0;

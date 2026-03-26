@@ -433,7 +433,7 @@ public:
 			assert (hasTypedPayload() && "expected ArrayAccess to have typed payload");
 			const ArrayAccessOp& op = std::any_cast<const ArrayAccessOp&>(getTypedPayload());
 			oss << '%' << op.result.var_number << " = array_access ";
-			oss << "[" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
+			oss << "[" << static_cast<int>(op.elementType()) << "][" << op.element_size_in_bits << "] ";
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
@@ -455,7 +455,7 @@ public:
 		{
 			assert (hasTypedPayload() && "expected ArrayStore to have typed payload");
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(getTypedPayload());
-			oss << "array_store [" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
+			oss << "array_store [" << static_cast<int>(op.elementType()) << "][" << op.element_size_in_bits << "] ";
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
@@ -478,7 +478,7 @@ public:
 			assert(hasTypedPayload() && "ArrayElementAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ArrayElementAddressOp>();
 			oss << '%' << op.result.var_number << " = array_element_address ";
-			oss << "[" << static_cast<int>(op.element_type) << "]" << op.element_size_in_bits << " ";
+			oss << "[" << static_cast<int>(op.elementType()) << "]" << op.element_size_in_bits << " ";
 
 			// Array
 			if (const auto* string = std::get_if<StringHandle>(&op.array))

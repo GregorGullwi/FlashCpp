@@ -732,7 +732,7 @@
 									TempVar elem_addr_var = var_counter.next();
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
-									elem_addr_payload.element_type = element_type;
+									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, type_index);
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
@@ -930,7 +930,7 @@
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
-						payload.element_type = element_type;
+						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.type = Type::UnsignedLongLong;
@@ -991,7 +991,7 @@
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
-				payload.element_type = element_type;
+				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)

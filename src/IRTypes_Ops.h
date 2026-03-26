@@ -575,7 +575,8 @@ struct ReturnOp {
 // Array access (load element from array)
 struct ArrayAccessOp {
 	TempVar result;									// Result temp var
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
+	Type elementType() const { return categoryToType(element_type_index.category()); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -585,7 +586,8 @@ struct ArrayAccessOp {
 
 // Array store (store value to array element)
 struct ArrayStoreOp {
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
+	Type elementType() const { return categoryToType(element_type_index.category()); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -597,7 +599,8 @@ struct ArrayStoreOp {
 // Array element address (get address without loading)
 struct ArrayElementAddressOp {
 	TempVar result;									// Result temp var (pointer to element)
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
+	Type elementType() const { return categoryToType(element_type_index.category()); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -857,7 +860,7 @@ struct VariableDeclOp {
 	bool is_array = false;
 		bool use_copy_constructor = false;
 	// Array info (if is_array)
-	std::optional<Type> array_element_type;
+	std::optional<TypeIndex> array_element_type_index;
 	std::optional<int> array_element_size;
 	std::optional<size_t> array_count;
 	// Initializer (if present)
@@ -968,7 +971,7 @@ struct IndirectCallOp {
 struct CatchBeginOp {
 	TempVar exception_temp;       // Temporary holding the exception object
 	TypeIndex type_index;         // Type index for user-defined types
-	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
+	Type exceptionType() const { return categoryToType(type_index.category()); }
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
@@ -1004,7 +1007,7 @@ struct ElfCatchNoMatchOp {};
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
-	Type exception_type;          // Actual Type enum for built-in types
+	Type exceptionType() const { return categoryToType(type_index.category()); }
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)

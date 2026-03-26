@@ -101,8 +101,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				// Emit CatchBegin marker with exception type and qualifiers
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
-				catch_op.type_index = type_index;
-				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
+				catch_op.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_index);
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = type_node.is_const();
@@ -156,7 +155,6 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = TempVar(0);
 				catch_op.type_index = TypeIndex(0);
-				catch_op.exception_type = Type::Void;  // No specific type for catch(...)
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = false;
@@ -296,8 +294,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			throw_op.type_index = exception_type_index;
-			throw_op.exception_type = expr_type;  // Store the actual Type enum
+			throw_op.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.is_rvalue = is_rvalue;
 			throw_op.value_is_materialized = value_is_materialized;

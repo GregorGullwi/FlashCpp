@@ -260,7 +260,7 @@ const TypedValue& index, const TypedValue& value,
 int64_t member_offset, bool is_pointer_to_array,
 const Token& token) {
 	ArrayStoreOp payload;
-	payload.element_type = element_type;
+	payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 	payload.element_size_in_bits = element_size_bits;
 	payload.array = array;
 	payload.index = index;
