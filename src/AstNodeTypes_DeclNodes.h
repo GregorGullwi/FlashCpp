@@ -888,17 +888,43 @@ size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
-// Resolve primitive type aliases (typedefs / using aliases represented as
-// Type::UserDefined) to their underlying primitive type. This intentionally
-// preserves struct and enum identity.
-inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(type_index);
-		if (!needs_type_index(type_info.type_)) {
-			return type_info.type_;
-		}
+struct CanonicalTypeAlias {
+	Type type = Type::Invalid;
+	TypeIndex type_index {};
+};
+
+// Canonicalize chained typedef / using aliases represented as Type::UserDefined.
+// Follows UserDefined -> UserDefined -> concrete type chains, but preserves the
+// original unresolved state when the chain does not bottom out in a concrete type
+// (placeholder / parse-time fallback cases).
+inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+	const size_t typeInfoCount = getTypeInfoCount();
+	if (type != Type::UserDefined || !type_index.is_valid()) {
+		return {type, type_index};
 	}
-	return type;
+
+	const TypeIndex original_type_index = type_index;
+	TypeIndex current_type_index = type_index;
+	size_t depthLimit = typeInfoCount;
+	while (current_type_index.is_valid() &&
+		depthLimit-- > 0) {
+		const TypeInfo& type_info = getTypeInfo(current_type_index);
+		if (type_info.type_ != Type::Void && type_info.type_ != Type::UserDefined) {
+			return {type_info.type_, type_info.type_index_};
+		}
+		if (type_info.type_ != Type::UserDefined ||
+			!type_info.type_index_.is_valid() ||
+			type_info.type_index_ == current_type_index) {
+			break;
+		}
+		current_type_index = type_info.type_index_;
+	}
+
+	return {type, original_type_index};
+}
+
+inline Type resolve_type_alias(Type type, TypeIndex type_index) {
+	return canonicalize_type_alias(type, type_index).type;
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});

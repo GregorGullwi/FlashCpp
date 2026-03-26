@@ -20,7 +20,7 @@
 | 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§7.1) | ✅ Done (`is_type_alias_` flag + `isTypeAlias()`) |
 | 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ✅ Done (`Type::Count_` + static_assert) |
 | 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
-| 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ⬜ TODO |
+| 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ✅ Done (isolated recursive canonicalization PR) |
 | 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ✅ Done |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
@@ -691,10 +691,21 @@ only the safe classification checks inside `buildConversionPlan(Type, Type)` and
 and stamped `TypeIndex` helpers. The conversion rules, ranking, and optimistic
 parse-time fallbacks were preserved branch-for-branch.
 
+**Status (2026-03-26, follow-up PR): isolated recursive alias canonicalization landed.**
+`resolve_type_alias()` now delegates to a shared helper that follows
+`UserDefined -> UserDefined -> concrete` chains while preserving unresolved
+parse-time fallback behavior when a chain bottoms out in a placeholder. The
+adjacent `buildConversionPlan` callers that only had `CanonicalTypeDesc`
+`base_type + type_index` pairs now canonicalize before classification, and the
+new focused regressions cover chained member `using`/`typedef` aliases in
+overload resolution and reference binding:
+
+- `tests/test_chained_member_alias_overload_ret0.cpp`
+- `tests/test_chained_member_alias_reference_binding_ret0.cpp`
+
 **Recommendation for the next PR**: keep following the same isolation rule and move
-only one nearby holdout at a time. The next piece of work should likely be recursive
-alias canonicalization for unresolved `Type::UserDefined` chains before classification,
-without mixing in broader `Type` cleanup.
+only one nearby holdout at a time, without mixing this alias work into broader
+`Type::` cleanup.
 
 ### 7.3 Enum exhaustiveness is not enforced for classification helpers
 

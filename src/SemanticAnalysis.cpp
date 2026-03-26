@@ -2921,23 +2921,9 @@ static bool structHasConversionOperatorTo(
 			const auto& return_type_node = func_decl.decl_node().type_node();
 			if (!return_type_node.is<TypeSpecifierNode>()) continue;
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-			Type resolved_type = type_spec.type();
-			// Resolve UserDefined type aliases through gTypeInfo chain (same as codegen).
-			if (resolved_type == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
-				TypeIndex current_idx = type_spec.type_index();
-				int max_depth = 10;
-				while (resolved_type == Type::UserDefined && current_idx.index() < getTypeInfoCount() && max_depth-- > 0) {
-					const TypeInfo& alias_info = getTypeInfo(current_idx);
-					if (alias_info.type_ != Type::Void && alias_info.type_ != Type::UserDefined) {
-						resolved_type = alias_info.type_;
-						break;
-					} else if (alias_info.type_ == Type::UserDefined && alias_info.type_index_ != current_idx) {
-						current_idx = alias_info.type_index_;
-					} else {
-						break;
-					}
-				}
-			}
+			const CanonicalTypeAlias canonical_return_type =
+				canonicalize_type_alias(type_spec.type(), type_spec.type_index());
+			Type resolved_type = canonical_return_type.type;
 			if (resolved_type == to_desc.base_type) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
 			if (resolved_type == Type::UserDefined) {
@@ -3012,7 +2998,9 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
-	const ConversionPlan plan = buildConversionPlan(from_desc.base_type, to_desc.base_type);
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.base_type, from_desc.type_index);
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.base_type, to_desc.type_index);
+	const ConversionPlan plan = buildConversionPlan(from_canonical.type, to_canonical.type);
 	if (!plan.is_valid) return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
@@ -3244,7 +3232,9 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
 	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
 	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
-	const ConversionPlan plan = buildConversionPlan(src_desc.base_type, tgt_desc.base_type);
+	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(src_desc.base_type, src_desc.type_index);
+	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(tgt_desc.base_type, tgt_desc.type_index);
+	const ConversionPlan plan = buildConversionPlan(src_canonical.type, tgt_canonical.type);
 	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
 
 	ImplicitCastInfo cast_info;
