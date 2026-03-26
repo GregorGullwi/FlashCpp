@@ -6828,7 +6828,7 @@ void IrToObjConverter<TWriterClass>::resetFunctionState()  {
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
 		catch_has_pending_parent_return_ = false;
-		current_function_return_type_ = Type::Void;
+		current_function_return_type_index_ = TypeIndex{0, TypeCategory::Void};
 		current_function_return_size_in_bits_ = 0;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
@@ -7193,7 +7193,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
-		current_function_return_type_ = func_decl.return_type;
+		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(func_decl.return_type, func_decl.return_type_index);
 		current_function_return_size_in_bits_ = func_decl.return_size_in_bits.value;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
@@ -14137,15 +14137,16 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::currentFunctionReturnsFloatingPointInXmm0() const  {
-		return current_function_return_type_ != Type::Void &&
-			is_floating_point_type(current_function_return_type_) &&
+		const TypeCategory return_cat = current_function_return_type_index_.category();
+		return return_cat != TypeCategory::Void &&
+			isFloatingPointType(return_cat) &&
 			!current_function_has_hidden_return_param_ &&
 			!current_function_returns_reference_;
 	}
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::currentFunctionHasCatchParentReturnValue() const  {
-		return current_function_return_type_ != Type::Void;
+		return current_function_return_type_index_.category() != TypeCategory::Void;
 	}
 
 template<class TWriterClass>
@@ -14154,7 +14155,7 @@ int IrToObjConverter<TWriterClass>::getCatchParentReturnSpillSizeBits() const  {
 			return current_function_return_size_in_bits_;
 		}
 
-		if (current_function_return_type_ == Type::Void ||
+		if (current_function_return_type_index_.category() == TypeCategory::Void ||
 			current_function_has_hidden_return_param_ ||
 			current_function_returns_reference_) {
 			return 64;

@@ -809,9 +809,16 @@ private:
 	// Current function mangled name (used for static local variable namespacing)
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
-	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
-	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types
+	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types (TypeCategory embedded)
+
+	// Convenience accessor: converts the embedded TypeCategory back to the legacy Type
+	// enum for call sites that still require a Type value (emitReturn, member_type, etc.).
+	// Returns Type::Invalid when the TypeIndex has not been stamped with a category yet,
+	// which only happens before any function definition has been visited.
+	Type currentFunctionReturnType() const {
+		return categoryToType(current_function_return_type_index_.category());
+	}
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO

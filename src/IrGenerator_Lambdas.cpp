@@ -675,7 +675,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(lambda_info.return_type, lambda_info.return_type_index);
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
@@ -815,7 +815,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(lambda_info.return_type, lambda_info.return_type_index);
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 

@@ -90,7 +90,7 @@
 				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
 
 				// Get struct type information
-				Type return_type = current_function_return_type_;
+				Type return_type = currentFunctionReturnType();
 				int return_size = current_function_return_size_;
 
 				if (return_type != Type::Struct) {
@@ -192,7 +192,7 @@
 								emitAndClearFullExpressionTempDestructors();
 								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								current_function_return_type_, current_function_return_size_,
+								currentFunctionReturnType(), current_function_return_size_,
 								node.return_token());
 								return;
 							}
@@ -217,7 +217,7 @@
 
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
-				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+				if (expr_type == Type::Void && current_function_return_type_index_.category() == TypeCategory::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
 					emitDestructorsForNonLocalExit(0);
@@ -226,7 +226,7 @@
 				}
 			}
 
-			if (isPlaceholderAutoType(current_function_return_type_)) {
+			if (isPlaceholderAutoType(current_function_return_type_index_.category())) {
 				throw InternalError("Unresolved placeholder return type reached IR return lowering");
 			}
 
@@ -237,7 +237,7 @@
 				int expr_size = operands.size_in_bits.value;
 
 				// Get the current function's return type
-				Type return_type = current_function_return_type_;
+				Type return_type = currentFunctionReturnType();
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
 					return_type,
@@ -363,10 +363,10 @@
 						addr_member_op.result = address_temp;
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
-						addr_member_op.member_type = current_function_return_type_;
+						addr_member_op.member_type = currentFunctionReturnType();
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnType(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands.value = address_temp;
@@ -407,7 +407,7 @@
 				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
-			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
+			emitReturn(return_value, currentFunctionReturnType(), current_function_return_size_,
 			node.return_token());
 		}
 		else {

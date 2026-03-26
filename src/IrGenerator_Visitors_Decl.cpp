@@ -54,7 +54,6 @@
 
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
-		current_function_return_type_ = ret_type_spec.type();
 		current_function_returns_reference_ = ret_type_spec.is_reference();
 
 		int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
@@ -148,7 +147,10 @@
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track return type index and hidden parameter flag for current function context
-		current_function_return_type_index_ = ret_type.type_index();
+		// Use fromTypeAndIndex to ensure TypeCategory is embedded even for primitive types
+		// (TypeSpecifierNode built with the Type-only constructor stores TypeIndex{0} with
+		// TypeCategory::Invalid; fromTypeAndIndex falls back to typeToCategory(type) in that case).
+		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		if (returns_struct_by_value) {
