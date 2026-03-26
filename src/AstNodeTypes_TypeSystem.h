@@ -654,11 +654,8 @@ constexpr bool needs_type_index(TypeCategory cat) {
 // require a gTypeInfo lookup.  During the migration period, TypeIndex values
 // constructed via the legacy 1-arg ctor leave category_ = TypeCategory::Invalid;
 // only values returned by add* functions and initialize_native_types carry a
-// correct category.  Comparison operators use only `.value` for backward
-// compatibility until all construction sites are updated.
-//
-// Note: `.value` is retained (not yet renamed to `index_`) to avoid a mechanical
-// rename at ~499 call sites; that rename is deferred to the next Milestone 7 sub-PR.
+// correct category.  Comparison operators use only `.index_` for backward
+// compatibility (category is a cached hint, not an identity field).
 struct TypeIndex {
 	uint32_t     index_    = 0;
 	TypeCategory category_ = TypeCategory::Invalid;
@@ -674,6 +671,14 @@ struct TypeIndex {
 
 	// Public accessor (read-only raw index).
 	constexpr uint32_t index() const noexcept { return index_; }
+
+	// Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
+	// a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
+	// is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
+	static constexpr TypeIndex fromTypeAndIndex(Type t, TypeIndex idx) noexcept {
+		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : typeToCategory(t);
+		return TypeIndex{idx.index(), cat};
+	}
 
 	// Increment operators for loop variables (index only).
 	TypeIndex& operator++() noexcept { ++index_; return *this; }
@@ -699,6 +704,9 @@ struct TypeIndex {
 	// add*() function or initialize_native_types().  Legacy TypeIndex{n} values
 	// always return TypeCategory::Invalid / false from these helpers.
 	constexpr TypeCategory category() const noexcept { return category_; }
+	// Mutates only the category cache (not the index).  Use to stamp the correct
+	// TypeCategory onto a TypeIndex that was built with the legacy 1-arg ctor.
+	constexpr void setCategory(TypeCategory cat) noexcept { category_ = cat; }
 
 	constexpr bool isStruct()              const noexcept { return category_ == TypeCategory::Struct; }
 	constexpr bool isEnum()               const noexcept { return category_ == TypeCategory::Enum; }

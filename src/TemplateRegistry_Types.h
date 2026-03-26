@@ -184,19 +184,19 @@ struct TemplateTypeArg {
 	TypeCategory category() const noexcept { return type_index.category(); }
 	// Returns the legacy Type enum value for APIs that still require it.
 	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
-	// Set the type (updates type_index.category_ without changing the index slot).
-	void setType(Type t) noexcept { type_index.category_ = typeToCategory(t); }
-	void setCategory(TypeCategory cat) noexcept { type_index.category_ = cat; }
+	// Set the type (updates type_index category without changing the index slot).
+	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
+	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
-	// Helper: build a TypeIndex with the correct category for a given Type+index pair.
+	// Helper: delegates to TypeIndex::fromTypeAndIndex — builds a TypeIndex with the
+	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
 	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
-		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : typeToCategory(t);
-		return TypeIndex{idx.index(), cat};
+		return TypeIndex::fromTypeAndIndex(t, idx);
 	}
 
 	TemplateTypeArg()

@@ -70,6 +70,7 @@ TargetDataModel g_target_data_model = TargetDataModel::LP64;   // Linux/Unix: lo
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
+std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypesByCategory;
 
 TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
     TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
@@ -158,6 +159,11 @@ const TypeInfo* findNativeType(Type type) {
     return it != gNativeTypes.end() ? it->second : nullptr;
 }
 
+const TypeInfo* findNativeType(TypeCategory cat) {
+    auto it = gNativeTypesByCategory.find(cat);
+    return it != gNativeTypesByCategory.end() ? it->second : nullptr;
+}
+
 size_t getTypeInfoCount() {
     return gTypeInfo.size();
 }
@@ -191,6 +197,10 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 
 const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap() {
     return gNativeTypes;
+}
+
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap() {
+    return gNativeTypesByCategory;
 }
 
 void initialize_native_types() {
@@ -280,6 +290,15 @@ void initialize_native_types() {
     auto gnuc_va_list_handle = StringTable::createStringHandle("__gnuc_va_list"sv);
     auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64);
     gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
+
+    // Populate the TypeCategory-keyed mirror map from the Type-keyed map using typeToCategory().
+    // This allows callers to use findNativeType(TypeCategory) going forward.
+    for (const auto& [type, type_info_ptr] : gNativeTypes) {
+        TypeCategory cat = typeToCategory(type);
+        if (cat != TypeCategory::Invalid) {
+            gNativeTypesByCategory[cat] = type_info_ptr;
+        }
+    }
 }
 
 bool is_integer_type(Type type) {

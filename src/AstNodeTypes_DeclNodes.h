@@ -881,12 +881,14 @@ struct StringEqual {
 const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
-const TypeInfo* findNativeType(Type type);         // returns nullptr if not found
+const TypeInfo* findNativeType(Type type);         // returns nullptr if not found (legacy — prefer TypeCategory overload)
+const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found (preferred)
 size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap();
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap();
 
 // Resolve primitive type aliases (typedefs / using aliases represented as
 // Type::UserDefined) to their underlying primitive type. This intentionally
@@ -1032,12 +1034,27 @@ public:
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
 
+	// TypeCategory-first constructor — preferred for new code.
+	// Converts cat to the legacy Type via categoryToType() and stores it; the TypeIndex
+	// category_ field is also set so that category() returns cat without a lookup.
+	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+
 	// Constructor for struct types
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
 	auto type() const { return type_; }
+	// Returns the TypeCategory for this type specifier.
+	// Prefers category embedded in type_index_ (set correctly by add* functions);
+	// falls back to typeToCategory(type_) for legacy TypeSpecifierNode values built
+	// with the Type-only constructor.
+	TypeCategory category() const {
+		TypeCategory cat = type_index_.category();
+		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
+	}
 	auto size_in_bits() const { return size_; }
 	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
