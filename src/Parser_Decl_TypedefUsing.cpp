@@ -613,10 +613,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 				
 				// For struct types, get the actual size from TypeInfo
-				if (member_type_spec.type() == Type::Struct) {
+				if (member_type_spec.category() == TypeCategory::Struct) {
 					TypeInfo* member_type_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
+		TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
 						if (ti.type_index_ == member_type_spec.type_index()) {
 							member_type_info = &ti;
 							break;
@@ -677,7 +677,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
 			}
 			TypeSpecifierNode type_spec(
-				Type::Struct,
+				TypeCategory::Struct,
 				struct_type_index,
 				struct_size_bits,
 				alias_token
@@ -817,7 +817,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-						Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
+						TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 				}
@@ -1295,7 +1295,7 @@ ParseResult Parser::parse_typedef_declaration()
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
+					TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 			}
@@ -1842,7 +1842,7 @@ ParseResult Parser::parse_typedef_declaration()
 			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
-			if (member_type_spec.type() == Type::Struct) {
+			if (member_type_spec.category() == TypeCategory::Struct) {
 				const TypeInfo* member_type_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -1898,7 +1898,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
 			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)

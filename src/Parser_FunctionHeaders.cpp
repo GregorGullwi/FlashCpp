@@ -339,7 +339,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								if (elem_type.has_value()) {
 									arg_types.push_back(*elem_type);
 								} else {
-									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+									arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token);
 								}
 							}
 						}
@@ -360,7 +360,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						if (arg_type.has_value()) {
 							arg_types.push_back(*arg_type);
 						} else {
-							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+							arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token);
 						}
 					}
 				}

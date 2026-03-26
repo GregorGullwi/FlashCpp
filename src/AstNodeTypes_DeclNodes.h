@@ -1070,6 +1070,16 @@ public:
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
+	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
+	// Ensures the category embedded in type_index_ is always taken from cat, even if the
+	// incoming type_index was constructed with the legacy 1-arg (index-only) constructor.
+	// Constructor 4: category-first form.  `type_index` provides the gTypeInfo slot;
+	// its embedded category is *overridden* by `cat` so the caller need not pre-stamp
+	// the category into the TypeIndex before passing it here.
+	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
+		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
+
 	auto type() const { return type_; }
 	// Returns the TypeCategory for this type specifier.
 	// Prefers category embedded in type_index_ (set correctly by add* functions);
@@ -1160,6 +1170,7 @@ public:
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
 	void set_type(Type t) { type_ = t; }
+	void set_category(TypeCategory cat) { type_ = categoryToType(cat); type_index_.setCategory(cat); }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;

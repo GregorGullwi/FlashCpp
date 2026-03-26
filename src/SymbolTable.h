@@ -662,7 +662,7 @@ public:
 		// Base type must match
 		if (actual.type() != expected.type()) return false;
 		// For struct types, type_index must also match
-		if (actual.type() == Type::Struct && actual.type_index() != expected.type_index()) return false;
+		if (actual.category() == TypeCategory::Struct && actual.type_index() != expected.type_index()) return false;
 		// Pointer depth must match (e.g. int vs int* vs int**)
 		if (actual.pointer_depth() != expected.pointer_depth()) return false;
 		// Reference qualifier must match (e.g. int& vs int&& vs int)

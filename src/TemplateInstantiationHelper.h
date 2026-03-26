@@ -302,7 +302,7 @@ inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateA
 		const TypeSpecifierNode& arg = arg_types[i];
 		
 		// If the parameter is a template parameter (dependent type), deduce from argument
-		if (param.type() == Type::Template) {
+		if (param.category() == TypeCategory::Template) {
 			// This is a template parameter - use the argument type as the deduced type
 			deduced_args.emplace_back(arg);
 			FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced type from param ", i,
@@ -331,7 +331,7 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
 	// This is a simplified check - full template template parameter detection
 	// would require more context from the template declaration
 	
-	if (type_spec.type() == Type::Template) {
+	if (type_spec.category() == TypeCategory::Template) {
 		// Check if this template type has template arguments
 		// (indicating it's something like Container<T> rather than just T)
 		TypeIndex idx = type_spec.type_index();

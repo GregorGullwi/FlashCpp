@@ -691,7 +691,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					// Only plain `auto` forms abbreviated function template parameters.
 					// `decltype(auto)` is not permitted here by C++20 [dcl.spec.auto]/3.
-					if (param_type.type() == Type::Auto) {
+					if (param_type.category() == TypeCategory::Auto) {
 						std::string_view concept_constraint = param_type.has_concept_constraint() ? param_type.concept_constraint() : std::string_view{};
 						auto_params.push_back({i, param_decl.identifier_token(), concept_constraint});
 					}
@@ -885,8 +885,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// At global scope with struct types, use ConstructorCallNode for constexpr evaluation.
 			// At block scope, use InitializerListNode consistent with parse_variable_declaration.
 			bool is_global_scope = (gSymbolTable.get_current_scope_type() == ScopeType::Global);
-			if (is_global_scope && (type_specifier.type() == Type::Struct ||
-			    (type_specifier.type() == Type::UserDefined && type_specifier.type_index().is_valid()))) {
+			if (is_global_scope && (type_specifier.category() == TypeCategory::Struct ||
+			    (type_specifier.category() == TypeCategory::UserDefined && type_specifier.type_index().is_valid()))) {
 				Token paren_token = peek_info();
 				advance(); // consume '('
 				ChunkedVector<ASTNode> arguments;
@@ -1365,7 +1365,7 @@ ParseResult Parser::finalize_static_member_init(StructStaticMember* static_membe
 	}
 	NumericLiteralValue zero_value;
 	std::string_view zero_str;
-	if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
+	if (isFloatingPointType(member_type)) {
 		zero_value = 0.0;
 		zero_str = "0.0"sv;
 	} else {

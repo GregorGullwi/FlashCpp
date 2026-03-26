@@ -44,7 +44,7 @@ ParseResult Parser::parse_type_and_name() {
     // Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
     // Per C++20 [dcl.struct.bind], decltype(auto) is not permitted in structured bindings.
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
-    if (type_spec.type() == Type::DeclTypeAuto) {
+    if (type_spec.category() == TypeCategory::DeclTypeAuto) {
         if (type_spec.cv_qualifier() != CVQualifier::None) {
             return ParseResult::error("'decltype(auto)' cannot have cv-qualifiers", current_token_);
         }
@@ -62,7 +62,7 @@ ParseResult Parser::parse_type_and_name() {
             return ParseResult::error("'decltype(auto)' cannot be used in structured bindings", current_token_);
         }
     }
-    if (type_spec.type() == Type::Auto) {
+    if (type_spec.category() == TypeCategory::Auto) {
         // Check for optional reference qualifiers
         ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
         
@@ -97,12 +97,12 @@ ParseResult Parser::parse_type_and_name() {
     // The concept constraint was parsed as a UserDefined type by parse_type_specifier().
     // If followed by 'auto', this is an abbreviated function template parameter.
     // Store the concept name on the TypeSpecifierNode for requires clause generation.
-    if (type_spec.type() == Type::UserDefined && peek() == "auto"_tok) {
+    if (type_spec.category() == TypeCategory::UserDefined && peek() == "auto"_tok) {
         // Capture the concept name before converting the type to Auto
         std::string_view concept_name = type_spec.token().value();
         FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected (concept='", concept_name, "'), consuming 'auto'");
         advance(); // consume 'auto'
-        type_spec.set_type(Type::Auto);
+        type_spec.set_category(TypeCategory::Auto);
         // Store the concept constraint so abbreviated template generation can build a requires clause
         type_spec.set_concept_constraint(concept_name);
     }

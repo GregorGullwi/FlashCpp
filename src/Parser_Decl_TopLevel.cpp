@@ -1155,7 +1155,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			for (const auto& enumerator : enum_info->enumerators) {
 				// Create a type node for the enum type
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					Type::Enum, type_it->second->type_index_, enum_info->underlying_size, enum_type_token);
+					TypeCategory::Enum, type_it->second->type_index_, enum_info->underlying_size, enum_type_token);
 				
 				// Create a declaration node for the enumerator
 				Token enumerator_token(Token::Type::Identifier, 

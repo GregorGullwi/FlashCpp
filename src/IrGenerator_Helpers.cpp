@@ -422,7 +422,7 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 }
 
 std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const {
-	if (type_node.type() != Type::Enum || type_node.is_reference() || type_node.pointer_depth() > 0) {
+	if (type_node.category() != TypeCategory::Enum || type_node.is_reference() || type_node.pointer_depth() > 0) {
 		return std::nullopt;
 	}
 

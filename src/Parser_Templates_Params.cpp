@@ -1447,7 +1447,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
-		if (type_node.type() == Type::UserDefined) {
+		if (type_node.category() == TypeCategory::UserDefined) {
 			// BUGFIX: Use the original token value instead of looking up via type_index
 			// When template parameters are parsed, they may have type_index=0 (void),
 			// which causes incorrect dependency checks. The token value is always correct.
@@ -1549,7 +1549,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
 		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
-		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
+		if (!arg.is_dependent && type_node.category() == TypeCategory::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx.index() < getTypeInfoCount()) {
 				std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());

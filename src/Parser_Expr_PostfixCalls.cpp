@@ -974,7 +974,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->type_ == Type::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
+					if (type_info->isStruct() && type_info->type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {

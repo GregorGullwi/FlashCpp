@@ -797,7 +797,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Also check if the type is a dependent placeholder (UserDefined type with
 			// a name containing our template parameter names)
 			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
-			if (!has_unresolved_params && type_spec.type() == Type::UserDefined) {
+			if (!has_unresolved_params && type_spec.category() == TypeCategory::UserDefined) {
 				for (const auto& param_name : template_param_names) {
 					std::string_view param_sv = param_name.view();
 					// Check if the type name contains the parameter as a suffix (after underscore)
@@ -967,7 +967,7 @@ ParseResult Parser::parse_template_declaration() {
 					TemplateTypeArg arg;
 					arg.is_value = true;
 					arg.value = std::stoll(std::string(value_token.value()));
-					arg.setType(Type::Int);
+					arg.setCategory(TypeCategory::Int);
 					specialization_pattern.push_back(arg);
 				} else {
 					// Parse the pattern type
@@ -2368,7 +2368,7 @@ ParseResult Parser::parse_template_declaration() {
 				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				size_t referenced_size_bits = type_spec.size_in_bits();
 
-				if (type_spec.type() == Type::Struct) {
+				if (type_spec.category() == TypeCategory::Struct) {
 					const TypeInfo* member_type_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
