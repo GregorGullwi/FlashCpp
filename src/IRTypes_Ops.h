@@ -787,9 +787,8 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 	
 	// Type and size
-	auto type_info = getNativeTypesMap().find(op.value.type);
-	if (type_info != getNativeTypesMap().end()) {
-		oss << type_info->second->name();
+	if (const TypeInfo* type_info = findNativeType(typeToCategory(op.value.type))) {
+		oss << type_info->name();
 	}
 	oss << op.value.size_in_bits << " ";
 	
@@ -1058,9 +1057,8 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 	
 	// From type and size
-	auto from_type_info = getNativeTypesMap().find(op.from.type);
-	if (from_type_info != getNativeTypesMap().end()) {
-		oss << from_type_info->second->name();
+	if (const TypeInfo* from_type_info = findNativeType(typeToCategory(op.from.type))) {
+		oss << from_type_info->name();
 	}
 	oss << op.from.size_in_bits << " ";
 	
@@ -1076,9 +1074,8 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << " to ";
 	
 	// To type and size
-	auto to_type_info = getNativeTypesMap().find(op.to_type);
-	if (to_type_info != getNativeTypesMap().end()) {
-		oss << to_type_info->second->name();
+	if (const TypeInfo* to_type_info = findNativeType(typeToCategory(op.to_type))) {
+		oss << to_type_info->name();
 	}
 	oss << op.to_size;
 	
@@ -1099,9 +1096,8 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	oss << " = " << op_name << " ";
 	
 	// Type and size (from LHS, but both sides should be same after type promotion)
-	auto type_info = getNativeTypesMap().find(op.lhs.type);
-	if (type_info != getNativeTypesMap().end()) {
-		oss << type_info->second->name();
+	if (const TypeInfo* type_info = findNativeType(typeToCategory(op.lhs.type))) {
+		oss << type_info->name();
 	}
 	oss << op.lhs.size_in_bits << " ";
 	

@@ -69,8 +69,7 @@ TargetDataModel g_target_data_model = TargetDataModel::LP64;   // Linux/Unix: lo
 
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
-std::unordered_map<Type, const TypeInfo*> gNativeTypes;
-std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypesByCategory;
+std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
 TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
     TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
@@ -154,14 +153,9 @@ const TypeInfo* findTypeByName(StringHandle name) {
     return it != gTypesByName.end() ? it->second : nullptr;
 }
 
-const TypeInfo* findNativeType(Type type) {
-    auto it = gNativeTypes.find(type);
-    return it != gNativeTypes.end() ? it->second : nullptr;
-}
-
 const TypeInfo* findNativeType(TypeCategory cat) {
-    auto it = gNativeTypesByCategory.find(cat);
-    return it != gNativeTypesByCategory.end() ? it->second : nullptr;
+    auto it = gNativeTypes.find(cat);
+    return it != gNativeTypes.end() ? it->second : nullptr;
 }
 
 size_t getTypeInfoCount() {
@@ -186,21 +180,19 @@ TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_typ
     return type_info;
 }
 
-TypeInfo& add_empty_type_entry() {
+TypeCreationResult add_empty_type_entry() {
+    TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
     auto& type_info = gTypeInfo.emplace_back();
-    return type_info;
+    type_info.type_index_ = idx;
+    return TypeCreationResult{type_info, idx};
 }
 
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap() {
     return gTypesByName;
 }
 
-const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap() {
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap() {
     return gNativeTypes;
-}
-
-const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap() {
-    return gNativeTypesByCategory;
 }
 
 void initialize_native_types() {
@@ -211,73 +203,73 @@ void initialize_native_types() {
 
     // Add basic native types
     auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), Type::Void, TypeIndex{gTypeInfo.size(), TypeCategory::Void}, 0);
-    gNativeTypes[Type::Void] = &void_type;
+    gNativeTypes[TypeCategory::Void] = &void_type;
 
     auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), Type::Bool, TypeIndex{gTypeInfo.size(), TypeCategory::Bool}, get_type_size_bits(Type::Bool));
-    gNativeTypes[Type::Bool] = &bool_type;
+    gNativeTypes[TypeCategory::Bool] = &bool_type;
 
     auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, TypeIndex{gTypeInfo.size(), TypeCategory::Char}, get_type_size_bits(Type::Char));
-    gNativeTypes[Type::Char] = &char_type;
+    gNativeTypes[TypeCategory::Char] = &char_type;
     
     auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("wchar_t"sv), Type::WChar, TypeIndex{gTypeInfo.size(), TypeCategory::WChar}, get_wchar_size_bits());
-    gNativeTypes[Type::WChar] = &wchar_type;
+    gNativeTypes[TypeCategory::WChar] = &wchar_type;
     
     auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char8_t"sv), Type::Char8, TypeIndex{gTypeInfo.size(), TypeCategory::Char8}, get_type_size_bits(Type::Char8));
-    gNativeTypes[Type::Char8] = &char8_type;
+    gNativeTypes[TypeCategory::Char8] = &char8_type;
     
     auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char16_t"sv), Type::Char16, TypeIndex{gTypeInfo.size(), TypeCategory::Char16}, get_type_size_bits(Type::Char16));
-    gNativeTypes[Type::Char16] = &char16_type;
+    gNativeTypes[TypeCategory::Char16] = &char16_type;
     
     auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char32_t"sv), Type::Char32, TypeIndex{gTypeInfo.size(), TypeCategory::Char32}, get_type_size_bits(Type::Char32));
-    gNativeTypes[Type::Char32] = &char32_type;
+    gNativeTypes[TypeCategory::Char32] = &char32_type;
 
     auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedChar}, get_type_size_bits(Type::UnsignedChar));
-    gNativeTypes[Type::UnsignedChar] = &uchar_type;
+    gNativeTypes[TypeCategory::UnsignedChar] = &uchar_type;
 
     auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), Type::Short, TypeIndex{gTypeInfo.size(), TypeCategory::Short}, get_type_size_bits(Type::Short));
-    gNativeTypes[Type::Short] = &short_type;
+    gNativeTypes[TypeCategory::Short] = &short_type;
 
     auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), Type::UnsignedShort, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedShort}, get_type_size_bits(Type::UnsignedShort));
-    gNativeTypes[Type::UnsignedShort] = &ushort_type;
+    gNativeTypes[TypeCategory::UnsignedShort] = &ushort_type;
 
     auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), Type::Int, TypeIndex{gTypeInfo.size(), TypeCategory::Int}, get_type_size_bits(Type::Int));
-    gNativeTypes[Type::Int] = &int_type;
+    gNativeTypes[TypeCategory::Int] = &int_type;
 
     auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedInt}, get_type_size_bits(Type::UnsignedInt));
-    gNativeTypes[Type::UnsignedInt] = &uint_type;
+    gNativeTypes[TypeCategory::UnsignedInt] = &uint_type;
 
 	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, TypeIndex{gTypeInfo.size(), TypeCategory::Long}, get_type_size_bits(Type::Long));
-	gNativeTypes[Type::Long] = &long_type;
+	gNativeTypes[TypeCategory::Long] = &long_type;
 
 	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLong}, get_type_size_bits(Type::UnsignedLong));
-	gNativeTypes[Type::UnsignedLong] = &ulong_type;
+	gNativeTypes[TypeCategory::UnsignedLong] = &ulong_type;
 
     auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, TypeIndex{gTypeInfo.size(), TypeCategory::LongLong}, get_type_size_bits(Type::LongLong));
-    gNativeTypes[Type::LongLong] = &longlong_type;
+    gNativeTypes[TypeCategory::LongLong] = &longlong_type;
 
     auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), Type::UnsignedLongLong, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLongLong}, get_type_size_bits(Type::UnsignedLongLong));
-    gNativeTypes[Type::UnsignedLongLong] = &ulonglong_type;
+    gNativeTypes[TypeCategory::UnsignedLongLong] = &ulonglong_type;
 
     auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), Type::Float, TypeIndex{gTypeInfo.size(), TypeCategory::Float}, get_type_size_bits(Type::Float));
-    gNativeTypes[Type::Float] = &float_type;
+    gNativeTypes[TypeCategory::Float] = &float_type;
 
     auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), Type::Double, TypeIndex{gTypeInfo.size(), TypeCategory::Double}, get_type_size_bits(Type::Double));
-    gNativeTypes[Type::Double] = &double_type;
+    gNativeTypes[TypeCategory::Double] = &double_type;
 
     auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), Type::LongDouble, TypeIndex{gTypeInfo.size(), TypeCategory::LongDouble}, get_type_size_bits(Type::LongDouble));
-    gNativeTypes[Type::LongDouble] = &longdouble_type;
+    gNativeTypes[TypeCategory::LongDouble] = &longdouble_type;
 
     auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, TypeIndex{gTypeInfo.size(), TypeCategory::Auto}, 0);
-    gNativeTypes[Type::Auto] = &auto_type;
+    gNativeTypes[TypeCategory::Auto] = &auto_type;
 
     auto& decltype_auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("decltype(auto)"sv), Type::DeclTypeAuto, TypeIndex{gTypeInfo.size(), TypeCategory::DeclTypeAuto}, 0);
-    gNativeTypes[Type::DeclTypeAuto] = &decltype_auto_type;
+    gNativeTypes[TypeCategory::DeclTypeAuto] = &decltype_auto_type;
 
     auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, TypeIndex{gTypeInfo.size(), TypeCategory::FunctionPointer}, get_type_size_bits(Type::FunctionPointer));
-    gNativeTypes[Type::FunctionPointer] = &function_pointer_type;
+    gNativeTypes[TypeCategory::FunctionPointer] = &function_pointer_type;
 
     auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, TypeIndex{gTypeInfo.size(), TypeCategory::MemberFunctionPointer}, get_type_size_bits(Type::MemberFunctionPointer));
-    gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
+    gNativeTypes[TypeCategory::MemberFunctionPointer] = &member_function_pointer_type;
 
     // Register GCC builtin types used by libstdc++ headers
     // __builtin_va_list is the compiler's internal va_list type (a struct array on x86-64).
@@ -291,14 +283,6 @@ void initialize_native_types() {
     auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64);
     gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
 
-    // Populate the TypeCategory-keyed mirror map from the Type-keyed map using typeToCategory().
-    // This allows callers to use findNativeType(TypeCategory) going forward.
-    for (const auto& [type, type_info_ptr] : gNativeTypes) {
-        TypeCategory cat = typeToCategory(type);
-        if (cat != TypeCategory::Invalid) {
-            gNativeTypesByCategory[cat] = type_info_ptr;
-        }
-    }
 }
 
 bool is_integer_type(Type type) {

@@ -846,9 +846,8 @@ ParseResult Parser::parse_type_specifier()
 				auto type_it = getTypesByNameMap().find(type_handle);
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
-					auto& placeholder_type = add_empty_type_entry();
+					TypeInfo& placeholder_type = add_empty_type_entry();
 					placeholder_type.type_ = Type::UserDefined;
-					placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 					placeholder_type.type_size_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
@@ -1136,9 +1135,8 @@ ParseResult Parser::parse_type_specifier()
 										} else {
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-											auto& placeholder_type = add_empty_type_entry();
+											TypeInfo& placeholder_type = add_empty_type_entry();
 											placeholder_type.type_ = Type::UserDefined;
-											placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
@@ -1282,9 +1280,8 @@ ParseResult Parser::parse_type_specifier()
 							} else {
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-								auto& placeholder_type = add_empty_type_entry();
+								TypeInfo& placeholder_type = add_empty_type_entry();
 								placeholder_type.type_ = Type::UserDefined;
-								placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
@@ -1344,9 +1341,8 @@ ParseResult Parser::parse_type_specifier()
 						TypeIndex type_idx;
 						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
-							auto& placeholder_type = add_empty_type_entry();
+							TypeInfo& placeholder_type = add_empty_type_entry();
 							placeholder_type.type_ = Type::UserDefined;
-							placeholder_type.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
@@ -1383,9 +1379,8 @@ ParseResult Parser::parse_type_specifier()
 						}
 
 						// Create a new dependent placeholder with template instantiation metadata
-						auto& type_info = add_empty_type_entry();
+						TypeInfo& type_info = add_empty_type_entry();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 						type_info.type_size_ = 0;
 						type_info.name_ = type_handle;
 						getTypesByNameMap()[type_handle] = &type_info;
@@ -1770,9 +1765,8 @@ ParseResult Parser::parse_type_specifier()
 							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
-							auto& type_info = add_empty_type_entry();
+							TypeInfo& type_info = add_empty_type_entry();
 							type_info.type_ = Type::UserDefined;
-							type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
@@ -2042,9 +2036,8 @@ ParseResult Parser::parse_type_specifier()
 				if (has_dependent_args) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
-					auto& type_info = add_empty_type_entry();
+					TypeInfo& type_info = add_empty_type_entry();
 					type_info.type_ = Type::UserDefined;
-					type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
@@ -2212,9 +2205,8 @@ ParseResult Parser::parse_type_specifier()
 						FLASH_LOG_FORMAT(Templates, Debug, 
 							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
 							type_name);
-						auto& type_info = add_empty_type_entry();
+						TypeInfo& type_info = add_empty_type_entry();
 						type_info.type_ = Type::UserDefined;
-						type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;

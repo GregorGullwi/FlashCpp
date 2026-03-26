@@ -1294,7 +1294,7 @@ ParseResult Parser::parse_lambda_expression() {
 				member_size = 8;
 				member_alignment = 8;
 				member_type = var_type.type();
-				if (var_type.type() == Type::Struct) {
+				if (var_type.category() == TypeCategory::Struct) {
 					type_index = var_type.type_index();
 				}
 			} else {
@@ -1302,7 +1302,7 @@ ParseResult Parser::parse_lambda_expression() {
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
                 member_type = var_type.type();
-                if (var_type.type() == Type::Struct) {
+                if (var_type.category() == TypeCategory::Struct) {
                     type_index = var_type.type_index();
                 }
             }
@@ -1311,7 +1311,7 @@ ParseResult Parser::parse_lambda_expression() {
 			bool is_ref_capture = (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference);
 			if (is_ref_capture) {
 				referenced_size_bits = var_type.size_in_bits();
-				if (referenced_size_bits == 0 && var_type.type() == Type::Struct) {
+				if (referenced_size_bits == 0 && var_type.category() == TypeCategory::Struct) {
 					const TypeInfo* member_type_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});

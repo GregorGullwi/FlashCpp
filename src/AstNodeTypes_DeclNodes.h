@@ -881,14 +881,12 @@ struct StringEqual {
 const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
-const TypeInfo* findNativeType(Type type);         // returns nullptr if not found (legacy — prefer TypeCategory overload)
-const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found (preferred)
+const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
 size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
-const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap();
-const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap();
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 // Resolve primitive type aliases (typedefs / using aliases represented as
 // Type::UserDefined) to their underlying primitive type. This intentionally
@@ -926,7 +924,7 @@ TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits
 TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
-TypeInfo& add_empty_type_entry();
+TypeCreationResult add_empty_type_entry();
 
 // Iteration support — use instead of range-for over gTypeInfo
 template<typename Fn>

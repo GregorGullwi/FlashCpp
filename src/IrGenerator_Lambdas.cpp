@@ -1094,7 +1094,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 						if (member) {
 							// Create a TypeSpecifierNode from the member type
 							TypeSpecifierNode member_type(member->type, TypeQualifier::None, static_cast<int>(member->size * 8));
-							if (member->type == Type::Struct) {
+							if (member->type_index.isStruct()) {
 								// Need to set type_index for struct types
 								member_type = TypeSpecifierNode(member->type, member->type_index, static_cast<int>(member->size * 8), Token());
 							}

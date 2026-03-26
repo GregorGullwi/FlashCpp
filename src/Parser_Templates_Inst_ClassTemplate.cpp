@@ -315,9 +315,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string_view inst_name = get_instantiated_class_name(template_name, template_args);
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
 			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
-				auto& type_info = add_empty_type_entry();
+				TypeInfo& type_info = add_empty_type_entry();
 				type_info.type_ = Type::UserDefined;
-				type_info.type_index_ = TypeIndex{getTypeInfoCount() - 1};
 				type_info.type_size_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
