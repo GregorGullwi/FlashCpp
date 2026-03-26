@@ -151,7 +151,7 @@
 
 			// Declare the closure variable with the target name
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, {});
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
@@ -167,7 +167,7 @@
 
 			// Declare the closure variable
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, {});
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;

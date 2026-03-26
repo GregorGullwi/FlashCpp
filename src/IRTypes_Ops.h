@@ -697,8 +697,9 @@ struct StringLiteralOp {
 // Stack allocation
 struct StackAllocOp {
 	std::variant<StringHandle, TempVar> result;  // Result variable
-	Type type = Type::Invalid;                        // Type being allocated
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};                             // Size in bits
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Assignment operation
@@ -812,9 +813,10 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 // Type conversion operations (SignExtend, ZeroExtend, Truncate)
 struct ConversionOp {
 	TypedValue from;     // 40 bytes (source type, size, and value)
-	Type to_type = Type::Invalid;  // 4 bytes
+	TypeIndex to_type_index {};  // TypeCategory embedded; replaces Type to_type
 	int to_size = 0;     // 4 bytes
 	TempVar result;      // 4 bytes
+	Type toType() const { return categoryToType(to_type_index.category()); }
 };
 
 // Global variable load
@@ -847,7 +849,7 @@ struct FunctionAddressOp {
 
 // Variable declaration (local)
 struct VariableDeclOp {
-	Type type = Type::Invalid;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
@@ -869,11 +871,12 @@ struct VariableDeclOp {
 	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Global variable declaration
 struct GlobalVariableDeclOp {
-	Type type = Type::Invalid;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};          // Size of one element in bits
 	StringHandle var_name;  // Pure StringHandle
 	bool is_initialized = false;
@@ -886,24 +889,27 @@ struct GlobalVariableDeclOp {
 	StringHandle getVarName() const {
 		return var_name;
 	}
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Heap allocation (new operator)
 struct HeapAllocOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Heap array allocation (new[] operator)
 struct HeapAllocArrayOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue count;               // Array element count (TempVar or constant)
 	bool needs_cookie = false;   // If true, prepend 8-byte count cookie; result points past cookie
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Heap free (delete operator)
@@ -920,18 +926,20 @@ struct HeapFreeArrayOp {
 // Placement new operator
 struct PlacementNewOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
+	Type opType() const { return categoryToType(type_index.category()); }
 };
 
 // Type conversion operations (FloatToInt, IntToFloat, FloatToFloat)
 struct TypeConversionOp {
 	TempVar result;              // Result variable
 	TypedValue from;             // Source value with type information
-	Type to_type = Type::Invalid;   // Target type
+	TypeIndex to_type_index {};  // TypeCategory embedded; replaces Type to_type
 	SizeInBits to_size_in_bits;     // Target size
+	Type toType() const { return categoryToType(to_type_index.category()); }
 };
 
 // RTTI: typeid operation
@@ -1079,7 +1087,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << " to ";
 	
 	// To type and size
-	if (const TypeInfo* to_type_info = findNativeType(typeToCategory(op.to_type))) {
+	if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 		oss << to_type_info->name();
 	}
 	oss << op.to_size;

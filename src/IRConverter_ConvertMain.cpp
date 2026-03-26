@@ -6090,7 +6090,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 		// Store global variable info for later use
 		GlobalVariableInfo global_info;
 		global_info.name = op.var_name;
-		global_info.type = op.type;
+		global_info.type_index = op.type_index;
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 		global_info.reloc_target = op.reloc_target;
@@ -6195,7 +6195,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 		}
 
 		int size_in_bits = static_cast<int>(global_info->size_in_bytes * 8);
-		Type var_type = global_info->type;
+		Type var_type = global_info->varType();
 		bool is_floating_point = (var_type == Type::Float || var_type == Type::Double);
 		bool is_float = (var_type == Type::Float);
 
@@ -6226,7 +6226,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		StringHandle var_name_handle = op.var_name;
 		std::string var_name_str = std::string(StringTable::getStringView(var_name_handle));
 
-		Type var_type = op.type;
+		Type var_type = op.opType();
 		StackVariableScope& current_scope = variable_scopes.back();
 		auto var_it = current_scope.variables.find(var_name_handle);
 		assert(var_it != current_scope.variables.end());
@@ -6470,7 +6470,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					// Store the value from register to stack (size-aware)
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
-						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}  // dest
+						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}  // dest
 					);
 
 					// Release the register since the value is now in the stack
@@ -6571,7 +6571,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						emitMovToFrameSized(
 							SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
-							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}
 						);
 					}
 				} else {
@@ -6716,7 +6716,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						emitMovToFrameSized(
 							SizedRegister{allocated_reg_val, 64, false},
-							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}
 						);
 						regAlloc.release(allocated_reg_val);
 					}
@@ -10585,7 +10585,7 @@ void IrToObjConverter<TWriterClass>::handleIntToFloat(const IrInstruction& instr
 		// cvtsi2ss (int to float) or cvtsi2sd (int to double)
 		// Opcode: F3 REX.W 0F 2A /r (cvtsi2ss xmm, r64) for float
 		// Opcode: F2 REX.W 0F 2A /r (cvtsi2sd xmm, r64) for double
-		bool is_float = (op.to_type == Type::Float);
+		bool is_float = (op.to_type_index.category() == TypeCategory::Float);
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 
 		uint8_t rex = 0x48;  // REX.W for 64-bit source
@@ -10633,7 +10633,7 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 
 		// cvtss2sd (float to double) or cvtsd2ss (double to float)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (op.from.effectiveIrType() == IrType::Float && op.to_type == Type::Double) {
+		if (op.from.effectiveIrType() == IrType::Float && op.to_type_index.category() == TypeCategory::Double) {
 			// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5A, result_xmm, source_xmm);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -10650,7 +10650,7 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
-		bool is_float_result = (op.to_type == Type::Float);
+		bool is_float_result = (op.to_type_index.category() == TypeCategory::Float);
 		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
 		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits.value);
 	}

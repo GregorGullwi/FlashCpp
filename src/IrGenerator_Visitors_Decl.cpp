@@ -1152,7 +1152,7 @@
 							emitted_static_members_.insert(name_handle);
 
 							GlobalVariableDeclOp op;
-							op.type = static_member.memberType();
+							op.type_index = static_member.type_index;
 							op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 							op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
@@ -2427,7 +2427,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
-	array_decl.type = element_type;
+	array_decl.type_index = TypeIndex::fromTypeAndIndex(element_type, {});
 	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
 	array_decl.array_element_type = element_type;
@@ -2472,7 +2472,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp init_list_decl;
 	init_list_decl.var_name = init_list_name;
-	init_list_decl.type = Type::Struct;
+	init_list_decl.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, {});
 	init_list_decl.size_in_bits = SizeInBits{static_cast<int>(init_list_size_bits)};
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
 

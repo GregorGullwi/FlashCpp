@@ -122,7 +122,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				if (!exception_var_name.empty()) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
-					decl_op.type = type_node.type();
+					decl_op.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 
@@ -273,7 +273,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					StringHandle throw_storage_name = StringTable::getOrInternStringHandle(temp_name_builder.commit());
 
 					VariableDeclOp materialized_throw_decl;
-					materialized_throw_decl.type = expr_type;
+					materialized_throw_decl.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
 					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
 					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());

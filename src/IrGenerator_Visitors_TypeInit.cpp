@@ -584,7 +584,7 @@
 					emitted_static_members_.insert(name_handle);
 
 					GlobalVariableDeclOp op;
-					op.type = static_member.memberType();
+					op.type_index = static_member.type_index;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.index() < getTypeInfoCount()) {
@@ -1038,7 +1038,7 @@
 							"' for ", type_name, " from base ", base_name_str);
 
 							GlobalVariableDeclOp alias_op;
-							alias_op.type = static_member_ptr->memberType();
+							alias_op.type_index = static_member_ptr->type_index;
 							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;

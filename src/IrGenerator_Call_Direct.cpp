@@ -86,7 +86,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
 
 	VariableDeclOp vdecl;
-	vdecl.type = ret_type;
+	vdecl.type_index = TypeIndex::fromTypeAndIndex(ret_type, ret_spec.type_index());
 	vdecl.size_in_bits = ret_size;
 	vdecl.var_name = struct_tmp_handle;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));

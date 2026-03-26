@@ -338,7 +338,7 @@ public:
 			else
 				oss << std::get<TempVar>(op.result).var_number;
 			oss << " = alloca ";
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 				oss << type_info->name();
 			oss << op.size_in_bits;
 		}
@@ -828,7 +828,7 @@ public:
 			// %result = heap_alloc [Type][Size][PointerDepth]
 			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc ["
-				<< static_cast<int>(op.type) << "]["
+				<< static_cast<int>(op.opType()) << "]["
 				<< op.size_in_bytes << "][" << op.pointer_depth.value << "]";
 		}
 		break;
@@ -838,7 +838,7 @@ public:
 			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
 			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc_array ["
-				<< static_cast<int>(op.type) << "]["
+				<< static_cast<int>(op.opType()) << "]["
 				<< op.size_in_bytes << "][" << op.pointer_depth.value << "] ";
 
 			if (const auto* temp_var = std::get_if<TempVar>(&op.count))
@@ -885,7 +885,7 @@ public:
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.address));
 			else if (std::holds_alternative<unsigned long long>(op.address))
 				oss << std::get<unsigned long long>(op.address);
-			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
+			oss << " [" << static_cast<int>(op.opType()) << "][" << op.size_in_bytes << "]";
 		}
 		break;
 
@@ -1025,12 +1025,12 @@ public:
 
 			if (op.is_array && op.array_count.has_value()) {
 				// For arrays, print element type and count: int32[5]
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+				if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 					oss << type_info->name();
 				oss << op.size_in_bits << "[" << op.array_count.value() << "]";
 			} else {
 				// For scalars, print type and size: int32
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+				if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 					oss << type_info->name();
 				oss << op.size_in_bits;
 			}
@@ -1062,7 +1062,7 @@ public:
 		std::string_view var_name = StringTable::getStringView(var_name_handle);  // Use helper for backward compatibility
 
 			oss << "global_var ";
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 				oss << type_info->name();
 			oss << op.size_in_bits << " @" << std::string(var_name);
 			if (op.element_count > 1) {
@@ -1168,7 +1168,7 @@ public:
 				oss << *d_val;
 			}
 			oss << " to ";
-			if (const TypeInfo* to_type_info = findNativeType(typeToCategory(op.to_type))) {
+			if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 				oss << to_type_info->name();
 			}
 			oss << op.to_size_in_bits;

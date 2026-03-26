@@ -82,7 +82,7 @@
 					TypeConversionOp conv_op{
 						.result = resultVar,
 						.from = toTypedValue(operands),
-						.to_type = toType,
+						.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
 						.to_size_in_bits = SizeInBits{toSize
 					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
@@ -111,7 +111,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 
@@ -132,7 +132,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatToFloat, std::move(conv_op), source_token));
@@ -159,7 +159,7 @@
 			// Extension needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
 				.to_size = toSize,
 				.result = resultVar
 			};
@@ -206,7 +206,7 @@
 			// Truncation needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
 				.to_size = toSize,
 				.result = resultVar
 			};

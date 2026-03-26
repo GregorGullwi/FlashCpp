@@ -58,7 +58,7 @@
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
 				op.result = result_var;
-				op.type = type;
+				op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
@@ -167,7 +167,7 @@
 				// Create HeapAllocArrayOp
 				HeapAllocArrayOp op;
 				op.result = result_var;
-				op.type = type;
+				op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
@@ -345,7 +345,7 @@
 			// Create PlacementNewOp
 			PlacementNewOp op;
 			op.result = result_var;
-			op.type = type;
+			op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
@@ -391,7 +391,7 @@
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
 			op.result = result_var;
-			op.type = type;
+			op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 
@@ -820,7 +820,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
@@ -844,7 +844,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
@@ -868,7 +868,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
