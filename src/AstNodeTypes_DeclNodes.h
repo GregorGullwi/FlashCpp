@@ -898,17 +898,17 @@ struct CanonicalTypeAlias {
 // original unresolved state when the chain does not bottom out in a concrete type
 // (placeholder / parse-time fallback cases).
 inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
-	const size_t type_info_count = getTypeInfoCount();
-	if (type != Type::UserDefined || !type_index.is_valid() || type_index.index() >= type_info_count) {
+	const size_t typeInfoCount = getTypeInfoCount();
+	if (type != Type::UserDefined || !type_index.is_valid() || type_index.index() >= typeInfoCount) {
 		return {type, type_index};
 	}
 
 	const TypeIndex original_type_index = type_index;
 	TypeIndex current_type_index = type_index;
-	size_t remaining = type_info_count;
+	size_t depthLimit = typeInfoCount;
 	while (current_type_index.is_valid() &&
-		current_type_index.index() < type_info_count &&
-		remaining-- > 0) {
+		current_type_index.index() < typeInfoCount &&
+		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
 		if (type_info.type_ != Type::Void && type_info.type_ != Type::UserDefined) {
 			return {type_info.type_, type_info.type_index_};
