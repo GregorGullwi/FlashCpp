@@ -1454,9 +1454,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					element_type_node = elem_type_spec;
 				} else {
 					// Fall back to using the member's type directly (for primitive types)
-					int elem_size = get_type_size_bits(first_member.type);
+					int elem_size = get_type_size_bits(first_member.memberType());
 					element_type_node = emplace_node<TypeSpecifierNode>(
-						first_member.type,
+						first_member.memberType(),
 						TypeQualifier::None,
 						static_cast<unsigned char>(elem_size),
 						brace_token
@@ -1750,7 +1750,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			if (target_member.type_index.is_valid() && target_member.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& member_type_info = getTypeInfo(target_member.type_index);
-				if (is_struct_type(target_member.type)) {
+				if (is_struct_type(target_member.memberType())) {
 					member_type_spec = TypeSpecifierNode(
 						member_type_info.type_,
 						target_member.type_index,
@@ -1759,7 +1759,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					);
 				} else {
 					member_type_spec = TypeSpecifierNode(
-						target_member.type,
+						target_member.memberType(),
 						TypeQualifier::None,
 						member_type_info.type_size_ * 8,
 						Token()
@@ -1767,11 +1767,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					member_type_spec.set_type_index(target_member.type_index);
 				}
 				have_member_type_spec = true;
-			} else if (target_member.type != Type::Invalid) {
+			} else if (target_member.memberType() != Type::Invalid) {
 				member_type_spec = TypeSpecifierNode(
-					target_member.type,
+					target_member.memberType(),
 					TypeQualifier::None,
-					get_type_size_bits(target_member.type),
+					get_type_size_bits(target_member.memberType()),
 					Token()
 				);
 				have_member_type_spec = true;

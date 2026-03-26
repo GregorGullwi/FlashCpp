@@ -167,7 +167,7 @@
 				// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
 
 				const StructMember* member = member_multi_dim.member_info;
-				Type element_type = member->type;
+				Type element_type = member->memberType();
 				int base_element_size = get_type_size_bits(element_type);
 
 				// Get all dimension sizes
@@ -431,7 +431,7 @@
 									ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 									// Get element type and size from the member
-									Type element_type = member->type;
+									Type element_type = member->memberType();
 									int element_size_bits = static_cast<int>(member->size * 8);
 
 									// Use array_dimensions to compute actual element size
@@ -1250,13 +1250,13 @@
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
-			global_load.result.type = static_member->type;
+			global_load.result.type = static_member->memberType();
 			global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
-			return makeMemberResult(static_member->type, SizeInBits{sm_size_bits}, result_var, static_member->type_index,
+			return makeMemberResult(static_member->memberType(), SizeInBits{sm_size_bits}, result_var, static_member->type_index,
 				PointerDepth{static_cast<int>(static_member->pointer_depth)}, ValueStorage::ContainsData);
 		}
 
@@ -1346,15 +1346,15 @@
 		lvalue_info.bitfield_width = member->bitfield_width;
 		lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
 		if (member_is_xvalue && !member->is_reference()) {
-			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type, member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->memberType(), member_size_bits));
 		} else {
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type, member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->memberType(), member_size_bits));
 		}
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
 		member_load.result.value = result_var;
-		member_load.result.type = member->type;
+		member_load.result.type = member->memberType();
 		member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};  // Convert bytes to bits
 
 		// Set base object, member name, and offset — using unwrapped values when applicable
@@ -1374,7 +1374,7 @@
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
 		if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
-			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+			return makeMemberResult(member->memberType(), SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1391,7 +1391,7 @@
 				0            // No offset - the pointer points directly to the target
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+			return makeMemberResult(member->memberType(), SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1412,23 +1412,23 @@
 			// member access (e.g. wp.p.x) needs this pointer as a base with is_pointer_dereference
 			// semantics — just like accessing through a struct pointer (ptr->x). Dereferencing
 			// would load the struct's raw bytes into a scalar TempVar, making field access impossible.
-			if (isIrStructType(toIrType(member->type)) && member->type_index.is_valid()) {
+			if (isIrStructType(toIrType(member->memberType())) && member->type_index.is_valid()) {
 				// Return the loaded pointer directly — the next level of member access will
 				// treat it as a pointer-to-struct base (is_pointer_dereference = true).
-				return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, result_var, member->type_index,
+				return makeMemberResult(member->memberType(), SizeInBits{pointee_size_bits}, result_var, member->type_index,
 					PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 			}
 
-			TempVar deref_var = emitDereference(member->type, 64, 1, IrValue(result_var), Token());
+			TempVar deref_var = emitDereference(member->memberType(), 64, 1, IrValue(result_var), Token());
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
 			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, deref_var, member->type_index,
+			return makeMemberResult(member->memberType(), SizeInBits{pointee_size_bits}, deref_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 		}
 
-		return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+		return makeMemberResult(member->memberType(), SizeInBits{member_size_bits}, result_var, member->type_index,
 			PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 
@@ -1512,8 +1512,8 @@
 					if (static_member) {
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
-							size_t ref_size = get_type_size_bits(static_member->type) / 8;
-							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
+							size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
+							if (ref_size == 0 && static_member->memberType() == Type::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(static_member->type_index).getStructInfo();
 								if (si) ref_size = si->total_size;
 							}
@@ -2078,7 +2078,7 @@
 		if (struct_info->hasUserDefinedDestructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (isIrStructType(toIrType(member.type))) {
+			if (isIrStructType(toIrType(member.memberType()))) {
 				if (member.type_index.index() >= getTypeInfoCount()) return false;
 				const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
 				if (!isTriviallyCopyableStruct(member_info)) return false;
@@ -2103,7 +2103,7 @@
 		if (struct_info->hasUserDefinedConstructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (isIrStructType(toIrType(member.type))) {
+			if (isIrStructType(toIrType(member.memberType()))) {
 				if (member.type_index.index() >= getTypeInfoCount()) return false;
 				const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
 				if (!isTrivialStruct(member_info)) return false;

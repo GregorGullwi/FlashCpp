@@ -325,7 +325,7 @@
 			}
 
 			// Update type to member type
-			base_components->final_type = result.member->type;
+			base_components->final_type = result.member->memberType();
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
@@ -759,7 +759,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
 
 									// Return pointer to member (64-bit pointer, 0 for no additional type info)
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -812,13 +812,13 @@
 									addr_member_op.result = result_var;
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
-									addr_member_op.member_type = member_result.member->type;
+									addr_member_op.member_type = member_result.member->memberType();
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 
 									// Return pointer to member
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -1019,7 +1019,7 @@
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			int increment_amount = (member->pointer_depth > 0) ?
-				getPointerElementSize(member->type, member->type_index, member->pointer_depth) : 1;
+				getPointerElementSize(member->memberType(), member->type_index, member->pointer_depth) : 1;
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -1028,7 +1028,7 @@
 				TempVar ptr_temp = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = ptr_temp;
-				member_load.result.type = member->type;
+				member_load.result.type = member->memberType();
 				member_load.result.size_in_bits = SizeInBits{64};  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1038,11 +1038,11 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 
 				// Load current value through pointer
-				TempVar current_val = emitDereference(member->type, 64, 1, ptr_temp, token);
+				TempVar current_val = emitDereference(member->memberType(), 64, 1, ptr_temp, token);
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
-					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
+					.lhs = { member->memberType(), SizeInBits{member_size_bits}, current_val },
 					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
@@ -1052,21 +1052,21 @@
 
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.type = member->type;
+				store_op.pointer.type = member->memberType();
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
-				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
+				store_op.value = { member->memberType(), SizeInBits{member_size_bits}, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// By-value: load member, inc/dec, store back to member
 				TempVar current_val = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = current_val;
-				member_load.result.type = member->type;
+				member_load.result.type = member->memberType();
 				member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1077,7 +1077,7 @@
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
-					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
+					.lhs = { member->memberType(), SizeInBits{member_size_bits}, current_val },
 					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
 					.result = result_var,
 				};
@@ -1090,12 +1090,12 @@
 				store_op.object = object_name;
 				store_op.member_name = member_name;
 				store_op.offset = static_cast<int>(adjusted_offset);
-				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
+				store_op.value = { member->memberType(), SizeInBits{member_size_bits}, result_var };
 				store_op.ref_qualifier = CVReferenceQualifier::None;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		};
 
@@ -1260,7 +1260,7 @@
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
 							return makeExprResult(
-								member_result.member->type,
+								member_result.member->memberType(),
 								SizeInBits{64},
 								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
 								TypeIndex{member_result.member->type_index}
@@ -1848,7 +1848,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		}
@@ -1890,7 +1890,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
-			element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+			element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
 			return true;
 		};
 
@@ -1955,7 +1955,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {

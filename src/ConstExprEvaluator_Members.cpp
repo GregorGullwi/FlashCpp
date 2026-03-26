@@ -2964,7 +2964,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 					
 					// If not constexpr or no initializer, return default value based on type
-					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->type));
+					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->memberType()));
 					return evaluate_static_member_initializer_or_default(*static_member, context);
 				}
 			}
@@ -3587,7 +3587,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			const bool needs_intermediate_materialization =
 				!intermediate_result.object_type_index.is_valid() &&
 				intermediate_result.object_member_bindings.empty() &&
-				(is_struct_type(intermediate_member_info->type)) &&
+				(is_struct_type(intermediate_member_info->memberType())) &&
 				intermediate_member_info->type_index.is_valid() &&
 				intermediate_member_info->type_index.index() < getTypeInfoCount();
 			if (needs_intermediate_materialization) {
@@ -3683,7 +3683,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 
 	const StructMember* intermediate_member_info = intermediate_member_source.member_info;
-	if (!is_struct_type(intermediate_member_info->type)) {
+	if (!is_struct_type(intermediate_member_info->memberType())) {
 		return EvalResult::error("Intermediate member is not a struct type");
 	}
 
@@ -4038,7 +4038,7 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 		return evaluate(static_member.initializer.value(), context);
 	}
 
-	if (static_member.type == Type::Bool) {
+	if (static_member.type_index.category() == TypeCategory::Bool) {
 		return EvalResult::from_bool(false);
 	}
 	return EvalResult::from_int(0);
@@ -4697,10 +4697,10 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(member_info.type, member_info.type_index, init_list, context);
+			return Evaluator::materialize_array_value(member_info.memberType(), member_info.type_index, init_list, context);
 		}
 
-		if ((is_struct_type(member_info.type)) &&
+		if ((is_struct_type(member_info.type_index.category())) &&
 			member_info.type_index.is_valid() && member_info.type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info.type_index).getStructInfo()) {
 				return Evaluator::materialize_aggregate_object_value(
@@ -4742,14 +4742,14 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			const bool is_struct_brace_init =
 				!member_info->is_array &&
 				initializer.is<InitializerListNode>() &&
-				(is_struct_type(member_info->type)) &&
+				(is_struct_type(member_info->memberType())) &&
 				member_info->type_index.is_valid() &&
 				member_info->type_index.index() < getTypeInfoCount();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				val = Evaluator::materialize_array_value(
-					member_info->type,
+					member_info->memberType(),
 					member_info->type_index,
 					member_init_list,
 					context,
@@ -4833,22 +4833,22 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			EvalResult member_result;
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
-					member_info->type, member_info->type_index, init_list, context, &ctor_param_bindings);
+					member_info->memberType(), member_info->type_index, init_list, context, &ctor_param_bindings);
 				// C++ aggregate init: zero-fill remaining elements up to the declared array size
 				// using a type-correct zero for each native type.
 				if (member_result.success() && !member_info->array_dimensions.empty()) {
 					size_t declared_size = member_info->array_dimensions[0];
 					while (member_result.array_elements.size() < declared_size) {
-						member_result.array_elements.push_back(make_zero_element(member_info->type));
+						member_result.array_elements.push_back(make_zero_element(member_info->memberType()));
 					}
 					// Only extend array_values (legacy int64_t fallback) for integer types.
-					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->type)) {
+					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->memberType())) {
 						while (member_result.array_values.size() < declared_size) {
 							member_result.array_values.push_back(0);
 						}
 					}
 				}
-			} else if ((is_struct_type(member_info->type)) &&
+			} else if ((is_struct_type(member_info->memberType())) &&
 				member_info->type_index.is_valid() && member_info->type_index.index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info->type_index).getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
@@ -4858,7 +4858,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 				}
 			} else if (init_list.size() == 0) {
 				// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
-				member_result = make_zero_element(member_info->type);
+				member_result = make_zero_element(member_info->memberType());
 			} else {
 				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
 					std::string(mem_init.member_name) + "' in constexpr constructor");
@@ -4885,12 +4885,12 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 					array_r.is_array = true;
 					array_r.array_elements.push_back(std::move(member_result));
 					for (size_t i = 1; i < array_size; ++i) {
-						array_r.array_elements.push_back(make_zero_element(member_info->type));
+						array_r.array_elements.push_back(make_zero_element(member_info->memberType()));
 					}
 					// Do not populate array_values for floating-point elements since array_values
 					// is int64_t and cannot represent doubles without truncation. array_elements
 					// is the authoritative source and is always checked first during subscript.
-					if (!isFloatingPointType(member_info->type)) {
+					if (!isFloatingPointType(member_info->memberType())) {
 						for (size_t i = 0; i < array_size; ++i) {
 							array_r.array_values.push_back(
 								i == 0 ? array_r.array_elements[0].as_int() : 0LL);

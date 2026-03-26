@@ -1078,8 +1078,7 @@ struct DeferredStaticAssert {
 // Struct member information
 struct StructMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
+	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.); category encodes Type
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -1097,6 +1096,7 @@ struct StructMember {
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
+	Type memberType() const { return categoryToType(type_index.category()); }
 
 	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
@@ -1107,7 +1107,7 @@ struct StructMember {
 	            std::vector<size_t> arr_dims,
 	            int ptr_depth,
 	            std::optional<size_t> bf_width)
-		: name(n), type(t), type_index(tidx), offset(off), size(sz),
+		: name(n), type_index(TypeIndex::fromTypeAndIndex(t, tidx)), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
@@ -1289,8 +1289,7 @@ struct RTTITypeInfo {
 // Static member information
 struct StructStaticMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types
+	TypeIndex type_index;   // Index into gTypeInfo for complex types; category encodes Type
 	size_t size;            // Size in bytes
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
@@ -1303,11 +1302,12 @@ struct StructStaticMember {
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
+	Type memberType() const { return categoryToType(type_index.category()); }
 
 	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
-		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		: name(n), type_index(TypeIndex::fromTypeAndIndex(t, tidx)), size(sz), alignment(align), access(acc),
 		  initializer(init), cv_qualifier(cv_qual), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
 	
 	StringHandle getName() const {

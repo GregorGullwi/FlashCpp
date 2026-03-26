@@ -70,7 +70,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	}
 	for (const auto& member : struct_info->members) {
 		// Only struct/class-typed members (not pointers or references) have destructors
-		if ((!is_struct_type(member.type)) ||
+		if ((!is_struct_type(member.type_index.category())) ||
 		    member.pointer_depth > 0 || member.is_reference()) continue;
 		if (member.type_index.index() >= getTypeInfoCount()) continue;
 		const StructTypeInfo* mem_struct = getTypeInfo(member.type_index).getStructInfo();

@@ -233,8 +233,8 @@
 									TempVar loaded_value = var_counter.next();
 									MemberLoadOp load_op;
 									load_op.result.value = loaded_value;
-									load_op.result.type = enclosing_member.type;
-									load_op.result.ir_type = toIrType(enclosing_member.type);
+									load_op.result.type = enclosing_member.memberType();
+									load_op.result.ir_type = toIrType(enclosing_member.memberType());
 									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
@@ -245,7 +245,7 @@
 
 									// Store into closure->__copy_this at the appropriate offset
 									MemberStoreOp store_copy_this;
-									store_copy_this.value.type = enclosing_member.type;
+									store_copy_this.value.type = enclosing_member.memberType();
 									store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -317,7 +317,7 @@
 							} else {
 								// Init-capture by value [x = expr] - store the value directly
 								MemberStoreOp member_store;
-								member_store.value.type = member->type;
+								member_store.value.type = member->memberType();
 								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 								// Convert IrOperand to IrValue
@@ -414,7 +414,7 @@
 
 							// Store the address in the closure member
 							MemberStoreOp member_store;
-							member_store.value.type = member->type;
+							member_store.value.type = member->memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 							member_store.value.value = addr_temp;
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -426,7 +426,7 @@
 						} else {
 							// By-value: copy the value
 							MemberStoreOp member_store;
-							member_store.value.type = member->type;
+							member_store.value.type = member->memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 							if (is_captured_from_enclosing) {
@@ -434,7 +434,7 @@
 								TempVar loaded_value = var_counter.next();
 								MemberLoadOp member_load;
 								member_load.result.value = loaded_value;
-								member_load.result.type = member->type;
+								member_load.result.type = member->memberType();
 								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 								member_load.object = StringTable::getOrInternStringHandle("this");
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
@@ -1091,10 +1091,10 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
 						if (member) {
 							// Create a TypeSpecifierNode from the member type
-							TypeSpecifierNode member_type(member->type, TypeQualifier::None, static_cast<int>(member->size * 8));
+							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, static_cast<int>(member->size * 8));
 							if (member->type_index.isStruct()) {
 								// Need to set type_index for struct types
-								member_type = TypeSpecifierNode(member->type, member->type_index, static_cast<int>(member->size * 8), Token());
+								member_type = TypeSpecifierNode(member->memberType(), member->type_index, static_cast<int>(member->size * 8), Token());
 							}
 							current_lambda_context_.capture_types[var_name] = member_type;
 						}

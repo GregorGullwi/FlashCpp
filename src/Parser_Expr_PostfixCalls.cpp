@@ -467,7 +467,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
 									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
-										if (member.type == Type::FunctionPointer) {
+										if (member.type_index.category() == TypeCategory::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
 										break;

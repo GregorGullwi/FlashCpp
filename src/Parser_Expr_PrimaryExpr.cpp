@@ -2943,7 +2943,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Set identifierType to prevent "Missing identifier" error
 							identifierType = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(
-									static_member->type,
+									static_member->memberType(),
 									static_member->type_index,
 									static_cast<unsigned char>(static_member->size * 8),
 									identifier_token

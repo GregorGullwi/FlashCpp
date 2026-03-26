@@ -404,7 +404,7 @@
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
-				if (resolved_member && resolved_member->type == Type::FunctionPointer) {
+				if (resolved_member && resolved_member->memberType() == Type::FunctionPointer) {
 					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
 					std::variant<StringHandle, TempVar> function_pointer;
 					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
@@ -438,7 +438,7 @@
 				}
 
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
+				if (resolved_member && isIrStructType(toIrType(resolved_member->memberType()))) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
@@ -447,7 +447,7 @@
 							// Look for the called function name in this struct's members
 							StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 							for (const auto& member : member_struct_info->members) {
-								if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
+								if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
 									// Found a function pointer member! Generate indirect call
 									TempVar ret_var = var_counter.next();
 
@@ -773,7 +773,7 @@
 				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
 					auto fp_member = struct_info->findMemberRecursive(func_name_handle);
-					if (fp_member.has_value() && fp_member->type == Type::FunctionPointer) {
+					if (fp_member.has_value() && fp_member->memberType() == Type::FunctionPointer) {
 						const auto& member = *fp_member;
 						// This is a call through a function pointer member!
 						// Generate an indirect call instead of a member function call
@@ -786,7 +786,7 @@
 						// Generate member access IR to load the function pointer
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
-						member_load.result.type = member.type;
+						member_load.result.type = member.memberType();
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand

@@ -132,7 +132,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.type;
+	desc.base_type = member.memberType();
 	desc.type_index = member.type_index;
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.is_array) {
@@ -152,7 +152,7 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.type;
+	desc.base_type = member.memberType();
 	desc.type_index = member.type_index;
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;

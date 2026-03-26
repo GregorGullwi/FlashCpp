@@ -748,6 +748,8 @@ struct StaticMemberDecl {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	int pointer_depth = 0;        // Pointer indirection level (e.g., int* = 1, int** = 2)
 
+	Type memberType() const { return type; }
+
 	StaticMemberDecl(StringHandle name_, Type type_, TypeIndex type_index_, size_t size_, size_t alignment_,
 	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
 	                 ReferenceQualifier ref_qual_ = ReferenceQualifier::None, int ptr_depth_ = 0)

@@ -126,8 +126,7 @@ struct LazyStaticMemberInfo {
 	StringHandle class_template_name;          // Original template name (e.g., "integral_constant")
 	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "integral_constant_bool_true")
 	StringHandle member_name;                  // Static member name (e.g., "value")
-	Type type;                                 // Member type
-	TypeIndex type_index;                      // Type index for complex types
+	TypeIndex type_index;                      // Type index; category encodes Type
 	size_t size;                               // Size in bytes
 	size_t alignment;                          // Alignment requirement
 	AccessSpecifier access;                    // Access specifier
@@ -138,6 +137,8 @@ struct LazyStaticMemberInfo {
 	std::vector<ASTNode> template_params;      // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;                   // True if initializer contains template parameters
+
+	Type memberType() const { return categoryToType(type_index.category()); }
 };
 
 // Registry for tracking uninstantiated template static members

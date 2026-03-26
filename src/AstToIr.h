@@ -459,7 +459,7 @@ private:
 				size_t abs_offset = base_offset + member.offset;
 				const ASTNode& member_init = init_list.initializers()[i];
 				if (member_init.is<InitializerListNode>() &&
-					isIrStructType(toIrType(member.type)) &&
+					isIrStructType(toIrType(member.memberType())) &&
 					member.type_index.is_valid() &&
 					member.type_index.index() < getTypeInfoCount()) {
 					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
@@ -469,7 +469,7 @@ private:
 					break;
 				}
 
-				unsigned long long value = eval_to_value(member_init, member.type);
+				unsigned long long value = eval_to_value(member_init, member.memberType());
 				if (member.bitfield_width.has_value()) {
 					size_t width = *member.bitfield_width;
 					size_t bit_offset = member.bitfield_bit_offset;

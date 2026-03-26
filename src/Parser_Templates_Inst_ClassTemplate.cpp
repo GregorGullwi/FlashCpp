@@ -1958,7 +1958,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 					struct_info->addStaticMember(
 						static_member_name_handle,
-						static_member.type,
+						static_member.memberType(),
 						static_member.type_index,
 						static_member.size,
 						static_member.alignment,
@@ -1986,7 +1986,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Substitute type if it's a template parameter
 				// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				// Use substitute_template_parameter for consistent template parameter matching
@@ -2249,7 +2249,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 		}
 		for (const auto& static_member : pattern_struct.static_members()) {
-			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
 			original_type_spec.set_type_index(static_member.type_index);
 			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 				original_type_spec, template_params, template_args_for_pattern);
@@ -4132,7 +4132,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
 				lazy_info.instantiated_class_name = instantiated_name;
 				lazy_info.member_name = static_member.getName();
-				lazy_info.type = static_member.type;
 				lazy_info.type_index = static_member.type_index;
 				lazy_info.size = static_member.size;
 				lazy_info.alignment = static_member.alignment;
@@ -4149,7 +4148,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
-				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
@@ -4475,7 +4474,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
 			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
 			original_type_spec.set_type_index(static_member.type_index);
 			
 			// Use substitute_template_parameter for consistent template parameter matching
@@ -4485,7 +4484,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Calculate the substituted size based on the substituted type
 			size_t substituted_size = get_substituted_type_size_bytes(substituted_type, substituted_type_index);
 			
-			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.type,
+			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.memberType(),
 			          " -> substituted type=", (int)substituted_type, ", size=", substituted_size);
 			
 			struct_info->addStaticMember(
@@ -4567,7 +4566,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		struct_info->addStaticMember(
 			static_member.name,
-			static_member.type,
+			static_member.memberType(),
 			static_member.type_index,
 			static_member.size,
 			static_member.alignment,
@@ -4731,7 +4730,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			auto copy_nested_static_members = [&](const StructTypeInfo& original_struct_info) {
 				for (const auto& static_member : original_struct_info.static_members) {
-					TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+					TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
 					original_type_spec.set_type_index(static_member.type_index);
 					auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 						original_type_spec, template_params, template_args_to_use);
@@ -4899,8 +4898,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto resolved_it = getTypesByNameMap().find(resolved_handle);
 						if (resolved_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_type = resolved_it->second;
-							member.type = resolved_type->type_;
-							member.type_index = resolved_type->type_index_;
+							member.type_index = TypeIndex::fromTypeAndIndex(resolved_type->type_, resolved_type->type_index_);
 							if (resolved_type->getStructInfo()) {
 								member.size = resolved_type->getStructInfo()->total_size;
 								member.alignment = resolved_type->getStructInfo()->alignment;
@@ -5096,7 +5094,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& static_member : struct_info_ptr->static_members) {
 		instantiated_struct_ref.add_static_member(
 			static_member.name,
-			static_member.type,
+			static_member.memberType(),
 			static_member.type_index,
 			static_member.size,
 			static_member.alignment,
@@ -6572,7 +6570,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else {
 					struct_info_ptr->addStaticMember(
 						static_member_name_handle,
-						static_member.type,
+						static_member.memberType(),
 						static_member.type_index,
 						static_member.size,
 						static_member.alignment,

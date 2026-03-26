@@ -96,9 +96,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		auto it = eval_result.object_member_bindings.find(member_sv);
 		if (it == eval_result.object_member_bindings.end()) continue;
 		MemberStoreOp ms;
-		ms.value.type = member.type;
+		ms.value.type = member.memberType();
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.type)};
+		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.memberType())};
 		ms.object = struct_tmp_handle;
 		ms.member_name = member.getName();
 		ms.offset = static_cast<int>(member.offset);

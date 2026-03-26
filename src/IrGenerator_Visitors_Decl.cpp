@@ -418,7 +418,7 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+						if (member.type_index.category() == TypeCategory::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
@@ -444,7 +444,7 @@
 								TempVar lhs_val = var_counter.next();
 								MemberLoadOp lhs_load;
 								lhs_load.result.value = lhs_val;
-								lhs_load.result.type = member.type;
+								lhs_load.result.type = member.memberType();
 								lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								lhs_load.object = this_handle;
 								lhs_load.member_name = member.getName();
@@ -456,7 +456,7 @@
 								TempVar rhs_val = var_counter.next();
 								MemberLoadOp rhs_load;
 								rhs_load.result.value = rhs_val;
-								rhs_load.result.type = member.type;
+								rhs_load.result.type = member.memberType();
 								rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								rhs_load.object = other_handle;
 								rhs_load.member_name = member.getName();
@@ -525,7 +525,7 @@
 						TempVar lhs_val = var_counter.next();
 						MemberLoadOp lhs_load;
 						lhs_load.result.value = lhs_val;
-						lhs_load.result.type = member.type;
+						lhs_load.result.type = member.memberType();
 						lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						lhs_load.object = this_handle;
 						lhs_load.member_name = member.getName();
@@ -537,7 +537,7 @@
 						TempVar rhs_val = var_counter.next();
 						MemberLoadOp rhs_load;
 						rhs_load.result.value = rhs_val;
-						rhs_load.result.type = member.type;
+						rhs_load.result.type = member.memberType();
 						rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						rhs_load.object = other_handle;
 						rhs_load.member_name = member.getName();
@@ -549,8 +549,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -568,8 +568,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -811,7 +811,7 @@
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
-							member_load.result.type = member.type;
+							member_load.result.type = member.memberType();
 							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
@@ -824,7 +824,7 @@
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type = member.memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1152,7 +1152,7 @@
 							emitted_static_members_.insert(name_handle);
 
 							GlobalVariableDeclOp op;
-							op.type = static_member.type;
+							op.type = static_member.memberType();
 							op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 							op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
@@ -1624,7 +1624,7 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+							if (member.type_index.category() == TypeCategory::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
@@ -1633,7 +1633,7 @@
 									addr_member_op.result = member_source_addr;
 									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
 									addr_member_op.member_offset = static_cast<int>(member.offset);
-									addr_member_op.member_type = member.type;
+									addr_member_op.member_type = member.memberType();
 									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
@@ -1666,7 +1666,7 @@
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
-							member_load.result.type = member.type;
+							member_load.result.type = member.memberType();
 							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
@@ -1679,7 +1679,7 @@
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type = member.memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1723,7 +1723,7 @@
 								for (const auto& member : struct_info->members) {
 									if (member.offset == offset && member.bitfield_width.has_value()) {
 										MemberStoreOp combined_store;
-										combined_store.value.type = member.type;
+										combined_store.value.type = member.memberType();
 										combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 										combined_store.value.value = combined_bitfield_values[offset];
 										combined_store.object = StringTable::getOrInternStringHandle("this");
@@ -1859,7 +1859,7 @@
 												if (nested_member_value.has_value()) {
 													// Generate nested member store
 													MemberStoreOp nested_member_store;
-													nested_member_store.value.type = nested_member.type;
+													nested_member_store.value.type = nested_member.memberType();
 													nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
 													nested_member_store.value.value = nested_member_value.value();
 													nested_member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1899,12 +1899,12 @@
 									}
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
-									if (member.type == Type::Int || member.type == Type::Long ||
-									member.type == Type::Short || member.type == Type::Char) {
+									if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+									member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
 										member_value = 0ULL;  // Zero for integer types
-									} else if (member.type == Type::Float || member.type == Type::Double) {
+									} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
 										member_value = 0.0;  // Zero for floating-point types
-									} else if (member.type == Type::Bool) {
+									} else if (member.type_index.category() == TypeCategory::Bool) {
 										member_value = 0ULL;  // False for bool (0)
 									} else {
 										member_value = 0ULL;  // Default to zero
@@ -1913,7 +1913,7 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
+								if (member.type_index.category() == TypeCategory::Struct && member.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
@@ -1937,12 +1937,12 @@
 									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
 									// Zero-initialize based on type
-									if (member.type == Type::Int || member.type == Type::Long ||
-									member.type == Type::Short || member.type == Type::Char) {
+									if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+									member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
 										member_value = 0ULL;  // Zero for integer types
-									} else if (member.type == Type::Float || member.type == Type::Double) {
+									} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
 										member_value = 0.0;  // Zero for floating-point types
-									} else if (member.type == Type::Bool) {
+									} else if (member.type_index.category() == TypeCategory::Bool) {
 										member_value = 0ULL;  // False for bool (0)
 									} else {
 										member_value = 0ULL;  // Default to zero
@@ -1951,7 +1951,7 @@
 							}
 
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type = member.memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -2023,7 +2023,7 @@
 										const size_t declared_count = member.array_dimensions[0];
 										const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
 										const auto& init_elements = init_list.initializers();
-										const bool elem_is_fp = isFloatingPointType(member.type);
+										const bool elem_is_fp = isFloatingPointType(member.memberType());
 
 										for (size_t i = 0; i < declared_count; ++i) {
 											IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
@@ -2040,7 +2040,7 @@
 												}
 											}
 											MemberStoreOp elem_store;
-											elem_store.value.type = member.type;
+											elem_store.value.type = member.memberType();
 											assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
 											elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
 											elem_store.value.value = elem_val;
@@ -2056,8 +2056,8 @@
 									}
 									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
-										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
-									} else if ((is_struct_type(member.type)) &&
+										member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
+									} else if ((is_struct_type(member.type_index.category())) &&
 										member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 										if (const StructTypeInfo* nested_info = getTypeInfo(member.type_index).getStructInfo()) {
@@ -2066,7 +2066,7 @@
 											const auto& nested_members = nested_info->members;
 											for (size_t i = 0; i < nested_members.size(); ++i) {
 												const StructMember& nm = nested_members[i];
-												IrValue nm_val = isFloatingPointType(nm.type) ? IrValue{0.0} : IrValue{0ULL};
+												IrValue nm_val = isFloatingPointType(nm.memberType()) ? IrValue{0.0} : IrValue{0ULL};
 												if (i < agg_elements.size() && agg_elements[i].is<ExpressionNode>()) {
 													ExprResult nm_op = visitExpressionNode(agg_elements[i].as<ExpressionNode>());
 													if (const auto* tmp = std::get_if<TempVar>(&nm_op.value)) {
@@ -2080,7 +2080,7 @@
 													}
 												}
 												MemberStoreOp nm_store;
-												nm_store.value.type = nm.type;
+												nm_store.value.type = nm.memberType();
 												nm_store.value.size_in_bits = SizeInBits{static_cast<int>(nm.size * 8)};
 												nm_store.value.value = nm_val;
 												nm_store.object = StringTable::getOrInternStringHandle("this");
@@ -2120,12 +2120,12 @@
 									if (member.is_array && !member.array_dimensions.empty()) {
 										const size_t arr_count = member.array_dimensions[0];
 										const size_t arr_elem_size = arr_count > 0 ? member.size / arr_count : member.size;
-										const bool arr_is_fp = isFloatingPointType(member.type);
+										const bool arr_is_fp = isFloatingPointType(member.memberType());
 										for (size_t i = 0; i < arr_count; ++i) {
 											IrValue arr_elem_val = (i == 0) ? member_value
 												: (arr_is_fp ? IrValue{0.0} : IrValue{0ULL});
 											MemberStoreOp arr_elem_store;
-											arr_elem_store.value.type = member.type;
+											arr_elem_store.value.type = member.memberType();
 											assert(arr_elem_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
 											arr_elem_store.value.size_in_bits = SizeInBits{static_cast<int>(arr_elem_size * 8)};
 											arr_elem_store.value.value = arr_elem_val;
@@ -2160,12 +2160,12 @@
 								}
 							} else {
 								// Default initializer exists but isn't an expression, zero-initialize
-								if (member.type == Type::Int || member.type == Type::Long ||
-								member.type == Type::Short || member.type == Type::Char) {
+								if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+								member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
 									member_value = 0ULL;
-								} else if (member.type == Type::Float || member.type == Type::Double) {
+								} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
 									member_value = 0.0;
-								} else if (member.type == Type::Bool) {
+								} else if (member.type_index.category() == TypeCategory::Bool) {
 									member_value = 0ULL;  // False for bool (0)
 								} else {
 									member_value = 0ULL;
@@ -2174,7 +2174,7 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
+							if (member.type_index.category() == TypeCategory::Struct && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
@@ -2198,12 +2198,12 @@
 								continue;  // Skip the MemberStore since constructor handles initialization
 							} else {
 								// Zero-initialize based on type
-								if (member.type == Type::Int || member.type == Type::Long ||
-								member.type == Type::Short || member.type == Type::Char) {
+								if (member.type_index.category() == TypeCategory::Int || member.type_index.category() == TypeCategory::Long ||
+								member.type_index.category() == TypeCategory::Short || member.type_index.category() == TypeCategory::Char) {
 									member_value = 0ULL;  // Zero for integer types
-								} else if (member.type == Type::Float || member.type == Type::Double) {
+								} else if (member.type_index.category() == TypeCategory::Float || member.type_index.category() == TypeCategory::Double) {
 									member_value = 0.0;  // Zero for floating-point types
-								} else if (member.type == Type::Bool) {
+								} else if (member.type_index.category() == TypeCategory::Bool) {
 									member_value = 0ULL;  // False for bool (0)
 								} else {
 									member_value = 0ULL;  // Default to zero
@@ -2212,7 +2212,7 @@
 						}
 
 						MemberStoreOp member_store;
-						member_store.value.type = member.type;
+						member_store.value.type = member.memberType();
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 						member_store.value.value = member_value;
 						member_store.object = StringTable::getOrInternStringHandle("this");
@@ -2664,12 +2664,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// InitializerListNode, not ExpressionNode, and must be handled
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
-					member.type == Type::Struct &&
+					member.type_index.category() == TypeCategory::Struct &&
 					member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
-						TypeSpecifierNode nested_spec(member.type, member.type_index, nested_bits);
+						TypeSpecifierNode nested_spec(member.memberType(), member.type_index, nested_bits);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {
 							MemberStoreOp store_op;

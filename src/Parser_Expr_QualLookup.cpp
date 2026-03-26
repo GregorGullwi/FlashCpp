@@ -1675,7 +1675,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
-					TypeSpecifierNode member_type(member_result.member->type, TypeQualifier::None, member_result.member->size * 8);
+					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8);
 					member_type.set_type_index(member_result.member->type_index);
 					if (member_result.member->pointer_depth > 0) {
 						member_type.add_pointer_levels(member_result.member->pointer_depth);
@@ -1782,7 +1782,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
 						// Found the static member - return its type
-						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
+						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8);
 						member_type.set_type_index(static_member->type_index);
 						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);

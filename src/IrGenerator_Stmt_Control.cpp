@@ -565,9 +565,9 @@
 				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
 					resolved_member) {
 					inferred_range_type.emplace(
-						isIrStructType(toIrType(resolved_member->type))
+						isIrStructType(toIrType(resolved_member->memberType()))
 							? Type::Struct
-							: resolved_member->type,
+							: resolved_member->memberType(),
 						resolved_member->type_index,
 						static_cast<int>(resolved_member->size * 8),
 						Token()

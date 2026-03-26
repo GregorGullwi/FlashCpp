@@ -88,7 +88,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return std::nullopt;
 			}
 
-			TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
+			TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8);
 			member_type.set_type_index(member->type_index);
 			if (member->pointer_depth > 0) {
 				member_type.add_pointer_levels(member->pointer_depth);
@@ -388,7 +388,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									init_data,
 									abs_offset + elem_i * element_size,
 									element_size,
-									evalResultMemberToRaw(member_result.array_elements[elem_i], member.type));
+									evalResultMemberToRaw(member_result.array_elements[elem_i], member.memberType()));
 							}
 						} else {
 							for (size_t elem_i = 0; elem_i < member_result.array_values.size() && elem_i < total_elements; ++elem_i) {
@@ -410,7 +410,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						}
 					}
 
-					unsigned long long value = evalResultMemberToRaw(member_result, member.type);
+					unsigned long long value = evalResultMemberToRaw(member_result, member.memberType());
 					if (member.bitfield_width.has_value()) {
 						size_t width = *member.bitfield_width;
 						size_t bit_offset = member.bitfield_bit_offset;
@@ -661,7 +661,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									for (const auto& mem_init : matching_ctor->member_initializers()) {
 										if (mem_init.member_name == StringTable::getStringView(member.getName())) {
 											auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
-											if (eval_r.success()) member_val = evalResultMemberToRaw(eval_r, member.type);
+											if (eval_r.success()) member_val = evalResultMemberToRaw(eval_r, member.memberType());
 											break;
 										}
 									}
@@ -867,7 +867,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							for (const auto& member : struct_info->members) {
 								if (member.default_initializer.has_value()) {
 									// Evaluate the default initializer
-									unsigned long long value = evalToValue(*member.default_initializer, member.type);
+									unsigned long long value = evalToValue(*member.default_initializer, member.memberType());
 
 									if (member.bitfield_width.has_value()) {
 										// Bitfield: use bit-level OR to pack value into the storage unit
@@ -1427,7 +1427,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									}
 
 									MemberStoreOp member_store;
-									member_store.value.type = member.type;
+									member_store.value.type = member.memberType();
 									member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().handle();
@@ -3054,7 +3054,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			// For struct types, type_index is what matters, not size_in_bits
 			size_t member_size_bits_full = member.size * 8;
 			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
-			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
+			TypeSpecifierNode binding_type(member.memberType(), TypeQualifier::None, member_size_bits, Token());
 			binding_type.set_type_index(member.type_index);
 
 			// If this is a reference binding (auto& or auto&&), mark the type as a reference
@@ -3091,25 +3091,25 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				addr_op.result = member_addr;
 				addr_op.base = hidden_var_handle;
 				addr_op.total_member_offset = static_cast<int>(member.offset);
-				addr_op.result_type = member.type;
+				addr_op.result_type = member.memberType();
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
 
 				// Mark member_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 				setTempVarMetadata(member_addr,
-					TempVarMetadata::makeAddressOnly(member.type, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
+					TempVarMetadata::makeAddressOnly(member.memberType(), SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
 
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type = member.type;
+				binding_var_decl.type = member.memberType();
 				binding_var_decl.size_in_bits = SizeInBits{64};  // References are pointers (64-bit addresses)
 				binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = member.type;
+				init_val.type = member.memberType();
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3122,8 +3122,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// First, generate a member access to load the value
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
-				load_op.result.type = member.type;
-				load_op.result.ir_type = toIrType(member.type);
+				load_op.result.type = member.memberType();
+				load_op.result.ir_type = toIrType(member.memberType());
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;
 				load_op.result.type_index = member.type_index;
@@ -3139,10 +3139,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Now, declare the binding variable with the member value as initializer
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type = member.type;
+				binding_var_decl.type = member.memberType();
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = member.type;
+				init_val2.type = member.memberType();
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

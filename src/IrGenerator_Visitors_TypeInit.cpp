@@ -584,7 +584,7 @@
 					emitted_static_members_.insert(name_handle);
 
 					GlobalVariableDeclOp op;
-					op.type = static_member.type;
+					op.type = static_member.memberType();
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.index() < getTypeInfoCount()) {
@@ -608,7 +608,7 @@
 							zero_initialize();
 						} else if (op.is_initialized) {
 							if (static_member.initializer->is<InitializerListNode>()) {
-								if (static_member.type == Type::Struct &&
+								if (static_member.type_index.category() == TypeCategory::Struct &&
 									static_member.type_index.is_valid() &&
 									static_member.type_index.index() < getTypeInfoCount()) {
 									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
@@ -1038,7 +1038,7 @@
 							"' for ", type_name, " from base ", base_name_str);
 
 							GlobalVariableDeclOp alias_op;
-							alias_op.type = static_member_ptr->type;
+							alias_op.type = static_member_ptr->memberType();
 							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
@@ -1241,7 +1241,7 @@
 						for (const auto& member : struct_info->members) {
 							if (member.offset == offset && member.bitfield_width.has_value()) {
 								MemberStoreOp combined_store;
-								combined_store.value.type = member.type;
+								combined_store.value.type = member.memberType();
 								combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								combined_store.value.value = combined_bitfield_values[offset];
 								combined_store.object = StringTable::getOrInternStringHandle("this");
@@ -1282,7 +1282,7 @@
 							}
 
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type = member.memberType();
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1476,7 +1476,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
-		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
+		bool is_nested_struct = isIrStructType(toIrType(sub_member.memberType()))
 			&& sub_member.type_index.index() < getTypeInfoCount()
 			&& getTypeInfo(sub_member.type_index).struct_info_
 			&& (sub_member.size * 8) > 64;
@@ -1489,7 +1489,7 @@ void AstToIr::emitRecursiveZeroFill(
 				token);
 		} else {
 			MemberStoreOp member_store;
-			member_store.value.type = sub_member.type;
+			member_store.value.type = sub_member.memberType();
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(sub_member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1589,7 +1589,7 @@ const Token& token)
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-			member.type,
+			member.memberType(),
 			element_size_bits,
 			base_object,
 			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
@@ -1603,7 +1603,7 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
-	const bool is_struct_element = isIrStructType(toIrType(member.type))
+	const bool is_struct_element = isIrStructType(toIrType(member.memberType()))
 		&& member.type_index.index() < getTypeInfoCount()
 		&& getTypeInfo(member.type_index).struct_info_
 		&& element_size_bits > 64;
@@ -1618,9 +1618,9 @@ const Token& token)
 			emitRecursiveZeroFill(*getTypeInfo(member.type_index).struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
+			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-				member.type,
+				member.memberType(),
 				element_size_bits,
 				base_object,
 				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
@@ -1665,7 +1665,7 @@ const Token& token)
 		if (!member_values.count(member_name)) {
 			// Zero-initialize unspecified members
 			MemberStoreOp member_store;
-			member_store.value.type = member.type;
+			member_store.value.type = member.memberType();
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1719,7 +1719,7 @@ const Token& token)
 					}
 
 				MemberStoreOp member_store;
-				member_store.value.type = member.type;
+				member_store.value.type = member.memberType();
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = member_value;
 				member_store.object = base_object;
@@ -1731,7 +1731,7 @@ const Token& token)
 			} else {
 				// Zero-initialize if we can't extract a value
 				MemberStoreOp member_store;
-				member_store.value.type = member.type;
+				member_store.value.type = member.memberType();
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = 0ULL;
 				member_store.object = base_object;
@@ -1756,7 +1756,7 @@ const Token& token)
 				}
 
 			MemberStoreOp member_store;
-			member_store.value.type = member.type;
+			member_store.value.type = member.memberType();
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = member_value;
 			member_store.object = base_object;

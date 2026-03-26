@@ -139,7 +139,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
 		if (static_member) {
-			info.type = static_member->type;
+			info.type = static_member->memberType();
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
 		}
 		return info;
@@ -203,7 +203,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		// Evaluate the initializer expression
 		IrValue store_value;
-		Type store_type = member.type;
+		Type store_type = member.memberType();
 		int store_size = static_cast<int>(member.size * 8);
 		bool store_value_set = false;
 
@@ -213,7 +213,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			store_size = init_result.size_in_bits.value;
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
-		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
+		} else if (init_expr.is<InitializerListNode>() && member.type_index.category() == TypeCategory::Struct &&
 				   member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
 			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
@@ -222,7 +222,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			if (nested_type_info.getStructInfo()) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
 				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
-				TypeSpecifierNode nested_type_spec(member.type, member.type_index, nested_size_bits);
+				TypeSpecifierNode nested_type_spec(member.memberType(), member.type_index, nested_size_bits);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
 					store_type = nested_result->type;
