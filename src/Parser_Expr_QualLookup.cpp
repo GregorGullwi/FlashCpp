@@ -2102,43 +2102,39 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 	}
 	
 	// Add base type name
-	switch (type.type()) {
-		case Type::Void: result += "void"; break;
-		case Type::Bool: result += "bool"; break;
-		case Type::Char: result += "char"; break;
-		case Type::UnsignedChar: result += "unsigned char"; break;
-		case Type::Short: result += "short"; break;
-		case Type::UnsignedShort: result += "unsigned short"; break;
-		case Type::Int: result += "int"; break;
-		case Type::UnsignedInt: result += "unsigned int"; break;
-		case Type::Long: result += "long"; break;
-		case Type::UnsignedLong: result += "unsigned long"; break;
-		case Type::LongLong: result += "long long"; break;
-		case Type::UnsignedLongLong: result += "unsigned long long"; break;
-		case Type::Float: result += "float"; break;
-		case Type::Double: result += "double"; break;
-		case Type::LongDouble: result += "long double"; break;
-		case Type::Auto: result += "auto"; break;
-		case Type::DeclTypeAuto: result += "decltype(auto)"; break;
-		case Type::Struct:
+	switch (type.category()) {
+		case TypeCategory::Void: result += "void"; break;
+		case TypeCategory::Bool: result += "bool"; break;
+		case TypeCategory::Char: result += "char"; break;
+		case TypeCategory::UnsignedChar: result += "unsigned char"; break;
+		case TypeCategory::Short: result += "short"; break;
+		case TypeCategory::UnsignedShort: result += "unsigned short"; break;
+		case TypeCategory::Int: result += "int"; break;
+		case TypeCategory::UnsignedInt: result += "unsigned int"; break;
+		case TypeCategory::Long: result += "long"; break;
+		case TypeCategory::UnsignedLong: result += "unsigned long"; break;
+		case TypeCategory::LongLong: result += "long long"; break;
+		case TypeCategory::UnsignedLongLong: result += "unsigned long long"; break;
+		case TypeCategory::Float: result += "float"; break;
+		case TypeCategory::Double: result += "double"; break;
+		case TypeCategory::LongDouble: result += "long double"; break;
+		case TypeCategory::Auto: result += "auto"; break;
+		case TypeCategory::DeclTypeAuto: result += "decltype(auto)"; break;
+		case TypeCategory::Struct:
+		case TypeCategory::UserDefined:
+		case TypeCategory::TypeAlias:
+		case TypeCategory::Enum:
 			if (type.type_index().index() < getTypeInfoCount()) {
 				result += std::string(StringTable::getStringView(getTypeInfo(type.type_index()).name()));
 			} else {
-				result += "struct";
+				result += (type.category() == TypeCategory::Enum) ? "enum" : "struct";
 			}
 			break;
-		case Type::Enum:
-			if (type.type_index().index() < getTypeInfoCount()) {
-				result += std::string(StringTable::getStringView(getTypeInfo(type.type_index()).name()));
-			} else {
-				result += "enum";
-			}
-			break;
-		case Type::Function: result += "function"; break;
-		case Type::FunctionPointer: result += "function pointer"; break;
-		case Type::MemberFunctionPointer: result += "member function pointer"; break;
-		case Type::MemberObjectPointer: result += "member object pointer"; break;
-		case Type::Nullptr: result += "nullptr_t"; break;
+		case TypeCategory::Function: result += "function"; break;
+		case TypeCategory::FunctionPointer: result += "function pointer"; break;
+		case TypeCategory::MemberFunctionPointer: result += "member function pointer"; break;
+		case TypeCategory::MemberObjectPointer: result += "member object pointer"; break;
+		case TypeCategory::Nullptr: result += "nullptr_t"; break;
 		default: result += "unknown"; break;
 	}
 	

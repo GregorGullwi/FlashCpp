@@ -786,7 +786,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 		return false;  // Type traits need at least one argument
 	}
 	
-	Type arg_type = type_args[0].typeEnum();
+	TypeCategory arg_type = type_args[0].category();
 	
 	// Handle common type traits
 	if (trait_name == "is_integral_v" || trait_name == "is_integral") {
@@ -801,14 +801,14 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	else if (trait_name == "is_signed_v" || trait_name == "is_signed") {
 		// Check if type is signed
 		switch (arg_type) {
-			case Type::Char:  // char signedness is implementation-defined, but typically signed
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
+			case TypeCategory::Char:  // char signedness is implementation-defined, but typically signed
+			case TypeCategory::Short:
+			case TypeCategory::Int:
+			case TypeCategory::Long:
+			case TypeCategory::LongLong:
+			case TypeCategory::Float:
+			case TypeCategory::Double:
+			case TypeCategory::LongDouble:
 				return true;
 			default:
 				return false;
@@ -816,12 +816,12 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	}
 	else if (trait_name == "is_unsigned_v" || trait_name == "is_unsigned") {
 		switch (arg_type) {
-			case Type::Bool:
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
+			case TypeCategory::Bool:
+			case TypeCategory::UnsignedChar:
+			case TypeCategory::UnsignedShort:
+			case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong:
+			case TypeCategory::UnsignedLongLong:
 				return true;
 			default:
 				return false;

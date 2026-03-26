@@ -999,9 +999,10 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			int size_in_bits = get_type_size_bits(subst.category());
 			if (size_in_bits == 0)
 			{
-				switch (subst.typeEnum()) {
-					case Type::Struct:
-					case Type::UserDefined:
+				switch (subst.category()) {
+					case TypeCategory::Struct:
+					case TypeCategory::UserDefined:
+					case TypeCategory::TypeAlias:
 						// For struct types, we need to look up the size from TypeInfo
 						if (subst.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& ti = getTypeInfo(subst.type_index);

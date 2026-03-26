@@ -14101,32 +14101,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 			}
 
 			int type_size_bits = 0;
-			bool is_builtin = false;
-			switch (catch_op.exception_type) {
-				case Type::Bool:
-				case Type::Char:
-				case Type::UnsignedChar:
-				case Type::Short:
-				case Type::UnsignedShort:
-				case Type::Int:
-				case Type::UnsignedInt:
-				case Type::Long:
-				case Type::UnsignedLong:
-				case Type::LongLong:
-				case Type::UnsignedLongLong:
-				case Type::Float:
-				case Type::Double:
-				case Type::LongDouble:
-				case Type::FunctionPointer:
-				case Type::MemberFunctionPointer:
-				case Type::MemberObjectPointer:
-				case Type::Nullptr:
-					is_builtin = true;
-					break;
-				default:
-					is_builtin = false;
-					break;
-			}
+			bool is_builtin = is_builtin_type(catch_op.exception_type);
 
 			if (is_builtin) {
 				type_size_bits = get_type_size_bits(catch_op.exception_type);

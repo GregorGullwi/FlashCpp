@@ -324,25 +324,27 @@ public:
 		return getInstantiation(key);
 	}
 	
-	// Helper to convert Type to string for mangling
-	static std::string_view typeToString(Type type) {
-		switch (type) {
-			case Type::Int: return "int";
-			case Type::Float: return "float";
-			case Type::Double: return "double";
-			case Type::Bool: return "bool";
-			case Type::Char: return "char";
-			case Type::Long: return "long";
-			case Type::LongLong: return "longlong";
-			case Type::Short: return "short";
-			case Type::UnsignedInt: return "uint";
-			case Type::UnsignedLong: return "ulong";
-			case Type::UnsignedLongLong: return "ulonglong";
-			case Type::UnsignedShort: return "ushort";
-			case Type::UnsignedChar: return "uchar";
+	// Helper to convert TypeCategory to string for mangling
+	static std::string_view typeToString(TypeCategory cat) {
+		switch (cat) {
+			case TypeCategory::Int: return "int";
+			case TypeCategory::Float: return "float";
+			case TypeCategory::Double: return "double";
+			case TypeCategory::Bool: return "bool";
+			case TypeCategory::Char: return "char";
+			case TypeCategory::Long: return "long";
+			case TypeCategory::LongLong: return "longlong";
+			case TypeCategory::Short: return "short";
+			case TypeCategory::UnsignedInt: return "uint";
+			case TypeCategory::UnsignedLong: return "ulong";
+			case TypeCategory::UnsignedLongLong: return "ulonglong";
+			case TypeCategory::UnsignedShort: return "ushort";
+			case TypeCategory::UnsignedChar: return "uchar";
 			default: return "?";
 		}
 	}
+	// Type overload for legacy call sites
+	static std::string_view typeToString(Type type) { return typeToString(typeToCategory(type)); }
 
 	// Helper to convert string to Type for parsing mangled names
 	static Type stringToType(std::string_view str) {
