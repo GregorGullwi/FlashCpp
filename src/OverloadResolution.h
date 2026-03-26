@@ -75,6 +75,8 @@ struct ConversionPlan {
 // StandardConversionKind (for semantic annotation) in a single call.
 // Implements C++20 [conv], [conv.prom], [conv.rank] rules.
 inline ConversionPlan buildConversionPlan(Type from, Type to) {
+	// Use TypeCategory for safe classification checks in this helper, but keep the
+	// raw Type values available for rank/underlying-type helpers that still accept Type.
 	const TypeCategory from_category = typeToCategory(from);
 	const TypeCategory to_category = typeToCategory(to);
 
@@ -349,10 +351,6 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	auto resolvedTypeIndex = [](Type resolved_type, TypeIndex type_index) {
-		return TypeIndex::fromTypeAndIndex(resolved_type, type_index);
-	};
-
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
@@ -370,8 +368,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
-		TypeIndex from_resolved_index = resolvedTypeIndex(from_resolved, from.type_index());
-		TypeIndex to_resolved_index = resolvedTypeIndex(to_resolved, to.type_index());
+		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from.type_index());
+		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to.type_index());
 
 		// Helper to check if the pointed-to type is const for first-level pointers.
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
@@ -481,8 +479,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
-				TypeIndex from_base_index = resolvedTypeIndex(from_base, from.type_index());
-				TypeIndex to_base_index = resolvedTypeIndex(to_base, to.type_index());
+				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from.type_index());
+				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to.type_index());
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
 					// For struct types, "same base type" requires the same type_index.
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
@@ -535,8 +533,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				Type from_base = resolve_type_alias(from.type(), from.type_index());
 				Type to_base = resolve_type_alias(to.type(), to.type_index());
-				TypeIndex from_base_index = resolvedTypeIndex(from_base, from.type_index());
-				TypeIndex to_base_index = resolvedTypeIndex(to_base, to.type_index());
+				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from.type_index());
+				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to.type_index());
 				bool types_match = (from_base == to_base);
 				// For struct types, "same base type" requires the same type_index.
 				if (types_match && from_base_index.isStruct() &&
@@ -584,8 +582,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 			Type to_resolved = resolve_type_alias(to.type(), to.type_index());
-			TypeIndex from_resolved_index = resolvedTypeIndex(from_resolved, from.type_index());
-			TypeIndex to_resolved_index = resolvedTypeIndex(to_resolved, to.type_index());
+			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from.type_index());
+			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to.type_index());
 			
 			if (from_resolved == to_resolved) {
 				// For struct types, "same base type" requires the same type_index.
@@ -642,20 +640,22 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	Type from_type = resolve_type_alias(from.type(), from.type_index());
 	Type to_type = resolve_type_alias(to.type(), to.type_index());
-	TypeIndex from_type_index = resolvedTypeIndex(from_type, from.type_index());
-	TypeIndex to_type_index = resolvedTypeIndex(to_type, to.type_index());
+	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_type, from.type_index());
+	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_type, to.type_index());
+	const TypeCategory from_type_category = typeToCategory(from_type);
+	const TypeCategory to_type_category = typeToCategory(to_type);
 	
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
 	if (from_type_index.category() == TypeCategory::UserDefined && !from.type_index().is_valid()) {
 		// 'from' is an unresolved type alias - allow if 'to' is integral
-		if (isIntegralType(typeToCategory(to_type))) {
+		if (isIntegralType(to_type_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
 	if (to_type_index.category() == TypeCategory::UserDefined && !to.type_index().is_valid()) {
 		// 'to' is an unresolved type alias - allow if 'from' is integral
-		if (isIntegralType(typeToCategory(from_type))) {
+		if (isIntegralType(from_type_category)) {
 			return {ConversionRank::Conversion, StandardConversionKind::None, true};
 		}
 	}
