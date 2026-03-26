@@ -680,7 +680,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				TypeCategory::Struct,
 				struct_type_index,
 				struct_size_bits,
-				alias_token
+				alias_token,
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
 			
@@ -817,7 +819,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token);
+						TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token,
+						CVQualifier::None, ReferenceQualifier::None);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 				}
@@ -1295,7 +1298,8 @@ ParseResult Parser::parse_typedef_declaration()
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token);
+					TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token,
+					CVQualifier::None, ReferenceQualifier::None);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 			}
@@ -1901,7 +1905,9 @@ ParseResult Parser::parse_typedef_declaration()
 			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
-			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
+			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {

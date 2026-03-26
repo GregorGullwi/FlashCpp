@@ -1928,7 +1928,9 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			TypeCategory::Struct,
 			struct_type_info->type_index_,
 			64,  // Pointer size in bits
-			template_decl.identifier_token()
+			template_decl.identifier_token(),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 
 		// Set pointer depth to 1 (this is a pointer)

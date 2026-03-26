@@ -504,10 +504,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Add 'this' pointer to symbol table
 	ASTNode this_type = emplace_node<TypeSpecifierNode>(
-		TypeCategory::UserDefined,
+		TypeCategory::Struct,
 		struct_type_index,
 		64,  // Pointer size
-		Token()
+		Token(),
+		CVQualifier::None,
+		ReferenceQualifier::None
 	);
 
 	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);

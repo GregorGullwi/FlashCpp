@@ -833,7 +833,9 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 				TypeCategory::Struct,
 				struct_type_index,
 				64,  // Pointer size
-				this_token
+				this_token,
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
 			

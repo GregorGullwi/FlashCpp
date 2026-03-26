@@ -76,7 +76,9 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
 			TypeCategory::Struct, struct_type_index,
 			64,  // Pointer size in bits
-			Token()
+			Token(),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		this_type_ref.add_pointer_level();
 

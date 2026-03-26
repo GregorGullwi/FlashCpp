@@ -1091,7 +1091,7 @@ public:
 	// its embedded category is *overridden* by `cat` so the caller need not pre-stamp
 	// the category into the TypeIndex before passing it here.
 	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
+		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
 		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
 
 	auto type() const { return type_; }

@@ -456,7 +456,8 @@ int get_type_size_bits(Type type) {
         case Type::FunctionPointer:
         case Type::MemberFunctionPointer:
         case Type::MemberObjectPointer:
-            return 64;  // Function and member pointers are 64-bit (sizeof(void*))
+        case Type::Nullptr:
+            return 64;  // Function/member pointers and nullptr_t are 64-bit (sizeof(void*))
         default:
             return 0;
     }

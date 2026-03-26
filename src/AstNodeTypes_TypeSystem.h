@@ -386,9 +386,11 @@ static_assert(!needs_type_index(Type::Nullptr));
 static_assert(!needs_type_index(Type::Template));
 
 // True for all builtin types that have a valid get_type_size_bits() answer:
-// Void through MemberObjectPointer in the enum. This is broader than
-// is_primitive_type() — it also covers FunctionPointer, MemberFunctionPointer,
-// and MemberObjectPointer (but NOT Auto, DeclTypeAuto, or Nullptr).
+// Void through MemberObjectPointer in the enum, plus Nullptr (nullptr_t is a
+// fundamental type per C++20 [basic.fundamental]/13 with size sizeof(void*)).
+// Broader than is_primitive_type() — also covers FunctionPointer,
+// MemberFunctionPointer, MemberObjectPointer, and Nullptr
+// (but NOT Auto or DeclTypeAuto).
 constexpr bool is_builtin_type(Type type) {
 	switch (type) {
 	case Type::Void:
@@ -413,6 +415,7 @@ constexpr bool is_builtin_type(Type type) {
 	case Type::FunctionPointer:
 	case Type::MemberFunctionPointer:
 	case Type::MemberObjectPointer:
+	case Type::Nullptr:
 		return true;
 	default:
 		return false;
@@ -460,6 +463,7 @@ static_assert(isFundamentalType(Type::Void));
 static_assert(isFundamentalType(Type::Nullptr));
 static_assert(!isFundamentalType(Type::Struct));
 static_assert(is_builtin_type(Type::FunctionPointer));
+static_assert(is_builtin_type(Type::Nullptr));
 static_assert(!is_builtin_type(Type::Struct));
 static_assert(!is_builtin_type(Type::Template));
 
@@ -750,6 +754,8 @@ inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
 // TypeIndex (above) so that TypeIndex methods can delegate to them.
 
 // True for all builtin types that have a valid get_type_size_bits() answer.
+// Includes Nullptr (nullptr_t is fundamental per C++20 [basic.fundamental]/13).
+// Excludes Auto and DeclTypeAuto.
 constexpr bool is_builtin_type(TypeCategory cat) {
 	switch (cat) {
 	case TypeCategory::Void:
@@ -774,6 +780,7 @@ constexpr bool is_builtin_type(TypeCategory cat) {
 	case TypeCategory::FunctionPointer:
 	case TypeCategory::MemberFunctionPointer:
 	case TypeCategory::MemberObjectPointer:
+	case TypeCategory::Nullptr:
 		return true;
 	default:
 		return false;
