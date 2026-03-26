@@ -797,7 +797,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Also check if the type is a dependent placeholder (UserDefined type with
 			// a name containing our template parameter names)
 			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
-			if (!has_unresolved_params && type_spec.category() == TypeCategory::UserDefined) {
+			if (!has_unresolved_params && (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template)) {
 				for (const auto& param_name : template_param_names) {
 					std::string_view param_sv = param_name.view();
 					// Check if the type name contains the parameter as a suffix (after underscore)

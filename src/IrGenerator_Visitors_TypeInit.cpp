@@ -1315,7 +1315,7 @@
 // Important: only resolves when the unfinalized type's name matches the base name of the
 // enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.type() == Type::Struct && type.type_index().is_valid() && type.type_index().index() < getTypeInfoCount()) {
+	if (type.category() == TypeCategory::Struct && type.type_index().is_valid() && type.type_index().index() < getTypeInfoCount()) {
 		auto& ti = getTypeInfo(type.type_index());
 		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 			if (enclosing_type_index.index() < getTypeInfoCount()) {
@@ -1925,7 +1925,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	if (struct_type_info) {
 		// Create a 'this' pointer type (pointer to the struct)
 		auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			Type::UserDefined,
+			TypeCategory::UserDefined,
 			struct_type_info->type_index_,
 			64,  // Pointer size in bits
 			template_decl.identifier_token()
@@ -1994,7 +1994,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Add implicit return for void functions
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	if (return_type.type() == Type::Void) {
+	if (return_type.category() == TypeCategory::Void) {
 		ReturnOp ret_op;  // No return value for void
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
 	}

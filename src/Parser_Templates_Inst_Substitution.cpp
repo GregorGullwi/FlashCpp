@@ -187,7 +187,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// If not found by type_index, try to find by matching type name with any substitution value
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
-			if (type_node.type() == Type::UserDefined && type_node.type_index().index() < getTypeInfoCount()) {
+			if ((type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) && type_node.type_index().index() < getTypeInfoCount()) {
 				std::string_view type_name = StringTable::getStringView(getTypeInfo(type_node.type_index()).name());
 				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
 				
@@ -259,7 +259,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 		// For variable templates with cleaned-up template parameters, the constructor
 		// might have type_index=0 or some other invalid value. So we check if there's
 		// exactly one entry in the map and assume any UserDefined constructor is for that type.
-		if (ctor_type.type() == Type::UserDefined) {
+		if (ctor_type.category() == TypeCategory::UserDefined || ctor_type.category() == TypeCategory::TypeAlias || ctor_type.category() == TypeCategory::Template) {
 			// If we have exactly one type substitution and this is a UserDefined constructor,
 			// assume it's for the template parameter
 			if (type_substitution_map.size() == 1) {
@@ -593,7 +593,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// we should use orig_type.type_index() directly, as it's the correct type_index
 			// for THIS template's parameter. Searching by name can find the wrong type_index
 			// when multiple templates use the same parameter name (e.g., 'T').
-			if (orig_type.type() == Type::UserDefined) {
+			if (orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) {
 				// Check if orig_type's type name matches this template parameter
 				if (orig_type.type_index().index() < getTypeInfoCount()) {
 					std::string_view orig_type_name = StringTable::getStringView(getTypeInfo(orig_type.type_index()).name());
@@ -611,7 +611,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
 				for (TypeIndex ti {}; ti.index() < getTypeInfoCount(); ++ti) {
-					if (getTypeInfo(ti).type_ == Type::UserDefined || getTypeInfo(ti).type_ == Type::Template) {
+					if ((getTypeInfo(ti).isStructLike() && !getTypeInfo(ti).isStruct()) || getTypeInfo(ti).isTemplatePlaceholder()) {
 						if (StringTable::getStringView(getTypeInfo(ti).name()) == param_name) {
 							param_type_index = TypeIndex{ti};
 							found_param = true;
@@ -630,7 +630,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			
 			// Also check if the variable's return type itself is the template parameter
 			// (for cases like template<typename T> T value = T();)
-			if (orig_type.type() == Type::UserDefined && orig_type.type_index() == param_type_index) {
+			if ((orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) && orig_type.type_index() == param_type_index) {
 				// Use original token info for better diagnostics
 				const Token& orig_token = orig_decl.identifier_token();
 				substituted_type = TypeSpecifierNode(
@@ -821,7 +821,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
-			if (alias_type_spec.type() == Type::Enum && alias_type_spec.type_index().index() < getTypeInfoCount()) {
+			if (alias_type_spec.category() == TypeCategory::Enum && alias_type_spec.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(alias_type_spec.type_index()).getEnumInfo()) {
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}

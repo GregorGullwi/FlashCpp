@@ -1447,7 +1447,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
-		if (type_node.category() == TypeCategory::UserDefined) {
+		if (type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) {
 			// BUGFIX: Use the original token value instead of looking up via type_index
 			// When template parameters are parsed, they may have type_index=0 (void),
 			// which causes incorrect dependency checks. The token value is always correct.

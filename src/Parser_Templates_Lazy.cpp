@@ -43,7 +43,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
 				bool handled_as_pack = false;
-				if (param_decl.is_parameter_pack() && param_type_spec.type() == Type::UserDefined) {
+				if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
 					std::string_view type_name = param_type_spec.token().value();
 					size_t non_variadic = 0;
 					size_t pack_size = 0;
@@ -369,7 +369,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 			// Expand variadic pack parameters (e.g. "Args... args") into N params.
 			bool handled_as_pack = false;
-			if (param_decl.is_parameter_pack() && param_type_spec.type() == Type::UserDefined) {
+			if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
 				std::string_view type_name = param_type_spec.token().value();
 				size_t non_variadic = 0;
 				size_t pack_size = 0;

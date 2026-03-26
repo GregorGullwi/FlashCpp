@@ -886,7 +886,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// At block scope, use InitializerListNode consistent with parse_variable_declaration.
 			bool is_global_scope = (gSymbolTable.get_current_scope_type() == ScopeType::Global);
 			if (is_global_scope && (type_specifier.category() == TypeCategory::Struct ||
-			    (type_specifier.category() == TypeCategory::UserDefined && type_specifier.type_index().is_valid()))) {
+			    ((type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias) && type_specifier.type_index().is_valid()))) {
 				Token paren_token = peek_info();
 				advance(); // consume '('
 				ChunkedVector<ASTNode> arguments;
