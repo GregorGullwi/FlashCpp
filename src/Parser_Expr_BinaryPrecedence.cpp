@@ -342,7 +342,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!is_struct_type(type_spec.type())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
-						if (type_idx.value < getTypeInfoCount()) {
+						if (type_idx.index() < getTypeInfoCount()) {
 							StringHandle type_name_handle = getTypeInfo(type_idx).name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
@@ -356,7 +356,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto resolve_sfinae_type_index = [&](TypeIndex type_idx) -> TypeIndex {
-						if (type_idx.is_valid() && type_idx.value < getTypeInfoCount()) {
+						if (type_idx.is_valid() && type_idx.index() < getTypeInfoCount()) {
 							StringHandle type_name_handle = getTypeInfo(type_idx).name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
@@ -367,7 +367,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
-						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) return;
+						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
 						Type resolved_type = getTypeInfo(type_idx).type_;
 						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
@@ -1687,7 +1687,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				// For struct types, look up alignment from struct info
 				if (is_struct_type(parsed_type)) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index.value < getTypeInfoCount()) {
+					if (type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_index);
 						if (type_info.isStruct()) {
 							const StructTypeInfo* struct_info = type_info.getStructInfo();

@@ -33,7 +33,7 @@
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
 		} else if (current_lambda_context_.enclosing_struct_type_index.is_valid() &&
-			current_lambda_context_.enclosing_struct_type_index.value < getTypeInfoCount()) {
+			current_lambda_context_.enclosing_struct_type_index.index() < getTypeInfoCount()) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
 			info.enclosing_struct_name = StringTable::getStringView(getTypeInfo(info.enclosing_struct_type_index).name());
 		}

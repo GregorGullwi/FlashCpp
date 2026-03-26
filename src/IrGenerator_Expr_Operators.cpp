@@ -177,7 +177,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type) {
 	// Look up the struct type info
 	TypeIndex type_idx = param_type.type_index();
-	if (!type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) return std::nullopt;
+	if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return std::nullopt;
 	const TypeInfo& type_info = getTypeInfo(type_idx);
 	const StructTypeInfo* struct_info = type_info.getStructInfo();
 	if (!struct_info) return std::nullopt;
@@ -214,7 +214,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type == Type::Struct &&
-				   member.type_index.is_valid() && member.type_index.value < getTypeInfoCount()) {
+				   member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
 			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
 			// initialize sub-aggregate members recursively.
@@ -275,7 +275,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		|| type_node.is_member_function_pointer()
 		|| type_node.is_member_object_pointer()) {
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-	} else if (type_node.type() == Type::Struct && type_node.type_index().is_valid() && type_node.type_index().value < getTypeInfoCount()) {
+	} else if (type_node.type() == Type::Struct && type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (struct_info) {
@@ -1286,7 +1286,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				? rhsExprResult.type_index
 				: TypeIndex{};
 
-			if (lhs_type_index.is_valid() && lhs_type_index.value < getTypeInfoCount()) {
+			if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
 				// Check for user-defined operator= that takes the RHS type
 				OperatorOverloadResult overload_result;
 				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
@@ -1310,7 +1310,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					if (lhs_type_index.is_valid() && lhs_type_index.value < getTypeInfoCount()) {
+					if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
 						if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 								same_type_assignment_kind.has_value()) {
@@ -1427,7 +1427,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				Type resolved_ir_type = resolve_type_alias(ir_type, ir_type_index);
-				if (ir_type_index.value < getTypeInfoCount()) {
+				if (ir_type_index.index() < getTypeInfoCount()) {
 					resolved_ir_type = resolve_type_alias(getTypeInfo(ir_type_index).type_, ir_type_index);
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
@@ -1447,7 +1447,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 
 		auto normalizeSyntaxTypeSpec = [](const TypeSpecifierNode& type_spec) {
-			if (type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& owner_type_info = getTypeInfo(type_spec.type_index());
 				if (const StructTypeInfo* owner_struct = owner_type_info.getStructInfo()) {
 					std::string_view token_name = type_spec.token().value();
@@ -1477,7 +1477,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (carriesSemanticTypeIndex(semantic_type)) {
 				return true;
 			}
-			if (type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
@@ -1568,7 +1568,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				&& isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second);
 		} else {
 			auto hasUserDefinedIdentityFromIr = [](Type lowered_type, TypeIndex type_index) {
-				if (!type_index.is_valid() || type_index.value >= getTypeInfoCount()) {
+				if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 					return false;
 				}
 				const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1733,7 +1733,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index().is_valid()) {
-					if (return_type.type_index().value < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
+					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
 					}
 				}
@@ -1785,7 +1785,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 				if (op == "=") {
-					if (lhs_type_index.is_valid() && lhs_type_index.value < getTypeInfoCount()) {
+					if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
 						if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 								same_type_assignment_kind.has_value()) {
@@ -1882,7 +1882,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index().is_valid()) {
 					// Look up struct size from type info
-					if (return_type.type_index().value < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
+					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
 					}
 				}
@@ -2013,7 +2013,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				// Look up the operator<=> function in the struct
-				if (spaceship_lhs_type_index.value < getTypeInfoCount()) {
+				if (spaceship_lhs_type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(spaceship_lhs_type_index);
 					if (type_info.struct_info_) {
 						const StructTypeInfo& struct_info = *type_info.struct_info_;
@@ -2456,7 +2456,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				&& lhsExprResult.type_index.is_valid()
 				&& rhsExprResult.type_index.is_valid()
 				&& lhsExprResult.type_index == rhsExprResult.type_index
-				&& lhsExprResult.type_index.value < getTypeInfoCount()) {
+				&& lhsExprResult.type_index.index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(lhsExprResult.type_index).getStructInfo()) {
 					diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhsExprResult));
 				}
@@ -2983,7 +2983,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
 				// Check return type for self-referential struct
-				if (return_type.type() == Type::Struct && return_type.type_index().is_valid() && return_type.type_index().value < getTypeInfoCount()) {
+				if (return_type.type() == Type::Struct && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount()) {
 					auto& rti = getTypeInfo(return_type.type_index());
 					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
 						needs_resolution = true;
@@ -2993,7 +2993,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					for (const auto& param : func_node.parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
 							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-							if (pt.type() == Type::Struct && pt.type_index().is_valid() && pt.type_index().value < getTypeInfoCount()) {
+							if (pt.type() == Type::Struct && pt.type_index().is_valid() && pt.type_index().index() < getTypeInfoCount()) {
 								auto& ti = getTypeInfo(pt.type_index());
 								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 									needs_resolution = true;
@@ -4226,7 +4226,7 @@ const Token& token) {
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_type))) {
-			if (lhs_operands.type_index.value < getTypeInfoCount()) {
+			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -4304,7 +4304,7 @@ const Token& token) {
 		if (!lhs_type_index.is_valid()
 			|| !rhs_type_index.is_valid()
 			|| lhs_type_index != rhs_type_index
-			|| lhs_type_index.value >= getTypeInfoCount()) {
+			|| lhs_type_index.index() >= getTypeInfoCount()) {
 			return;
 		}
 
@@ -4469,7 +4469,7 @@ std::string_view op) {
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_type))) {
-			if (lhs_operands.type_index.value < getTypeInfoCount()) {
+			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -4706,7 +4706,7 @@ std::string_view op) {
 				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
 				if (is_struct_type(type_node.type())) {
 					TypeIndex type_index = type_node.type_index();
-					if (type_index.value < getTypeInfoCount()) {
+					if (type_index.index() < getTypeInfoCount()) {
 						auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
 						if (result) {
 							member_is_reference = result.member->is_reference();

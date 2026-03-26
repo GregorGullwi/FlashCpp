@@ -772,8 +772,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;
-						dependent_arg.base_type = Type::Bool;  // noexcept, sizeof, alignof return bool/size_t
-						dependent_arg.type_index = TypeIndex{};
+						dependent_arg.type_index = TypeIndex{0, TypeCategory::Bool};  // noexcept, sizeof, alignof return bool/size_t
 						dependent_arg.is_value = true;  // This is a non-type (value) template argument
 						dependent_arg.is_dependent = true;
 						
@@ -936,7 +935,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							if (type_info->struct_info_ != nullptr) {
 								is_concrete_type = true;
 								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
-							} else if (type_info->type_index_.value < getTypeInfoCount()) {
+							} else if (type_info->type_index_.index() < getTypeInfoCount()) {
 								// Check if this is a type alias (type_index points to underlying type)
 								// and the underlying type is concrete (not a template parameter)
 								const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
@@ -1050,8 +1049,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// this should be a TYPE argument, not a VALUE argument!
 						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
 						TemplateTypeArg dependent_arg;
-						dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
-						dependent_arg.type_index = TypeIndex{};  // Default, will try to look up
+						dependent_arg.type_index = TypeIndex{0, TypeCategory::UserDefined};  // Template parameter is a user-defined type placeholder; will try to look up
 						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
 						dependent_arg.is_dependent = true;
 						
@@ -1092,7 +1090,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								if (!is_struct_type(target_type)) {
 									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
 									          "' resolves to concrete type ", static_cast<int>(target_type));
-									dependent_arg.base_type = target_type;
+									dependent_arg.setType(target_type);
 									dependent_arg.is_dependent = false;  // Not dependent - resolves to concrete type
 								}
 							}
@@ -1461,7 +1459,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
 			std::string_view full_type_name;
 			TypeIndex idx = type_node.type_index();
-			if (idx.value < getTypeInfoCount()) {
+			if (idx.index() < getTypeInfoCount()) {
 				full_type_name = StringTable::getStringView(getTypeInfo(idx).name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
 			}
@@ -1503,7 +1501,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					}
 				}
 				
-				if (is_template_param || (idx.value < getTypeInfoCount() && getTypeInfo(idx).is_incomplete_instantiation_)) {
+				if (is_template_param || (idx.index() < getTypeInfoCount() && getTypeInfo(idx).is_incomplete_instantiation_)) {
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
@@ -1553,7 +1551,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
-			if (idx.value < getTypeInfoCount()) {
+			if (idx.index() < getTypeInfoCount()) {
 				std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);

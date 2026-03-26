@@ -65,7 +65,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							std::string_view orig_name = param_decl.identifier_token().value();
 							for (size_t pi = 0; pi < pack_size; ++pi) {
 								const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-								Type elem_type = elem.base_type;
+								Type elem_type = elem.typeEnum();
 								TypeIndex elem_type_index = elem.type_index;
 								TypeSpecifierNode sub_type(
 									elem_type, param_type_spec.qualifier(),
@@ -128,9 +128,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
 		}
 
@@ -269,9 +269,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
 		}
 
@@ -312,7 +312,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
 	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
-		if (type == Type::Struct && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+		if (type == Type::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 			if (getTypeInfo(type_index).name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
 				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
@@ -391,7 +391,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						std::string_view orig_name = param_decl.identifier_token().value();
 						for (size_t pi = 0; pi < pack_size; ++pi) {
 							const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-							Type elem_type = elem.base_type;
+							Type elem_type = elem.typeEnum();
 							TypeIndex elem_type_index = elem.type_index;
 							TypeSpecifierNode sub_type(
 								elem_type, param_type_spec.qualifier(),
@@ -542,9 +542,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		std::vector<TemplateTypeArg> converted_template_args;
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.base_type));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.base_type, ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
 		}
 
@@ -1107,7 +1107,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get size for the member
 		size_t member_size = 0;
-		if (substituted_type_index.value < getTypeInfoCount()) {
+		if (substituted_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
 			if (member_type_info.getStructInfo()) {
 				member_size = member_type_info.getStructInfo()->total_size;
@@ -1120,7 +1120,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get alignment for the member
 		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (substituted_type_index.value < getTypeInfoCount()) {
+		if (substituted_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
 			if (member_type_info.getStructInfo()) {
 				member_alignment = member_type_info.getStructInfo()->alignment;

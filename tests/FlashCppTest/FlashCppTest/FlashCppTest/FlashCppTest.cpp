@@ -3411,8 +3411,8 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	REQUIRE(!parse_result.is_error());
 
 	auto findTypeIndexByName = [](std::string_view wanted) -> TypeIndex {
-		for (TypeIndex i{0}; i.value < gTypeInfo.size(); ++i) {
-			if (StringTable::getStringView(gTypeInfo[i.value].name()) == wanted) {
+		for (TypeIndex i{0}; i.index() < gTypeInfo.size(); ++i) {
+			if (StringTable::getStringView(gTypeInfo[i.index()].name()) == wanted) {
 				return i;
 			}
 		}

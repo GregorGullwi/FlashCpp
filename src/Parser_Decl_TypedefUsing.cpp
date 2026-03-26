@@ -882,7 +882,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 				// Look up the original enum TypeInfo by its type_index
 				TypeInfo* original_enum_type_info = nullptr;
-				if (enum_type_index.value < getTypeInfoCount()) {
+				if (enum_type_index.index() < getTypeInfoCount()) {
 					original_enum_type_info = &getTypeInfoMut(enum_type_index);
 				}
 

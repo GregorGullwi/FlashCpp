@@ -70,22 +70,25 @@ TargetDataModel g_target_data_model = TargetDataModel::LP64;   // Linux/Unix: lo
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
+std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypesByCategory;
 
-TypeInfo& add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, type_size_in_bits);
+TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
+    TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, idx, type_size_in_bits);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
-    return type_info;
+    return TypeCreationResult{type_info, idx};
 }
 
-TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type, NamespaceHandle ns) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, TypeIndex{gTypeInfo.size(), TypeCategory::Function}, 0);
+TypeCreationResult add_function_type(StringHandle name, [[maybe_unused]] Type return_type, NamespaceHandle ns) {
+    TypeIndex idx{gTypeInfo.size(), TypeCategory::Function};
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, idx, 0);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
-    return type_info;
+    return TypeCreationResult{type_info, idx};
 }
 
-TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns) {
+TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
     // Check if type already exists (forward declaration case)
     auto existing_it = gTypesByName.find(name);
     if (existing_it != gTypesByName.end()) {
@@ -97,23 +100,26 @@ TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns) {
         if (!existing_it->second->namespaceHandle().isValid()) {
             existing_it->second->setNamespaceHandle(ns);
         }
-        return *existing_it->second;
+        return TypeCreationResult{*existing_it->second, existing_it->second->type_index_};
     }
-    
-    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, TypeIndex{gTypeInfo.size(), TypeCategory::Struct}, 0);
+
+    TypeIndex idx{gTypeInfo.size(), TypeCategory::Struct};
+    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, idx, 0);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
-    return type_info;
+    return TypeCreationResult{type_info, idx};
 }
 
-TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, TypeIndex{gTypeInfo.size(), TypeCategory::Enum}, 0);
+TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns) {
+    TypeIndex idx{gTypeInfo.size(), TypeCategory::Enum};
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, idx, 0);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
-    return type_info;
+    return TypeCreationResult{type_info, idx};
 }
 
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
+TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
+    TypeIndex alias_idx{gTypeInfo.size(), TypeCategory::TypeAlias};
     auto& info = gTypeInfo.emplace_back(name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
     info.setNamespaceHandle(ns);
     info.is_type_alias_ = true;
@@ -122,25 +128,25 @@ TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_s
     if (type_spec.has_function_signature()) {
         info.function_signature_ = type_spec.function_signature();
     }
-    if (type_spec.type() == Type::Enum && type_spec.type_index().value < gTypeInfo.size()) {
-        if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().value].getEnumInfo()) {
+    if (type_spec.type() == Type::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
+        if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
             info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
         }
     }
     gTypesByName.emplace(info.name(), &info);
-    return info;
+    return TypeCreationResult{info, alias_idx};
 }
 
 // --- Type table accessor API (Milestone 6 / Option D Step 0) ---
 
 const TypeInfo& getTypeInfo(TypeIndex idx) {
-    assert(idx.value < gTypeInfo.size() && "TypeIndex out of range");
-    return gTypeInfo[idx.value];
+    assert(idx.index() < gTypeInfo.size() && "TypeIndex out of range");
+    return gTypeInfo[idx.index()];
 }
 
 TypeInfo& getTypeInfoMut(TypeIndex idx) {
-    assert(idx.value < gTypeInfo.size() && "TypeIndex out of range");
-    return gTypeInfo[idx.value];
+    assert(idx.index() < gTypeInfo.size() && "TypeIndex out of range");
+    return gTypeInfo[idx.index()];
 }
 
 const TypeInfo* findTypeByName(StringHandle name) {
@@ -151,6 +157,11 @@ const TypeInfo* findTypeByName(StringHandle name) {
 const TypeInfo* findNativeType(Type type) {
     auto it = gNativeTypes.find(type);
     return it != gNativeTypes.end() ? it->second : nullptr;
+}
+
+const TypeInfo* findNativeType(TypeCategory cat) {
+    auto it = gNativeTypesByCategory.find(cat);
+    return it != gNativeTypesByCategory.end() ? it->second : nullptr;
 }
 
 size_t getTypeInfoCount() {
@@ -186,6 +197,10 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 
 const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap() {
     return gNativeTypes;
+}
+
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap() {
+    return gNativeTypesByCategory;
 }
 
 void initialize_native_types() {
@@ -275,6 +290,15 @@ void initialize_native_types() {
     auto gnuc_va_list_handle = StringTable::createStringHandle("__gnuc_va_list"sv);
     auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64);
     gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
+
+    // Populate the TypeCategory-keyed mirror map from the Type-keyed map using typeToCategory().
+    // This allows callers to use findNativeType(TypeCategory) going forward.
+    for (const auto& [type, type_info_ptr] : gNativeTypes) {
+        TypeCategory cat = typeToCategory(type);
+        if (cat != TypeCategory::Invalid) {
+            gNativeTypesByCategory[cat] = type_info_ptr;
+        }
+    }
 }
 
 bool is_integer_type(Type type) {
@@ -452,6 +476,10 @@ int get_type_size_bits(Type type) {
         default:
             return 0;
     }
+}
+
+int get_type_size_bits(TypeCategory cat) {
+    return get_type_size_bits(categoryToType(cat));
 }
 
 Type promote_integer_type(Type type) {
@@ -792,11 +820,11 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
     // Direct match (works for non-template types and properly substituted template params)
     if (param_type_index == *own_type_index_) return true;
     // Template instantiation fallback: check if param refers to our base template pattern
-    if ((*own_type_index_).value >= gTypeInfo.size() || param_type_index.value >= gTypeInfo.size())
+    if ((*own_type_index_).index() >= gTypeInfo.size() || param_type_index.index() >= gTypeInfo.size())
         return false;
-    const TypeInfo& own_info = gTypeInfo[(*own_type_index_).value];
+    const TypeInfo& own_info = gTypeInfo[(*own_type_index_).index()];
     if (!own_info.isTemplateInstantiation()) return false;
-    const TypeInfo& param_info = gTypeInfo[param_type_index.value];
+    const TypeInfo& param_info = gTypeInfo[param_type_index.index()];
     // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
     if (own_info.baseTemplateName() == param_info.name()) return true;
     // Note: We intentionally do NOT match different instantiations of the same template
@@ -982,8 +1010,8 @@ bool StructTypeInfo::finalizeWithBases() {
     bool base_has_vtable = false;
     for (const auto& base : base_classes) {
         if (base.is_virtual) continue;  // Skip virtual bases for now
-        if (base.type_index.value < gTypeInfo.size()) {
-            const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+        if (base.type_index.index() < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
             const StructTypeInfo* base_info = base_type.getStructInfo();
             if (base_info && base_info->has_vtable) {
                 base_has_vtable = true;
@@ -1005,11 +1033,11 @@ bool StructTypeInfo::finalizeWithBases() {
             continue;  // Virtual bases are laid out at the end
         }
 
-        if (base.type_index.value >= gTypeInfo.size()) {
+        if (base.type_index.index() >= gTypeInfo.size()) {
             continue;  // Invalid base class index
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (!base_info) {
@@ -1074,8 +1102,8 @@ bool StructTypeInfo::finalizeWithBases() {
             }
 
             // Recursively collect from non-virtual bases
-            if (!base.is_virtual && base.type_index.value < gTypeInfo.size()) {
-                const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+            if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
                 const StructTypeInfo* base_info = base_type.getStructInfo();
                 collectVirtualBases(base_info);
             }
@@ -1086,11 +1114,11 @@ bool StructTypeInfo::finalizeWithBases() {
 
     // Layout virtual bases
     for (auto* vbase : all_virtual_bases) {
-        if (vbase->type_index.value >= gTypeInfo.size()) {
+        if (vbase->type_index.index() >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[vbase->type_index.value];
+        const TypeInfo& base_type = gTypeInfo[vbase->type_index.index()];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (!base_info) {
@@ -1131,11 +1159,11 @@ bool StructTypeInfo::buildVTable() {
     // Step 1: Copy base class vtable entries (if any)
     bool any_base_potentially_incomplete = has_deferred_base_classes;
     for (const auto& base : base_classes) {
-        if (base.type_index.value >= gTypeInfo.size()) {
+        if (base.type_index.index() >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info && base_info->has_vtable) {
@@ -1296,11 +1324,11 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 
     // Then, check base class members
     for (const auto& base : base_classes) {
-        if (base.type_index.value >= gTypeInfo.size()) {
+        if (base.type_index.index() >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info) {
@@ -1332,11 +1360,11 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
     // Then, check base class static members
     for (const auto& base : base_classes) {
-		if (base.type_index.value >= gTypeInfo.size()) {
+		if (base.type_index.index() >= gTypeInfo.size()) {
 			continue;
 		}
 
-		const TypeInfo* base_type = &gTypeInfo[base.type_index.value];
+		const TypeInfo* base_type = &gTypeInfo[base.type_index.index()];
 		const StructTypeInfo* base_info = base_type->getStructInfo();
 
 		// Follow typedef/alias chains to find the underlying struct info if needed
@@ -1344,10 +1372,10 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 			constexpr size_t MAX_ALIAS_DEPTH = 64;
 			size_t depth = 0;
 			while (depth < MAX_ALIAS_DEPTH) {
-				if (!base_type->type_index_.is_valid() || base_type->type_index_.value >= gTypeInfo.size()) {
+				if (!base_type->type_index_.is_valid() || base_type->type_index_.index() >= gTypeInfo.size()) {
 					break;
 				}
-				const TypeInfo* next = &gTypeInfo[base_type->type_index_.value];
+				const TypeInfo* next = &gTypeInfo[base_type->type_index_.index()];
 				if (next == base_type) {
 					break;
 				}
@@ -1418,12 +1446,12 @@ void StructTypeInfo::buildRTTI() {
         size_t base_array_start = base_array_storage.size();
 
         for (const auto& base : base_classes) {
-            if (base.type_index.value >= gTypeInfo.size()) {
+            if (base.type_index.index() >= gTypeInfo.size()) {
                 base_array_storage.push_back(nullptr);
                 continue;
             }
 
-            const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+            const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
             const StructTypeInfo* base_info = base_type.getStructInfo();
 
             if (base_info && base_info->rtti_info) {
@@ -1454,11 +1482,11 @@ void StructTypeInfo::buildRTTI() {
     for (size_t i = 0; i < base_classes.size(); ++i) {
         const auto& base = base_classes[i];
         
-        if (base.type_index.value >= gTypeInfo.size()) {
+        if (base.type_index.index() >= gTypeInfo.size()) {
             continue;
         }
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+        const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
         const StructTypeInfo* base_info = base_type.getStructInfo();
 
         if (base_info && base_info->rtti_info && base_info->rtti_info->type_descriptor) {
@@ -1562,8 +1590,8 @@ void StructTypeInfo::buildRTTI() {
         si_ti.name = itanium_name;
         
         // Get base class type info
-        if (base_classes[0].type_index.value < gTypeInfo.size()) {
-            const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index.value];
+        if (base_classes[0].type_index.index() < gTypeInfo.size()) {
+            const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index.index()];
             const StructTypeInfo* base_info = base_type.getStructInfo();
             if (base_info && base_info->rtti_info && base_info->rtti_info->itanium_type_info) {
                 si_ti.base_type = base_info->rtti_info->itanium_type_info;
@@ -1612,8 +1640,8 @@ void StructTypeInfo::buildRTTI() {
             
             // Get base class type info
             void* base_type_info = nullptr;
-            if (base.type_index.value < gTypeInfo.size()) {
-                const TypeInfo& base_type = gTypeInfo[base.type_index.value];
+            if (base.type_index.index() < gTypeInfo.size()) {
+                const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
                 const StructTypeInfo* base_info = base_type.getStructInfo();
                 if (base_info && base_info->rtti_info) {
                     base_type_info = base_info->rtti_info->itanium_type_info;

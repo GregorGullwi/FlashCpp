@@ -769,8 +769,7 @@ struct TypeInfo
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
-		Type base_type = Type::Invalid;  // For primitive types
-		TypeIndex type_index {};        // For user-defined types
+		TypeIndex type_index {};        // Carries both gTypeInfo slot and TypeCategory
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth = 0;        // Pointer indirection level
 		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
@@ -780,6 +779,11 @@ struct TypeInfo
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
 		StringHandle dependent_name;     // Name of the dependent template parameter (for inner deduction)
+
+		// Category accessor (delegates to type_index.category())
+		TypeCategory category() const noexcept { return type_index.category(); }
+		// Legacy Type accessor for code that still needs it
+		Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
@@ -845,6 +849,17 @@ struct TypeInfo
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
+// Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
+// register_type_alias so callers can capture both the TypeInfo reference AND the
+// freshly-minted TypeIndex (with category already embedded) in one call.
+struct TypeCreationResult {
+	TypeInfo& info;
+	TypeIndex index;
+	// Implicit conversion to TypeInfo& for backward-compat with sites that do:
+	//   TypeInfo& x = add_struct_type(...);
+	operator TypeInfo&() const noexcept { return info; }
+};
+
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
@@ -866,18 +881,20 @@ struct StringEqual {
 const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
-const TypeInfo* findNativeType(Type type);         // returns nullptr if not found
+const TypeInfo* findNativeType(Type type);         // returns nullptr if not found (legacy — prefer TypeCategory overload)
+const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found (preferred)
 size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<Type, const TypeInfo*>& getNativeTypesMap();
+const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesByCategoryMap();
 
 // Resolve primitive type aliases (typedefs / using aliases represented as
 // Type::UserDefined) to their underlying primitive type. This intentionally
 // preserves struct and enum identity.
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	if (type == Type::UserDefined && type_index.is_valid() && type_index.value < getTypeInfoCount()) {
+	if (type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (!needs_type_index(type_info.type_)) {
 			return type_info.type_;
@@ -886,13 +903,13 @@ inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	return type;
 }
 
-TypeInfo& add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
-TypeInfo& add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
 void initialize_native_types();
 
@@ -981,6 +998,7 @@ inline int get_wchar_size_bits() {
 }
 
 int get_type_size_bits(Type type);
+int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
 Type promote_integer_type(Type type);
 Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);
@@ -1016,12 +1034,27 @@ public:
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
 
+	// TypeCategory-first constructor — preferred for new code.
+	// Converts cat to the legacy Type via categoryToType() and stores it; the TypeIndex
+	// category_ field is also set so that category() returns cat without a lookup.
+	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+
 	// Constructor for struct types
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
 	auto type() const { return type_; }
+	// Returns the TypeCategory for this type specifier.
+	// Prefers category embedded in type_index_ (set correctly by add* functions);
+	// falls back to typeToCategory(type_) for legacy TypeSpecifierNode values built
+	// with the Type-only constructor.
+	TypeCategory category() const {
+		TypeCategory cat = type_index_.category();
+		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
+	}
 	auto size_in_bits() const { return size_; }
 	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
@@ -1218,7 +1251,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	Type t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx.is_valid() && idx.value < getTypeInfoCount()) {
+		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(idx);
 			if (const StructTypeInfo* si = ti.getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
@@ -1244,7 +1277,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 // reference_qualifier, and function_signature from the TypeSpecifierNode, then
 // registers it in gTypesByName.  Returns a reference for callers that need to
 // do additional work (e.g. namespace-qualified registration).
-TypeInfo& register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
+TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns = NamespaceHandle{});
 
 class DeclarationNode {
 public:
@@ -1780,7 +1813,6 @@ public:
 
 		for (const auto& arg : template_args) {
 			TypeInfo::TemplateArgInfo info;
-			info.base_type = arg.base_type;
 			info.type_index = arg.type_index;
 			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 			info.pointer_depth = arg.pointer_depth;

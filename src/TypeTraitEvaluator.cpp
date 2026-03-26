@@ -63,7 +63,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	// No explicit destructor, or destructor without a noexcept specifier:
 	// the effective noexcept status depends on base classes and members.
 	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred || base.type_index.value >= getTypeInfoCount()) continue;
+		if (base.is_deferred || base.type_index.index() >= getTypeInfoCount()) continue;
 		const StructTypeInfo* base_struct = getTypeInfo(base.type_index).getStructInfo();
 		if (!isStructNothrowDestructible(base_struct))
 			return false;
@@ -72,7 +72,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 		// Only struct/class-typed members (not pointers or references) have destructors
 		if ((!is_struct_type(member.type)) ||
 		    member.pointer_depth > 0 || member.is_reference()) continue;
-		if (member.type_index.value >= getTypeInfoCount()) continue;
+		if (member.type_index.index() >= getTypeInfoCount()) continue;
 		const StructTypeInfo* mem_struct = getTypeInfo(member.type_index).getStructInfo();
 		if (!isStructNothrowDestructible(mem_struct))
 			return false;
@@ -92,7 +92,7 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 				if (decl && decl->type_node().is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = decl->type_node().as<TypeSpecifierNode>();
-					if (type_spec.type_index().is_valid() && type_spec.type_index().value < getTypeInfoCount()) {
+					if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 						const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
 						if (struct_info) {
 							return isStructNothrowDestructible(struct_info);
@@ -421,7 +421,7 @@ TypeTraitResult evaluateTypeTrait(
 				// If no explicit destructor but has vtable, check base classes
 				if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 					for (const auto& base : struct_info->base_classes) {
-						if (base.type_index.value < getTypeInfoCount()) {
+						if (base.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 							if (base_struct_info && base_struct_info->has_vtable) {

@@ -461,7 +461,7 @@ private:
 				if (member_init.is<InitializerListNode>() &&
 					isIrStructType(toIrType(member.type)) &&
 					member.type_index.is_valid() &&
-					member.type_index.value < getTypeInfoCount()) {
+					member.type_index.index() < getTypeInfoCount()) {
 					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
 					if (nested_struct) {
 						fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);

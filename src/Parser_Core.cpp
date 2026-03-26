@@ -61,11 +61,11 @@ MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& 
 // Helper function to safely get type size from TemplateTypeArg
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	// Check if this is a builtin type that get_type_size_bits can handle
-	if (is_builtin_type(arg.base_type)) {
-		return static_cast<size_t>(get_type_size_bits(arg.base_type));
+	if (is_builtin_type(arg.category())) {
+		return static_cast<size_t>(get_type_size_bits(arg.category()));
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
-	if (arg.type_index.is_valid() && arg.type_index.value < getTypeInfoCount()) {
+	if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(arg.type_index);
 		if (type_info.type_size_ > 0) {
 			return type_info.type_size_;
@@ -80,8 +80,7 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	for (const auto& arg : template_args) {
 		TypeInfo::TemplateArgInfo info;
-		info.base_type = arg.base_type;
-		info.type_index = arg.type_index;
+		info.type_index = arg.type_index;  // carries both index and TypeCategory
 		info.pointer_depth = arg.pointer_depth;
 		info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 		info.ref_qualifier = arg.ref_qualifier;
@@ -435,7 +434,7 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
-	if (type_index.value < getTypeInfoCount()) {
+	if (type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (type_info.struct_info_) {
 			return static_cast<int>(type_info.struct_info_->total_size * 8);

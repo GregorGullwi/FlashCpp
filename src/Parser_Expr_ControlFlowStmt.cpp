@@ -1125,11 +1125,10 @@ ParseResult Parser::parse_lambda_expression() {
 
 				TypeInfo::TemplateArgInfo info;
 				if (subst.is_value_param) {
-					info.base_type = subst.value_type;
+					info.type_index = TypeIndex{0, typeToCategory(subst.value_type)};
 					info.value = subst.value;
 					info.is_value = true;
 				} else if (subst.is_type_param) {
-					info.base_type = subst.substituted_type.base_type;
 					info.type_index = subst.substituted_type.type_index;
 					info.pointer_depth = subst.substituted_type.pointer_depth;
 					info.pointer_cv_qualifiers = subst.substituted_type.pointer_cv_qualifiers;

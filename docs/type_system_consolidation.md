@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
-**Date**: 2026-03-25  
-**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 Steps 1+2 done: `TypeCategory` enum defined, embedded in `TypeIndex`, and TypeCategory-based classification helpers added.  
+**Date**: 2026-03-26  
+**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 Steps 1–7 in progress: `TypeCategory` enum defined, embedded in `TypeIndex`, TypeCategory-based helpers added, `TypeIndex` internal field renamed to `index_`, `TemplateTypeArg::base_type` and `TypeInfo::TemplateArgInfo::base_type` removed (relying on `type_index.category()`), pattern matching fixed for `TypeCategory::Invalid`. Remaining: `TypeCreationResult`, `gNativeTypes` re-keying, bulk `Type::` site migration, and `Type` deletion.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -25,7 +25,7 @@
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
 | 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
-| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 Steps 1+2 done; Step 3 (site migration + delete `Type`) TODO |
+| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 Steps 1–7 in progress; `TypeCategory` embedded, helpers added, `TemplateTypeArg::base_type` / `TemplateArgInfo::base_type` removed, `TypeIndex::value` renamed to `index_`; site migration + `Type` deletion TODO |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
 
@@ -580,16 +580,17 @@ This is a behavior-preserving PR that establishes the encapsulation boundary for
 These steps can be split into separate PRs once Milestone 6 is merged.
 
 - [x] Add `TypeCategory` enum with explicit values (§5); add `static_assert` correspondence checks with old `Type` values.
-- [x] Embed `TypeCategory category_` in `TypeIndex` alongside `uint32_t value`. The `value` field is kept (not renamed to `index_`) for backward compatibility during migration; comparison operators are updated to compare only `.value` so that legacy `TypeIndex{n}` constructions remain correct. Update `std::hash<TypeIndex>` and `std::formatter<TypeIndex>` to use `uint32_t`. Keep `Type` untouched.
+- [x] Embed `TypeCategory category_` in `TypeIndex` alongside `uint32_t index_`. Comparison operators compare only `.index_` so legacy `TypeIndex{n}` constructions remain correct. `std::hash<TypeIndex>` and `std::formatter<TypeIndex>` use `uint32_t`. `Type` untouched.
 - [x] Update all `add*` / `initialize_native_types` to pass the correct `TypeCategory` when constructing `TypeIndex`. `register_type_alias` sets the alias TypeInfo via the existing `is_type_alias_` flag; the self-`TypeIndex` carrying `TypeCategory::TypeAlias` will be introduced with `TypeCreationResult` below.
 - [x] Add `TypeCategory`-based classification helpers (`is_primitive_type`, `is_struct_type`, `needs_type_index`, `is_builtin_type`, `isArithmeticType`, `isFundamentalType`, `isIntegralType`, `isFloatingPointType`) mirroring the existing `Type`-based helpers.
 - [x] Add `typeToCategory(Type)` helper to convert legacy `Type` values to `TypeCategory`.
 - [x] Add classification methods directly on `TypeIndex` (`isStruct`, `isEnum`, `isTypeAlias`, `isPrimitive`, `isStructLike`, `needsTypeIndex`, `isTemplatePlaceholder`, `isFunction`, `isNull`, `category`).
+- [x] Rename `TypeIndex::value` → `TypeIndex::index_`; update internal comparison operators, hash, and formatter. The public read accessor is `index()`.  External `.value` direct access eliminated; all callers use `.index()`.
+- [x] Migrate `TemplateTypeArg::base_type` from `Type` field to relying entirely on `type_index.category()`. Field removed; `setType(Type)` / `setCategory(TypeCategory)` / `typeEnum()` / `category()` accessors added.
+- [x] Migrate `TypeInfo::TemplateArgInfo::base_type` similarly — field removed; `category()` / `typeEnum()` accessors delegate to `type_index.category()`.
+- [x] Fix `TemplateRegistry_Pattern.h` pattern matching for `TypeCategory::Invalid` pattern args (outer `matches()` and `matchNestedArg()` now handle `Invalid`-category placeholder args correctly, including non-type inner parameter deduction).
 - [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred from Milestone 6). This enables callers to receive a `TypeIndex{pos, TypeCategory::TypeAlias}` for aliases without computing `gTypeInfo.size()-1` themselves.
-- [ ] Rename `TypeIndex::value` → `TypeIndex::index_` at all ~499 call sites now that the layout is established. Update comparison operators and accessors accordingly.
-- [ ] Migrate `TemplateTypeArg::base_type` (122+ write sites) from `Type` to relying on `type_index.category()`.
-- [ ] Migrate `TypeInfo::TemplateArgInfo::base_type` similarly.
-- [ ] Re-key `gNativeTypes` from `Type` to `TypeCategory`.
+- [ ] Re-key `gNativeTypes` from `Type` to `TypeCategory`; add `findNativeType(TypeCategory)` overload; migrate all `getNativeTypesMap().find(type)` call sites in `IRTypes_Instructions.h` to `TypeCategory`.
 - [ ] Migrate remaining `Type::` sites to `TypeCategory::`/`TypeIndex` queries file by file. Use compile errors to track remaining sites.
 - [ ] Delete the `Type` enum once all references are gone.
 
@@ -735,5 +736,73 @@ accidentally make the coupling worse.
 helpers should be `const` methods that read only from the `TypeInfo` instance, not from
 global state. This keeps the door open for a future where `TypeInfo` objects are owned
 per-compilation-unit rather than globally.
+
+### 7.6 `setType()` / `setCategory()` + `type_index =` overwrite anti-pattern
+
+After the removal of `TemplateTypeArg::base_type` (Milestone 7), the type category
+lives exclusively inside `type_index.category_`. This introduces a subtle bug pattern
+that did not exist before: calling `setType()` or `setCategory()` and then assigning a
+new `TypeIndex` to `type_index` on the same object **silently discards the category**
+because the assignment overwrites the entire `TypeIndex` struct (both `index_` and
+`category_`).
+
+**Old code (safe — `base_type` was an independent field):**
+```cpp
+arg.base_type = Type::Int;       // sets base_type
+arg.type_index = some_index;     // sets type_index; base_type is unaffected
+```
+
+**New code (buggy — category is lost):**
+```cpp
+arg.setType(Type::Int);          // sets type_index.category_ = TypeCategory::Int
+arg.type_index = some_index;     // OVERWRITES entire type_index, including category_!
+// arg.category() is now whatever some_index.category_ was (often Invalid)
+```
+
+**Symptoms**: `TemplateTypeArg::category()` returns `TypeCategory::Invalid` instead of
+the expected type. This causes:
+- Hash/equality mismatches in template specialization lookup (§1, `TemplateRegistry_Types.h:296-362`)
+- Wrong mangling output (`toString()` / `toHashString()` fall through to `default: "?"`)
+- Pattern matching failures in `TemplateRegistry_Pattern.h` (placeholder args not recognized)
+
+**Correct patterns** (use one of these instead):
+```cpp
+// Option 1: Use the factory that merges category from Type when index has Invalid
+arg.type_index = TemplateTypeArg::makeTypeIndex(type, some_index);
+
+// Option 2: Use the TemplateTypeArg factory method
+arg = TemplateTypeArg::makeType(type, some_index);
+
+// Option 3: Construct TypeIndex with explicit category
+arg.type_index = TypeIndex{some_index.index(), typeToCategory(type)};
+```
+
+**Detection**: `setType()` is only safe when there is **no subsequent `type_index =`
+assignment** on the same object. To find violations, grep for `setType` or `setCategory`
+calls and verify no `type_index =` follows on the same variable. A debug assertion in
+`TemplateTypeArg::category()` can also catch this at runtime:
+
+```cpp
+TypeCategory category() const noexcept {
+    assert(type_index.category() != TypeCategory::Invalid
+        || is_dependent || is_template_template_arg
+        || type_index.index() == 0  // legitimate sentinel
+        && "TemplateTypeArg has Invalid category — possible setType+overwrite bug");
+    return type_index.category();
+}
+```
+
+Note: this assertion cannot live on `TypeIndex::operator=` because `TypeIndex{}` with
+`Invalid` category is a valid sentinel used pervasively throughout the codebase
+(default member initialization, "no type" return values, `is_valid()` checks, etc.).
+An `operator=` that rejects `Invalid`-category assignments would fire on hundreds of
+legitimate sites.  The bug is semantic to `TemplateTypeArg`, not to `TypeIndex`.
+
+**Longer-term mitigation**: make `TemplateTypeArg::type_index` private and route all
+writes through a setter that asserts the incoming `TypeIndex` has a non-`Invalid`
+category (or that the arg is in a legitimately-unset state like default-constructed
+or `is_template_template_arg`).  This is a larger refactor (~100+ direct `.type_index =`
+sites on `TemplateTypeArg`) but would make the anti-pattern a compile error rather than
+a runtime assert.
 
 

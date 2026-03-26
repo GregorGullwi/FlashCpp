@@ -5,11 +5,11 @@
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
 const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
-	if (!type_idx.is_valid() || type_idx.value >= getTypeInfoCount()) return nullptr;
+	if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return nullptr;
 	const TypeInfo* ti = &getTypeInfo(type_idx);
 	// Chase aliases up to 64 levels deep.
 	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
-		if (!ti->type_index_.is_valid() || ti->type_index_.value >= getTypeInfoCount()) break;
+		if (!ti->type_index_.is_valid() || ti->type_index_.index() >= getTypeInfoCount()) break;
 		ti = &getTypeInfo(ti->type_index_);
 	}
 	return ti;
@@ -276,7 +276,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 			if (func_type.type() == Type::Struct &&
 				func_type.type_index().is_valid() &&
-				func_type.type_index().value < getTypeInfoCount()) {
+				func_type.type_index().index() < getTypeInfoCount()) {
 				// Check for a sema-pre-resolved operator() first.
 				const FunctionDeclarationNode* operator_call =
 					sema_ ? sema_->getResolvedOpCall(&functionCallNode) : nullptr;
@@ -528,7 +528,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
-				if (!type_info->type_index_.is_valid() || type_info->type_index_.value >= getTypeInfoCount()) {
+				if (!type_info->type_index_.is_valid() || type_info->type_index_.index() >= getTypeInfoCount()) {
 					break;
 				}
 				const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
@@ -674,7 +674,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
 						for (const auto& base_spec : current_struct->base_classes) {
 							// Look up base class in gTypeInfo
-							if (base_spec.type_index.value < getTypeInfoCount()) {
+							if (base_spec.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -916,7 +916,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
 						if (curr_struct) {
 							for (const auto& base_spec : curr_struct->base_classes) {
-								if (base_spec.type_index.value < getTypeInfoCount()) {
+								if (base_spec.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 									if (base_type_info.isTemplateInstantiation() &&
 									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
@@ -1151,7 +1151,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							from_type == Type::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.value < getTypeInfoCount()) {
+							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
@@ -1214,7 +1214,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
-					if (param_type_index.is_valid() && param_type_index.value < getTypeInfoCount()) {
+					if (param_type_index.is_valid() && param_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& target_type_info = getTypeInfo(param_type_index);
 						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
 
@@ -1284,7 +1284,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					if (arg_type_index.is_valid() && arg_type_index.value < getTypeInfoCount()) {
+					if (arg_type_index.is_valid() && arg_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
 						const int param_size = static_cast<int>(param_type->size_in_bits());
 

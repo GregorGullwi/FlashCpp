@@ -151,35 +151,37 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	}
 
 	// Add base type code
-	switch (type_node.type()) {
-		case Type::Void: output += 'X'; break;
-		case Type::Bool: output += "_N"; break;  // bool
-		case Type::Char: output += 'D'; break;   // char
-		case Type::UnsignedChar: output += 'E'; break;  // unsigned char
-		case Type::WChar: output += "_W"; break;  // wchar_t (MSVC native type)
-		case Type::Char8: output += "_Q"; break;  // char8_t (C++20)
-		case Type::Char16: output += "_S"; break;  // char16_t
-		case Type::Char32: output += "_U"; break;  // char32_t
-		case Type::Short: output += 'F'; break;  // short
-		case Type::UnsignedShort: output += 'G'; break;  // unsigned short
-		case Type::Int: output += 'H'; break;    // int
-		case Type::UnsignedInt: output += 'I'; break;  // unsigned int
-		case Type::Long: output += 'J'; break;   // long
-		case Type::UnsignedLong: output += 'K'; break;  // unsigned long
-		case Type::LongLong: output += "_J"; break;  // long long
-		case Type::UnsignedLongLong: output += "_K"; break;  // unsigned long long
-		case Type::Float: output += 'M'; break;  // float
-		case Type::Double: output += 'N'; break;  // double
-		case Type::LongDouble: output += 'O'; break;  // long double
-		case Type::Struct:
-		case Type::UserDefined:
-		case Type::Enum: {
+	switch (type_node.category()) {
+		case TypeCategory::Void: output += 'X'; break;
+		case TypeCategory::Bool: output += "_N"; break;  // bool
+		case TypeCategory::Char: output += 'D'; break;   // char
+		case TypeCategory::UnsignedChar: output += 'E'; break;  // unsigned char
+		case TypeCategory::WChar: output += "_W"; break;  // wchar_t (MSVC native type)
+		case TypeCategory::Char8: output += "_Q"; break;  // char8_t (C++20)
+		case TypeCategory::Char16: output += "_S"; break;  // char16_t
+		case TypeCategory::Char32: output += "_U"; break;  // char32_t
+		case TypeCategory::Short: output += 'F'; break;  // short
+		case TypeCategory::UnsignedShort: output += 'G'; break;  // unsigned short
+		case TypeCategory::Int: output += 'H'; break;    // int
+		case TypeCategory::UnsignedInt: output += 'I'; break;  // unsigned int
+		case TypeCategory::Long: output += 'J'; break;   // long
+		case TypeCategory::UnsignedLong: output += 'K'; break;  // unsigned long
+		case TypeCategory::LongLong: output += "_J"; break;  // long long
+		case TypeCategory::UnsignedLongLong: output += "_K"; break;  // unsigned long long
+		case TypeCategory::Float: output += 'M'; break;  // float
+		case TypeCategory::Double: output += 'N'; break;  // double
+		case TypeCategory::LongDouble: output += 'O'; break;  // long double
+		case TypeCategory::Struct:
+		case TypeCategory::UserDefined:
+		case TypeCategory::TypeAlias:
+		case TypeCategory::Enum: {
 			// Struct/class types use format: V<name>@@ (V for class/struct)
 			// Enum types use format: W4<name>@@
+			// TypeAlias mangles the same as UserDefined (resolved struct/class reference)
 			// Get the type name from the global type registry
-			if (type_node.type_index().value < getTypeInfoCount()) {
+			if (type_node.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-				if (type_node.type() == Type::Enum) {
+				if (type_node.category() == TypeCategory::Enum) {
 					output += "W4";
 				} else {
 					output += 'V';
@@ -191,7 +193,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			}
 			break;
 		}
-		case Type::FunctionPointer: {
+		case TypeCategory::FunctionPointer: {
 			// MSVC function pointer: P6A<return><params>@Z
 			output += "P6A";
 			if (type_node.has_function_signature()) {
@@ -214,12 +216,12 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "@Z";
 			break;
 		}
-		case Type::Nullptr:
+		case TypeCategory::Nullptr:
 			// nullptr_t — encode as void pointer best-effort
 			output += "$$T";
 			break;
-		case Type::Auto:
-		case Type::DeclTypeAuto:
+		case TypeCategory::Auto:
+		case TypeCategory::DeclTypeAuto:
 			throw CompileError("MSVC name mangling: unresolved 'auto' type reached mangling");
 		default: throw CompileError("MSVC name mangling: unknown type — cannot generate valid symbol");
 	}
@@ -283,10 +285,10 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	}
 	
 	// Basic type codes (Itanium ABI section 5.1.5)
-	switch (type_node.type()) {
-		case Type::Void:       output += 'v'; break;
-		case Type::Bool:       output += 'b'; break;
-		case Type::Char:
+	switch (type_node.category()) {
+		case TypeCategory::Void:       output += 'v'; break;
+		case TypeCategory::Bool:       output += 'b'; break;
+		case TypeCategory::Char:
 			// Char can be signed or unsigned depending on qualifier
 			if (type_node.qualifier() == TypeQualifier::Unsigned) {
 				output += 'h';  // unsigned char
@@ -296,29 +298,30 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				output += 'c';  // plain char (implementation-defined signedness)
 			}
 			break;
-		case Type::UnsignedChar: output += 'h'; break;
-		case Type::WChar:      output += 'w'; break;   // wchar_t
-		case Type::Char8:      output += "Du"; break;  // char8_t (C++20)
-		case Type::Char16:     output += "Ds"; break;  // char16_t
-		case Type::Char32:     output += "Di"; break;  // char32_t
-		case Type::Short:      output += 's'; break;
-		case Type::UnsignedShort: output += 't'; break;
-		case Type::Int:        output += 'i'; break;
-		case Type::UnsignedInt: output += 'j'; break;
-		case Type::Long:       output += 'l'; break;
-		case Type::UnsignedLong: output += 'm'; break;
-		case Type::LongLong:   output += 'x'; break;
-		case Type::UnsignedLongLong: output += 'y'; break;
-		case Type::Float:      output += 'f'; break;
-		case Type::Double:     output += 'd'; break;
-		case Type::LongDouble: output += 'e'; break;
-		case Type::Struct:
-		case Type::UserDefined:
-		case Type::Enum: {
+		case TypeCategory::UnsignedChar: output += 'h'; break;
+		case TypeCategory::WChar:      output += 'w'; break;   // wchar_t
+		case TypeCategory::Char8:      output += "Du"; break;  // char8_t (C++20)
+		case TypeCategory::Char16:     output += "Ds"; break;  // char16_t
+		case TypeCategory::Char32:     output += "Di"; break;  // char32_t
+		case TypeCategory::Short:      output += 's'; break;
+		case TypeCategory::UnsignedShort: output += 't'; break;
+		case TypeCategory::Int:        output += 'i'; break;
+		case TypeCategory::UnsignedInt: output += 'j'; break;
+		case TypeCategory::Long:       output += 'l'; break;
+		case TypeCategory::UnsignedLong: output += 'm'; break;
+		case TypeCategory::LongLong:   output += 'x'; break;
+		case TypeCategory::UnsignedLongLong: output += 'y'; break;
+		case TypeCategory::Float:      output += 'f'; break;
+		case TypeCategory::Double:     output += 'd'; break;
+		case TypeCategory::LongDouble: output += 'e'; break;
+		case TypeCategory::Struct:
+		case TypeCategory::UserDefined:
+		case TypeCategory::TypeAlias:
+		case TypeCategory::Enum: {
 			// For structs/classes/enums, use the type name
 			// For nested types, we need to split the name into components
 			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
-			if (type_node.type_index().value < getTypeInfoCount()) {
+			if (type_node.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 				auto struct_name = StringTable::getStringView(type_info.name());
 				
@@ -360,7 +363,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			}
 			break;
 		}
-		case Type::FunctionPointer: {
+		case TypeCategory::FunctionPointer: {
 			// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
 			output += "PF";
 			if (type_node.has_function_signature()) {
@@ -384,12 +387,12 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			output += 'E';
 			break;
 		}
-		case Type::Nullptr:
+		case TypeCategory::Nullptr:
 			// nullptr_t is encoded as 'Dn' in Itanium ABI
 			output += "Dn";
 			break;
-		case Type::Auto:
-		case Type::DeclTypeAuto:
+		case TypeCategory::Auto:
+		case TypeCategory::DeclTypeAuto:
 				throw CompileError("Itanium name mangling: unresolved 'auto' type reached mangling");
 		default:
 			throw CompileError("Itanium name mangling: unknown type — cannot generate valid symbol");
@@ -565,15 +568,15 @@ inline void appendItaniumTypeTemplateArgs(
 			// Non-type template argument (value)
 			output += 'L';
 			// Use type code based on arg.base_type
-			switch (arg.base_type) {
-				case Type::Int: output += 'i'; break;
-				case Type::UnsignedInt: output += 'j'; break;
-				case Type::Long: output += 'l'; break;
-				case Type::UnsignedLong: output += 'm'; break;
-				case Type::LongLong: output += 'x'; break;
-				case Type::UnsignedLongLong: output += 'y'; break;
-				case Type::Bool: output += 'b'; break;
-				case Type::Char: output += 'c'; break;
+			switch (arg.category()) {
+				case TypeCategory::Int: output += 'i'; break;
+				case TypeCategory::UnsignedInt: output += 'j'; break;
+				case TypeCategory::Long: output += 'l'; break;
+				case TypeCategory::UnsignedLong: output += 'm'; break;
+				case TypeCategory::LongLong: output += 'x'; break;
+				case TypeCategory::UnsignedLongLong: output += 'y'; break;
+				case TypeCategory::Bool: output += 'b'; break;
+				case TypeCategory::Char: output += 'c'; break;
 				default: output += 'i'; break;  // Default to int
 			}
 			output += std::to_string(arg.value);
@@ -603,27 +606,28 @@ inline void appendItaniumTypeTemplateArgs(
 			}
 			
 			// Basic type code
-			switch (arg.base_type) {
-				case Type::Void:       output += 'v'; break;
-				case Type::Bool:       output += 'b'; break;
-				case Type::Char:       output += 'c'; break;
-				case Type::UnsignedChar: output += 'h'; break;
-				case Type::Short:      output += 's'; break;
-				case Type::UnsignedShort: output += 't'; break;
-				case Type::Int:        output += 'i'; break;
-				case Type::UnsignedInt: output += 'j'; break;
-				case Type::Long:       output += 'l'; break;
-				case Type::UnsignedLong: output += 'm'; break;
-				case Type::LongLong:   output += 'x'; break;
-				case Type::UnsignedLongLong: output += 'y'; break;
-				case Type::Float:      output += 'f'; break;
-				case Type::Double:     output += 'd'; break;
-				case Type::LongDouble: output += 'e'; break;
-				case Type::Struct:
-				case Type::UserDefined:
-				case Type::Enum: {
+			switch (arg.category()) {
+				case TypeCategory::Void:       output += 'v'; break;
+				case TypeCategory::Bool:       output += 'b'; break;
+				case TypeCategory::Char:       output += 'c'; break;
+				case TypeCategory::UnsignedChar: output += 'h'; break;
+				case TypeCategory::Short:      output += 's'; break;
+				case TypeCategory::UnsignedShort: output += 't'; break;
+				case TypeCategory::Int:        output += 'i'; break;
+				case TypeCategory::UnsignedInt: output += 'j'; break;
+				case TypeCategory::Long:       output += 'l'; break;
+				case TypeCategory::UnsignedLong: output += 'm'; break;
+				case TypeCategory::LongLong:   output += 'x'; break;
+				case TypeCategory::UnsignedLongLong: output += 'y'; break;
+				case TypeCategory::Float:      output += 'f'; break;
+				case TypeCategory::Double:     output += 'd'; break;
+				case TypeCategory::LongDouble: output += 'e'; break;
+				case TypeCategory::Struct:
+				case TypeCategory::UserDefined:
+				case TypeCategory::TypeAlias:
+				case TypeCategory::Enum: {
 					// For structs/classes/enums, use the type name from gTypeInfo
-					if (arg.type_index.value < getTypeInfoCount()) {
+					if (arg.type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(arg.type_index);
 						auto struct_name = StringTable::getStringView(type_info.name());
 						output += std::to_string(struct_name.size());
@@ -1393,7 +1397,7 @@ inline MangledName generateMangledNameFromNode(
 		}
 		
 		// Create a dummy TypeSpecifierNode for the return type (constructors return void)
-		TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
 		
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
@@ -1427,7 +1431,7 @@ inline MangledName generateMangledNameFromNode(
 		dtor_name += class_name;
 		
 		// Create a dummy TypeSpecifierNode for the return type (destructors return void)
-		TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
 		
 		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},

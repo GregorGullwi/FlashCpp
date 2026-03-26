@@ -440,7 +440,7 @@
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
 					// Get the struct info for the member's type
-					if (resolved_member->type_index.value < getTypeInfoCount()) {
+					if (resolved_member->type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
 						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 						if (member_struct_info) {
@@ -677,7 +677,7 @@
 		bool is_virtual_call = false;
 		int vtable_index = -1;
 
-		size_t struct_type_index = object_type.type_index().value;
+		size_t struct_type_index = object_type.type_index().index();
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 
@@ -721,7 +721,7 @@
 				if (!called_member_func && !struct_info->base_classes.empty()) {
 					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
-							if (base_spec.type_index.value < getTypeInfoCount()) {
+							if (base_spec.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
 								if (base_type_info.isStruct()) {
 									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -929,10 +929,7 @@
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
-								TemplateTypeArg type_arg;
-								type_arg.base_type = arg_type;
-								type_arg.type_index = arg_type_index;
-								type_args.push_back(type_arg);
+								type_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
 							}
 
 							// Evaluate the constraint with the template arguments
