@@ -43,7 +43,7 @@ namespace {
 		}
 
 		const auto& param_type = func_decl.parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-		if (param_type.type() != Type::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
+		if (param_type.category() != TypeCategory::Struct || !struct_info.isOwnTypeIndex(param_type.type_index())) {
 			return std::nullopt;
 		}
 
@@ -275,7 +275,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		|| type_node.is_member_function_pointer()
 		|| type_node.is_member_object_pointer()) {
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-	} else if (type_node.type() == Type::Struct && type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
+	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (struct_info) {
@@ -286,7 +286,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	} else {
 		value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 		if (!value.size_in_bits.is_set()) {
-			value.size_in_bits = SizeInBits{get_type_size_bits(type_node.type())};
+			value.size_in_bits = SizeInBits{get_type_size_bits(type_node.category())};
 		}
 	}
 	value.type_index = type_node.type_index();
@@ -466,13 +466,13 @@ TypedValue AstToIr::materializeDefaultArgument(
 	auto materializePlaceholderCtorDefault = [&](const ConstructorCallNode& ctor_call) -> std::optional<TypedValue> {
 		if (ctor_call.arguments().size() == 0 &&
 			ctor_call.type_node().is<TypeSpecifierNode>() &&
-			(ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::UserDefined ||
-			 ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::Struct ||
-			 ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::Template ||
+			(ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::UserDefined ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Struct ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Template ||
 			 isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
-			!is_struct_type(param_type_spec.type()) &&
-			param_type_spec.type() != Type::UserDefined) {
-			const int type_size_bits = get_type_size_bits(param_type_spec.type());
+			!is_struct_type(param_type_spec.category()) &&
+			param_type_spec.category() != TypeCategory::UserDefined) {
+			const int type_size_bits = get_type_size_bits(param_type_spec.category());
 			TypedValue concrete_default = is_floating_point_type(param_type_spec.type())
 				? makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0.0)
 				: makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0ULL);
@@ -1732,7 +1732,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.return_type = return_type.type();
 				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
-				if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index().is_valid()) {
+				if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
 					}
@@ -2983,7 +2983,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
 				// Check return type for self-referential struct
-				if (return_type.type() == Type::Struct && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount()) {
+				if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount()) {
 					auto& rti = getTypeInfo(return_type.type_index());
 					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
 						needs_resolution = true;
@@ -2993,7 +2993,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					for (const auto& param : func_node.parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
 							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-							if (pt.type() == Type::Struct && pt.type_index().is_valid() && pt.type_index().index() < getTypeInfoCount()) {
+							if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid() && pt.type_index().index() < getTypeInfoCount()) {
 								auto& ti = getTypeInfo(pt.type_index());
 								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 									needs_resolution = true;
@@ -4704,7 +4704,7 @@ std::string_view op) {
 			const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 			if (decl) {
 				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
-				if (is_struct_type(type_node.type())) {
+				if (is_struct_type(type_node.category())) {
 					TypeIndex type_index = type_node.type_index();
 					if (type_index.index() < getTypeInfoCount()) {
 						auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());

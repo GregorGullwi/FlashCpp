@@ -54,9 +54,9 @@
 						const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
 
 						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}",
-							is_struct_type(type_node.type()), type_node.type_index());
+							is_struct_type(type_node.category()), type_node.type_index());
 
-						if (is_struct_type(type_node.type()) && type_node.type_index().index() < getTypeInfoCount()) {
+						if (is_struct_type(type_node.category()) && type_node.type_index().index() < getTypeInfoCount()) {
 							TypeIndex type_index = type_node.type_index();
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_index,
@@ -418,7 +418,7 @@
 					const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 					if (member_decl_ptr) {
 						const auto& type_node = member_decl_ptr->type_node().as<TypeSpecifierNode>();
-							if (is_struct_type(type_node.type())) {
+							if (is_struct_type(type_node.category())) {
 							TypeIndex struct_type_index = type_node.type_index();
 								if (struct_type_index.index() < getTypeInfoCount()) {
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(
@@ -529,7 +529,7 @@
 				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 
 				// Capture type_index for struct types (important for member access on array elements)
-				if (type_node.type() == Type::Struct) {
+				if (type_node.category() == TypeCategory::Struct) {
 					element_type_index = type_node.type_index().index();
 				}
 
@@ -547,7 +547,7 @@
 						// Get the element size from type_node
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						// If still 0, compute from type info for struct types
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index != 0) {
 							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
@@ -578,7 +578,7 @@
 					} else {
 						// Single-level pointer/reference indexing yields the base object.
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index != 0) {
 							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
@@ -586,7 +586,7 @@
 							}
 						}
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(type_node.type());
+							element_size_bits = get_type_size_bits(type_node.category());
 						}
 					}
 					is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
@@ -630,7 +630,7 @@
 					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-						if (is_struct_type(type_node.type()) && type_node.type_index().index() < getTypeInfoCount()) {
+						if (is_struct_type(type_node.category()) && type_node.type_index().index() < getTypeInfoCount()) {
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_node.type_index(),
 								StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
@@ -803,7 +803,7 @@
 		// References and pointers are automatically dereferenced for member access
 		// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 		// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
-		bool is_valid_for_member_access = is_struct_type(object_type.type()) ||
+		bool is_valid_for_member_access = is_struct_type(object_type.category()) ||
 		(object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
 		if (!is_valid_for_member_access) {
 			FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
@@ -936,7 +936,7 @@
 			}
 
 				// Check if it's a struct with operator-> overload
-				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+				if (type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
 					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
 
 					if (overload_result.has_match) {
@@ -976,7 +976,7 @@
 						call_op.return_type = return_type.type();
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 						if (!call_op.return_size_in_bits.is_set()) {
-						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
+						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 						}
 						call_op.function_name = mangled_name;
 						call_op.is_variadic = false;
@@ -1441,7 +1441,7 @@
 		size_t element_size = type_spec.size_in_bits() / 8;
 
 		// For struct types, get size from gTypeInfo instead of size_in_bits()
-		if (element_size == 0 && type_spec.type() == Type::Struct) {
+		if (element_size == 0 && type_spec.category() == TypeCategory::Struct) {
 			size_t type_index = type_spec.type_index().index();
 			if (type_index < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1670,7 +1670,7 @@
 
 					// For regular variables, get the type size from the declaration
 					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-					if (var_type.type() == Type::Struct) {
+					if (var_type.category() == TypeCategory::Struct) {
 						size_t type_index = var_type.type_index().index();
 						if (type_index < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1691,7 +1691,7 @@
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
 						int size_bits = var_type.size_in_bits();
 						if (size_bits == 0) {
-							size_bits = get_type_size_bits(var_type.type());
+							size_bits = get_type_size_bits(var_type.category());
 						}
 						size_in_bytes = size_bits / 8;
 						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -1717,7 +1717,7 @@
 						if (decl) {
 							const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
 							FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
-							if (obj_type.type() == Type::Struct) {
+							if (obj_type.category() == TypeCategory::Struct) {
 								size_t type_index = obj_type.type_index().index();
 								if (type_index < getTypeInfoCount()) {
 									const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1801,11 +1801,11 @@
 							// Get the base element type size
 							size_t element_size = var_type.size_in_bits() / 8;
 							if (element_size == 0) {
-								element_size = get_type_size_bits(var_type.type()) / 8;
+								element_size = get_type_size_bits(var_type.category()) / 8;
 							}
 
 							// Handle struct element types
-							if (element_size == 0 && var_type.type() == Type::Struct) {
+							if (element_size == 0 && var_type.category() == TypeCategory::Struct) {
 								size_t type_index = var_type.type_index().index();
 								if (type_index < getTypeInfoCount()) {
 									const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1968,7 +1968,7 @@
 					if (decl) {
 						// Get the type alignment from the declaration
 						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-						if (var_type.type() == Type::Struct) {
+						if (var_type.category() == TypeCategory::Struct) {
 							size_t type_index = var_type.type_index().index();
 							if (type_index < getTypeInfoCount()) {
 								const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1981,7 +1981,7 @@
 							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
 							int size_bits = var_type.size_in_bits();
 							if (size_bits == 0) {
-								size_bits = get_type_size_bits(var_type.type());
+								size_bits = get_type_size_bits(var_type.category());
 							}
 							size_t size_in_bytes = size_bits / 8;
 							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
@@ -2030,7 +2030,7 @@
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		if (type_spec.type() != Type::Struct) {
+		if (type_spec.category() != TypeCategory::Struct) {
 			throw InternalError("offsetof requires a struct type");
 			return ExprResult{};
 		}

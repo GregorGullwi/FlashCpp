@@ -151,7 +151,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
-	if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
 
@@ -165,7 +165,7 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 	const bool is_xvalue_source = init_type.is_rvalue_reference();
 	init_type.set_reference_qualifier(ReferenceQualifier::None);
 
-	if (init_type.type() != Type::Struct || init_type.type_index() != target_type.type_index()) {
+	if (init_type.category() != TypeCategory::Struct || init_type.type_index() != target_type.type_index()) {
 		return std::nullopt;
 	}
 
@@ -528,7 +528,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-					if ((is_struct_type(type_node.type())) && !decl.is_array() && !type_node.is_array()
+					if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()
 						&& type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 						const StructTypeInfo* struct_info_ptr = getTypeInfo(type_node.type_index()).getStructInfo();
 						if (struct_info_ptr) {
@@ -548,7 +548,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if ((is_struct_type(type_node.type())) && type_node.type_index().is_valid() &&
+						if ((is_struct_type(type_node.category())) && type_node.type_index().is_valid() &&
 							type_node.type_index().index() < getTypeInfoCount()) {
 							const StructTypeInfo* elem_struct = getTypeInfo(type_node.type_index()).getStructInfo();
 							if (elem_struct) {
@@ -812,7 +812,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.is_initialized = true;
 						auto ctx = makeStaticStorageEvalContext();
 						auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-						if ((is_struct_type(type_node.type())) &&
+						if ((is_struct_type(type_node.category())) &&
 							eval_result.success() &&
 							type_node.type_index().is_valid()) {
 							const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
@@ -989,7 +989,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, *ull_val);
 					} else if (std::holds_alternative<double>(eval_result.value)) {
 						double d = std::get<double>(eval_result.value);
-						if (type_node.type() == Type::Float) {
+						if (type_node.category() == TypeCategory::Float) {
 							float f = static_cast<float>(d);
 							uint32_t bits;
 							std::memcpy(&bits, &f, sizeof(float));
@@ -1083,7 +1083,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For scalar types with direct initialization like int v(10),
 				// the InitializerListNode will have a single element. Handle this case.
-				if (type_node.type() != Type::Struct && init_list.initializers().size() == 1) {
+				if (type_node.category() != TypeCategory::Struct && init_list.initializers().size() == 1) {
 					// Direct initialization of scalar type: int v(10) or int v{10}
 					// Extract the single initializer and treat it as a regular expression initializer
 					const ASTNode& single_init = init_list.initializers()[0];
@@ -1126,7 +1126,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 					// Check if this struct has a constructor
-					if (type_node.type() == Type::Struct) {
+					if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index = type_node.type_index();
 						if (type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1183,7 +1183,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 													if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
 														const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
 														// Check if initializer is of the same struct type
-														if (init_type.type() == Type::Struct &&
+														if (init_type.category() == TypeCategory::Struct &&
 															init_type.type_index() == type_index) {
 															init_is_same_struct_type = true;
 														}
@@ -1452,7 +1452,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 						}
 					}
-					}  // end if (type_node.type() == Type::Struct)
+					}  // end if (type_node.category() == TypeCategory::Struct)
 				}  // end else (struct initialization)
 				return; // Early return - we've already added the variable declaration
 			} else if (init_node.is<LambdaExpressionNode>()) {
@@ -1497,7 +1497,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
+				if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
@@ -1505,7 +1505,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 
 				// References don't use copy constructors - they bind to the address of the initializer
-				bool is_copy_init_for_struct = (type_node.type() == Type::Struct &&
+				bool is_copy_init_for_struct = (type_node.category() == TypeCategory::Struct &&
 				type_node.pointer_depth() == 0 &&
 				!type_node.is_reference() &&
 				!type_node.is_rvalue_reference() &&
@@ -1775,7 +1775,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+				if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 					struct_info_ptr = getTypeInfo(type_node.type_index()).struct_info_.get();
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
@@ -1817,7 +1817,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// If this is a struct type with a constructor, generate a constructor call
 		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
-		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
+		if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
 			if (type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1899,7 +1899,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
 														const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 														// Check if argument is of the same struct type
-														if (arg_type.type() == Type::Struct &&
+														if (arg_type.category() == TypeCategory::Struct &&
 															arg_type.type_index() == type_node.type_index()) {
 															arg_is_same_struct_type = true;
 														}

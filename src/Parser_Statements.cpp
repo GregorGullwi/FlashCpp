@@ -738,7 +738,7 @@ ParseResult Parser::parse_variable_declaration()
 	first_var_decl.set_initializer(first_init_expr);
 
 	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
-	if (type_specifier.type() == Type::Struct && !type_specifier.is_pointer() &&
+	if (type_specifier.category() == TypeCategory::Struct && !type_specifier.is_pointer() &&
 	    first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		const auto& init_list = first_init_expr->as<InitializerListNode>();
 		if (init_list.initializers().empty()) {
@@ -959,7 +959,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		auto initializer = init_expr_result.node();
 
 		// If the type is auto, deduce the type from the initializer
-		if (type_specifier.type() == Type::Auto && initializer.has_value()) {
+		if (type_specifier.category() == TypeCategory::Auto && initializer.has_value()) {
 			// IMPORTANT: Save the original reference and CV qualifiers before type deduction
 			// Auto type deduction replaces the entire TypeSpecifierNode, which would lose
 			// qualifiers set during parsing (e.g., const auto&, auto&&)
@@ -1039,7 +1039,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				type_specifier.set_cv_qualifier(original_cv_qual);
 			}
 		}
-		else if (type_specifier.type() == Type::DeclTypeAuto && initializer.has_value()) {
+		else if (type_specifier.category() == TypeCategory::DeclTypeAuto && initializer.has_value()) {
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (!deduced_type_spec_opt.has_value()) {
 				throw CompileError(std::string(StringBuilder()
@@ -1051,7 +1051,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			type_specifier = *deduced_type_spec_opt;
 			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
 				!type_specifier.is_reference()) {
-				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.type()));
+				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.category()));
 			}
 		}
 		
@@ -1062,7 +1062,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 // Check if a type name is std::initializer_list (or just initializer_list in std namespace)
 // Returns the element type index if it is, or nullopt otherwise
 std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNode& type_spec) const {
-	if (type_spec.type() != Type::Struct) {
+	if (type_spec.category() != TypeCategory::Struct) {
 		return std::nullopt;
 	}
 	
@@ -1279,8 +1279,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// Handle scalar type brace initialization (C++11): int x = {10}; or int x{};
 	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
 	// Note: Template instantiations are stored as Type::UserDefined, so we need to check if it's a struct-like type
-	bool is_struct_like_type = (type_specifier.type() == Type::Struct);
-	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined) {
+	bool is_struct_like_type = (type_specifier.category() == TypeCategory::Struct);
+	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template)) {
 		// Check if this UserDefined type is actually a struct (e.g., instantiated template)
 		TypeIndex type_index = type_specifier.type_index();
 		if (type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).struct_info_) {
@@ -1290,7 +1290,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// In template bodies, dependent UserDefined types (e.g., node_type, value_type) may not have
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
 	// to allow multi-element brace-init lists like: return { expr1, expr2 };
-	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined &&
+	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template) &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
 	}
@@ -1303,14 +1303,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
 			
 			// Use 0.0 for floating point types, 0ULL for integral types
-			if (type_specifier.type() == Type::Double || type_specifier.type() == Type::Float) {
+			if (type_specifier.category() == TypeCategory::Double || type_specifier.category() == TypeCategory::Float) {
 				auto zero_expr = emplace_node<ExpressionNode>(
-					NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+					NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category()))
 				);
 				return ParseResult::success(zero_expr);
 			} else {
 				auto zero_expr = emplace_node<ExpressionNode>(
-					NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.type()))
+					NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category()))
 				);
 				return ParseResult::success(zero_expr);
 			}
@@ -1689,25 +1689,25 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 					// Compare types (allowing for implicit conversions in some cases)
 					// For enum class types, we need exact match (no implicit conversions)
-					if (param_type->type() == Type::Enum && arg_type.type() == Type::Enum) {
+					if (param_type->category() == TypeCategory::Enum && arg_type.category() == TypeCategory::Enum) {
 						// Enum types must match exactly by type_index
 						if (param_type->type_index() != arg_type.type_index()) {
 							types_match = false;
 						}
-					} else if (param_type->type() != arg_type.type()) {
+					} else if (param_type->category() != arg_type.category()) {
 						// Different base types - check for compatible integer/enum types
 						// Allow enum -> int conversions for scoped enums passed as their underlying type
 						bool compatible = false;
-						if (arg_type.type() == Type::Enum &&
-							(param_type->type() == Type::Int || param_type->type() == Type::UnsignedInt ||
-							 param_type->type() == Type::Long || param_type->type() == Type::UnsignedLong)) {
+						if (arg_type.category() == TypeCategory::Enum &&
+							(param_type->category() == TypeCategory::Int || param_type->category() == TypeCategory::UnsignedInt ||
+							 param_type->category() == TypeCategory::Long || param_type->category() == TypeCategory::UnsignedLong)) {
 							// Enum to integer conversion (for scoped enum underlying type)
 							compatible = true;
 						}
 						if (!compatible) {
 							types_match = false;
 						}
-					} else if (is_struct_type(param_type->type())) {
+					} else if (is_struct_type(param_type->category())) {
 						// For user-defined/struct types, check type_index
 						if (param_type->type_index() != arg_type.type_index()) {
 							types_match = false;
@@ -1984,7 +1984,7 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 	// CTAD only applies to unresolved template class names, not already-instantiated structs.
 	// When explicit template args are provided (e.g., Processor<char>), the type has a valid
 	// type_index_ from template instantiation, so CTAD should not override it.
-	if (!is_struct_type(type_specifier.type())) {
+	if (!is_struct_type(type_specifier.category())) {
 		return false;
 	}
 

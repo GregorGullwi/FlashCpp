@@ -435,7 +435,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Expand into N individual parameters (args_0, args_1, ...) and populate
 			// pack_param_info_ so body/initializer pack expansions produce correct names.
 			bool handled_as_pack = false;
-			if (param_decl.is_parameter_pack() && param_type_spec.type() == Type::UserDefined) {
+			if (param_decl.is_parameter_pack() && (param_type_spec.category() == TypeCategory::UserDefined || param_type_spec.category() == TypeCategory::TypeAlias || param_type_spec.category() == TypeCategory::Template)) {
 				std::string_view type_name = param_type_spec.token().value();
 				size_t non_variadic = 0;
 				size_t pack_size = 0;
@@ -765,7 +765,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 					
 					// Simple case: default is void
-					if (default_type.type() == Type::Void) {
+					if (default_type.category() == TypeCategory::Void) {
 						TemplateTypeArg void_arg;
 						void_arg.type_index = TypeIndex{0, TypeCategory::Void};
 						filled_args_for_pattern_match.push_back(void_arg);
@@ -787,7 +787,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const ASTNode& target_type = alias_node.target_type();
 						if (target_type.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
-							if (alias_type_spec.type() == Type::Void) {
+							if (alias_type_spec.category() == TypeCategory::Void) {
 								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
 								void_arg.type_index = TypeIndex{0, TypeCategory::Void};
@@ -800,7 +800,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					
 					// Check if this is a dependent qualified type (like wrapper<T>::type)
 					// that needs resolution based on already-filled template arguments
-					if (default_type.type() == Type::UserDefined && default_type.type_index().is_valid() && 
+					if ((default_type.category() == TypeCategory::UserDefined || default_type.category() == TypeCategory::TypeAlias || default_type.category() == TypeCategory::Template) && default_type.type_index().is_valid() && 
 					    default_type.type_index().index() < getTypeInfoCount()) {
 						const TypeInfo& default_type_info = getTypeInfo(default_type.type_index());
 						std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
@@ -905,7 +905,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								// Try to get the type name from the token first (most reliable for template params)
 								if (type_spec.token().type() == Token::Type::Identifier) {
 									type_name = type_spec.token().value();
-								} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+								} else if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().index() < getTypeInfoCount()) {
 									// Fall back to gTypeInfo for fully resolved types
 									const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 									type_name = StringTable::getStringView(type_info.name());
@@ -1332,7 +1332,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					bool resolved = false;
 					if (arg_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
-						if ((is_struct_type(ts.type())) && ts.type_index().index() < getTypeInfoCount()) {
+						if ((is_struct_type(ts.category())) && ts.type_index().index() < getTypeInfoCount()) {
 							std::string_view tname = StringTable::getStringView(getTypeInfo(ts.type_index()).name());
 							auto it = spec_name_subst_map.find(tname);
 							if (it != spec_name_subst_map.end()) {
@@ -2138,7 +2138,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			int substituted_size = alias_type_spec.size_in_bits();
 			
 			// Check if the alias type is a template parameter that needs substitution
-			if (alias_type_spec.type() == Type::UserDefined && !template_args.empty() && !pattern_args.empty()) {
+			if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template) && !template_args.empty() && !pattern_args.empty()) {
 				// The alias_type_spec.type_index() identifies which template parameter this is
 				// We need to find which pattern_arg corresponds to this template parameter,
 				// then map to the corresponding template_arg
@@ -2632,7 +2632,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if this is a dependent qualified type (like wrapper<T>::type)
 				// that needs resolution based on already-filled template arguments
 				bool resolved = false;
-				if (default_type.type() == Type::UserDefined && default_type.type_index().is_valid() && 
+				if ((default_type.category() == TypeCategory::UserDefined || default_type.category() == TypeCategory::TypeAlias || default_type.category() == TypeCategory::Template) && default_type.type_index().is_valid() && 
 				    default_type.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& default_type_info = getTypeInfo(default_type.type_index());
 					std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
@@ -2894,7 +2894,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Try to get the type name from the token first (most reliable for template params)
 							if (type_spec.token().type() == Token::Type::Identifier) {
 								sizeof_type_name = type_spec.token().value();
-							} else if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+							} else if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().index() < getTypeInfoCount()) {
 								// Fall back to gTypeInfo for fully resolved types
 								const TypeInfo& sizeof_type_info = getTypeInfo(type_spec.type_index());
 								sizeof_type_name = StringTable::getStringView(sizeof_type_info.name());
@@ -3433,7 +3433,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								} else if (targ_node.is<TypeSpecifierNode>()) {
 									const TypeSpecifierNode& type_spec = targ_node.as<TypeSpecifierNode>();
-									if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+									if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().index() < getTypeInfoCount()) {
 										std::string_view type_name = StringTable::getStringView(getTypeInfo(type_spec.type_index()).name());
 										auto subst_it = name_substitution_map.find(type_name);
 										if (subst_it != name_substitution_map.end()) {
@@ -5193,7 +5193,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 								
 								// If the alias resolves to a template parameter, substitute it
-								if (alias_type_spec.type() == Type::UserDefined) {
+								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
 									// Try to substitute the alias target
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
@@ -5615,7 +5615,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 								
 								// If the alias resolves to a template parameter, substitute it
-								if (alias_type_spec.type() == Type::UserDefined) {
+								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
 									);
@@ -5905,7 +5905,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Check return type
 			{
 				const auto& rtype = decl_node.type_node().as<TypeSpecifierNode>();
-				if (rtype.type() == Type::UserDefined) {
+				if ((rtype.category() == TypeCategory::UserDefined || rtype.category() == TypeCategory::TypeAlias || rtype.category() == TypeCategory::Template)) {
 					needs_substitution = true;
 				}
 			}
@@ -5914,7 +5914,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& param : func_decl.parameter_nodes()) {
 					if (param.is<DeclarationNode>()) {
 						const auto& ptype = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						if (ptype.type() == Type::UserDefined) {
+						if ((ptype.category() == TypeCategory::UserDefined || ptype.category() == TypeCategory::TypeAlias || ptype.category() == TypeCategory::Template)) {
 							needs_substitution = true;
 							break;
 						}
