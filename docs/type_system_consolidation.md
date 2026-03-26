@@ -696,17 +696,6 @@ only one nearby holdout at a time. The next piece of work should likely be recur
 alias canonicalization for unresolved `Type::UserDefined` chains before classification,
 without mixing in broader `Type` cleanup.
 
-**Suggested agent prompt for the next piece of work**:
-
-> Continue Milestone 7 from `docs/type_system_consolidation.md` by isolating recursive
-> alias canonicalization into its own PR. Add focused tests for chained
-> `using`/`typedef` aliases that currently survive as `Type::UserDefined`, especially in
-> overload resolution and reference binding. Then update only the alias-resolution
-> helpers and the closest `buildConversionPlan` callers needed to canonicalize
-> `UserDefined -> UserDefined -> concrete type` chains, preserving all existing
-> conversion and parse-time fallback semantics. Do not batch unrelated `Type::`
-> migration.
-
 ### 7.3 Enum exhaustiveness is not enforced for classification helpers
 
 The `constexpr` switch-based helpers (`is_primitive_type`, `is_builtin_type`,
