@@ -51,7 +51,7 @@
 				Token enum_type_token(Token::Type::Identifier,
 					StringTable::getStringView(enum_name), 0, 0, 0);
 				auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					TypeCategory::Enum, enum_type_index, enum_info->underlying_size, enum_type_token);
+					Type::Enum, enum_type_index, enum_info->underlying_size, enum_type_token);
 
 				// Create a declaration node for the enumerator
 				Token enumerator_token(Token::Type::Identifier,
