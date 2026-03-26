@@ -652,8 +652,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		TemplateTypeArg resolved_arg;
-		resolved_arg.setType(resolved_base_type);
-		resolved_arg.type_index = TypeIndex{resolved_type_index};
+		resolved_arg.type_index = TypeIndex::fromTypeAndIndex(resolved_base_type, resolved_type_index);
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
 		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
@@ -769,8 +768,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Simple case: default is void
 					if (default_type.type() == Type::Void) {
 						TemplateTypeArg void_arg;
-						void_arg.setType(Type::Void);
-						void_arg.type_index = TypeIndex{};
+						void_arg.type_index = TypeIndex{0, TypeCategory::Void};
 						filled_args_for_pattern_match.push_back(void_arg);
 						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
 						continue;
@@ -793,8 +791,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (alias_type_spec.type() == Type::Void) {
 								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
-								void_arg.setType(Type::Void);
-								void_arg.type_index = TypeIndex{};
+								void_arg.type_index = TypeIndex{0, TypeCategory::Void};
 								filled_args_for_pattern_match.push_back(void_arg);
 								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
 								continue;
@@ -1372,8 +1369,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.setType(type_it->second->type_);
-									a.type_index = type_it->second->type_index_;
+									a.type_index = TypeIndex::fromTypeAndIndex(type_it->second->type_, type_it->second->type_index_);
 									resolved_args.push_back(a);
 									resolved = true;
 								}
@@ -3294,8 +3290,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
-									inst_arg.setType(Type::Struct);
-									inst_arg.type_index = inst_it->second->type_index_;
+									inst_arg.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, inst_it->second->type_index_);
 									inst_arg.pointer_depth = type_spec.pointer_depth();
 									inst_arg.ref_qualifier = type_spec.reference_qualifier();
 									inst_arg.cv_qualifier = type_spec.cv_qualifier();

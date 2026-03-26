@@ -1197,8 +1197,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-								type_arg.setType(type_it->second->type_);
-								type_arg.type_index = type_it->second->type_index_;
+								type_arg.type_index = TypeIndex::fromTypeAndIndex(type_it->second->type_, type_it->second->type_index_);
 								concept_args.push_back(type_arg);
 							}
 						}
@@ -1217,8 +1216,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					TemplateTypeArg type_arg;
-					type_arg.setType(type_spec.type());
-					type_arg.type_index = type_spec.type_index();
+					type_arg.type_index = TypeIndex::fromTypeAndIndex(type_spec.type(), type_spec.type_index());
 					type_arg.ref_qualifier = type_spec.reference_qualifier();
 					type_arg.pointer_depth = type_spec.pointer_depth();
 					type_arg.cv_qualifier = type_spec.cv_qualifier();
