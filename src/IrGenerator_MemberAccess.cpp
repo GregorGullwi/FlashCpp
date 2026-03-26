@@ -1180,7 +1180,7 @@
 		// Try to find by direct index lookup
 		if (base_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(base_type_index);
-			if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+			if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		}
@@ -1190,7 +1190,7 @@
 		if (!type_info) {
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					type_info = &ti;
 					break;
 				}
@@ -1205,13 +1205,13 @@
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+				if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.index() << ")\n";
 				}
 			}
 			std::cerr << "  Available types in getTypesByNameMap():\n";
 			for (const auto& [name, ti] : getTypesByNameMap()) {
-				if (isIrStructType(toIrType(ti->type_))) {
+				if (isIrStructType(toIrType(*ti))) {
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_.index() << ")\n";
 				}
 			}

@@ -25,7 +25,7 @@
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
 | 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
-| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 All `TypeSpecifierNode::type()` sites migrated; `TypeInfo::category()/resolvedType()/isVoid()` added; all alias-traversal and classification sites migrated; `TypeSpecifierNode` fp-pointer helpers use `category()`; `ConstExprEvaluator_Core` constructor switches use `TypeCategory`. Remaining: IRConverter/IrType codegen switch-dispatch on `Type` + `current_function_return_type_` field + `Type` deletion |
+| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 All `TypeSpecifierNode::type()` sites migrated; all `TypeInfo::type_` alias-traversal sites migrated; `toIrType(TypeCategory)` and `toIrType(TypeInfo)` overloads added; `IrGenerator_MemberAccess` TypeInfo.type_ reads use `toIrType(ti)`. Remaining: `current_function_return_type_` (Type field in IRConverter) migration + eventual `Type` deletion |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
 
@@ -603,7 +603,9 @@ These steps can be split into separate PRs once Milestone 6 is merged.
 - [x] Migrate `TypeSpecifierNode::is_function_pointer()`, `is_member_function_pointer()`, `is_member_object_pointer()` to use `category()`.
 - [x] Migrate `TypeSpecifierNode::getReadableString()` switch to `TypeCategory` (with new `TypeAlias` case); add `getTypeName(TypeCategory)` overload.
 - [x] Migrate `ConstExprEvaluator_Core.cpp` constructor-call switch statements to `TypeCategory`.
-- [ ] Migrate codegen switch-dispatch sites on `Type` in `IRConverter_ConvertMain.cpp`, `IrType.cpp` (current_function_return_type_, etc.).
+- [x] Add `toIrType(TypeCategory)` overload that delegates via `categoryToType()`; add `toIrType(const TypeInfo&)` overload using `resolvedType()` for correct alias resolution.
+- [x] Migrate `toIrType(ti.type_)` direct `TypeInfo::type_` reads in `IrGenerator_MemberAccess.cpp` to `toIrType(ti)`.
+- [ ] Migrate `current_function_return_type_` (`Type` field in `IRConverter_ConvertMain.h`) and its comparison/dispatch sites in `IRConverter_ConvertMain.cpp` and `IrGenerator_Visitors_Namespace.cpp` to `TypeCategory`. This is the last substantive use of raw `Type` outside of the `Type`-first constructor paths.
 - [ ] Delete the `Type` enum once all references are gone.
 
 ### `Type::Template` decision (immediate)

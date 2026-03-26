@@ -5,6 +5,7 @@
 #include <ostream>
 #include <string_view>
 
+#include "AstNodeTypes_DeclNodes.h"
 #include "AstNodeTypes_TypeSystem.h"
 
 // ============================================================================
@@ -47,6 +48,16 @@ enum class IrType : int_fast16_t {
 //   this function is called.  Hitting those cases is a compiler bug.
 // ============================================================================
 IrType toIrType(Type semantic_type);
+
+// TypeCategory overload — delegates via categoryToType().
+// For TypeCategory::TypeAlias, this returns IrType::Struct (Type::UserDefined).
+// Callers that need alias-resolved IR type should use toIrType(TypeInfo) below.
+inline IrType toIrType(TypeCategory cat) { return toIrType(categoryToType(cat)); }
+
+// TypeInfo overload — uses resolvedType() for correct alias resolution.
+// For primitive-aliased TypeInfo entries, this returns IrType::Integer instead
+// of IrType::Struct that a naive category() lookup would give.
+inline IrType toIrType(const TypeInfo& ti) { return toIrType(ti.resolvedType()); }
 
 // ============================================================================
 // IrType classification helpers
