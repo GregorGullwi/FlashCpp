@@ -3131,7 +3131,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
 				} else {
 					const TypeInfo& concrete_type = getTypeInfo(concrete_arg.type_index);
-					if (concrete_type.type_ != Type::Struct) {
+					if (!concrete_type.isStruct()) {
 						FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
 					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
 						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
@@ -3154,7 +3154,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
 						if (pack_arg.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& concrete_type = getTypeInfo(pack_arg.type_index);
-							if (concrete_type.type_ == Type::Struct &&
+							if (concrete_type.isStruct() &&
 							    !(concrete_type.struct_info_ && concrete_type.struct_info_->is_final)) {
 								struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), pack_arg.type_index, base.access, base.is_virtual);
 								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type.name_), "'");

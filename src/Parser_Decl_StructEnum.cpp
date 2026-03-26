@@ -668,7 +668,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					
 					resolved_type = &underlying;
 					// If we've reached a concrete struct type, we're done
-					if (underlying.type_ == Type::Struct) break;
+					if (underlying.isStruct()) break;
 				}
 				
 				// Use the resolved underlying type name as the base class

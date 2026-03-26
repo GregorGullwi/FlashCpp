@@ -811,8 +811,17 @@ struct TypeInfo
 		template_args_ = std::move(args);
 	}
 
+	// Returns the TypeCategory embedded in type_index_. For types registered via
+	// add_struct_type / add_enum_type / register_type_alias / etc. this is always
+	// correct. For legacy TypeInfo entries built before Milestone 7 (TypeCategory
+	// embedding), category() falls back to typeToCategory(type_).
+	TypeCategory category() const {
+		TypeCategory cat = type_index_.category();
+		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
+	}
+
 	// Helper methods for struct types
-	bool isStruct() const { return type_ == Type::Struct; }
+	bool isStruct() const { return category() == TypeCategory::Struct; }
 	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
@@ -824,7 +833,7 @@ struct TypeInfo
 	}
 
 	// Helper methods for enum types
-	bool isEnum() const { return type_ == Type::Enum; }
+	bool isEnum() const { return category() == TypeCategory::Enum; }
 	const EnumTypeInfo* getEnumInfo() const { return enum_info_.get(); }
 	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
 
@@ -835,17 +844,16 @@ struct TypeInfo
 		enum_info_ = std::move(info);
 	}
 
-	// Classification helpers that read from type_ — no gTypeInfo lookup needed.
-	// isStructLike: includes Type::UserDefined because UserDefined entries either
-	// (a) are opaque user types (e.g. __builtin_va_list), or
-	// (b) are type aliases for another UserDefined type — in both cases the
-	//     effective underlying type is struct-like.  Aliases to primitives are
-	//     stored with the primitive's Type (e.g. Type::UnsignedLongLong for
-	//     `using size_t = unsigned long long`), so they do NOT appear as UserDefined.
+	// Classification helpers.
+	// isStructLike: reads type_ (the effective/resolved type) because TypeAlias
+	// entries store the resolved type in type_ (e.g. Type::UnsignedLongLong for
+	// `using size_t = unsigned long long`). Aliases to primitives do NOT appear as
+	// UserDefined, so UserDefined means either an opaque user type or an alias to
+	// another UserDefined type — both struct-like.
 	bool isStructLike()          const { return type_ == Type::Struct || type_ == Type::UserDefined; }
 	bool isPrimitive()           const { return is_primitive_type(type_); }
 	bool needsTypeIndex()        const { return needs_type_index(type_); }
-	bool isTemplatePlaceholder() const { return type_ == Type::Template; }
+	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 

@@ -732,7 +732,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// Resolve type aliases: if base_type_info points to another type (type alias),
 	// follow the chain to find the actual struct type
 	size_t max_alias_depth = 10;  // Prevent infinite loops
-	while (base_type_info->type_ != Type::Struct && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
+	while (!base_type_info->isStruct() && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
 		const TypeInfo& underlying = getTypeInfo(base_type_info->type_index_);
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
@@ -759,7 +759,7 @@ ParseResult Parser::validate_and_add_base_class(
 	}
 	
 	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders OR dependent type aliases
-	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && base_type_info->type_ != Type::Struct) {
+	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && !base_type_info->isStruct()) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
 	}
 
