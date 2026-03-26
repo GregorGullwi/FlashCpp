@@ -139,7 +139,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					}
 					decl_op.initializer = init_value;
 					decl_op.use_copy_constructor = !type_node.is_reference() &&
-					                               type_node.type() == Type::Struct &&
+					                               type_node.category() == TypeCategory::Struct &&
 					                               type_index.is_valid();
 
 					decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -260,7 +260,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			if (!catch_scope_stack_.empty()) {
 				bool needs_materialization =
-					expr_type == Type::Struct &&
+					typeToCategory(expr_type) == TypeCategory::Struct &&
 					!is_rvalue &&
 					(std::holds_alternative<StringHandle>(exception_value) ||
 					 (std::holds_alternative<TempVar>(exception_value) &&

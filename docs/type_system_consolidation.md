@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-26  
-**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 Steps 1–7 in progress: `TypeCategory` enum defined, embedded in `TypeIndex`, TypeCategory-based helpers added, `TypeIndex` internal field renamed to `index_`, `TemplateTypeArg::base_type` and `TypeInfo::TemplateArgInfo::base_type` removed (relying on `type_index.category()`), pattern matching fixed for `TypeCategory::Invalid`. Remaining: `TypeCreationResult`, `gNativeTypes` re-keying, bulk `Type::` site migration, and `Type` deletion.  
+**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 mechanical work is largely complete: `TypeCategory` is embedded in `TypeIndex`, TypeCategory-based helpers are in place, `TypeIndex` now uses `index_`, `TemplateTypeArg::base_type` and `TypeInfo::TemplateArgInfo::base_type` are removed, `TypeCreationResult` now covers the `add_*` helpers plus `add_empty_type_entry()`, `gNativeTypes` is keyed by `TypeCategory`, and the first file-by-file `Type::` → `TypeCategory::` migrations have landed. Remaining: mixed `Type` + `TypeIndex` hot-spot cleanup, broader `Type::` site migration, the separate `buildConversionPlan` migration PR, and eventual `Type` deletion.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -21,11 +21,11 @@
 | 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ✅ Done (`Type::Count_` + static_assert) |
 | 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
 | 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ⬜ TODO |
-| 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ⬜ TODO |
+| 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ✅ Done |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
 | 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
 | 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
-| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 Steps 1–7 in progress; `TypeCategory` embedded, helpers added, `TemplateTypeArg::base_type` / `TemplateArgInfo::base_type` removed, `TypeIndex::value` renamed to `index_`; site migration + `Type` deletion TODO |
+| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 Core mechanical steps landed: `TypeCreationResult` propagation, `gNativeTypes` re-keying, and the first bulk `Type::` → `TypeCategory::` migrations are done; broad remaining-site cleanup + `Type` deletion TODO |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
 
@@ -127,9 +127,9 @@ These are the most important sites for a future Option C migration:
   - All `x == Type::Struct || x == Type::Enum || x == Type::UserDefined` (or negated) → `needs_type_index(x)` / `!needs_type_index(x)`
 - Made `binaryOperatorUsesTypeIndexIdentity` and `carriesSemanticTypeIndex` delegate to `needs_type_index` instead of repeating the disjunction.
 
-### Remaining Option A TODOs
+### Completed Option A TODOs (historical)
 
-These are the straightforward next cleanups that do **not** require architectural changes:
+These were the straightforward cleanups that originally remained after Phase 1. They are now complete, but the rationale is preserved here because later milestones still rely on the helper boundaries they introduced.
 
 **TODO 1 — Add `is_builtin_type(Type)`**  
 Replace the two `arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer` range checks in `Parser_Core.cpp:65` and `Parser_Templates_Inst_Deduction.cpp:32`. The intent is "this type has a valid `get_type_size_bits()` answer". A constexpr switch-based helper avoids the enum-ordering dependency.
@@ -490,7 +490,7 @@ Once all references to `Type::` are gone, delete the old `Type` enum.
 
 2. **`TypeInfo::TemplateArgInfo::base_type` is also `Type`** — The lightweight template arg storage in `TypeInfo` (`src/AstNodeTypes_DeclNodes.h:769`) has the same dual-field pattern. Same migration challenge.
 
-3. **`gNativeTypes` key type** — `gNativeTypes` is `std::unordered_map<Type, const TypeInfo*>` (`src/AstNodeTypes.cpp:72`). It would need to become `unordered_map<TypeCategory, const TypeInfo*>` or be replaced entirely by the `findNativeType(cat)` accessor.
+3. **`gNativeTypes` key type** — done. `gNativeTypes` is now keyed on `TypeCategory`, and native-type call sites should use `findNativeType(cat)` / the TypeCategory-keyed accessor instead of `Type`.
 
 4. **`is_valid()` rename** — The current `TypeIndex::is_valid()` returns `value > 0` (a sentinel/null check). The proposal renames this to `isNull()` and defines a new `isValid()` as a runtime bounds check. This rename touches every one of the 455+ sites that currently call `.is_valid()`. Many of those sites really want the sentinel check, not the bounds check — careful inspection is needed at each site.
 
@@ -550,7 +550,7 @@ The updated recommendation relative to the previous version of this document:
 - [ ] Replace the alias-resolution pattern in `AstNodeTypes_DeclNodes.h:837-845` with explicit `TypeInfo` helper calls.
 - [ ] **Sub-milestone 3a**: Migrate `buildConversionPlan` separately with dedicated test coverage (see §7.2). Do not batch this with mechanical helper replacements.
 - [ ] Upgrade `resolve_type_alias()` to chase alias chains (bounded depth) or document why the shallow version is intentional (see §7.1 option b).
-- [ ] Document `buildConversionPlan` as a legitimate `Type`-primary consumer — do not attempt to migrate its core dispatch to `TypeIndex` (see §7.2).
+- [x] Document `buildConversionPlan` as a legitimate `Type`-primary consumer — do not attempt to migrate its core dispatch to `TypeIndex` in bulk-migration PRs (see §7.2).
 
 #### Milestone 4 — Settle `Type::Template` (Option C Step D)
 
@@ -573,7 +573,7 @@ This is a behavior-preserving PR that establishes the encapsulation boundary for
 - [x] Replace all external `gTypeInfo[x.value]` reads with `getTypeInfo(x)`, mutable accesses with `getTypeInfoMut(x)`, `gTypeInfo.size()` with `getTypeInfoCount()`.
 - [x] Replace external `gTypesByName` access with `findTypeByName()` / `getTypesByNameMap()`, external `gNativeTypes` access with `findNativeType()` / `getNativeTypesMap()`.
 - [x] Remove `extern` declarations of `gTypeInfo`, `gTypesByName`, `gNativeTypes` from `AstNodeTypes_DeclNodes.h` so no new code can access them directly.
-- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred to Milestone 7).
+- [x] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}`. `add_empty_type_entry()` now follows the same pattern so placeholder creation sites no longer recompute `TypeIndex{getTypeInfoCount() - 1}`.
 
 #### Milestone 7 (Option D Steps 1-3) — Introduce `TypeCategory` and unify identity
 
@@ -589,9 +589,9 @@ These steps can be split into separate PRs once Milestone 6 is merged.
 - [x] Migrate `TemplateTypeArg::base_type` from `Type` field to relying entirely on `type_index.category()`. Field removed; `setType(Type)` / `setCategory(TypeCategory)` / `typeEnum()` / `category()` accessors added.
 - [x] Migrate `TypeInfo::TemplateArgInfo::base_type` similarly — field removed; `category()` / `typeEnum()` accessors delegate to `type_index.category()`.
 - [x] Fix `TemplateRegistry_Pattern.h` pattern matching for `TypeCategory::Invalid` pattern args (outer `matches()` and `matchNestedArg()` now handle `Invalid`-category placeholder args correctly, including non-type inner parameter deduction).
-- [ ] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred from Milestone 6). This enables callers to receive a `TypeIndex{pos, TypeCategory::TypeAlias}` for aliases without computing `gTypeInfo.size()-1` themselves.
-- [ ] Re-key `gNativeTypes` from `Type` to `TypeCategory`; add `findNativeType(TypeCategory)` overload; migrate all `getNativeTypesMap().find(type)` call sites in `IRTypes_Instructions.h` to `TypeCategory`.
-- [ ] Migrate remaining `Type::` sites to `TypeCategory::`/`TypeIndex` queries file by file. Use compile errors to track remaining sites.
+- [x] Change `add_struct_type`, `add_enum_type`, `add_user_type`, `register_type_alias` to return `TypeCreationResult {TypeInfo& info; TypeIndex index;}` (deferred from Milestone 6). This now lands together with `add_empty_type_entry()` returning `TypeCreationResult`, eliminating the `TypeIndex{getTypeInfoCount() - 1}` placeholder antipattern in the audited call sites.
+- [x] Re-key `gNativeTypes` from `Type` to `TypeCategory`; remove the old `Type`-keyed map/overload; migrate the `IRTypes_Instructions.h` / `IRTypes_Ops.h` native-type lookups to `findNativeType(TypeCategory)`.
+- [ ] Migrate remaining `Type::` sites to `TypeCategory::`/`TypeIndex` queries file by file. Initial batches landed in `IRTypes_Instructions.h`, `IrGenerator_Stmt_TryCatchSeh.cpp`, `IrGenerator.h`, `IrGenerator_Stmt_Control.cpp`, `IrGenerator_Lambdas.cpp`, and `Parser_Expr_ControlFlowStmt.cpp`; continue file-by-file rather than batching semantic hot spots.
 - [ ] Delete the `Type` enum once all references are gone.
 
 ### `Type::Template` decision (immediate)
@@ -673,6 +673,12 @@ These are not mechanical replacements — each branch encodes a specific C++20 c
 rule. Migrating them to `TypeInfo` query helpers requires understanding the conversion
 semantics, not just the classification API. This should be treated as a separate,
 carefully tested milestone rather than part of a bulk migration.
+
+**Status (2026-03-26): documented holdout.** The surrounding mechanical Milestone 7 work
+has landed, but `buildConversionPlan` remains intentionally `Type`-primary for now.
+Bulk `Type::` → `TypeCategory::` migration PRs should explicitly skip it and reference
+this section instead. A future PR should change only `buildConversionPlan` (and its
+closest callers), with dedicated conversion-coverage tests added in the same patch.
 
 **Recommendation**: Add a dedicated sub-milestone under Milestone 3 for
 `buildConversionPlan` specifically, with its own test plan covering:
@@ -804,5 +810,3 @@ category (or that the arg is in a legitimately-unset state like default-construc
 or `is_template_template_arg`).  This is a larger refactor (~100+ direct `.type_index =`
 sites on `TemplateTypeArg`) but would make the anti-pattern a compile error rather than
 a runtime assert.
-
-

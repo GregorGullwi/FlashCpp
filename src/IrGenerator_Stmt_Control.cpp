@@ -689,7 +689,7 @@
 		if (array_type.pointer_depth() > 0) {
 			// Array of pointers - element size is pointer size (64 bits)
 			element_size_bits = 64;
-		} else if (array_type.type() == Type::Struct) {
+		} else if (array_type.category() == TypeCategory::Struct) {
 			// Array of structs - lookup size from type info
 			TypeIndex type_index = array_type.type_index();
 			if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
