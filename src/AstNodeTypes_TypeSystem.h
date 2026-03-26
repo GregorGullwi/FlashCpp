@@ -912,6 +912,12 @@ inline std::string_view getTypeName(Type t) {
 	}
 }
 
+/// TypeCategory overload — delegates via categoryToType so callers migrated to
+/// TypeCategory can use the same helper without a round-trip to Type.
+inline std::string_view getTypeName(TypeCategory cat) {
+	return getTypeName(categoryToType(cat));
+}
+
 /// Helper function to determine if a Type is signed (for MOVSX vs MOVZX)
 /// MSVC treats char as signed by default.
 inline bool isSignedType(Type t) {

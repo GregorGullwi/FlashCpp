@@ -3627,11 +3627,11 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						int max_depth = 10;  // Prevent infinite loops from circular aliases
 						while (resolved_type == Type::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
 							const TypeInfo& alias_type_info = getTypeInfo(current_type_index);
-							if (alias_type_info.type_ != Type::Void && alias_type_info.type_ != Type::UserDefined) {
-								resolved_type = alias_type_info.type_;
+							if (!alias_type_info.isVoid() && alias_type_info.resolvedType() != Type::UserDefined) {
+								resolved_type = alias_type_info.resolvedType();
 								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
 								break;
-							} else if (alias_type_info.type_ == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
+							} else if (alias_type_info.resolvedType() == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
 								// Follow the chain of aliases
 								current_type_index = alias_type_info.type_index_;
 							} else {

@@ -637,16 +637,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const TypeInfo* resolved_type_info = resolved_type_it->second;
 		
 		// Get the resolved type, following aliases if needed
-		Type resolved_base_type = resolved_type_info->type_;
+		Type resolved_base_type = resolved_type_info->resolvedType();
 		TypeIndex resolved_type_index = resolved_type_info->type_index_;
 		
 		// Check if this is an alias to a concrete type
-		if (resolved_type_info->type_ == Type::UserDefined && 
+		if (resolved_type_info->resolvedType() == Type::UserDefined && 
 		    resolved_type_index != resolved_type_info->type_index_ && 
 		    resolved_type_index.index() < getTypeInfoCount()) {
 			// Follow the alias
 			const TypeInfo& aliased_type = getTypeInfo(resolved_type_index);
-			resolved_base_type = aliased_type.type_;
+			resolved_base_type = aliased_type.resolvedType();
 			resolved_type_index = aliased_type.type_index_;
 		}
 		

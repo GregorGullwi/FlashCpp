@@ -1318,43 +1318,44 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		// For struct types, this is valid - it's default initialization
 		// Return a success result with default value (0 for integers, false for bool, etc.)
 		// This allows the constructor call to be used for template argument deduction
-		switch (type_spec.type()) {
-			case Type::Bool:
+		switch (type_spec.category()) {
+			case TypeCategory::Bool:
 				{
 					EvalResult result = EvalResult::from_bool(false);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Char:
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
+			case TypeCategory::Char:
+			case TypeCategory::Short:
+			case TypeCategory::Int:
+			case TypeCategory::Long:
+			case TypeCategory::LongLong:
 				{
 					EvalResult result = EvalResult::from_int(0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
+			case TypeCategory::UnsignedChar:
+			case TypeCategory::UnsignedShort:
+			case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong:
+			case TypeCategory::UnsignedLongLong:
 				{
 					EvalResult result = EvalResult::from_uint(0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
+			case TypeCategory::Float:
+			case TypeCategory::Double:
+			case TypeCategory::LongDouble:
 				{
 					EvalResult result = EvalResult::from_double(0.0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Struct:
-			case Type::UserDefined:
+			case TypeCategory::Struct:
+			case TypeCategory::UserDefined:
+			case TypeCategory::TypeAlias:
 				// For struct types, return a success result with value 0
 				// This indicates successful default construction
 				return EvalResult::from_int(0);
@@ -1621,18 +1622,18 @@ EvalResult Evaluator::evaluate_new_expression(
 		auto arg_result = eval_arg(ctor_args[0]);
 		if (!arg_result.success()) return arg_result;
 		// Apply the type conversion to the evaluated value.
-		switch (type_spec.type()) {
-			case Type::Bool:
+		switch (type_spec.category()) {
+			case TypeCategory::Bool:
 				init_val = EvalResult::from_bool(arg_result.as_bool());
 				break;
-			case Type::Char: case Type::Short: case Type::Int: case Type::Long: case Type::LongLong:
+			case TypeCategory::Char: case TypeCategory::Short: case TypeCategory::Int: case TypeCategory::Long: case TypeCategory::LongLong:
 				init_val = EvalResult::from_int(arg_result.as_int());
 				break;
-			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
-			case Type::UnsignedLong: case Type::UnsignedLongLong:
+			case TypeCategory::UnsignedChar: case TypeCategory::UnsignedShort: case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong: case TypeCategory::UnsignedLongLong:
 				init_val = EvalResult::from_uint(arg_result.as_uint_raw());
 				break;
-			case Type::Float: case Type::Double: case Type::LongDouble:
+			case TypeCategory::Float: case TypeCategory::Double: case TypeCategory::LongDouble:
 				init_val = EvalResult::from_double(arg_result.as_double());
 				break;
 			default:

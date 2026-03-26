@@ -1323,8 +1323,8 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex ty
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
 		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (type_info.type_ != Type::Invalid && type_info.type_ != Type::Void) {
-				effective_type = type_info.type_;
+			if (type_info.resolvedType() != Type::Invalid && !type_info.isVoid()) {
+				effective_type = type_info.resolvedType();
 			} else if (effective_type == Type::Invalid || effective_type == Type::Void) {
 				effective_type = Type::Struct;
 			}

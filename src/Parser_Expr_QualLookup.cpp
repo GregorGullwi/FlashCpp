@@ -753,7 +753,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// In template bodies, a UserDefined type alias (e.g., _Tp_alloc_type) may resolve to a struct
 	// at instantiation time. Treat it as a deferred base class.
 	bool is_dependent_type_alias = false;
-	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ == Type::UserDefined &&
+	if (!is_template_param && !is_dependent_placeholder && base_type_info->resolvedType() == Type::UserDefined &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_dependent_type_alias = true;
 	}
@@ -984,7 +984,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// This requires a valid type_index to look up the alias info
 			if (!found_match && result_type_index.is_valid() && result_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(result_type_index);
-				if (type_info.type_ == Type::UserDefined && type_info.type_index_ != result_type_index) {
+				if (type_info.resolvedType() == Type::UserDefined && type_info.type_index_ != result_type_index) {
 					// This is a type alias - recursively check what it resolves to
 					if (type_info.type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& alias_target_info = getTypeInfo(type_info.type_index_);

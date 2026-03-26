@@ -845,12 +845,16 @@ struct TypeInfo
 	}
 
 	// Classification helpers.
-	// isStructLike: reads type_ (the effective/resolved type) because TypeAlias
-	// entries store the resolved type in type_ (e.g. Type::UnsignedLongLong for
-	// `using size_t = unsigned long long`). Aliases to primitives do NOT appear as
-	// UserDefined, so UserDefined means either an opaque user type or an alias to
-	// another UserDefined type — both struct-like.
-	bool isStructLike()          const { return type_ == Type::Struct || type_ == Type::UserDefined; }
+	// isStructLike: checks category() for the declared kind.  TypeAlias entries
+	// whose resolved (effective) type is a struct/UserDefined are treated as
+	// struct-like because struct-info traversal must follow alias chains.
+	// resolvedType() returns type_, the effective/resolved underlying type, which
+	// is what alias-traversal loops should read rather than type_ directly.
+	Type resolvedType()          const { return type_; }
+	bool isStructLike()          const { return category() == TypeCategory::Struct
+	                                         || category() == TypeCategory::UserDefined
+	                                         || (isTypeAlias() && type_ == Type::UserDefined); }
+	bool isVoid()                const { return type_ == Type::Void; }
 	bool isPrimitive()           const { return is_primitive_type(type_); }
 	bool needsTypeIndex()        const { return needs_type_index(type_); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
@@ -917,10 +921,12 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 	while (current_type_index.is_valid() &&
 		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
-		if (type_info.type_ != Type::Void && type_info.type_ != Type::UserDefined) {
-			return {type_info.type_, type_info.type_index_};
+		// resolvedType() returns the effective underlying type stored in type_.
+		// Stop when we reach a concrete non-void non-UserDefined type.
+		if (!type_info.isVoid() && type_info.resolvedType() != Type::UserDefined) {
+			return {type_info.resolvedType(), type_info.type_index_};
 		}
-		if (type_info.type_ != Type::UserDefined ||
+		if (type_info.resolvedType() != Type::UserDefined ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -1131,9 +1137,9 @@ public:
 	}
 
 	// Function pointer support
-	bool is_function_pointer() const { return type_ == Type::FunctionPointer; }
-	bool is_member_function_pointer() const { return type_ == Type::MemberFunctionPointer; }
-	bool is_member_object_pointer() const { return type_ == Type::MemberObjectPointer; }
+	bool is_function_pointer() const { return category() == TypeCategory::FunctionPointer; }
+	bool is_member_function_pointer() const { return category() == TypeCategory::MemberFunctionPointer; }
+	bool is_member_object_pointer() const { return category() == TypeCategory::MemberObjectPointer; }
 	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }

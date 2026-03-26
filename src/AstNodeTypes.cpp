@@ -639,24 +639,25 @@ std::string TypeSpecifierNode::getReadableString() const {
     }
 
     // Add base type name
-    std::string_view name = getTypeName(type_);
+    std::string_view name = getTypeName(category());
     if (!name.empty()) {
         oss << name;
     } else {
         // getTypeName returns "" for non-primitive types; provide fallback names
-        switch (type_) {
-            case Type::UserDefined: oss << "user_defined"; break;
-            case Type::Auto: oss << "auto"; break;
-            case Type::DeclTypeAuto: oss << "decltype(auto)"; break;
-            case Type::Function: oss << "function"; break;
-            case Type::Struct: oss << "struct"; break;
-            case Type::Enum: oss << "enum"; break;
-            case Type::FunctionPointer: oss << "function_pointer"; break;
-            case Type::MemberFunctionPointer: oss << "member_function_pointer"; break;
-            case Type::MemberObjectPointer: oss << "member_object_pointer"; break;
-            case Type::Nullptr: oss << "nullptr_t"; break;
-            case Type::Template: oss << "template"; break;
-            case Type::Invalid: oss << "invalid"; break;
+        switch (category()) {
+            case TypeCategory::UserDefined: oss << "user_defined"; break;
+            case TypeCategory::Auto: oss << "auto"; break;
+            case TypeCategory::DeclTypeAuto: oss << "decltype(auto)"; break;
+            case TypeCategory::Function: oss << "function"; break;
+            case TypeCategory::Struct: oss << "struct"; break;
+            case TypeCategory::Enum: oss << "enum"; break;
+            case TypeCategory::TypeAlias: oss << "type_alias"; break;
+            case TypeCategory::FunctionPointer: oss << "function_pointer"; break;
+            case TypeCategory::MemberFunctionPointer: oss << "member_function_pointer"; break;
+            case TypeCategory::MemberObjectPointer: oss << "member_object_pointer"; break;
+            case TypeCategory::Nullptr: oss << "nullptr_t"; break;
+            case TypeCategory::Template: oss << "template"; break;
+            case TypeCategory::Invalid: oss << "invalid"; break;
             default: oss << "unknown"; break;
         }
     }
