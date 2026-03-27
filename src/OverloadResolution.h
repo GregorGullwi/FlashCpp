@@ -1572,8 +1572,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	return OperatorOverloadResult(best_candidates[0]->member_func);
 }
 
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
-	TypeCategory effective_right_type = typeToCategory(right_type);
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
+	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
 		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
@@ -1818,9 +1818,9 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	OverloadableOperator operator_kind,
 	std::string_view operator_symbol,
 	const SymbolTable& symbol_table,
-	Type right_type)
+		TypeCategory right_type)
 {
-	TypeCategory effective_right_type = typeToCategory(right_type);
+	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
 		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
