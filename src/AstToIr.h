@@ -76,8 +76,12 @@ private:
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		StringHandle store_name;
-		Type type = Type::Void;
+		// TypeCategory is embedded in type_index; default = Void to preserve original sentinel.
+		TypeIndex type_index = TypeIndex::fromTypeAndIndex(Type::Void, TypeIndex{});
 		SizeInBits size_in_bits;
+
+		// Returns the legacy Type enum derived from the embedded TypeCategory.
+		Type bindingType() const { return categoryToType(type_index.category()); }
 	};
 
 

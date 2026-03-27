@@ -368,8 +368,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-		Type from_resolved = from_canonical.type;
-		Type to_resolved = to_canonical.type;
+		Type from_resolved = from_canonical.typeEnum();
+		Type to_resolved = to_canonical.typeEnum();
 		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
 		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
 
@@ -481,8 +481,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.type;
-				Type to_base = to_canonical.type;
+				Type from_base = from_canonical.typeEnum();
+				Type to_base = to_canonical.typeEnum();
 				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
 				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
@@ -537,8 +537,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.type;
-				Type to_base = to_canonical.type;
+				Type from_base = from_canonical.typeEnum();
+				Type to_base = to_canonical.typeEnum();
 				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
 				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
 				bool types_match = (from_base == to_base);
@@ -588,8 +588,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-			Type from_resolved = from_canonical.type;
-			Type to_resolved = to_canonical.type;
+			Type from_resolved = from_canonical.typeEnum();
+			Type to_resolved = to_canonical.typeEnum();
 			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
 			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
 			
@@ -648,8 +648,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-	Type from_type = from_canonical.type;
-	Type to_type = to_canonical.type;
+	Type from_type = from_canonical.typeEnum();
+	Type to_type = to_canonical.typeEnum();
 	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_type, from_canonical.type_index);
 	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_type, to_canonical.type_index);
 	const TypeCategory from_type_category = typeToCategory(from_type);

@@ -78,7 +78,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		}
 
 		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
-		info.type = ts.type();
+		info.type_index = TypeIndex::fromTypeAndIndex(ts.type(), TypeIndex{});
 		info.size_in_bits = SizeInBits{ts.size_in_bits()};
 	};
 
@@ -104,7 +104,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		info.is_global_or_static = true;
 		info.store_name = it->second.mangled_name;
-		info.type = it->second.type();
+		info.type_index = TypeIndex::fromTypeAndIndex(it->second.type(), TypeIndex{});
 		info.size_in_bits = it->second.size_in_bits;
 		return info;
 	}
@@ -139,7 +139,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
 		if (static_member) {
-			info.type = static_member->memberType();
+			info.type_index = TypeIndex::fromTypeAndIndex(static_member->memberType(), TypeIndex{});
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
 		}
 		return info;
@@ -156,7 +156,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 	if (static_local_it != static_local_names_.end()) {
 		info.is_global_or_static = true;
 		info.store_name = static_local_it->second.mangled_name;
-		info.type = static_local_it->second.type();
+		info.type_index = TypeIndex::fromTypeAndIndex(static_local_it->second.type(), TypeIndex{});
 		info.size_in_bits = static_local_it->second.size_in_bits;
 		return info;
 	}
@@ -892,8 +892,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
 		TempVar result_temp = var_counter.next();
 		GlobalLoadOp load_op;
-			load_op.result.setType(binding.type);
-			load_op.result.ir_type = toIrType(binding.type);
+			load_op.result.setType(binding.bindingType());
+			load_op.result.ir_type = toIrType(binding.bindingType());
 			load_op.result.size_in_bits = binding.size_in_bits;
 			load_op.result.value = result_temp;
 			load_op.global_name = binding.store_name;
@@ -901,9 +901,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
-				binding.type, binding.size_in_bits.value));
+				binding.bindingType(), binding.size_in_bits.value));
 
-		return makeExprResult(binding.type, binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(binding.bindingType(), binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	};
 
 	auto tryGetGlobalLValueName = [&](const ExprResult& expr_result) -> std::optional<StringHandle> {
@@ -927,18 +927,18 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static && !isIrStructType(toIrType(gsi.type))) {
+				if (gsi.is_global_or_static && !isIrStructType(toIrType(gsi.bindingType()))) {
 					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					ExprResult rhsExprResult = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 					// Phase 15: sema should annotate global/static assignment conversions.
-					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
-						rhsExprResult.typeEnum() != gsi.type && gsi.type != Type::Void) {
-						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(gsi.type))
-							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.type)) + ")");
-						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.typeEnum(), gsi.type, binaryOperatorNode.get_token());
+					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.bindingType()) &&
+						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.bindingType() != Type::Void) {
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(gsi.bindingType()))
+							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
+						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.typeEnum(), gsi.bindingType(), binaryOperatorNode.get_token());
 					}
 
 					// Materialize the final assigned value into a stack temp before GlobalStore.
@@ -947,7 +947,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar store_temp = var_counter.next();
 					AssignmentOp assign_op;
 					assign_op.result = store_temp;
-					assign_op.lhs.setType(gsi.type);
+					assign_op.lhs.setType(gsi.bindingType());
 					assign_op.lhs.size_in_bits = gsi.size_in_bits;
 					assign_op.lhs.value = store_temp;
 					assign_op.rhs = toTypedValue(rhsExprResult);
@@ -974,12 +974,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static && gsi.type != Type::Void && gsi.size_in_bits.is_set()) {
+				if (gsi.is_global_or_static && gsi.bindingType() != Type::Void && gsi.size_in_bits.is_set()) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.setType(gsi.type);
-					load_op.result.ir_type = toIrType(gsi.type);
+					load_op.result.setType(gsi.bindingType());
+					load_op.result.ir_type = toIrType(gsi.bindingType());
 					load_op.result.size_in_bits = gsi.size_in_bits;
 					load_op.result.value = loaded;
 					load_op.global_name = gsi.store_name;
@@ -1000,19 +1000,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// All other operators use usual arithmetic conversions per [expr.ass]/7.
 					const bool is_shift_op = (op == "<<=" || op == ">>=");
 					const Type commonType = is_shift_op
-						? promote_integer_type(gsi.type)
-						: get_common_type(gsi.type, rhs_result.type);
+						? promote_integer_type(gsi.bindingType())
+						: get_common_type(gsi.bindingType(), rhs_result.type);
 
 					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
-					if (is_shift_op && is_floating_point_type(gsi.type))
+					if (is_shift_op && is_floating_point_type(gsi.bindingType()))
 						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 
-					ExprResult lhs_operand = makeExprResult(gsi.type, gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-					if (gsi.type != commonType) {
+					ExprResult lhs_operand = makeExprResult(gsi.bindingType(), gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					if (gsi.bindingType() != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
-							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.type) && is_standard_arithmetic_type(commonType))
-							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
-							lhs_operand = generateTypeConversion(lhs_operand, gsi.type, commonType, binaryOperatorNode.get_token());
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(gsi.bindingType()) && is_standard_arithmetic_type(commonType))
+							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.bindingType())) + " -> " + std::string(getTypeName(commonType)) + ")");
+							lhs_operand = generateTypeConversion(lhs_operand, gsi.bindingType(), commonType, binaryOperatorNode.get_token());
 						}
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -1070,15 +1070,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Convert result back to global's type if needed
 					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-					if (commonType != gsi.type) {
+					if (commonType != gsi.bindingType()) {
 						// Phase 17: verify sema annotated the back-conversion.
 						if (sema_ && sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type)) {
+							is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.bindingType())) {
 							auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 							if (!back_conv.has_value())
-								throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.type)) + ")");
+								throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 						}
-						op_result = generateTypeConversion(op_result, commonType, gsi.type, binaryOperatorNode.get_token());
+						op_result = generateTypeConversion(op_result, commonType, gsi.bindingType(), binaryOperatorNode.get_token());
 					}
 
 					// Materialize the conversion result into a stack-flushed temporary
@@ -1091,7 +1091,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					{
 						AssignmentOp mat;
 						mat.result = store_temp;
-						mat.lhs = { gsi.type, gsi.size_in_bits, store_temp };
+						mat.lhs = { gsi.bindingType(), gsi.size_in_bits, store_temp };
 						mat.rhs = toTypedValue(op_result);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(mat), binaryOperatorNode.get_token()));
 					}
@@ -2501,7 +2501,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				GlobalStaticBindingInfo binding;
 				binding.is_global_or_static = true;
 				binding.store_name = *global_name;
-				binding.type = lhsType;
+				binding.type_index = TypeIndex::fromTypeAndIndex(lhsType, TypeIndex{});
 				binding.size_in_bits = SizeInBits{lhsSize};
 				return makeGlobalAssignmentResultLValue(binding);
 			}

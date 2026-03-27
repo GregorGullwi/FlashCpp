@@ -248,15 +248,15 @@
 			{
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 				if (binding_info.is_global_or_static &&
-					binding_info.type != Type::Void &&
+					binding_info.bindingType() != Type::Void &&
 					binding_info.size_in_bits.is_set()) {
 					AddressComponents result;
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
-					result.final_type = binding_info.type;
+					result.final_type = binding_info.bindingType();
 					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
 					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
-					result.final_type_index = TypeIndex::fromTypeAndIndex(binding_info.type, {});
+					result.final_type_index = TypeIndex::fromTypeAndIndex(binding_info.bindingType(), {});
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
@@ -580,7 +580,7 @@
 
 			if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-				if (binding_info.is_global_or_static && binding_info.type != Type::Void && binding_info.size_in_bits.is_set()) {
+				if (binding_info.is_global_or_static && binding_info.bindingType() != Type::Void && binding_info.size_in_bits.is_set()) {
 					int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 						? 64
 						: static_cast<int>(type_node->size_in_bits());

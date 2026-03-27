@@ -38,9 +38,10 @@
 | 4 | `current_function_return_type_index_` default → `{0, TypeCategory::Void}` | ✅ Done |
 | 4 | Fix `evaluate_constructor_call` missing `WChar/Char8/Char16/Char32` switch cases | ✅ Done |
 | 5 | Migrate `ExprResult::type` field to pure `IrType`+`TypeCategory` (remove `Type type` from `ExprResult`) | ⬜ TODO — largest remaining step |
-| 5 | Migrate `StaticMemberDecl::type` field to `TypeIndex`-only | ⬜ TODO |
-| 5 | Migrate `CanonicalTypeAlias::type` and `TemplateArgumentValue::type` to `TypeCategory`/`TypeIndex` | ⬜ TODO |
-| 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ⬜ TODO |
+| 5 | Migrate `StaticMemberDecl::type` field to `TypeIndex`-only | ✅ Done — constructor stamps `TypeIndex::fromTypeAndIndex`; `memberType()` derives from `type_index.category()` |
+| 5 | Migrate `CanonicalTypeAlias::type` to `TypeCategory` | ✅ Done — `type_cat` field + `typeEnum()` accessor; 14 read sites updated |
+| 5 | Migrate `TemplateArgumentValue::type` to `TypeCategory`/`TypeIndex` | ✅ Done — `type_index` carries category; `typeEnum()` accessor; `makeType()`/`makeValue()` stamp TypeCategory |
+| 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ✅ Done — `type_index` field with Void default; `bindingType()` accessor; 5 write + ~30 read sites updated |
 | 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ⬜ TODO |
 | 5 | Port all remaining switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp` to `TypeCategory`/`IrType` | ⬜ TODO (~100 sites) |
 | 5 | Port Parser and ConstExpr local `Type type = …` variables to `TypeCategory`/`TypeIndex` (~250 sites) | ⬜ TODO |
@@ -58,10 +59,10 @@
 | Struct | File | Notes |
 |--------|------|-------|
 | `ExprResult::type` | `src/IROperandHelpers.h:83` | **Biggest remaining field** — used by all IR generators; needs `IrType`+`TypeCategory` replacement (Phase 5) |
-| `GlobalStaticBindingInfo::type` | `src/AstToIr.h:79` | Semantic struct; intentional read site; migrate to `TypeIndex` |
-| `CanonicalTypeAlias::type` | `src/AstNodeTypes_DeclNodes.h:903` | Local alias-chain output; migrate to `TypeCategory`/`TypeIndex` |
-| `TemplateArgumentValue::type` | `src/TemplateRegistry_Types.h:121` | Template arg representation; migrate to `TypeCategory`/`TypeIndex` |
-| `StaticMemberDecl::type` | `src/AstNodeTypes_Template.h:741` | Has `memberType()` forwarder; drop raw `Type type` field |
+| ~~`GlobalStaticBindingInfo::type`~~ | ~~`src/AstToIr.h:79`~~ | ✅ Done — migrated to `type_index` + `bindingType()` |
+| ~~`CanonicalTypeAlias::type`~~ | ~~`src/AstNodeTypes_DeclNodes.h:903`~~ | ✅ Done — migrated to `type_cat` (TypeCategory) + `typeEnum()` |
+| ~~`TemplateArgumentValue::type`~~ | ~~`src/TemplateRegistry_Types.h:121`~~ | ✅ Done — TypeCategory embedded in `type_index`; `typeEnum()` accessor |
+| ~~`StaticMemberDecl::type`~~ | ~~`src/AstNodeTypes_Template.h:741`~~ | ✅ Done — constructor stamps `TypeIndex::fromTypeAndIndex`; `memberType()` derives from category |
 | `Parser::ConstantValue::type` | `src/Parser.h:797` | Parser-internal literal constant; migrate to `TypeCategory` |
 | `TypedNumeric::type` | `src/Parser.h:1565` | Numeric literal type tag; migrate to `TypeCategory` |
 | `ElfFileWriter::CFIInstruction::Type` | `src/ElfFileWriter.h:368` | **Not the compiler Type enum** — local nested enum for CFI opcodes; no migration needed |

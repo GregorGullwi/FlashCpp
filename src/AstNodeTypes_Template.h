@@ -738,8 +738,7 @@ struct TypeAliasDecl {
 // Static member declaration (for AST storage in templates/partial specializations)
 struct StaticMemberDecl {
 	StringHandle name;            // The member name
-	Type type;                    // The member type
-	TypeIndex type_index;         // Type index for user-defined types
+	TypeIndex type_index;         // Type index for user-defined types (TypeCategory embedded)
 	size_t size;                  // Size in bytes
 	size_t alignment;             // Alignment requirement
 	AccessSpecifier access;       // Access specifier (public/private/protected)
@@ -748,12 +747,13 @@ struct StaticMemberDecl {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	int pointer_depth = 0;        // Pointer indirection level (e.g., int* = 1, int** = 2)
 
-	Type memberType() const { return type; }
+	// Returns the legacy Type enum derived from the embedded TypeCategory.
+	Type memberType() const { return categoryToType(type_index.category()); }
 
 	StaticMemberDecl(StringHandle name_, Type type_, TypeIndex type_index_, size_t size_, size_t alignment_,
 	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
 	                 ReferenceQualifier ref_qual_ = ReferenceQualifier::None, int ptr_depth_ = 0)
-		: name(name_), type(type_), type_index(type_index_), size(size_), alignment(alignment_),
+		: name(name_), type_index(TypeIndex::fromTypeAndIndex(type_, type_index_)), size(size_), alignment(alignment_),
 		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
 		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
 };

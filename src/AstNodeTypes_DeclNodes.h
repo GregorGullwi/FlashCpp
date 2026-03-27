@@ -901,8 +901,15 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	Type type = Type::Invalid;
+	TypeCategory type_cat = TypeCategory::Invalid;
 	TypeIndex type_index {};
+
+	// Implicit conversion constructor: stamp TypeCategory from the legacy Type.
+	CanonicalTypeAlias(Type t, TypeIndex idx)
+		: type_cat(typeToCategory(t)), type_index(idx) {}
+
+	// Returns the legacy Type value derived from the embedded TypeCategory.
+	Type typeEnum() const { return categoryToType(type_cat); }
 };
 
 // Canonicalize chained typedef / using aliases represented as Type::UserDefined.
@@ -938,7 +945,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 }
 
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return canonicalize_type_alias(type, type_index).type;
+	return canonicalize_type_alias(type, type_index).typeEnum();
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});

@@ -118,33 +118,37 @@ enum class MemberPointerKind : uint8_t {
 // Provides a lightweight representation that can be reused across different contexts
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
-	Type type = Type::Invalid;
-	TypeIndex type_index {};
+	TypeIndex type_index {};   // TypeCategory is embedded in the index (replaces raw Type field)
 	int64_t value = 0;
-	
+
+	// Returns the legacy Type enum derived from the embedded TypeCategory.
+	Type typeEnum() const { return categoryToType(type_index.category()); }
+
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
+	static TemplateArgumentValue makeType(Type t, TypeIndex idx) {
 		TemplateArgumentValue v;
-		v.type = t;
-		v.type_index = idx;
+		v.type_index = TypeIndex::fromTypeAndIndex(t, idx);
 		return v;
 	}
-	
-	static TemplateArgumentValue makeValue(int64_t val, Type value_type = Type::Int) {
+
+	static TemplateArgumentValue makeValue(int64_t val, Type value_type) {
 		TemplateArgumentValue v;
-		v.type = value_type;
+		v.type_index = TypeIndex::fromTypeAndIndex(value_type, TypeIndex{});
 		v.value = val;
 		return v;
 	}
-	
+
 	bool operator==(const TemplateArgumentValue& other) const {
-		return type == other.type && 
-		       type_index == other.type_index && 
+		// TypeIndex::operator== compares only the index_ slot, not the embedded
+		// category.  We must check category explicitly to distinguish e.g. Type::Int
+		// from Type::Float when both are stored with index_==0 (no gTypeInfo entry).
+		return type_index.category() == other.type_index.category() &&
+		       type_index == other.type_index &&
 		       value == other.value;
 	}
-	
+
 	size_t hash() const {
-		size_t h = std::hash<int>{}(static_cast<int>(type));
+		size_t h = std::hash<int>{}(static_cast<int>(type_index.category()));
 		h ^= std::hash<TypeIndex>{}(type_index) << 1;
 		h ^= std::hash<int64_t>{}(value) << 2;
 		return h;
