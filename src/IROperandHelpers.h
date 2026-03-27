@@ -80,48 +80,41 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 struct ExprResult {
-	Type type = Type::Void;
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrOperand value{};
-	TypeIndex type_index {};
+	TypeIndex type_index {};   // Authoritative type identity (category + gTypeInfo index)
 	PointerDepth pointer_depth;  // was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 	ValueStorage storage = ValueStorage::ContainsData;  // must be set explicitly at every construction site
 
 	// Returns the effective runtime representation type.
-	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
-	// and TypedValue are independent structs during the transition period.
-	// Both will be unified when ExprResult's type field is replaced by IrType
-	// (Phase 5).
 	IrType effectiveIrType() const {
-		if (ir_type != IrType::Void || type == Type::Void)
+		if (ir_type != IrType::Void || type_index.category() == TypeCategory::Void)
 			return ir_type;
-		return toIrType(type);
+		return toIrType(type_index);
 	}
 };
 
 inline ExprResult makeExprResultImpl(
-	Type type,
+	TypeIndex type_index,
 	SizeInBits size_in_bits,
 	IrOperand value,
-	TypeIndex type_index,
 	PointerDepth pointer_depth,
 	ValueStorage storage
 ) {
 	return {
-		.type = type,
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
 		.type_index = type_index,
 		.pointer_depth = pointer_depth,
-		.ir_type = toIrType(type),
+		.ir_type = toIrType(type_index),
 		.storage = storage
 	};
 }
 
-// All six arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
-inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, storage);
+// All five arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
+inline ExprResult makeExprResult(TypeIndex type_index, SizeInBits size_in_bits, IrOperand value, PointerDepth pointer_depth, ValueStorage storage) {
+	return makeExprResultImpl(type_index, size_in_bits, std::move(value), pointer_depth, storage);
 }
 
 /// Returns a copy of \p tv with the storage discriminator set to \p storage.
@@ -138,35 +131,27 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 // to ensure ir_type is always populated from the semantic type at construction time.
 // ============================================================================
 
-/// Basic TypedValue factory — sets ir_type from semantic type automatically.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value) {
+/// Basic TypedValue factory — sets ir_type from TypeIndex automatically.
+inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, IrValue value) {
 	TypedValue tv;
-	tv.type = type;
-	tv.ir_type = toIrType(type);
+	tv.ir_type = toIrType(type_index);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
-	return tv;
-}
-
-/// TypedValue factory with type_index — for Struct/Enum/UserDefined types that
-/// carry a type_index for layout and identity information.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
-	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
 	tv.type_index = type_index;
 	return tv;
 }
 
-/// TypedValue factory with type_index and pointer_depth.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
-	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value), type_index);
+/// TypedValue factory with pointer_depth.
+inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, IrValue value, PointerDepth pointer_depth) {
+	TypedValue tv = makeTypedValue(type_index, size_in_bits, std::move(value));
 	tv.pointer_depth = pointer_depth;
 	return tv;
 }
 
 /// TypedValue factory with ReferenceQualifier — for reference-typed values
 /// (e.g. by-reference function arguments). Sets ir_type automatically.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
-	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
+inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
+	TypedValue tv = makeTypedValue(type_index, size_in_bits, std::move(value));
 	tv.ref_qualifier = ref_qual;
 	return tv;
 }
@@ -177,11 +162,11 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	
 	TypedValue result;
-	result.type = std::get<Type>(operands[0]);
-	result.ir_type = toIrType(result.type);
+	Type legacy_type = std::get<Type>(operands[0]);
+	result.type_index = TypeIndex{0, typeToCategory(legacy_type)};
+	result.ir_type = toIrType(legacy_type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = TypeIndex{};
 	result.pointer_depth = PointerDepth{};
 	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
@@ -197,7 +182,6 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
-	tv.type = result.type;
 	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);

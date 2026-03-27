@@ -118,8 +118,8 @@ private:
 	};
 
 	struct IndirectStorageInfo {
-		Type value_type = Type::Invalid;
-		IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field, will replace value_type
+		TypeIndex value_type_index {};
+		IrType ir_type = IrType::Integer;
 		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
 		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
@@ -966,7 +966,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
-	Type current_function_return_type_ = Type::Void;
+	TypeIndex current_function_return_type_index_ {};  // Return type for current function
 	int current_function_return_size_in_bits_ = 0;
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
@@ -1004,7 +1004,7 @@ private:
 	// Global variable tracking
 	struct GlobalVariableInfo {
 		StringHandle name;
-		Type type;
+		TypeIndex type_index;
 		size_t size_in_bytes;
 		bool is_initialized;
 		std::vector<char> init_data;  // Raw bytes for initialized data

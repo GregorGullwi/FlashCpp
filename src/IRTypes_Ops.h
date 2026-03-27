@@ -407,12 +407,11 @@ enum class ValueStorage : uint8_t {
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
-	Type type = Type::Void;	// 4 bytes (enum) — semantic type (kept during transition, will be removed in Phase 4)
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrValue value;          // 32 bytes (variant)
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_signed = false;     // True for signed types (use MOVSX), false for unsigned (use MOVZX)
-	TypeIndex type_index {};   // Index into gTypeInfo for struct/enum types (0 = not set)
+	TypeIndex type_index {};   // Authoritative type identity (category + gTypeInfo index)
 	PointerDepth pointer_depth = PointerDepth{};  // Number of pointer indirection levels (0 = not a pointer, 1 = T*, 2 = T**, etc.)
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
@@ -423,16 +422,10 @@ struct TypedValue {
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 
 	// Returns the effective runtime representation type.
-	// During the transition period (Phase 1-3), some construction sites may not
-	// explicitly set ir_type.  This method computes it from the semantic type if
-	// ir_type is still the default.  Once all sites are migrated, this method
-	// can be replaced by a direct ir_type read.
 	IrType effectiveIrType() const {
-		// Return ir_type if it was explicitly set (non-Void), or if the semantic
-		// type IS Void (to avoid toIrType recomputation for genuinely void values).
-		if (ir_type != IrType::Void || type == Type::Void)
+		if (ir_type != IrType::Void || type_index.category() == TypeCategory::Void)
 			return ir_type;
-		return toIrType(type);
+		return toIrType(type_index);
 	}
 
 	// Storage discriminator: records whether `value` holds a data value or a
@@ -722,7 +715,7 @@ struct LoopBeginOp {
 
 // Function parameter information
 struct FunctionParam {
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	SizeInBits size_in_bits = SizeInBits{0};
 	PointerDepth pointer_depth = PointerDepth{};
 	StringHandle name;  // Pure StringHandle
@@ -741,10 +734,9 @@ struct FunctionParam {
 
 // Function declaration
 struct FunctionDeclOp {
-	Type return_type = Type::Void;
 	SizeInBits return_size_in_bits;
 	PointerDepth return_pointer_depth = PointerDepth{};
-	TypeIndex return_type_index {};  // Type index for struct/class return types
+	TypeIndex return_type_index {};  // Authoritative return type identity (category + gTypeInfo index)
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
 	StringHandle function_name;  // Pure StringHandle
@@ -842,7 +834,7 @@ struct FunctionAddressOp {
 
 // Variable declaration (local)
 struct VariableDeclOp {
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	SizeInBits size_in_bits = SizeInBits{0};
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
@@ -850,7 +842,7 @@ struct VariableDeclOp {
 	bool is_array = false;
 		bool use_copy_constructor = false;
 	// Array info (if is_array)
-	std::optional<Type> array_element_type;
+	std::optional<TypeIndex> array_element_type_index;
 	std::optional<int> array_element_size;
 	std::optional<size_t> array_count;
 	// Initializer (if present)
@@ -868,7 +860,7 @@ struct VariableDeclOp {
 
 // Global variable declaration
 struct GlobalVariableDeclOp {
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	SizeInBits size_in_bits = SizeInBits{0};          // Size of one element in bits
 	StringHandle var_name;  // Pure StringHandle
 	bool is_initialized = false;
@@ -886,7 +878,7 @@ struct GlobalVariableDeclOp {
 // Heap allocation (new operator)
 struct HeapAllocOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 };
@@ -894,7 +886,7 @@ struct HeapAllocOp {
 // Heap array allocation (new[] operator)
 struct HeapAllocArrayOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue count;               // Array element count (TempVar or constant)
@@ -915,7 +907,7 @@ struct HeapFreeArrayOp {
 // Placement new operator
 struct PlacementNewOp {
 	TempVar result;              // Result pointer variable
-	Type type = Type::Invalid;
+	TypeIndex type_index {};
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
@@ -925,7 +917,7 @@ struct PlacementNewOp {
 struct TypeConversionOp {
 	TempVar result;              // Result variable
 	TypedValue from;             // Source value with type information
-	Type to_type = Type::Invalid;   // Target type
+	TypeIndex to_type_index {};     // Target type
 	SizeInBits to_size_in_bits;     // Target size
 };
 

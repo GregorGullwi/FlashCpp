@@ -48,6 +48,12 @@ enum class IrType : int_fast16_t {
 // ============================================================================
 IrType toIrType(Type semantic_type);
 
+/// Convert a TypeIndex to its runtime IrType representation.
+/// Uses the category() field to map to IrType without a gTypeInfo lookup.
+inline IrType toIrType(TypeIndex type_index) {
+	return toIrType(categoryToType(type_index.category()));
+}
+
 // ============================================================================
 // IrType classification helpers
 //

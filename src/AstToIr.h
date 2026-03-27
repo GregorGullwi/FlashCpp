@@ -75,7 +75,7 @@ private:
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		StringHandle store_name;
-		Type type = Type::Void;
+		TypeIndex type_index {};
 		SizeInBits size_in_bits;
 	};
 
@@ -822,9 +822,8 @@ private:
 	// Static local variable information
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
-		Type type;
-		SizeInBits size_in_bits;
 		TypeIndex type_index {};
+		SizeInBits size_in_bits;
 	};
 
 	// Map from local static variable name to info

@@ -1040,8 +1040,8 @@ struct DeferredTemplateBaseClassSpecifier {
 
 // Function signature for function pointers
 struct FunctionSignature {
-	Type return_type;
-	std::vector<Type> parameter_types;
+	TypeIndex return_type_index;
+	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;           // C vs C++ linkage
 	std::optional<std::string> class_name;     // For member function pointers
 	bool is_const = false;                     // For const member functions
@@ -1060,8 +1060,7 @@ struct DeferredStaticAssert {
 // Struct member information
 struct StructMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
+	TypeIndex type_index;   // Authoritative type identity (category + gTypeInfo index)
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -1080,7 +1079,7 @@ struct StructMember {
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
-	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	StructMember(StringHandle n, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
 	            std::optional<ASTNode> init,
 	            ReferenceQualifier ref_qual,
@@ -1089,7 +1088,7 @@ struct StructMember {
 	            std::vector<size_t> arr_dims,
 	            int ptr_depth,
 	            std::optional<size_t> bf_width)
-		: name(n), type(t), type_index(tidx), offset(off), size(sz),
+		: name(n), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
@@ -1271,8 +1270,7 @@ struct RTTITypeInfo {
 // Static member information
 struct StructStaticMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types
+	TypeIndex type_index;   // Authoritative type identity (category + gTypeInfo index)
 	size_t size;            // Size in bytes
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
@@ -1286,10 +1284,10 @@ struct StructStaticMember {
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
-	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	StructStaticMember(StringHandle n, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
-		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		: name(n), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), cv_qualifier(cv_qual), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
 	
 	StringHandle getName() const {
