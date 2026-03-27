@@ -947,7 +947,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		// Determine result type based on operation
 		// For comparisons, result is bool (8 bits for code generation)
 		// For arithmetic operations, result type matches operand type
-		Type result_type = bin_op.lhs.type;
+		Type result_type = bin_op.lhs.typeEnum();
 		int result_size = bin_op.lhs.size_in_bits.value;
 
 		auto opcode = instruction.getOpcode();
@@ -961,7 +961,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
 
 		// Store the operand type and size for register allocation and loading decisions
-		Type operand_type = bin_op.lhs.type;
+		Type operand_type = bin_op.lhs.typeEnum();
 		int operand_size = bin_op.lhs.size_in_bits.value;
 
 		if (is_comparison) {
@@ -5522,13 +5522,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		if (op.result.effectiveIrType() != IrType::Void) {
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.type)}  // dest
+				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.typeEnum())}  // dest
 			);
 		}
 
 		registerObjectReferenceCallResult(
 			result_offset,
-			op.result.type,
+			op.result.typeEnum(),
 			op.referenced_value_size_in_bits,
 			op.returns_reference,
 			op.returns_rvalue_reference);
@@ -6132,7 +6132,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		StringHandle global_name_handle = op.getGlobalName();
 		int size_in_bits = op.result.size_in_bits.value;
-		Type result_type = op.result.type;
+		Type result_type = op.result.typeEnum();
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
 		bool is_float = (result_type == Type::Float);
 
@@ -10919,7 +10919,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// Use typed payload format
 		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
 		FLASH_LOG(Codegen, Debug, "handleAssignment called");
-		Type lhs_type = op.lhs.type;
+		Type lhs_type = op.lhs.typeEnum();
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for pointer store (assignment through pointer)
@@ -11234,7 +11234,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
-				value_type = op.lhs.type;
+				value_type = op.lhs.typeEnum();
 				value_size_bits = op.lhs.size_in_bits.value;
 			}
 			int value_size_bytes = value_size_bits / 8;
@@ -11312,7 +11312,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
-		Type rhs_type = op.rhs.type;
+		Type rhs_type = op.rhs.typeEnum();
 		X64Register source_reg = X64Register::RAX;
 
 		// Load RHS value into a register
@@ -12477,7 +12477,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		//      pointer (offset 0), so no load instruction is needed.
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 			isIrStructType(op.result.effectiveIrType()) &&
-			(op.result.type != Type::Struct || !op.result.type_index.is_valid()));
+			(op.result.category() != TypeCategory::Struct || !op.result.type_index.is_valid()));
 
 		// Flush all dirty registers to ensure values are saved before allocating
 		flushAllDirtyRegisters();
@@ -12550,7 +12550,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			regAlloc.release(addr_reg);
 
 			// Mark this temp var as containing a pointer/address
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, false, result_var);
+			setReferenceInfo(result_offset, op.result.typeEnum(), op.result.size_in_bits.value, false, result_var);
 			return;
 		}
 
@@ -12698,7 +12698,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		if (op.is_reference()) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
+			setReferenceInfo(result_offset, op.result.typeEnum(), op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
 			return;
 		}
 
@@ -13754,16 +13754,16 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 			TempVar value_temp = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_temp);
 			emitMovFromFrameSized(
-				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
-				SizedStackSlot{value_offset, value_size, isSignedType(op.value.type)}
+				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
+				SizedStackSlot{value_offset, value_size, isSignedType(op.value.typeEnum())}
 			);
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
 			StringHandle var_name_handle = std::get<StringHandle>(op.value.value);
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it != current_scope.variables.end()) {
 				emitMovFromFrameSized(
-					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
-					SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.type)}
+					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
+					SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.typeEnum())}
 				);
 			}
 		}

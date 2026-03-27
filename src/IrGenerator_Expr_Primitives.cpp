@@ -344,7 +344,7 @@
 						TempVar ptr_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = ptr_temp;
-						member_load.result.type = member->memberType();  // Base type (e.g., Int)
+						member_load.result.setType(member->memberType());  // Base type (e.g., Int)
 						member_load.result.size_in_bits = SizeInBits{64};  // pointer size in bits
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
