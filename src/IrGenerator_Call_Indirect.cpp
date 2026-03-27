@@ -463,7 +463,7 @@
 									TempVar func_ptr_temp = var_counter.next();
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
-									member_load.result.type = Type::FunctionPointer;
+									member_load.result.setType(Type::FunctionPointer);
 									member_load.result.ir_type = IrType::FunctionPointer;
 									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;
@@ -786,7 +786,7 @@
 						// Generate member access IR to load the function pointer
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
-						member_load.result.type = member.memberType();
+						member_load.result.setType(member.memberType());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand
@@ -1033,7 +1033,7 @@
 			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
-			vcall_op.result.type = return_type.type();
+			vcall_op.result.setType(return_type.type());
 			vcall_op.result.ir_type = toIrType(return_type.type());
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
@@ -1383,7 +1383,7 @@
 					TempVar this_addr = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
-					addr_op.operand.type = object_type.type();
+					addr_op.operand.setType(object_type.type());
 					addr_op.operand.ir_type = toIrType(object_type.type());
 					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1399,7 +1399,7 @@
 				TempVar this_addr = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
-				addr_op.operand.type = object_type.type();
+				addr_op.operand.setType(object_type.type());
 				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};

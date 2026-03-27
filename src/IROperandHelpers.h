@@ -138,13 +138,14 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 // to ensure ir_type is always populated from the semantic type at construction time.
 // ============================================================================
 
-/// Basic TypedValue factory — sets ir_type from semantic type automatically.
+/// Basic TypedValue factory — sets ir_type and TypeCategory in type_index automatically.
 inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value) {
 	TypedValue tv;
 	tv.type = type;
 	tv.ir_type = toIrType(type);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
+	tv.type_index = TypeIndex::fromTypeAndIndex(type, {});
 	return tv;
 }
 
@@ -152,7 +153,7 @@ inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue val
 /// carry a type_index for layout and identity information.
 inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
-	tv.type_index = type_index;
+	tv.type_index = TypeIndex::fromTypeAndIndex(type, type_index);
 	return tv;
 }
 
@@ -181,7 +182,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.ir_type = toIrType(result.type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = TypeIndex{};
+	result.type_index = TypeIndex::fromTypeAndIndex(result.type, {});
 	result.pointer_depth = PointerDepth{};
 	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
@@ -201,7 +202,7 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
-	tv.type_index = result.type_index;
+	tv.type_index = TypeIndex::fromTypeAndIndex(result.type, result.type_index);
 	tv.pointer_depth = result.pointer_depth;
 	tv.storage = result.storage;
 	return tv;

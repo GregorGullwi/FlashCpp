@@ -195,7 +195,7 @@
 							// Store the enclosing 'this' pointer in the closure
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
-							store_this.value.type = Type::Void;
+							store_this.value.setType(Type::Void);
 							store_this.value.ir_type = IrType::Void;
 							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
@@ -233,7 +233,7 @@
 									TempVar loaded_value = var_counter.next();
 									MemberLoadOp load_op;
 									load_op.result.value = loaded_value;
-									load_op.result.type = enclosing_member.memberType();
+									load_op.result.setType(enclosing_member.memberType());
 									load_op.result.ir_type = toIrType(enclosing_member.memberType());
 									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									load_op.object = StringTable::getOrInternStringHandle("this");
@@ -245,7 +245,7 @@
 
 									// Store into closure->__copy_this at the appropriate offset
 									MemberStoreOp store_copy_this;
-									store_copy_this.value.type = enclosing_member.memberType();
+									store_copy_this.value.setType(enclosing_member.memberType());
 									store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -287,7 +287,7 @@
 								TempVar addr_temp = var_counter.next();
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.type = init_type;
+								addr_op.operand.setType(init_type);
 								addr_op.operand.ir_type = toIrType(init_type);
 								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 								addr_op.operand.pointer_depth = PointerDepth{};
@@ -305,7 +305,7 @@
 
 								// Store the address in the closure member
 								MemberStoreOp member_store;
-								member_store.value.type = init_type;
+								member_store.value.setType(init_type);
 								member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 								member_store.value.value = addr_temp;
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -317,7 +317,7 @@
 							} else {
 								// Init-capture by value [x = expr] - store the value directly
 								MemberStoreOp member_store;
-								member_store.value.type = member->memberType();
+								member_store.value.setType(member->memberType());
 								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 								// Convert IrOperand to IrValue
@@ -369,7 +369,7 @@
 									// Enclosing captured by reference - it already holds a pointer, just copy it
 									MemberLoadOp member_load;
 									member_load.result.value = addr_temp;
-									member_load.result.type = orig_type.type();
+									member_load.result.setType(orig_type.type());
 									member_load.result.size_in_bits = SizeInBits{64};
 									member_load.object = StringTable::getOrInternStringHandle("this");
 									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
@@ -393,7 +393,7 @@
 									// Enclosing captured by value - need to get address of this->x
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
-									addr_op.operand.type = orig_type.type();
+									addr_op.operand.setType(orig_type.type());
 									addr_op.operand.ir_type = toIrType(orig_type.type());
 									addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 									addr_op.operand.pointer_depth = PointerDepth{};
@@ -404,7 +404,7 @@
 								// Regular variable - generate AddressOf directly
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.type = orig_type.type();
+								addr_op.operand.setType(orig_type.type());
 								addr_op.operand.ir_type = toIrType(orig_type.type());
 								addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 								addr_op.operand.pointer_depth = PointerDepth{};
@@ -414,7 +414,7 @@
 
 							// Store the address in the closure member
 							MemberStoreOp member_store;
-							member_store.value.type = member->memberType();
+							member_store.value.setType(member->memberType());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 							member_store.value.value = addr_temp;
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -426,7 +426,7 @@
 						} else {
 							// By-value: copy the value
 							MemberStoreOp member_store;
-							member_store.value.type = member->memberType();
+							member_store.value.setType(member->memberType());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 							if (is_captured_from_enclosing) {
@@ -434,7 +434,7 @@
 								TempVar loaded_value = var_counter.next();
 								MemberLoadOp member_load;
 								member_load.result.value = loaded_value;
-								member_load.result.type = member->memberType();
+								member_load.result.setType(member->memberType());
 								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 								member_load.object = StringTable::getOrInternStringHandle("this");
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
@@ -940,7 +940,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	// Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
-	op.result.type = Type::FunctionPointer;
+	op.result.setType(Type::FunctionPointer);
 	op.result.ir_type = IrType::FunctionPointer;
 	op.result.size_in_bits = SizeInBits{64};
 	op.result.value = func_addr_var;
@@ -1016,7 +1016,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	TempVar copy_this_temp = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = copy_this_temp;
-	load_op.result.type = Type::Struct;
+	load_op.result.setType(Type::Struct);
 	load_op.result.ir_type = IrType::Struct;
 	load_op.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_member->size * 8)};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
@@ -1145,7 +1145,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	TempVar this_ptr = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = this_ptr;
-	load_op.result.type = Type::Void;
+	load_op.result.setType(Type::Void);
 	load_op.result.ir_type = IrType::Void;
 	load_op.result.size_in_bits = SizeInBits{64};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)

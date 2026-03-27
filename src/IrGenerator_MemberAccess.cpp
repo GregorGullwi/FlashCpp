@@ -1087,7 +1087,7 @@
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
-							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.setType(Type::Struct);
 							load_copy_this.result.ir_type = IrType::Struct;
 							load_copy_this.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_size_bits)};
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1116,7 +1116,7 @@
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
-							load_this.result.type = Type::Void;
+							load_this.result.setType(Type::Void);
 							load_this.result.ir_type = IrType::Void;
 							load_this.result.size_in_bits = SizeInBits{64};
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1250,7 +1250,7 @@
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
-			global_load.result.type = static_member->memberType();
+			global_load.result.setType(static_member->memberType());
 			global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 
@@ -1354,7 +1354,7 @@
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
 		member_load.result.value = result_var;
-		member_load.result.type = member->memberType();
+		member_load.result.setType(member->memberType());
 		member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};  // Convert bytes to bits
 
 		// Set base object, member name, and offset — using unwrapped values when applicable

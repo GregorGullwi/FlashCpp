@@ -1241,7 +1241,7 @@
 						for (const auto& member : struct_info->members) {
 							if (member.offset == offset && member.bitfield_width.has_value()) {
 								MemberStoreOp combined_store;
-								combined_store.value.type = member.memberType();
+								combined_store.value.setType(member.memberType());
 								combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								combined_store.value.value = combined_bitfield_values[offset];
 								combined_store.object = StringTable::getOrInternStringHandle("this");
@@ -1282,7 +1282,7 @@
 							}
 
 							MemberStoreOp member_store;
-							member_store.value.type = member.memberType();
+							member_store.value.setType(member.memberType());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1489,7 +1489,7 @@ void AstToIr::emitRecursiveZeroFill(
 				token);
 		} else {
 			MemberStoreOp member_store;
-			member_store.value.type = sub_member.memberType();
+			member_store.value.setType(sub_member.memberType());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(sub_member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1665,7 +1665,7 @@ const Token& token)
 		if (!member_values.count(member_name)) {
 			// Zero-initialize unspecified members
 			MemberStoreOp member_store;
-			member_store.value.type = member.memberType();
+			member_store.value.setType(member.memberType());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1719,7 +1719,7 @@ const Token& token)
 					}
 
 				MemberStoreOp member_store;
-				member_store.value.type = member.memberType();
+				member_store.value.setType(member.memberType());
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = member_value;
 				member_store.object = base_object;
@@ -1731,7 +1731,7 @@ const Token& token)
 			} else {
 				// Zero-initialize if we can't extract a value
 				MemberStoreOp member_store;
-				member_store.value.type = member.memberType();
+				member_store.value.setType(member.memberType());
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = 0ULL;
 				member_store.object = base_object;
@@ -1756,7 +1756,7 @@ const Token& token)
 				}
 
 			MemberStoreOp member_store;
-			member_store.value.type = member.memberType();
+			member_store.value.setType(member.memberType());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = member_value;
 			member_store.object = base_object;

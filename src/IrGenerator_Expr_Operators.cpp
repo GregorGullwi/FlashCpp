@@ -354,7 +354,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 				TempVar addr_var = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = addr_var;
-				addr_op.operand.type = arg_type.type();
+				addr_op.operand.setType(arg_type.type());
 				addr_op.operand.ir_type = toIrType(arg_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{arg_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{};
@@ -670,7 +670,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
 		assign_true_op.result = result_var;
-		assign_true_op.lhs.type = common_type;
+		assign_true_op.lhs.setType(common_type);
 		assign_true_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_true_op.lhs.value = result_var;
 		assign_true_op.rhs = toTypedValue(true_result);
@@ -693,7 +693,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
 		assign_false_op.result = result_var;
-		assign_false_op.lhs.type = common_type;
+		assign_false_op.lhs.setType(common_type);
 		assign_false_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_false_op.lhs.value = result_var;
 		assign_false_op.rhs = toTypedValue(false_result);
@@ -849,7 +849,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						TempVar result_var = var_counter.next();
 						AssignmentOp assign_op;
 						assign_op.result = result_var;
-						assign_op.lhs.type = lhs_type.type();
+						assign_op.lhs.setType(lhs_type.type());
 						assign_op.lhs.size_in_bits = SizeInBits{lhs_type.size_in_bits()};
 						assign_op.lhs.value = StringTable::getOrInternStringHandle(lhs_name);
 						assign_op.rhs = toTypedValue(rhs_result);
@@ -892,7 +892,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	auto makeGlobalAssignmentResultLValue = [&](const GlobalStaticBindingInfo& binding) -> ExprResult {
 		TempVar result_temp = var_counter.next();
 		GlobalLoadOp load_op;
-			load_op.result.type = binding.type;
+			load_op.result.setType(binding.type);
 			load_op.result.ir_type = toIrType(binding.type);
 			load_op.result.size_in_bits = binding.size_in_bits;
 			load_op.result.value = result_temp;
@@ -947,7 +947,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar store_temp = var_counter.next();
 					AssignmentOp assign_op;
 					assign_op.result = store_temp;
-					assign_op.lhs.type = gsi.type;
+					assign_op.lhs.setType(gsi.type);
 					assign_op.lhs.size_in_bits = gsi.size_in_bits;
 					assign_op.lhs.value = store_temp;
 					assign_op.rhs = toTypedValue(rhsExprResult);
@@ -978,7 +978,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.type = gsi.type;
+					load_op.result.setType(gsi.type);
 					load_op.result.ir_type = toIrType(gsi.type);
 					load_op.result.size_in_bits = gsi.size_in_bits;
 					load_op.result.value = loaded;
@@ -1373,7 +1373,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							TempVar lhs_addr = var_counter.next();
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
-							addr_op.operand.type = lhsType;
+							addr_op.operand.setType(lhsType);
 							addr_op.operand.ir_type = toIrType(lhsType);
 							addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 							addr_op.operand.pointer_depth = PointerDepth{};
@@ -1854,7 +1854,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar lhs_addr = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = lhs_addr;
-				addr_op.operand.type = lhsType;
+				addr_op.operand.setType(lhsType);
 				addr_op.operand.ir_type = toIrType(lhsType);
 				addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
@@ -2128,8 +2128,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 								TempVar cmp_result = var_counter.next();
 								BinaryOp cmp_op{
-									.lhs = { Type::Int, SizeInBits{32}, result_var },
-									.rhs = { Type::Int, SizeInBits{32}, 0ULL },
+									.lhs = makeTypedValue(Type::Int, SizeInBits{32}, result_var),
+									.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL),
 									.result = cmp_result,
 								};
 
@@ -2221,8 +2221,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 1: Subtract the pointers (gives byte difference)
 			TempVar byte_diff = var_counter.next();
 			BinaryOp sub_op{
-				.lhs = { lhsType, SizeInBits{64}, toIrValue(lhsExprResult.value) },
-				.rhs = { rhsType, SizeInBits{64}, toIrValue(rhsExprResult.value) },
+				.lhs = makeTypedValue(lhsType, SizeInBits{64}, toIrValue(lhsExprResult.value)),
+				.rhs = makeTypedValue(rhsType, SizeInBits{64}, toIrValue(rhsExprResult.value)),
 				.result = byte_diff,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
@@ -2239,8 +2239,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Step 3: Divide byte difference by element size to get element count
 			TempVar result_var = var_counter.next();
 			BinaryOp div_op{
-				.lhs = { Type::Long, SizeInBits{64}, byte_diff },
-				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
+				.lhs = makeTypedValue(Type::Long, SizeInBits{64}, byte_diff),
+				.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
@@ -2278,7 +2278,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Use typed BinaryOp for the multiply operation
 		BinaryOp scale_op{
 			.lhs = toTypedValue(rhsExprResult),
-			.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
+			.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 			.result = scaled_offset,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
@@ -2288,8 +2288,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Use typed BinaryOp for pointer addition/subtraction
 		BinaryOp ptr_arith_op{
-			.lhs = { lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value) },
-			.rhs = { Type::Int, SizeInBits{32}, scaled_offset },
+			.lhs = makeTypedValue(lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
+			.rhs = makeTypedValue(Type::Int, SizeInBits{32}, scaled_offset),
 			.result = result_var,
 		};
 
@@ -2313,8 +2313,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
-				.lhs = { Type::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value) },
-				.rhs = { Type::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value) },
+				.lhs = makeTypedValue(Type::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value)),
+				.rhs = makeTypedValue(Type::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value)),
 				.result = result_var,
 			};
 			IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
@@ -2342,7 +2342,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar scaled_offset = var_counter.next();
 			BinaryOp scale_op{
 				.lhs = toTypedValue(rhsExprResult),
-				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
+				.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = scaled_offset,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
@@ -2350,8 +2350,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// ptr = ptr + scaled_offset (or ptr - scaled_offset)
 			TempVar result_var = var_counter.next();
 			BinaryOp ptr_arith_op{
-				.lhs = { lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value) },
-				.rhs = { Type::Int, SizeInBits{32}, scaled_offset },
+				.lhs = makeTypedValue(lhsType, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
+				.rhs = makeTypedValue(Type::Int, SizeInBits{32}, scaled_offset),
 				.result = result_var,
 			};
 
@@ -2691,10 +2691,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Helper lambda to apply pointer comparison type override
 		auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& opcode) {
 			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
-				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.setType(Type::UnsignedLongLong);
 				bin_op.lhs.ir_type = IrType::Integer;
 				bin_op.lhs.size_in_bits = SizeInBits{64};
-				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.setType(Type::UnsignedLongLong);
 				bin_op.rhs.ir_type = IrType::Integer;
 				bin_op.rhs.size_in_bits = SizeInBits{64};
 
@@ -4014,7 +4014,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-				addr_op.operand.type = param_type.type();
+				addr_op.operand.setType(param_type.type());
 				addr_op.operand.ir_type = toIrType(param_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
@@ -4558,7 +4558,7 @@ std::string_view op) {
 
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.type = lvalue_type;
+		bin_op.lhs.setType(lvalue_type);
 		bin_op.lhs.ir_type = toIrType(lvalue_type);
 		bin_op.lhs.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		bin_op.lhs.value = current_value_temp;
@@ -4634,7 +4634,7 @@ std::string_view op) {
 
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.setType(lhs_operands.type);
 		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = current_value_temp;
@@ -4677,7 +4677,7 @@ std::string_view op) {
 		// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
-		bin_op.lhs.type = lhs_operands.type;
+		bin_op.lhs.setType(lhs_operands.type);
 		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = lhs_temp;
@@ -4739,7 +4739,7 @@ std::string_view op) {
 
 	MemberLoadOp load_op;
 	load_op.result.value = current_value_temp;
-	load_op.result.type = lhs_operands.type;
+	load_op.result.setType(lhs_operands.type);
 	load_op.result.ir_type = lhs_operands.effectiveIrType();
 	load_op.result.size_in_bits = lhs_operands.size_in_bits;
 	load_op.object = lv_info.base;
@@ -4758,7 +4758,7 @@ std::string_view op) {
 
 	// Create the binary operation (size_in_bits is already SizeInBits — direct assignment)
 	BinaryOp bin_op;
-	bin_op.lhs.type = lhs_operands.type;
+	bin_op.lhs.setType(lhs_operands.type);
 	bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 	bin_op.lhs.value = current_value_temp;

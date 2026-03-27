@@ -427,6 +427,13 @@ struct TypedValue {
 	}
 	Type typeEnum() const { return categoryToType(category()); }
 
+	// Atomically update the semantic type and stamp the TypeCategory into type_index.
+	// Preserves any existing type_index.index_ (struct/enum identity).
+	void setType(Type t) noexcept {
+		type = t;
+		type_index = TypeIndex::fromTypeAndIndex(t, type_index);
+	}
+
 	// Returns the effective runtime representation type.
 	// During the transition period (Phase 1-3), some construction sites may not
 	// explicitly set ir_type.  This method computes it from the semantic type if

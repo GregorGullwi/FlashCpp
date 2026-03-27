@@ -383,7 +383,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.type = member->memberType();
+						member_load.result.setType(member->memberType());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
@@ -423,7 +423,7 @@
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
-					member_load.result.type = member->memberType();
+					member_load.result.setType(member->memberType());
 					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = *copy_this_temp;
 					member_load.member_name = member->getName();
@@ -463,7 +463,7 @@
 			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
-			op.result.type = info.type();
+			op.result.setType(info.type());
 			op.result.ir_type = toIrType(info.type());
 			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
@@ -509,7 +509,7 @@
 						int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.type = type_n.type();
+						op.result.setType(type_n.type());
 						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
@@ -535,7 +535,7 @@
 						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.type = type_n.type();
+						op.result.setType(type_n.type());
 						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
@@ -567,7 +567,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.type = member->memberType();
+						member_load.result.setType(member->memberType());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = *this_ptr;
 						member_load.member_name = member->getName();
@@ -603,7 +603,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.type = member->memberType();
+						member_load.result.setType(member->memberType());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
@@ -772,7 +772,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.type = member->memberType();
+						member_load.result.setType(member->memberType());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
@@ -823,7 +823,7 @@
 
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.type = static_member->memberType();
+						op.result.setType(static_member->memberType());
 						op.result.ir_type = toIrType(static_member->memberType());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
@@ -889,7 +889,7 @@
 				bool is_array_type = decl_node.is_array() || type_node.is_array();
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.type = type_node.type();
+				op.result.setType(type_node.type());
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -1073,7 +1073,7 @@
 				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.type = type_node.type();
+				op.result.setType(type_node.type());
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -1217,7 +1217,7 @@
 
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
-			op.result.type = Type::FunctionPointer;
+			op.result.setType(Type::FunctionPointer);
 			op.result.ir_type = IrType::FunctionPointer;
 			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;
@@ -1496,7 +1496,7 @@
 						}
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.type = static_member->memberType();
+						op.result.setType(static_member->memberType());
 						op.result.ir_type = toIrType(static_member->memberType());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
@@ -1581,7 +1581,7 @@
 					bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.type = type_node.type();
+				op.result.setType(type_node.type());
 				op.result.ir_type = toIrType(type_node.type());
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -1620,7 +1620,7 @@
 				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
-			op.result.type = type_node.type();
+			op.result.setType(type_node.type());
 			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;

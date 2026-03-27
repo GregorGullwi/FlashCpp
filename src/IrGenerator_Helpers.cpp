@@ -480,7 +480,7 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 	TempVar addr_var = var_counter.next();
 	AddressOfOp addr_op;
 	addr_op.result = addr_var;
-	addr_op.operand.type = type;
+	addr_op.operand.setType(type);
 	addr_op.operand.size_in_bits = SizeInBits{size_in_bits};
 	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
