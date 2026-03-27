@@ -1285,11 +1285,11 @@
 		}
 
 		// Get the type of the operand
-		Type operandType = operandIrOperands.typeEnum();
+		TypeCategory operandType = operandIrOperands.category();
 		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits.value;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
-		if (unaryOperatorNode.op() == "+" && typeToCategory(operandType) == TypeCategory::Struct) {
+		if (unaryOperatorNode.op() == "+" && operandType == TypeCategory::Struct) {
 			size_t struct_type_index = operandIrOperands.type_index.index();
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
@@ -1330,7 +1330,7 @@
 						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
 							from_t = operandIrOperands.typeEnum();
 						operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(from_t), typeToCategory(to_t), unaryOperatorNode.get_token());
-						operandType = to_t;
+						operandType = typeToCategory(to_t);
 						promoted = true;
 					}
 				}
@@ -1338,12 +1338,12 @@
 			// Phase 15: sema should annotate all unary operand integral promotions.
 			// When sema_ is null (e.g., template instantiation), keep the fallback
 			// unconditionally to avoid dropping promotions.
-			if (!promoted && (typeToCategory(operandType) == TypeCategory::Bool ||
-				(is_integer_type(typeToCategory(operandType)) && get_integer_rank(typeToCategory(operandType)) < 3))) {
+			if (!promoted && (operandType == TypeCategory::Bool ||
+				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
-				operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(operandType), TypeCategory::Int, unaryOperatorNode.get_token());
-				operandType = Type::Int;
+				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, TypeCategory::Int, unaryOperatorNode.get_token());
+				operandType = TypeCategory::Int;
 			}
 			// Unary plus is a no-op after promotion — return immediately without
 			// allocating an unused result_var.
@@ -1373,7 +1373,7 @@
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
-			if (!is_integer_type(typeToCategory(operandType)) && typeToCategory(operandType) != TypeCategory::Bool) {
+			if (!is_integer_type(operandType) && operandType != TypeCategory::Bool) {
 				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 			}
 			// Bitwise NOT - use UnaryOp struct
@@ -1425,7 +1425,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.operand.setType(typeToCategory(operandType));
+			op.operand.setType(operandType);
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 
@@ -1581,13 +1581,13 @@
 			if (pointer_depth <= 1) {
 				// Single-level pointer or less: result is base type size
 				switch (operandType) {
-					case Type::Bool: element_size = 8; break;
-					case Type::Char: element_size = 8; break;
-					case Type::Short: element_size = 16; break;
-					case Type::Int: element_size = 32; break;
-					case Type::Long: element_size = 64; break;
-					case Type::Float: element_size = 32; break;
-					case Type::Double: element_size = 64; break;
+					case TypeCategory::Bool: element_size = 8; break;
+					case TypeCategory::Char: element_size = 8; break;
+					case TypeCategory::Short: element_size = 16; break;
+					case TypeCategory::Int: element_size = 32; break;
+					case TypeCategory::Long: element_size = 64; break;
+					case TypeCategory::Float: element_size = 32; break;
+					case TypeCategory::Double: element_size = 64; break;
 					default: element_size = 64; break;  // Fallback for unknown types
 				}
 			}
@@ -1598,8 +1598,8 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.pointer.setType(typeToCategory(operandType));
-			op.pointer.type_index = TypeIndex::fromTypeAndIndex(operandType, operandIrOperands.type_index);
+			op.pointer.setType(operandType);
+			op.pointer.type_index = TypeIndex{operandIrOperands.type_index.index(), operandType};
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};
@@ -1656,11 +1656,11 @@
 // or std::nullopt if no overload was found.
 std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	OverloadableOperator op_kind,  // Increment or Decrement
-	Type operandType,
+	TypeCategory operandType,
 	const ExprResult& operandIrResult,
 	bool is_prefix
 ) {
-	if (!is_struct_type(typeToCategory(operandType)))
+	if (!is_struct_type(operandType))
 		return std::nullopt;
 
 	TypeIndex operand_type_index = operandIrResult.type_index;
@@ -1744,7 +1744,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
-	this_arg.setType(typeToCategory(operandType));
+	this_arg.setType(operandType);
 	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
@@ -1781,7 +1781,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	bool operandHandledAsIdentifier,
 	const UnaryOperatorNode& unaryOperatorNode,
 	const ExprResult& operandIrResult,
-	Type operandType,
+	TypeCategory operandType,
 	TempVar result_var
 ) {
 	auto getOperandPointerDepth = [&]() -> int {
@@ -1843,7 +1843,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	int element_size = 1;
 	if (operand_pointer_depth > 0) {
 		is_pointer = true;
-		element_size = getPointerElementSize(typeToCategory(operandType), operandIrResult.type_index, operand_pointer_depth);
+		element_size = getPointerElementSize(operandType, operandIrResult.type_index, operand_pointer_depth);
 	}
 	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
 		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);

@@ -359,7 +359,7 @@ private:
 	// or std::nullopt if no overload was found.
 	std::optional<ExprResult> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
-		Type operandType,
+		TypeCategory operandType,
 		const ExprResult& operandIrResult,
 		bool is_prefix
 	);
@@ -373,7 +373,7 @@ private:
 		bool operandHandledAsIdentifier,
 		const UnaryOperatorNode& unaryOperatorNode,
 		const ExprResult& operandIrResult,
-		Type operandType,
+		TypeCategory operandType,
 		TempVar result_var
 	);
 
