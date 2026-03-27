@@ -1658,7 +1658,7 @@
 		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
-		if (is_floating_point_type(numericLiteralNode.type())) {
+		if (is_floating_point_type(typeToCategory(numericLiteralNode.type()))) {
 			// For floating-point literals, the value is stored as double
 			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		} else {

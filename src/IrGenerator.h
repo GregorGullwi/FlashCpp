@@ -170,7 +170,7 @@ inline int getStructReturnThreshold(bool is_llp64) {
 /// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger use hidden param
 /// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger use hidden param
 inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference) {
-	return is_struct_type(type) && pointer_depth == 0 && !is_reference;
+	return is_struct_type(typeToCategory(type)) && pointer_depth == 0 && !is_reference;
 }
 
 inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {

@@ -814,7 +814,7 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 	// Implicit copy/move ctors always have exactly 1 param that is a reference
 	// (lvalue for copy, rvalue for move) to the struct's own type.
 	if (!(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) ||
-		!is_struct_type(param_type.type())) {
+		!is_struct_type(param_type.category())) {
 		return false;
 	}
 
@@ -853,7 +853,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
 			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
-			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+			bool is_same_struct_type = is_struct_type(typeToCategory(resolved_arg_type)) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
 				continue;

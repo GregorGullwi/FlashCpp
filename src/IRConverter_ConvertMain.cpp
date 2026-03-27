@@ -926,7 +926,7 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		X64Register result_reg;
 
 		// Handle floating-point vs integer/pointer types
-		if (is_floating_point_type(operand_type)) {
+		if (is_floating_point_type(typeToCategory(operand_type))) {
 			// For float/double, allocate an XMM register
 			result_reg = allocateXMMRegisterWithSpilling();
 			bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
@@ -1008,7 +1008,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// the IR size so downstream register allocation picks the right width.
 			// This coercion will become unnecessary once ArithmeticOperationContext
 			// uses IrType instead of Type for operand_type (Phase 3).
-			if (!is_integer_type(operand_type)) {
+			if (!is_integer_type(typeToCategory(operand_type))) {
 				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
 				if (!is_comparison) {
 					ctx.result_value.setType(int_type);
@@ -1044,7 +1044,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				else {
 					assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second.offset);
 
-					if (is_floating_point_type(operand_type)) {
+					if (is_floating_point_type(typeToCategory(operand_type))) {
 						// For float/double, allocate an XMM register
 						ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 						bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
@@ -1098,7 +1098,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			else {
 				assert(variable_scopes.back().scope_stack_space <= lhs_stack_var_addr);
 
-				if (is_floating_point_type(operand_type)) {
+				if (is_floating_point_type(typeToCategory(operand_type))) {
 					// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
@@ -1256,7 +1256,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				else {
 					assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second.offset);
 
-					if (is_floating_point_type(operand_type)) {
+					if (is_floating_point_type(typeToCategory(operand_type))) {
 						// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 						bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
@@ -1329,7 +1329,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			else {
 				assert(variable_scopes.back().scope_stack_space <= rhs_stack_var_addr);
 
-				if (is_floating_point_type(operand_type)) {
+				if (is_floating_point_type(typeToCategory(operand_type))) {
 					// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 					bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
@@ -4079,7 +4079,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type)) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4203,7 +4203,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type)) && !arg.is_reference();
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4433,7 +4433,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
-						if (is_floating_point_type(arg.type)) {
+						if (is_floating_point_type(typeToCategory(arg.type))) {
 							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
 								va_temp_float_idx++;
@@ -5435,7 +5435,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			// First pass: handle stack arguments
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type));
 
 				bool use_register = false;
 				if (is_float_arg) {
@@ -5462,7 +5462,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type));
 
 				bool use_register = false;
 				X64Register target_reg;
@@ -6569,7 +6569,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
 					// Source value is already in a register (e.g., from function return or arithmetic)
 					// Store it directly to the destination stack location
-					if (is_floating_point_type(var_type)) {
+					if (is_floating_point_type(typeToCategory(var_type))) {
 						// For floating-point types, the value is in an XMM register
 						// Use float mov instructions instead of integer mov
 						bool is_float = (typeToCategory(var_type) == TypeCategory::Float);
@@ -6709,7 +6709,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 							}
 							regAlloc.release(copy_reg);
 						}
-					} else if (is_floating_point_type(var_type)) {
+					} else if (is_floating_point_type(typeToCategory(var_type))) {
 						// For floating-point types, use XMM register and float moves
 						allocated_reg_val = allocateXMMRegisterWithSpilling();
 						bool is_float = (typeToCategory(var_type) == TypeCategory::Float);
@@ -11324,7 +11324,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 					int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 					emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 					source_reg = ptr_reg;
-				} else if (is_floating_point_type(rhs_type)) {
+				} else if (is_floating_point_type(typeToCategory(rhs_type))) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -11378,7 +11378,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				// Check if the value is already in a register
 				source_reg = rhs_reg.value();
 			} else {
-				if (is_floating_point_type(rhs_type)) {
+				if (is_floating_point_type(typeToCategory(rhs_type))) {
 					source_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
@@ -11423,7 +11423,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bits = ref_info->value_size_bits.value;
 			int size_bytes = value_size_bits / 8;
 
-			if (is_floating_point_type(rhs_type)) {
+			if (is_floating_point_type(typeToCategory(rhs_type))) {
 				// For floating-point, use SSE store instruction helper
 				bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 				auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
@@ -11438,7 +11438,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			regAlloc.release(ptr_reg);
 		} else {
 			// Normal (non-reference) assignment - store directly to stack location
-			if (is_floating_point_type(rhs_type)) {
+			if (is_floating_point_type(typeToCategory(rhs_type))) {
 				bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 				emitFloatMovToFrame(source_reg, lhs_offset, is_float);
 			} else {
@@ -11636,7 +11636,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		Type element_type = op.elementType();
 		bool is_floating_point = (typeToCategory(element_type) == TypeCategory::Float || typeToCategory(element_type) == TypeCategory::Double);
 		bool is_float = (typeToCategory(element_type) == TypeCategory::Float);
-		bool is_struct = is_struct_type(element_type);
+		bool is_struct = is_struct_type(typeToCategory(element_type));
 
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
 		// For struct types, always use LEA (original behavior)
@@ -12069,7 +12069,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
-			bool is_float_store = is_floating_point_type(op.elementType());
+			bool is_float_store = is_floating_point_type(typeToCategory(op.elementType()));
 
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
 				// Constant value
@@ -13959,7 +13959,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			Type argType = arg.typeEnum();
 
 			// Determine if this is a floating-point argument
-			bool is_float_arg = is_floating_point_type(argType);
+			bool is_float_arg = is_floating_point_type(typeToCategory(argType));
 
 			// Determine the target register for the argument
 			X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);

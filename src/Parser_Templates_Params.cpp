@@ -1087,7 +1087,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								
 								// If the alias always resolves to a concrete type (like void_t -> void),
 								// use that concrete type instead of marking as dependent
-								if (!is_struct_type(target_type)) {
+								if (!is_struct_type(typeToCategory(target_type))) {
 									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
 									          "' resolves to concrete type ", static_cast<int>(target_type));
 									dependent_arg.setType(target_type);

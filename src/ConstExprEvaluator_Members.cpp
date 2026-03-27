@@ -1290,7 +1290,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				// binary arithmetic. apply_uint_type_mask handles the 64-bit case by
 				// returning the value unmodified (masking with all-ones is a no-op).
 				if (target.exact_type.has_value() &&
-				    is_unsigned_integer_type(target.exact_type->type())) {
+				    is_unsigned_integer_type(target.exact_type->category())) {
 					new_val = EvalResult::from_uint(apply_uint_type_mask(new_val.as_uint_raw(), target.exact_type));
 					new_val.set_exact_type(*target.exact_type);
 				}
@@ -1639,7 +1639,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					// stored result must wrap at the declared type's width, regardless
 					// of any integer promotion that happened during the binary arithmetic.
 					if (current.exact_type.has_value() &&
-					    is_unsigned_integer_type(current.exact_type->type())) {
+					    is_unsigned_integer_type(current.exact_type->category())) {
 						new_value = EvalResult::from_uint(apply_uint_type_mask(new_value.as_uint_raw(), current.exact_type));
 						new_value.set_exact_type(*current.exact_type);
 					}
@@ -2119,7 +2119,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		const ASTNode& type_node = ctor_call->type_node();
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if ((is_struct_type(type_spec.type())) &&
+			if ((is_struct_type(type_spec.category())) &&
 				type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 				return materialize_constructor_object_value(*ctor_call, context, &bindings);
 			}
@@ -2892,7 +2892,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (value_arg.category() == TypeCategory::Bool) {
 						return EvalResult::from_bool(value_arg.intValue() != 0);
 					}
-					if (is_unsigned_integer_type(value_arg.typeEnum())) {
+					if (is_unsigned_integer_type(typeToCategory(value_arg.typeEnum()))) {
 						return EvalResult::from_uint(static_cast<unsigned long long>(value_arg.intValue()));
 					}
 					return EvalResult::from_int(value_arg.intValue());
@@ -3380,7 +3380,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (!is_struct_type(type_spec.type())) {
+	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constexpr " + std::string(usage_name) + " requires a struct type");
 	}
 
@@ -3457,7 +3457,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 // Helper to get StructTypeInfo from a TypeSpecifierNode
 const StructTypeInfo* Evaluator::get_struct_info_from_type(const TypeSpecifierNode& type_spec) {
-	if (!is_struct_type(type_spec.type())) {
+	if (!is_struct_type(type_spec.category())) {
 		return nullptr;
 	}
 	
@@ -3582,7 +3582,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			const bool needs_intermediate_materialization =
 				!intermediate_result.object_type_index.is_valid() &&
 				intermediate_result.object_member_bindings.empty() &&
-				(is_struct_type(intermediate_member_info->memberType())) &&
+				(is_struct_type(intermediate_member_info->type_index.category())) &&
 				intermediate_member_info->type_index.is_valid() &&
 				intermediate_member_info->type_index.index() < getTypeInfoCount();
 			if (needs_intermediate_materialization) {
@@ -3678,7 +3678,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 
 	const StructMember* intermediate_member_info = intermediate_member_source.member_info;
-	if (!is_struct_type(intermediate_member_info->memberType())) {
+	if (!is_struct_type(intermediate_member_info->type_index.category())) {
 		return EvalResult::error("Intermediate member is not a struct type");
 	}
 
@@ -4098,7 +4098,7 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
 	
 	// Get the type name - this should be a struct/class type
-	if (!is_struct_type(return_type.type())) {
+	if (!is_struct_type(return_type.category())) {
 		return EvalResult::error("Function return type is not a struct - cannot access member");
 	}
 	
@@ -4257,7 +4257,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			return EvalResult::error("Constructor call without valid type specifier");
 		}
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		if (!is_struct_type(type_spec.type())) {
+		if (!is_struct_type(type_spec.category())) {
 			return EvalResult::error("Member function call requires a struct type");
 		}
 		type_index = type_spec.type_index();
@@ -4416,7 +4416,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (!is_struct_type(type_spec.type())) {
+	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constructor call is not a struct/class type");
 	}
 
@@ -4471,7 +4471,7 @@ EvalResult Evaluator::materialize_array_value(
 	for (const auto& element : init_list.initializers()) {
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
-			(is_struct_type(element_type)) &&
+			(is_struct_type(typeToCategory(element_type))) &&
 			element_type_index.is_valid() && element_type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* element_struct_info = getTypeInfo(element_type_index).getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
@@ -4737,7 +4737,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			const bool is_struct_brace_init =
 				!member_info->is_array &&
 				initializer.is<InitializerListNode>() &&
-				(is_struct_type(member_info->memberType())) &&
+				(is_struct_type(member_info->type_index.category())) &&
 				member_info->type_index.is_valid() &&
 				member_info->type_index.index() < getTypeInfoCount();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
@@ -4843,7 +4843,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 						}
 					}
 				}
-			} else if ((is_struct_type(member_info->memberType())) &&
+			} else if ((is_struct_type(member_info->type_index.category())) &&
 				member_info->type_index.is_valid() && member_info->type_index.index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info->type_index).getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
@@ -5105,7 +5105,7 @@ EvalResult Evaluator::extract_object_members(
 	
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	
-	if (!is_struct_type(type_spec.type())) {
+	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Member function call requires a struct type");
 	}
 	
@@ -5527,11 +5527,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsSigned:
-			result = is_signed_integer_type(categoryToType(type_cat)) && !is_reference && pointer_depth == 0;
+			result = is_signed_integer_type(type_cat) && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsUnsigned:
-			result = (type_cat == TypeCategory::Bool || is_unsigned_integer_type(categoryToType(type_cat))) &&
+			result = (type_cat == TypeCategory::Bool || is_unsigned_integer_type(type_cat)) &&
 			         !is_reference && pointer_depth == 0;
 			break;
 

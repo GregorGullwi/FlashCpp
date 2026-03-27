@@ -3222,7 +3222,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeIndex resolved_index = type_spec.type_index();
 					bool resolved = false;
 					
-					if ((is_struct_type(resolved_type)) && resolved_index.index() < getTypeInfoCount()) {
+					if ((is_struct_type(typeToCategory(resolved_type))) && resolved_index.index() < getTypeInfoCount()) {
 						std::string_view type_name = StringTable::getStringView(getTypeInfo(resolved_index).name());
 						auto subst_it = name_substitution_map.find(type_name);
 						if (subst_it != name_substitution_map.end()) {
@@ -3321,7 +3321,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							[[maybe_unused]] bool substituted = false;
 							TypeSpecifierNode substituted_type_spec = type_spec;
 							
-							if ((is_struct_type(base_type)) && type_idx.index() < getTypeInfoCount()) {
+							if ((is_struct_type(typeToCategory(base_type))) && type_idx.index() < getTypeInfoCount()) {
 								std::string_view type_name = StringTable::getStringView(getTypeInfo(type_idx).name());
 								auto subst_it = name_substitution_map.find(type_name);
 								if (subst_it != name_substitution_map.end()) {
@@ -3682,7 +3682,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		//   template<typename T> struct TD { TC<T> c; }; 
 		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
 		// We need to instantiate TC with the concrete args when instantiating TD.
-		if ((is_struct_type(member_type)) && member_type_index.index() < getTypeInfoCount()) {
+		if ((is_struct_type(typeToCategory(member_type))) && member_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
@@ -4909,7 +4909,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Substitute template parameters in the alias type
 		// Handle both UserDefined and Struct types (template types are often registered as Struct)
-		if (is_struct_type(substituted_type)) {
+		if (is_struct_type(typeToCategory(substituted_type))) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_idx);

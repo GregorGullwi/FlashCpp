@@ -1944,7 +1944,7 @@
 			else {
 				// For primitive types, use standard alignment calculation
 				size_t size_in_bytes = type_spec.size_in_bits() / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, type);
+				alignment = calculate_alignment_from_size(size_in_bytes, typeToCategory(type));
 			}
 		}
 		else {
@@ -1984,7 +1984,7 @@
 								size_bits = get_type_size_bits(var_type.category());
 							}
 							size_t size_in_bytes = size_bits / 8;
-							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
+							alignment = calculate_alignment_from_size(size_in_bytes, var_type.category());
 							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
@@ -2009,7 +2009,7 @@
 			else {
 				// For primitive types
 				size_t size_in_bytes = size_in_bits / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, expr_type);
+				alignment = calculate_alignment_from_size(size_in_bytes, typeToCategory(expr_type));
 			}
 		}
 
@@ -2571,7 +2571,7 @@
 
 			case TypeTraitKind::IsSigned:
 				// __is_signed - checks if integral type is signed
-				result = is_signed_integer_type(type) & !is_reference & (pointer_depth == 0);
+				result = is_signed_integer_type(typeToCategory(type)) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnsigned:

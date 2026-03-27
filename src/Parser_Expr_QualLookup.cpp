@@ -1667,7 +1667,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const TypeSpecifierNode& object_type = *object_type_opt;
 		
 		// Handle struct/class member access
-		if (is_struct_type(object_type.type())) {
+		if (is_struct_type(object_type.category())) {
 			size_t struct_type_index = object_type.type_index().index();
 			if (struct_type_index < getTypeInfoCount()) {
 				// Look up the member
@@ -1723,8 +1723,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			
 			// Handle common type conversions for arithmetic types
-			if (!is_struct_type(true_type.type()) &&
-				!is_struct_type(false_type.type())) {
+			if (!is_struct_type(true_type.category()) &&
+				!is_struct_type(false_type.category())) {
 				// For arithmetic types, use usual arithmetic conversions
 				// Return the larger type (in terms of bit width)
 				if (true_type.size_in_bits() >= false_type.size_in_bits()) {

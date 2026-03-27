@@ -113,7 +113,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				auto& last_param = out_params.parameters.back();
 				if (last_param.is<DeclarationNode>()) {
 					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					if (is_struct_type(param_type.type())) {
+					if (is_struct_type(param_type.category())) {
 						SaveHandle brace_pos = save_token_position();
 						default_value = parse_brace_initializer(param_type);
 						if (!default_value.is_error()) {
@@ -238,7 +238,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 					if (param_decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
-						if (is_struct_type(param_type.type())) {
+						if (is_struct_type(param_type.category())) {
 							// Save position before parse_brace_initializer since it consumes '{'
 							SaveHandle brace_pos = save_token_position();
 							auto init_result = parse_brace_initializer(param_type);

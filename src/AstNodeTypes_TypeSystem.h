@@ -893,8 +893,40 @@ constexpr bool is_unsigned_integer_type(TypeCategory cat) {
 	}
 }
 
+constexpr bool is_floating_point_type(TypeCategory cat) {
+	return isFloatingPointType(cat);
+}
+
+constexpr bool is_signed_integer_type(TypeCategory cat) {
+	// Note: plain char is treated as signed, matching the most common implementations.
+	// WChar is NOT included — at the TypeCategory level WChar is treated as unsigned
+	// on all platforms (the target-dependent signedness of wchar_t was only modelled
+	// in the now-removed Type overload).
+	switch (cat) {
+	case TypeCategory::Char:
+	case TypeCategory::Short:
+	case TypeCategory::Int:
+	case TypeCategory::Long:
+	case TypeCategory::LongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
 constexpr bool is_standard_arithmetic_type(TypeCategory cat) {
-	return is_integer_type(cat) || isFloatingPointType(cat) || is_bool_type(cat);
+	return is_integer_type(cat) || is_floating_point_type(cat) || is_bool_type(cat);
+}
+
+// Helper to calculate alignment from size in bytes
+// Standard alignment rules: min(size, 8) for most platforms, with special case for long double
+inline size_t calculate_alignment_from_size(size_t size_in_bytes, TypeCategory cat) {
+	// Special case for long double on x86-64: often has 16-byte alignment
+	if (cat == TypeCategory::LongDouble) {
+		return 16;
+	}
+	// Standard alignment: same as size, up to 8 bytes
+	return (size_in_bytes < 8) ? size_in_bytes : 8;
 }
 
 // Identity record that travels with every deferred/lazy template member.

@@ -13,7 +13,7 @@
 
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
-		if (is_struct_type(toType)) {
+		if (is_struct_type(typeToCategory(toType))) {
 			// Preserve the original size for struct types
 			toSize = fromSize;
 		} else {
@@ -39,8 +39,8 @@
 		}
 
 		// Check for int-to-float or float-to-int conversions
-		bool from_is_float = is_floating_point_type(fromType);
-		bool to_is_float = is_floating_point_type(toType);
+		bool from_is_float = is_floating_point_type(typeToCategory(fromType));
+		bool to_is_float = is_floating_point_type(typeToCategory(toType));
 
 		// Check if the value is a compile-time constant (literal)
 		bool is_literal =
@@ -63,7 +63,7 @@
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
-					if (is_unsigned_integer_type(toType)) {
+					if (is_unsigned_integer_type(typeToCategory(toType))) {
 						// Cast through long long first for safety: direct
 						// static_cast<unsigned long long>(negative_double) is UB per
 						// C++20 [conv.fpint].  In practice parser double literals are
@@ -187,14 +187,14 @@
 				// Otherwise, use the type's signedness
 				if (lit_value <= signed_max) {
 					// Value fits in signed range, use type's signedness
-					use_sign_extend = is_signed_integer_type(fromType);
+					use_sign_extend = is_signed_integer_type(typeToCategory(fromType));
 				} else {
 					// Value doesn't fit in signed range - zero extend
 					use_sign_extend = false;
 				}
 			} else {
 				// For non-literal values (variables, TempVars), use the type's signedness
-				use_sign_extend = is_signed_integer_type(fromType);
+				use_sign_extend = is_signed_integer_type(typeToCategory(fromType));
 			}
 
 			if (use_sign_extend) {
@@ -1339,7 +1339,7 @@
 			// When sema_ is null (e.g., template instantiation), keep the fallback
 			// unconditionally to avoid dropping promotions.
 			if (!promoted && (typeToCategory(operandType) == TypeCategory::Bool ||
-				(is_integer_type(operandType) && get_integer_rank(typeToCategory(operandType)) < 3))) {
+				(is_integer_type(typeToCategory(operandType)) && get_integer_rank(typeToCategory(operandType)) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
@@ -1373,7 +1373,7 @@
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
-			if (!is_integer_type(operandType) && typeToCategory(operandType) != TypeCategory::Bool) {
+			if (!is_integer_type(typeToCategory(operandType)) && typeToCategory(operandType) != TypeCategory::Bool) {
 				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 			}
 			// Bitwise NOT - use UnaryOp struct
@@ -2352,7 +2352,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 				// Float/double → bool: emit FloatNotEqual(cond, 0.0).
-				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.base_type)) {
+				if (from_desc.pointer_levels.empty() && is_floating_point_type(typeToCategory(from_desc.base_type))) {
 					return emitFloatNonZeroTest(condition);
 				}
 				// Enum/pointer → bool (Phase 9): backend TEST already implements
@@ -2392,7 +2392,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
 		//    Guard: pointer types (even float*/double*) are integer-width addresses
 		//    and must use TEST, not FloatNotEqual.
-		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(typeToCategory(condition.typeEnum()))) {
 			return emitFloatNonZeroTest(condition);
 		}
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
@@ -2488,7 +2488,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			arg_result.typeEnum() != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(arg_result.typeEnum())) && is_standard_arithmetic_type(typeToCategory(param_base_type)))
 					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
 				arg_result = generateTypeConversion(arg_result, arg_result.typeEnum(), param_base_type, source_token);

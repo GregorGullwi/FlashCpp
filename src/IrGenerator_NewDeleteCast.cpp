@@ -802,7 +802,7 @@
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
-		if (is_floating_point_type(source_type) && is_integer_type(target_type)) {
+		if (is_floating_point_type(typeToCategory(source_type)) && is_integer_type(typeToCategory(target_type))) {
 			TempVar result_temp = var_counter.next();
 			// Extract IrValue from IrOperand - visitExpressionNode returns [type, size, value]
 			// where value is TempVar, string_view, unsigned long long, or double
@@ -829,7 +829,7 @@
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
-		if (is_integer_type(source_type) && is_floating_point_type(target_type)) {
+		if (is_integer_type(typeToCategory(source_type)) && is_floating_point_type(typeToCategory(target_type))) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -853,7 +853,7 @@
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
-		if (is_floating_point_type(source_type) && is_floating_point_type(target_type) && source_type != target_type) {
+		if (is_floating_point_type(typeToCategory(source_type)) && is_floating_point_type(typeToCategory(target_type)) && source_type != target_type) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -878,7 +878,7 @@
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
 		// e.g. static_cast<bool>(42) must produce 1, not 42
-		if (is_integer_type(source_type) && typeToCategory(target_type) == TypeCategory::Bool) {
+		if (is_integer_type(typeToCategory(source_type)) && typeToCategory(target_type) == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
@@ -890,7 +890,7 @@
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
-		if (is_floating_point_type(source_type) && typeToCategory(target_type) == TypeCategory::Bool) {
+		if (is_floating_point_type(typeToCategory(source_type)) && typeToCategory(target_type) == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),

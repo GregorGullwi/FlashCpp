@@ -341,7 +341,7 @@
 						// some expression contexts). Same-type size mismatches are not type
 						// conversions — no annotation expected.
 						if (sema_normalized_current_function_ && expr_type != return_type &&
-							is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
+							is_standard_arithmetic_type(typeToCategory(expr_type)) && is_standard_arithmetic_type(typeToCategory(return_type))) {
 							throw InternalError(std::string("Phase 15: sema missed return conversion (") + std::string(getTypeName(expr_type)) + " -> " + std::string(getTypeName(return_type)) + ")");
 						}
 						// Fallback for non-arithmetic types (enum, user_defined, etc.)

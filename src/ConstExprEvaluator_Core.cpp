@@ -70,7 +70,7 @@ namespace {
 			: (isFloatingPointType(category)
 				? EvalResult::from_double(expr_result.as_double())
 				: ((isIntegralType(category) || category == TypeCategory::Enum) &&
-					(target_type.category() == TypeCategory::Bool || is_unsigned_integer_type(target_type.type()))
+					(target_type.category() == TypeCategory::Bool || is_unsigned_integer_type(target_type.category()))
 					? EvalResult::from_uint(expr_result.as_uint_raw())
 					: EvalResult::from_int(expr_result.as_int())));
 		result.set_exact_type(target_type);
@@ -323,7 +323,7 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
-		EvalResult result = is_unsigned_integer_type(literal.type())
+		EvalResult result = is_unsigned_integer_type(typeToCategory(literal.type()))
 			? EvalResult::from_uint(val)
 			: EvalResult::from_int(static_cast<long long>(val));
 		result.set_exact_type(literal_type);
@@ -994,7 +994,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 				size_bits = get_type_size_bits(type_spec.category());
 			}
 			size_t size_in_bytes = size_bits / 8;
-			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
+			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 			
 			return EvalResult::from_int(static_cast<long long>(alignment));
 		}
@@ -1039,7 +1039,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 									size_bits = get_type_size_bits(type_spec.category());
 								}
 								size_t size_in_bytes = size_bits / 8;
-								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
+								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 								
 								return EvalResult::from_int(static_cast<long long>(alignment));
 							}
@@ -1472,7 +1472,7 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 		r.set_exact_type(type_spec);
 		return r;
 	}
-	if (is_unsigned_integer_type(type_spec.type())) {
+	if (is_unsigned_integer_type(type_spec.category())) {
 		EvalResult r = EvalResult::from_uint(0);
 		r.set_exact_type(type_spec);
 		return r;
@@ -2839,7 +2839,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// Check for incomplete class/struct types
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx.is_valid() && (is_struct_type(base_type))) {
+					if (type_idx.is_valid() && (is_struct_type(typeToCategory(base_type)))) {
 						const TypeInfo& type_info = getTypeInfo(type_idx);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						

@@ -1198,7 +1198,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (standard_conversion.is_valid &&
 						standard_conversion.rank != ConversionRank::UserDefined) {
 						if (sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
+							is_standard_arithmetic_type(typeToCategory(arg_type)) && is_standard_arithmetic_type(typeToCategory(param_base_type)) &&
 							!(sema_ && sema_->hasUnresolvedCallArgs(&functionCallNode))) {
 							throw InternalError(std::string("Phase 15: sema missed function call argument conversion (")
 								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");

@@ -2536,7 +2536,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	if (!is_struct_type(type_spec.category()) && type_spec.category() != TypeCategory::UserDefined) {
 		const int type_size_bits = get_type_size_bits(type_spec.type());
 		if (num_args == 0) {
-			if (is_floating_point_type(type_spec.type())) {
+			if (is_floating_point_type(type_spec.category())) {
 				return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0.0}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
 			}
 			return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0ULL}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
@@ -2560,7 +2560,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// For constructor calls, we need to generate a constructor call instruction
 	// In C++, constructors are named after the class
 	StringHandle constructor_name;
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		// If type_index is set, use it
 		if (type_spec.type_index().is_valid()) {
 			constructor_name = getTypeInfo(type_spec.type_index()).name();

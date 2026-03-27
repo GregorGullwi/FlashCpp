@@ -1017,18 +1017,7 @@ inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
 	}
 }
 
-// Type utilities
-bool is_integer_type(Type type);
-bool is_signed_integer_type(Type type);
-bool is_unsigned_integer_type(Type type);
-bool is_bool_type(Type type);
-bool is_floating_point_type(Type type);
-bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
-// Phase 15: standard arithmetic type = integer, floating-point, or bool.
-// Sema owns implicit conversion annotation for these types exclusively.
-inline bool is_standard_arithmetic_type(Type type) {
-	return is_integer_type(type) || is_floating_point_type(type) || is_bool_type(type);
-}
+// Type utilities — TypeCategory overloads are in AstNodeTypes_TypeSystem.h
 int get_integer_rank(TypeCategory type);
 int get_floating_point_rank(TypeCategory type);
 
@@ -1046,17 +1035,6 @@ int get_type_size_bits(Type type);
 int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
 TypeCategory promote_integer_type(TypeCategory type);
 TypeCategory get_common_type(TypeCategory left, TypeCategory right);
-
-// Helper to calculate alignment from size in bytes
-// Standard alignment rules: min(size, 8) for most platforms, with special case for long double
-inline size_t calculate_alignment_from_size(size_t size_in_bytes, Type type) {
-	// Special case for long double on x86-64: often has 16-byte alignment
-	if (typeToCategory(type) == TypeCategory::LongDouble) {
-		return 16;
-	}
-	// Standard alignment: same as size, up to 8 bytes
-	return (size_in_bytes < 8) ? size_in_bytes : 8;
-}
 
 // Pointer level information - stores CV-qualifiers for each pointer level
 // Example: const int* const* volatile
@@ -1219,7 +1197,7 @@ public:
 		}
 		
 		// Check type index for user-defined types
-		if (is_struct_type(type_)) {
+		if (is_struct_type(typeToCategory(type_))) {
 			if (type_index_ != other.type_index_) {
 				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
 				if (token_.value() != other.token_.value()) {
