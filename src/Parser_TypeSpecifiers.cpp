@@ -438,7 +438,7 @@ ParseResult Parser::parse_type_specifier()
 				{"__int64", {Type::LongLong, 64}},
 	};
 
-	Type type = Type::UserDefined;
+	TypeCategory type_cat = TypeCategory::UserDefined;
 	int type_size = 0;
 
 	// Check if we have a type keyword, or if we only have qualifiers (e.g., "long", "unsigned")
@@ -447,19 +447,19 @@ ParseResult Parser::parse_type_specifier()
 		auto k = peek();
 		// Handle "long" specially due to target-dependent size
 		if (k == "long"_tok) {
-			type = Type::Long;
+			type_cat = TypeCategory::Long;
 			type_size = get_type_size_bits(Type::Long);
 			has_explicit_type = true;
 		// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
 		} else if (k == "wchar_t"_tok) {
-			type = Type::WChar;
+			type_cat = TypeCategory::WChar;
 			type_size = get_wchar_size_bits();
 			has_explicit_type = true;
 		} else {
 			// For type_map lookup we still need the spelling string
 			const auto& it = type_map.find(peek_info().value());
 			if (it != type_map.end()) {
-				type = std::get<0>(it->second);
+				type_cat = typeToCategory(std::get<0>(it->second));
 				type_size = static_cast<unsigned char>(std::get<1>(it->second));
 				has_explicit_type = true;
 			}
@@ -471,21 +471,21 @@ ParseResult Parser::parse_type_specifier()
 
 		// Apply signed/unsigned qualifier to integer types
 		if (qualifier == TypeQualifier::Unsigned) {
-			switch (type) {
-				case Type::Char:
-					type = Type::UnsignedChar;
+			switch (type_cat) {
+				case TypeCategory::Char:
+					type_cat = TypeCategory::UnsignedChar;
 					type_size = 8;
 					break;
-				case Type::Short:
-					type = Type::UnsignedShort;
+				case TypeCategory::Short:
+					type_cat = TypeCategory::UnsignedShort;
 					type_size = 16;
 					break;
-				case Type::Int:
-					type = Type::UnsignedInt;
+				case TypeCategory::Int:
+					type_cat = TypeCategory::UnsignedInt;
 					type_size = 32;
 					break;
-				case Type::Long:
-					type = Type::UnsignedLong;
+				case TypeCategory::Long:
+					type_cat = TypeCategory::UnsignedLong;
 					type_size = get_type_size_bits(Type::UnsignedLong);
 					break;
 				default:
@@ -493,17 +493,17 @@ ParseResult Parser::parse_type_specifier()
 			}
 		} else if (qualifier == TypeQualifier::Signed) {
 			// Explicitly signed types keep their current type but ensure correct size
-			switch (type) {
-				case Type::Char:
+			switch (type_cat) {
+				case TypeCategory::Char:
 					type_size = 8;
 					break;
-				case Type::Short:
+				case TypeCategory::Short:
 					type_size = 16;
 					break;
-				case Type::Int:
+				case TypeCategory::Int:
 					type_size = 32;
 					break;
-				case Type::Long:
+				case TypeCategory::Long:
 					type_size = get_type_size_bits(Type::Long);
 					break;
 				default:
@@ -512,39 +512,39 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		if (long_count == 1) {
-			if (type == Type::Float) {
+			if (type_cat == TypeCategory::Float) {
 				type_size = sizeof(long double);
 			}
-			else if (type == Type::Int) {
+			else if (type_cat == TypeCategory::Int) {
 				// "long int" -> long
-				type = Type::Long;
+				type_cat = TypeCategory::Long;
 				type_size = get_type_size_bits(Type::Long);
 			}
-			else if (type == Type::UnsignedInt) {
+			else if (type_cat == TypeCategory::UnsignedInt) {
 				// "long unsigned int" or "unsigned long int" -> unsigned long
-				type = Type::UnsignedLong;
+				type_cat = TypeCategory::UnsignedLong;
 				type_size = get_type_size_bits(Type::UnsignedLong);
 			}
-			else if (type == Type::Long) {
+			else if (type_cat == TypeCategory::Long) {
 				// "long long" -> long long
-				type = Type::LongLong;
+				type_cat = TypeCategory::LongLong;
 				type_size = 64;
 			}
-			else if (type == Type::UnsignedLong) {
+			else if (type_cat == TypeCategory::UnsignedLong) {
 				// "long long unsigned" or "unsigned long long" -> unsigned long long
-				type = Type::UnsignedLongLong;
+				type_cat = TypeCategory::UnsignedLongLong;
 				type_size = 64;
 			}
 		}
 		else if (long_count == 2) {
-			if (type == Type::Int) {
+			if (type_cat == TypeCategory::Int) {
 				// "long long int" -> long long
-				type = Type::LongLong;
+				type_cat = TypeCategory::LongLong;
 				type_size = 64;
 			}
-			else if (type == Type::UnsignedInt) {
+			else if (type_cat == TypeCategory::UnsignedInt) {
 				// "unsigned long long int" or "long long unsigned int" -> unsigned long long
-				type = Type::UnsignedLongLong;
+				type_cat = TypeCategory::UnsignedLongLong;
 				type_size = 64;
 			}
 		}
@@ -555,9 +555,9 @@ ParseResult Parser::parse_type_specifier()
 		// Handle optional 'int' keyword after 'short', 'long', 'signed', or 'unsigned'
 		// e.g., "short int", "long int", "unsigned int"
 		if (peek() == "int"_tok &&
-		    (type == Type::Short || type == Type::UnsignedShort ||
-		     type == Type::Long || type == Type::UnsignedLong ||
-		     type == Type::LongLong || type == Type::UnsignedLongLong)) {
+		    (type_cat == TypeCategory::Short || type_cat == TypeCategory::UnsignedShort ||
+		     type_cat == TypeCategory::Long || type_cat == TypeCategory::UnsignedLong ||
+		     type_cat == TypeCategory::LongLong || type_cat == TypeCategory::UnsignedLongLong)) {
 			advance(); // consume optional 'int'
 		}
 
@@ -579,7 +579,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, type_keyword_token, cv_qualifier));
+			categoryToType(type_cat), qualifier, type_size, type_keyword_token, cv_qualifier));
 	}
 	else if (qualifier != TypeQualifier::None || long_count > 0) {
 		// Handle cases like "unsigned", "signed", "long" without explicit type (defaults to int)
@@ -588,20 +588,20 @@ ParseResult Parser::parse_type_specifier()
 
 		if (long_count == 1) {
 			// "long" or "const long" -> long int
-			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLong : Type::Long;
-			type_size = get_type_size_bits(type);
+			type_cat = (qualifier == TypeQualifier::Unsigned) ? TypeCategory::UnsignedLong : TypeCategory::Long;
+			type_size = get_type_size_bits(categoryToType(type_cat));
 		} else if (long_count == 2) {
 			// "long long" or "const long long" -> long long int
-			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLongLong : Type::LongLong;
+			type_cat = (qualifier == TypeQualifier::Unsigned) ? TypeCategory::UnsignedLongLong : TypeCategory::LongLong;
 			type_size = 64;
 		} else {
 			// "unsigned", "signed" without type -> int
-			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedInt : Type::Int;
+			type_cat = (qualifier == TypeQualifier::Unsigned) ? TypeCategory::UnsignedInt : TypeCategory::Int;
 			type_size = 32;
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type, qualifier, type_size, Token(), cv_qualifier));
+			categoryToType(type_cat), qualifier, type_size, Token(), cv_qualifier));
 	}
 	// If we only have CV-qualifiers (const/volatile) without unsigned/signed/long,
 	// continue parsing - could be "const Widget&", "const int*", etc.

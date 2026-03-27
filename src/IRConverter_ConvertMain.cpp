@@ -2,6 +2,20 @@
 #include "IRConverter.h"
 #include "OverloadResolution.h"
 
+namespace {
+	uint32_t codeViewTypeIndex(TypeCategory type_cat) {
+		switch (type_cat) {
+			case TypeCategory::Int: return 0x74;      // T_INT4
+			case TypeCategory::Float: return 0x40;    // T_REAL32
+			case TypeCategory::Double: return 0x41;   // T_REAL64
+			case TypeCategory::Char: return 0x10;     // T_CHAR
+			case TypeCategory::Bool: return 0x30;     // T_BOOL08
+			case TypeCategory::Struct: return 0x603;  // T_64PVOID for struct pointers / aggregate references
+			default: return 0x74;                     // T_INT4 fallback
+		}
+	}
+}
+
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename , bool show_timing)  {
 
@@ -6726,15 +6740,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 		// Add debug information for the local variable
 		if (current_function_name_.isValid()) {
-			uint32_t type_index;
-			switch (var_type) {
-				case Type::Int: type_index = 0x74; break;
-				case Type::Float: type_index = 0x40; break;
-				case Type::Double: type_index = 0x41; break;
-				case Type::Char: type_index = 0x10; break;
-				case Type::Bool: type_index = 0x30; break;
-				default: type_index = 0x74; break;
-			}
+			const uint32_t type_index = codeViewTypeIndex(typeToCategory(var_type));
 
 			std::vector<CodeView::VariableLocation> locations;
 			uint32_t start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -7673,15 +7679,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				if (param_pointer_depth > 0) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					switch (param_type) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
-					}
+					param_type_index = codeViewTypeIndex(typeToCategory(param_type));
 				}
 				writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
@@ -7827,15 +7825,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				if (param.pointer_depth.is_pointer()) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					switch (param.paramType()) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
-					}
+					param_type_index = codeViewTypeIndex(typeToCategory(param.paramType()));
 				}
 				// Phase 4: Use helper to get param name
 				std::string param_name_str(StringTable::getStringView(param.getName()));
