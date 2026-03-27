@@ -115,6 +115,11 @@ struct CanonicalTypeDesc {
 	std::optional<FunctionSignature> function_signature;
 
 	bool operator==(const CanonicalTypeDesc& other) const;
+
+	TypeCategory category() const {
+		TypeCategory cat = type_index.category();
+		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(base_type);
+	}
 };
 
 // --- Hash specialisation for CanonicalTypeDesc (enables O(1) TypeContext::intern) ---

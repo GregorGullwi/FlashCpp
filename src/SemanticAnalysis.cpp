@@ -121,7 +121,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	int size_bits = 0;
 	if (desc.ref_qualifier != ReferenceQualifier::None || !desc.pointer_levels.empty()) {
 		size_bits = 64;
-	} else if (desc.base_type == Type::Invalid) {
+	} else if (desc.category() == TypeCategory::Invalid) {
 		size_bits = 0;
 	} else {
 		size_bits = getTypeSpecSizeBits(type_node);
@@ -883,7 +883,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const FunctionDeclar
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -906,7 +906,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -925,7 +925,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& la
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(lambda_info.outer_template_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -948,7 +948,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarat
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -971,7 +971,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const VariableDeclar
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -994,7 +994,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDec
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -1017,7 +1017,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDecl
 		}
 
 		const CanonicalTypeDesc desc = canonicalTypeDescFromTemplateArgInfo(param_args[i]);
-		if (desc.base_type == Type::Invalid) {
+		if (desc.category() == TypeCategory::Invalid) {
 			continue;
 		}
 
@@ -1178,7 +1178,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
 	}
 
-	if (range_type->type() != Type::Struct ||
+	if (range_type->category() != TypeCategory::Struct ||
 		!range_type->type_index().is_valid() ||
 		range_type->type_index().index() >= getTypeInfoCount()) {
 		return original_var_decl.declaration_node();
@@ -1952,8 +1952,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					// from promoted LHS type to original LHS type.
 					if (is_compound_assign && lhs_type_id) {
 						const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
-						if (!lhs_desc.pointer_levels.empty() || lhs_desc.base_type == Type::Struct ||
-							lhs_desc.base_type == Type::Invalid || isPlaceholderAutoType(lhs_desc.base_type)) {
+						if (!lhs_desc.pointer_levels.empty() || lhs_desc.category() == TypeCategory::Struct ||
+							lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
 							// Skip non-primitive types
 						} else {
 							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
@@ -2410,7 +2410,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				}
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-				if (object_desc.base_type != Type::Struct ||
+				if (object_desc.category() != TypeCategory::Struct ||
 					!object_desc.type_index.is_valid() ||
 					object_desc.type_index.index() >= getTypeInfoCount()) {
 					return {};
@@ -2520,13 +2520,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!lhs_id || !rhs_id) return {};
 					const CanonicalTypeDesc& l = type_context_.get(lhs_id);
 					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
-					if (l.base_type == Type::Invalid || r.base_type == Type::Invalid) return {};
-					if (isPlaceholderAutoType(l.base_type) || isPlaceholderAutoType(r.base_type)) return {};
+					if (l.category() == TypeCategory::Invalid || r.category() == TypeCategory::Invalid) return {};
+					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category())) return {};
 					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
-					const Type common = categoryToType(get_common_type(typeToCategory(l.base_type), typeToCategory(r.base_type)));
-					if (common == Type::Invalid) return {};
+					const TypeCategory common_cat = get_common_type(typeToCategory(l.base_type), typeToCategory(r.base_type));
+					if (common_cat == TypeCategory::Invalid) return {};
 					CanonicalTypeDesc desc;
-					desc.base_type = common;
+					desc.base_type = categoryToType(common_cat);
 					return type_context_.intern(desc);
 				}
 			}
@@ -2538,12 +2538,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (canonical_types_match(t_id, f_id)) return t_id;
 				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
-				if (t_desc.base_type == Type::Struct || f_desc.base_type == Type::Struct) return {};
+				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct) return {};
 				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
-				const Type common_t = categoryToType(get_common_type(typeToCategory(t_desc.base_type), typeToCategory(f_desc.base_type)));
-				if (common_t == Type::Invalid) return {};
+				const TypeCategory common_cat = get_common_type(typeToCategory(t_desc.base_type), typeToCategory(f_desc.base_type));
+				if (common_cat == TypeCategory::Invalid) return {};
 				CanonicalTypeDesc ternary_desc;
-				ternary_desc.base_type = common_t;
+				ternary_desc.base_type = categoryToType(common_cat);
 				return type_context_.intern(ternary_desc);
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
@@ -2577,7 +2577,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!callee_type_id) return {};
 
 				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-				if (callee_desc.base_type == Type::Struct &&
+				if (callee_desc.category() == TypeCategory::Struct &&
 					callee_desc.type_index.is_valid() &&
 					callee_desc.type_index.index() < getTypeInfoCount()) {
 					const StructTypeInfo* struct_info = getTypeInfo(callee_desc.type_index).getStructInfo();
@@ -2791,16 +2791,16 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (from_desc.base_type != Type::Enum) return;
+	if (from_desc.category() != TypeCategory::Enum) return;
 	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
-	if (to_desc.base_type == Type::Enum && from_desc.type_index == to_desc.type_index) return;
+	if (to_desc.category() == TypeCategory::Enum && from_desc.type_index == to_desc.type_index) return;
 	if (!from_desc.type_index.is_valid() || from_desc.type_index.index() >= getTypeInfoCount()) return;
 
 	if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
 		if (ei->is_scoped) {
 			// Build target type name: use enum name if target is an enum, otherwise use primitive name.
 			std::string target_name;
-			if (to_desc.base_type == Type::Enum && to_desc.type_index.is_valid() &&
+			if (to_desc.category() == TypeCategory::Enum && to_desc.type_index.is_valid() &&
 				to_desc.type_index.index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* target_ei = getTypeInfo(to_desc.type_index).getEnumInfo())
 					target_name = StringTable::getStringView(target_ei->name);
@@ -2820,7 +2820,7 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 // of the same scoped enum type.  Any other binary operator usage is ill-formed.
 
 static bool isScopedEnum(const CanonicalTypeDesc& desc) {
-	if (desc.base_type != Type::Enum) return false;
+	if (desc.category() != TypeCategory::Enum) return false;
 	if (!desc.type_index.is_valid() || desc.type_index.index() >= getTypeInfoCount()) return false;
 	if (const EnumTypeInfo* ei = getTypeInfo(desc.type_index).getEnumInfo())
 		return ei->is_scoped;
@@ -2923,9 +2923,9 @@ static bool structHasConversionOperatorTo(
 			const CanonicalTypeAlias canonical_return_type =
 				canonicalize_type_alias(type_spec.type(), type_spec.type_index());
 			Type resolved_type = canonical_return_type.typeEnum();
-			if (resolved_type == to_desc.base_type) return true;
+			if (typeToCategory(resolved_type) == to_desc.category()) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
-			if (resolved_type == Type::UserDefined) {
+			if (typeToCategory(resolved_type) == TypeCategory::UserDefined) {
 				const int expected_size = get_type_size_bits(to_desc.base_type);
 				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
 					return true;
@@ -2937,7 +2937,7 @@ static bool structHasConversionOperatorTo(
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred) continue;
 		CanonicalTypeDesc base_from_desc;
-		base_from_desc.base_type = Type::Struct;
+		base_from_desc.base_type = categoryToType(TypeCategory::Struct);
 		base_from_desc.type_index = base.type_index;
 		if (structHasConversionOperatorTo(base_from_desc, to_desc, depth + 1))
 			return true;
@@ -2970,25 +2970,25 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Enum as *target* is rejected: C++11+ forbids implicit conversion TO enum.
 	// Struct source is allowed when target is primitive: user-defined conversion operator.
 	// is_unresolved_type: sources where sema cannot determine a concrete scalar conversion.
-	auto is_unresolved_type = [](Type t) {
-		return t == Type::UserDefined || t == Type::Invalid || isPlaceholderAutoType(t);
+	auto is_unresolved_type = [](TypeCategory t) {
+		return t == TypeCategory::UserDefined || t == TypeCategory::Invalid || isPlaceholderAutoType(t);
 	};
-	auto is_non_primitive_target = [](Type t) {
+	auto is_non_primitive_target = [](TypeCategory t) {
 		return is_struct_type(t) ||
-		       t == Type::Invalid || isPlaceholderAutoType(t);
+		       t == TypeCategory::Invalid || isPlaceholderAutoType(t);
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	// Allow Struct source for user-defined conversion operators (Struct→primitive).
 	// Reject Struct→Struct (handled elsewhere) and primitive→Struct (converting constructors).
-	if (from_desc.base_type == Type::Struct && to_desc.base_type == Type::Struct) return false;
-	if (from_desc.base_type != Type::Struct && is_unresolved_type(from_desc.base_type)) return false;
-	if (is_non_primitive_target(to_desc.base_type)) return false;
-	if (to_desc.base_type == Type::Enum) return false;  // no implicit conversion TO enum
+	if (from_desc.category() == TypeCategory::Struct && to_desc.category() == TypeCategory::Struct) return false;
+	if (from_desc.category() != TypeCategory::Struct && is_unresolved_type(from_desc.category())) return false;
+	if (is_non_primitive_target(to_desc.category())) return false;
+	if (to_desc.category() == TypeCategory::Enum) return false;  // no implicit conversion TO enum
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
-	if (from_desc.base_type == Type::Enum && from_desc.type_index.is_valid() &&
+	if (from_desc.category() == TypeCategory::Enum && from_desc.type_index.is_valid() &&
 		from_desc.type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
 			if (ei->is_scoped)
@@ -3003,7 +3003,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (!plan.is_valid) return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
-	if (plan.rank == ConversionRank::UserDefined && from_desc.base_type != Type::Struct) return false;
+	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct) return false;
 
 	// Phase 5: for UserDefined (struct→primitive) annotations, verify that a conversion
 	// operator actually exists before annotating. Without this check, sema optimistically
@@ -3056,12 +3056,12 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (to_desc.base_type != Type::Struct || !to_desc.type_index.is_valid()) return false;
+	if (to_desc.category() != TypeCategory::Struct || !to_desc.type_index.is_valid()) return false;
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
 	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None) return false;
-	if (from_desc.base_type == Type::UserDefined ||
-		from_desc.base_type == Type::Invalid || isPlaceholderAutoType(from_desc.base_type)) {
+	if (from_desc.category() == TypeCategory::UserDefined ||
+		from_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(from_desc.category())) {
 		return false;
 	}
 	if (to_desc.type_index.index() >= getTypeInfoCount()) return false;
@@ -3197,8 +3197,8 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	// Only handle plain primitive types and enum sources (no pointers, no arrays, no structs)
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
 	// Resolve enum operands to their underlying type for get_common_type,
@@ -3269,8 +3269,8 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	// Same guards as tryAnnotateBinaryOperandConversions
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
 	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
@@ -3310,8 +3310,8 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	// Only handle plain primitive integral types and enum sources (no pointers, arrays, structs, floats)
 	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.base_type == Type::Struct || rhs_desc.base_type == Type::Struct) return;
-	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
@@ -3352,7 +3352,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	// Only handle plain primitive types and enum sources (no pointers, arrays, structs)
 	if (!operand_desc.pointer_levels.empty()) return;
 	if (!operand_desc.array_dimensions.empty()) return;
-	if (operand_desc.base_type == Type::Struct || operand_desc.base_type == Type::Invalid) return;
+	if (operand_desc.category() == TypeCategory::Struct || operand_desc.category() == TypeCategory::Invalid) return;
 	if (isPlaceholderAutoType(operand_desc.base_type)) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
@@ -3391,7 +3391,7 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
 	if (!expr_type_id) return;
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
-	const bool is_enum = (from_desc.base_type == Type::Enum);
+	const bool is_enum = (from_desc.category() == TypeCategory::Enum);
 	const bool is_pointer = !from_desc.pointer_levels.empty();
 	if (!is_enum && !is_pointer) return;
 
@@ -3432,7 +3432,7 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	if (!callee_type_id) return;
 
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-	if (callee_desc.base_type != Type::Struct) return;
+	if (callee_desc.category() != TypeCategory::Struct) return;
 	if (!callee_desc.type_index.is_valid()) return;
 	if (callee_desc.type_index.index() >= getTypeInfoCount()) return;
 
@@ -3942,7 +3942,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
 			if (!arg_type_id) continue;
 			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
-			if (arg_desc.base_type != Type::Enum) continue;
+			if (arg_desc.category() != TypeCategory::Enum) continue;
 			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.index() >= getTypeInfoCount()) continue;
 			const EnumTypeInfo* ei = getTypeInfo(arg_desc.type_index).getEnumInfo();
 			if (!ei || !ei->is_scoped) continue;
@@ -3999,11 +3999,11 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	const auto& false_desc = type_context_.get(false_type_id);
 
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)
-	if (true_desc.base_type == Type::Struct || false_desc.base_type == Type::Struct) return;
+	if (true_desc.category() == TypeCategory::Struct || false_desc.category() == TypeCategory::Struct) return;
 	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
 	// C++20 [expr.cond]/2: when one branch is a throw-expression (or delete-expression),
 	// its type is void. The result type is the other branch's type — no conversion needed.
-	if (true_desc.base_type == Type::Void || false_desc.base_type == Type::Void) return;
+	if (true_desc.category() == TypeCategory::Void || false_desc.category() == TypeCategory::Void) return;
 
 	Type common = categoryToType(get_common_type(typeToCategory(true_desc.base_type), typeToCategory(false_desc.base_type)));
 	CanonicalTypeDesc common_desc;

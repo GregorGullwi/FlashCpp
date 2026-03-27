@@ -829,11 +829,11 @@ template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext& ctx, uint8_t setcc_opcode)  {
 		// Use SSE comiss/comisd for comparison
 		// Properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.operand_type == Type::Float) {
+		if (typeToCategory(ctx.operand_type) == TypeCategory::Float) {
 			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
 			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
+		} else if (typeToCategory(ctx.operand_type) == TypeCategory::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
 			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -929,7 +929,7 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		if (is_floating_point_type(operand_type)) {
 			// For float/double, allocate an XMM register
 			result_reg = allocateXMMRegisterWithSpilling();
-			bool is_float = (operand_type == Type::Float);
+			bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
 			uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
 
 			// Add pending relocation for this global variable reference
@@ -1047,7 +1047,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
-						bool is_float = (operand_type == Type::Float);
+						bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
@@ -1101,7 +1101,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				if (is_floating_point_type(operand_type)) {
 					// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (operand_type == Type::Float);
+					bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
@@ -1259,7 +1259,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
-						bool is_float = (operand_type == Type::Float);
+						bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
@@ -1332,7 +1332,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				if (is_floating_point_type(operand_type)) {
 					// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
-					bool is_float = (operand_type == Type::Float);
+					bool is_float = (typeToCategory(operand_type) == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
@@ -1464,7 +1464,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// Allocate a temporary GPR for the bit pattern
 			X64Register temp_gpr = allocateRegisterWithSpilling();
 
-			if (operand_type == Type::Float) {
+			if (typeToCategory(operand_type) == TypeCategory::Float) {
 				// For float (single precision), convert double to float and get 32-bit representation
 				float float_value = static_cast<float>(rhs_value);
 				uint32_t bits;
@@ -1821,7 +1821,7 @@ void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, Ty
 
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
-		if (!returns_reference || value_type == Type::Function) {
+		if (!returns_reference || typeToCategory(value_type) == TypeCategory::Function) {
 			return;
 		}
 
@@ -4933,14 +4933,14 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				}
 
 				// For copy/move constructors: if parameter is the same struct type, it should be a reference
-				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
+				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Struct and same as struct_name
 				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 				bool is_same_struct_type = false;
 				if (struct_type_it != getTypesByNameMap().end() && arg_type_index.is_valid()) {
 					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 				}
 
-				if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
+				if (num_params == 1 && typeToCategory(paramType) == TypeCategory::Struct && is_same_struct_type && !arg_is_reference) {
 					// This is likely a copy constructor, but arg_is_reference wasn't set
 					// Determine the actual CV qualifier from the constructor signature
 					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
@@ -4972,7 +4972,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
-				} else if (paramType == Type::Struct && arg_type_index.is_valid()) {
+				} else if (typeToCategory(paramType) == TypeCategory::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
 					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
 					// Add pointer levels (rebuild after creating with type_index)
@@ -5099,7 +5099,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				: arg.is_reference();
 			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
-			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double)
+			bool is_float_arg = (typeToCategory(paramType) == TypeCategory::Float || typeToCategory(paramType) == TypeCategory::Double)
 				&& (!param_type_spec || param_type_spec->pointer_depth() == 0)
 				&& !arg_is_reference;
 			bool is_reference_param = arg_is_reference;
@@ -5115,7 +5115,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 					// Convert to appropriate bit pattern (float or double)
 					uint64_t bits;
-					if (paramType == Type::Float) {
+					if (typeToCategory(paramType) == TypeCategory::Float) {
 						float float_val = static_cast<float>(float_value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -5136,7 +5136,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					// Load from temp variable
 					const TempVar temp_var = *temp_var_ptr;
 					int param_offset = getStackOffsetFromTempVar(temp_var);
-					bool is_float = (paramType == Type::Float);
+					bool is_float = (typeToCategory(paramType) == TypeCategory::Float);
 					emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 				} else if (std::holds_alternative<StringHandle>(paramValue)) {
 					// Load from variable
@@ -5144,7 +5144,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					auto it = variable_scopes.back().variables.find(var_name_handle);
 					if (it != variable_scopes.back().variables.end()) {
 						int param_offset = it->second.offset;
-						bool is_float = (paramType == Type::Float);
+						bool is_float = (typeToCategory(paramType) == TypeCategory::Float);
 						emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 					}
 				}
@@ -6147,8 +6147,8 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 		StringHandle global_name_handle = op.getGlobalName();
 		int size_in_bits = op.result.size_in_bits.value;
 		Type result_type = op.result.typeEnum();
-		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
-		bool is_float = (result_type == Type::Float);
+		bool is_floating_point = (typeToCategory(result_type) == TypeCategory::Float || typeToCategory(result_type) == TypeCategory::Double);
+		bool is_float = (typeToCategory(result_type) == TypeCategory::Float);
 
 		// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
 		// This prevents overwriting intermediate results in chained operations
@@ -6210,8 +6210,8 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 
 		int size_in_bits = static_cast<int>(global_info->size_in_bytes * 8);
 		Type var_type = global_info->varType();
-		bool is_floating_point = (var_type == Type::Float || var_type == Type::Double);
-		bool is_float = (var_type == Type::Float);
+		bool is_floating_point = (typeToCategory(var_type) == TypeCategory::Float || typeToCategory(var_type) == TypeCategory::Double);
+		bool is_float = (typeToCategory(var_type) == TypeCategory::Float);
 
 		// Load the source value from stack into a register
 		int source_offset = getStackOffsetFromTempVar(source_temp);
@@ -6369,7 +6369,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (std::holds_alternative<double>(init.value)) {
 						double value = std::get<double>(init.value);
 						uint64_t bits;
-						if (var_type == Type::Float) {
+						if (typeToCategory(var_type) == TypeCategory::Float) {
 							float fv = static_cast<float>(value);
 							uint32_t fb; std::memcpy(&fb, &fv, sizeof(fb));
 							emitMovDwordPtrImmToRegOffset(X64Register::RBP, temp_offset, fb);
@@ -6419,7 +6419,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				X64Register ptr_reg = allocateRegisterWithSpilling(dest_reg);
 				emitMovFromFrame(ptr_reg, source_stack_offset);
 				if (is_float) {
-					emitFloatMovFromMemory(dest_reg, ptr_reg, 0, var_type == Type::Float);
+					emitFloatMovFromMemory(dest_reg, ptr_reg, 0, typeToCategory(var_type) == TypeCategory::Float);
 				} else {
 					emitMovFromMemory(dest_reg, ptr_reg, 0, (op.size_in_bits.value + 7) / 8);
 				}
@@ -6435,13 +6435,13 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					// Handle double/float literals
 					double value = std::get<double>(init.value);
 
-					FLASH_LOG(Codegen, Debug, "Initializing ", (var_type == Type::Float ? "float" : "double"), " literal: ", value);
+					FLASH_LOG(Codegen, Debug, "Initializing ", (typeToCategory(var_type) == TypeCategory::Float ? "float" : "double"), " literal: ", value);
 
 					// Convert double to bit pattern
 					uint64_t bits;
 
 					// If the variable type is Float (32-bit), convert the double to float first
-					if (var_type == Type::Float) {
+					if (typeToCategory(var_type) == TypeCategory::Float) {
 						float float_value = static_cast<float>(value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_value, sizeof(float_bits));
@@ -6558,7 +6558,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 				}
 
-						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index.is_valid()) {
+						if (op.use_copy_constructor && typeToCategory(var_type) == TypeCategory::Struct && init.type_index.is_valid()) {
 							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 							return;
 						}
@@ -6572,7 +6572,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (is_floating_point_type(var_type)) {
 						// For floating-point types, the value is in an XMM register
 						// Use float mov instructions instead of integer mov
-						bool is_float = (var_type == Type::Float);
+						bool is_float = (typeToCategory(var_type) == TypeCategory::Float);
 						if (should_deref_reference_source) {
 							loadReferenceSourceIntoRegister(src_reg.value(), src_offset, is_float);
 						}
@@ -6590,7 +6590,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					if (var_type == Type::Struct) {
+					if (typeToCategory(var_type) == TypeCategory::Struct) {
 						// For struct types, copy entire struct using 8-byte chunks
 						int struct_size_bytes = (op.size_in_bits.value + 7) / 8;
 
@@ -6712,7 +6712,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					} else if (is_floating_point_type(var_type)) {
 						// For floating-point types, use XMM register and float moves
 						allocated_reg_val = allocateXMMRegisterWithSpilling();
-						bool is_float = (var_type == Type::Float);
+						bool is_float = (typeToCategory(var_type) == TypeCategory::Float);
 						if (should_deref_reference_source) {
 							loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, is_float);
 						} else {
@@ -7614,7 +7614,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0 && !is_reference;
+				bool is_float_param = (typeToCategory(param_type) == TypeCategory::Float || typeToCategory(param_type) == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
 
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -7668,7 +7668,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
 				bool is_passed_by_reference = is_reference ||
-				                              (!is_two_reg_struct && param_type == Type::Struct && param_size > 64);
+				                              (!is_two_reg_struct && typeToCategory(param_type) == TypeCategory::Struct && param_size > 64);
 				if (is_passed_by_reference) {
 					setReferenceInfo(offset, param_type, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
@@ -7892,11 +7892,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
-				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && !param.pointer_depth && !param.is_reference;
+				bool is_float_param = (typeToCategory(param.param_type) == TypeCategory::Float || typeToCategory(param.param_type) == TypeCategory::Double) && !param.pointer_depth && !param.is_reference;
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
-					bool is_float = (param.param_type == Type::Float);
+					bool is_float = (typeToCategory(param.param_type) == TypeCategory::Float);
 					emitFloatMovToFrame(param.src_reg, param.offset, is_float);
 				} else if (param.second_reg != X64Register::Count) {
 					// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
@@ -7910,7 +7910,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					// References are always passed as 64-bit pointers regardless of the type they refer to
 					// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
 					bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
-					                            (param.param_type == Type::Struct && param.param_size > 64);
+					                            (typeToCategory(param.param_type) == TypeCategory::Struct && param.param_size > 64);
 					int store_size = is_passed_by_pointer ? 64 : param.param_size;
 					emitMovToFrameSized(
 						SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
@@ -10963,7 +10963,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 		// Special handling for function pointer assignment
-		if (lhs_type == Type::FunctionPointer) {
+		if (typeToCategory(lhs_type) == TypeCategory::FunctionPointer) {
 			// Get LHS destination
 			int32_t lhs_offset = -1;
 
@@ -11013,7 +11013,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 		// Special handling for struct assignment
-		if (lhs_type == Type::Struct) {
+		if (typeToCategory(lhs_type) == TypeCategory::Struct) {
 			// For struct assignment, we need to copy the entire struct value
 			// LHS is the destination (should be a variable name or TempVar)
 			// RHS is the source (should be a TempVar from function return, or another variable)
@@ -11326,7 +11326,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 					source_reg = ptr_reg;
 				} else if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (rhs_type == Type::Float);
+					bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
@@ -11380,7 +11380,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			} else {
 				if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (rhs_type == Type::Float);
+					bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
@@ -11425,7 +11425,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 			if (is_floating_point_type(rhs_type)) {
 				// For floating-point, use SSE store instruction helper
-				bool is_float = (rhs_type == Type::Float);
+				bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 				auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
 				textSectionData.insert(textSectionData.end(), store_inst.op_codes.begin(),
 				                       store_inst.op_codes.begin() + store_inst.size_in_bytes);
@@ -11439,7 +11439,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		} else {
 			// Normal (non-reference) assignment - store directly to stack location
 			if (is_floating_point_type(rhs_type)) {
-				bool is_float = (rhs_type == Type::Float);
+				bool is_float = (typeToCategory(rhs_type) == TypeCategory::Float);
 				emitFloatMovToFrame(source_reg, lhs_offset, is_float);
 			} else {
 				emitMovToFrameSized(
@@ -11634,8 +11634,8 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
 		Type element_type = op.elementType();
-		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
-		bool is_float = (element_type == Type::Float);
+		bool is_floating_point = (typeToCategory(element_type) == TypeCategory::Float || typeToCategory(element_type) == TypeCategory::Double);
+		bool is_float = (typeToCategory(element_type) == TypeCategory::Float);
 		bool is_struct = is_struct_type(element_type);
 
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
@@ -13969,7 +13969,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				const TempVar temp_var = std::get<TempVar>(arg.value);
 				int arg_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_float_arg) {
-					bool is_float = (argType == Type::Float);
+					bool is_float = (typeToCategory(argType) == TypeCategory::Float);
 					emitFloatMovFromFrame(target_reg, arg_offset, is_float);
 				} else {
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
@@ -13982,7 +13982,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
 				int arg_offset = variable_scopes.back().variables[arg_var_name_handle].offset;
 				if (is_float_arg) {
-					bool is_float = (argType == Type::Float);
+					bool is_float = (typeToCategory(argType) == TypeCategory::Float);
 					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -14693,7 +14693,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				if (thrown_exception_struct_info) {
 					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
 					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
-			} else if (exception_type != Type::Void) {
+			} else if (typeToCategory(exception_type) != TypeCategory::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
 				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
 			}
