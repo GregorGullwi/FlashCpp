@@ -195,7 +195,7 @@
 							// Store the enclosing 'this' pointer in the closure
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
-							store_this.value.setType(Type::Void);
+							store_this.value.setType(TypeCategory::Void);
 							store_this.value.ir_type = IrType::Void;
 							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
@@ -940,7 +940,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	// Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
-	op.result.setType(Type::FunctionPointer);
+	op.result.setType(TypeCategory::FunctionPointer);
 	op.result.ir_type = IrType::FunctionPointer;
 	op.result.size_in_bits = SizeInBits{64};
 	op.result.value = func_addr_var;
@@ -1016,7 +1016,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	TempVar copy_this_temp = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = copy_this_temp;
-	load_op.result.setType(Type::Struct);
+	load_op.result.setType(TypeCategory::Struct);
 	load_op.result.ir_type = IrType::Struct;
 	load_op.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_member->size * 8)};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
@@ -1145,7 +1145,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	TempVar this_ptr = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = this_ptr;
-	load_op.result.setType(Type::Void);
+	load_op.result.setType(TypeCategory::Void);
 	load_op.result.ir_type = IrType::Void;
 	load_op.result.size_in_bits = SizeInBits{64};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)

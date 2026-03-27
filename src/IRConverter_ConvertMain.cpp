@@ -850,7 +850,7 @@ void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrT
 		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
 		// Update context for boolean result (1 byte)
-		ctx.result_value.setType(Type::Bool);
+		ctx.result_value.setType(TypeCategory::Bool);
 		ctx.result_value.size_in_bits = SizeInBits{8};
 		ctx.result_physical_reg = bool_reg;
 
@@ -1021,7 +1021,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// Pointer-like and struct types: force 64-bit integer semantics
 			// for pointer offset calculations
 			if (!is_comparison) {
-				ctx.result_value.setType(Type::UnsignedLongLong);
+				ctx.result_value.setType(TypeCategory::UnsignedLongLong);
 				ctx.result_value.size_in_bits = SizeInBits{64};
 			}
 			ctx.operand_type = Type::UnsignedLongLong;

@@ -463,7 +463,7 @@
 									TempVar func_ptr_temp = var_counter.next();
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
-									member_load.result.setType(Type::FunctionPointer);
+									member_load.result.setType(TypeCategory::FunctionPointer);
 									member_load.result.ir_type = IrType::FunctionPointer;
 									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;

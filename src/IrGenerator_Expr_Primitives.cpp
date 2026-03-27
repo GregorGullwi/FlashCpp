@@ -1217,7 +1217,7 @@
 
 			TempVar func_addr_var = var_counter.next();
 			FunctionAddressOp op;
-			op.result.setType(Type::FunctionPointer);
+			op.result.setType(TypeCategory::FunctionPointer);
 			op.result.ir_type = IrType::FunctionPointer;
 			op.result.size_in_bits = SizeInBits{64};
 			op.result.value = func_addr_var;

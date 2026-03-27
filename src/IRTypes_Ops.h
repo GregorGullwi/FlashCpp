@@ -438,6 +438,7 @@ struct TypedValue {
 		ir_type = toIrType(t);
 		is_signed = isSignedType(t);
 	}
+	void setType(TypeCategory cat) noexcept { setType(categoryToType(cat)); }
 
 	// Returns the effective runtime representation type.
 	// During the transition period (Phase 1-3), some construction sites may not

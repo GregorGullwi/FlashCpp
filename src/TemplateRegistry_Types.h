@@ -190,6 +190,7 @@ struct TemplateTypeArg {
 	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
 	// Set the type (updates type_index category without changing the index slot).
 	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
+	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }

@@ -231,7 +231,7 @@
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer
-		return makeExprResult(Type::Char, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeCategory::Char, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
@@ -466,14 +466,14 @@
 
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
-		op.result.setType(Type::FunctionPointer);
+		op.result.setType(TypeCategory::FunctionPointer);
 		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-		return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
@@ -760,8 +760,8 @@
 									// Treat the pointer as a 64-bit integer for arithmetic purposes
 									TempVar member_addr_var = var_counter.next();
 									BinaryOp add_offset;
-									add_offset.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, elem_addr_var);  // pointer treated as integer
-									add_offset.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, static_cast<unsigned long long>(member_result.adjusted_offset));
+									add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, elem_addr_var);  // pointer treated as integer
+									add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, static_cast<unsigned long long>(member_result.adjusted_offset));
 									add_offset.result = member_addr_var;
 
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
@@ -895,7 +895,7 @@
 									// flat_index = indices[k]
 									AssignmentOp assign_op;
 									assign_op.result = flat_index;
-									assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+									assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 									assign_op.rhs = toTypedValue(idx_operands);
 									ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 									first_term = false;
@@ -903,7 +903,7 @@
 									// flat_index += indices[k]
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+									add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 									add_op.rhs = toTypedValue(idx_operands);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -914,7 +914,7 @@
 								TempVar temp_prod = var_counter.next();
 								BinaryOp mul_op;
 								mul_op.lhs = toTypedValue(idx_operands);
-								mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
+								mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 								mul_op.result = IrValue{temp_prod};
 								ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
@@ -925,8 +925,8 @@
 									// flat_index += temp
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
-									add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
+									add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+									add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, temp_prod);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 									flat_index = new_flat;
@@ -941,7 +941,7 @@
 						payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-						payload.index.setType(Type::UnsignedLongLong);
+						payload.index.setType(TypeCategory::UnsignedLongLong);
 						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
@@ -1051,7 +1051,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, current_val),
-					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1087,7 +1087,7 @@
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
 					.lhs = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, current_val),
-					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1230,7 +1230,7 @@
 
 				// Return the address of the __invoke function
 				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
-				return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (lambda_struct_info) {
 				if (auto fp_operands = decayLambdaStructToFunctionPointer(*lambda_struct_info, unaryOperatorNode.get_token())) {
 					return *fp_operands;
@@ -1368,7 +1368,7 @@
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
 			// Logical NOT always returns bool8
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
@@ -1756,7 +1756,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	// since the fallback path may match a prefix function for a postfix call or vice versa.
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
-		dummy_arg.setType(Type::Int);
+		dummy_arg.setType(TypeCategory::Int);
 		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
@@ -1993,8 +1993,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 
 		if (is_prefix) {
 			BinaryOp bin_op{
-				.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_operand),
-				.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
+				.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_operand),
+				.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2015,13 +2015,13 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			TempVar old_value = var_counter.next();
 			AssignmentOp save_op;
 			save_op.result = old_value;
-			save_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, old_value);
+			save_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, old_value);
 			save_op.rhs = toTypedValue(operandIrResult);
 			populateIncDecTypedValueMetadata(save_op.rhs);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 			BinaryOp bin_op{
-				.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_operand),
-				.rhs = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
+				.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_operand),
+				.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2062,7 +2062,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			if (is_prefix) {
 				BinaryOp bin_op{
 					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
-					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 1ULL),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2081,7 +2081,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 
 				BinaryOp bin_op{
 					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
-					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 1ULL),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2339,7 +2339,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
 			// FloatNotEqual produces a bool8 result via SETNE; the backend's
 			// conditional branch already handles bool8 values correctly.
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		// 1. Try sema annotation (Phase 6/8 contextual bool).

@@ -793,6 +793,9 @@ private:
 	// Return IR helper
 	// ============================================================================
 	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token);
+	void emitReturn(IrValue return_value, TypeCategory return_type_cat, int return_size, const Token& token) {
+		emitReturn(std::move(return_value), categoryToType(return_type_cat), return_size, token);
+	}
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;
