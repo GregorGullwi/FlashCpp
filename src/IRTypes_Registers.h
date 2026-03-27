@@ -277,24 +277,24 @@ struct TempVarMetadata {
 	TempVarMetadata() = default;
 	
 	// Helper to create lvalue metadata
-	static TempVarMetadata makeLValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
+	static TempVarMetadata makeLValue(LValueInfo lv_info, TypeCategory cat = TypeCategory::Invalid, int size_bits = 0) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
-		meta.value_type = type;
-		meta.ir_type = toIrType(type);
+		meta.value_type = categoryToType(cat);
+		meta.ir_type = toIrType(categoryToType(cat));
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
 	// Helper to create xvalue metadata
-	static TempVarMetadata makeXValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
+	static TempVarMetadata makeXValue(LValueInfo lv_info, TypeCategory cat = TypeCategory::Invalid, int size_bits = 0) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::XValue;
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
-		meta.value_type = type;
-		meta.ir_type = toIrType(type);
+		meta.value_type = categoryToType(cat);
+		meta.ir_type = toIrType(categoryToType(cat));
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}

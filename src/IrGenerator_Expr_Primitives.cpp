@@ -344,7 +344,7 @@
 						TempVar ptr_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = ptr_temp;
-						member_load.result.setType(member->memberType());  // Base type (e.g., Int)
+						member_load.result.setType(member->type_index.category());  // Base type (e.g., Int)
 						member_load.result.size_in_bits = SizeInBits{64};  // pointer size in bits
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
@@ -383,7 +383,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.setType(member->memberType());
+						member_load.result.setType(member->type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
@@ -423,7 +423,7 @@
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;
-					member_load.result.setType(member->memberType());
+					member_load.result.setType(member->type_index.category());
 					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 					member_load.object = *copy_this_temp;
 					member_load.member_name = member->getName();
@@ -463,7 +463,7 @@
 			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
-			op.result.setType(info.type());
+			op.result.setType(info.type_index.category());
 			op.result.ir_type = toIrType(info.type());
 			op.result.size_in_bits = info.size_in_bits;
 			op.result.value = result_temp;
@@ -471,7 +471,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 				LValueInfo(LValueInfo::Kind::Global, info.mangled_name),
-				info.type(),
+				info.type_index.category(),
 				info.size_in_bits.value));
 
 			// Return the temp variable that will hold the loaded value
@@ -509,7 +509,7 @@
 						int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_n.size_in_bits());
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.setType(type_n.type());
+						op.result.setType(type_n.category());
 						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
@@ -518,9 +518,9 @@
 						StringHandle saved_name = op.global_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						if (!is_array_type) {
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 								LValueInfo(LValueInfo::Kind::Global, saved_name),
-								type_n.type(), size_bits));
+								type_n.category(), size_bits));
 						}
 						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
@@ -535,7 +535,7 @@
 						int size_bits = (type_n.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_n.size_in_bits());
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.setType(type_n.type());
+						op.result.setType(type_n.category());
 						op.result.ir_type = toIrType(type_n.type());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 						op.result.value = result_temp;
@@ -546,7 +546,7 @@
 						if (!is_array_type) {
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
-								type_n.type(), size_bits));
+								type_n.category(), size_bits));
 						}
 						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 					}
@@ -567,7 +567,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.setType(member->memberType());
+						member_load.result.setType(member->type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = *this_ptr;
 						member_load.member_name = member->getName();
@@ -603,7 +603,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.setType(member->memberType());
+						member_load.result.setType(member->type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");
 						member_load.member_name = member->getName();
@@ -772,7 +772,7 @@
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
 						member_load.result.value = result_temp;
-						member_load.result.setType(member->memberType());
+						member_load.result.setType(member->type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
@@ -823,7 +823,7 @@
 
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.setType(static_member->memberType());
+						op.result.setType(static_member->type_index.category());
 						op.result.ir_type = toIrType(static_member->memberType());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
@@ -889,7 +889,7 @@
 				bool is_array_type = decl_node.is_array() || type_node.is_array();
 				int size_bits = (type_node.pointer_depth() > 0 || is_array_type) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.setType(type_node.type());
+				op.result.setType(type_node.category());
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -915,7 +915,7 @@
 					if (!is_array_type) {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
-							type_node.type(), size_bits));
+							type_node.category(), size_bits));
 					}
 
 				// Return the temp variable that will hold the loaded value
@@ -986,19 +986,19 @@
 
 				// For non-array references in Load context, we need to dereference to get the value
 
-				Type pointee_type = type_node.type();
+				TypeCategory pointee_type = type_node.category();
 				int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier load lowering");
 
-				Type semantic_pointee_type = pointee_type;
+				Type semantic_pointee_type = type_node.type();
 
 				// For enum references, lower the dereferenced value to its runtime
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
-				pointee_type = getRuntimeValueType(semantic_pointee_type, type_node.type_index(), PointerDepth{});
+				pointee_type = getRuntimeValueType(typeToCategory(semantic_pointee_type), type_node.type_index(), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-				TempVar result_temp = emitDereference(typeToCategory(pointee_type), 64, ptr_depth,
+				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 					StringTable::getOrInternStringHandle(identifierNode.name()));
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -1011,7 +1011,7 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
+				return makeIdentifierResult(categoryToType(pointee_type), pointee_size, result_temp, type_index);
 			}
 
 			// Regular local variable
@@ -1024,8 +1024,8 @@
 			assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
 				"Pointer depth exceeds maximum int value for PointerDepth construction");
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
-			Type return_type = getRuntimeValueType(
-				type_node.type(),
+			TypeCategory return_type = getRuntimeValueType(
+				type_node.category(),
 				type_node.type_index(),
 				identifier_pointer_depth);
 			size_bits = getRuntimeValueSizeBits(
@@ -1050,7 +1050,7 @@
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
-				return_type,
+				categoryToType(return_type),
 				size_bits,
 				StringTable::getOrInternStringHandle(identifierNode.name()),
 				type_index,
@@ -1073,7 +1073,7 @@
 				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.setType(type_node.type());
+				op.result.setType(type_node.category());
 				op.result.ir_type = toIrType(type_node.type());
 				op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -1101,7 +1101,7 @@
 				if (!is_array_type) {
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
-						type_node.type(), size_bits));
+						type_node.category(), size_bits));
 				}
 
 				// Return the temp variable that will hold the loaded value
@@ -1496,7 +1496,7 @@
 						}
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
-						op.result.setType(static_member->memberType());
+						op.result.setType(static_member->type_index.category());
 						op.result.ir_type = toIrType(static_member->memberType());
 						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
@@ -1509,7 +1509,7 @@
 							TempVar deref_temp = var_counter.next();
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
-							deref_op.pointer.setType(static_member->memberType());
+							deref_op.pointer.setType(static_member->type_index.category());
 							deref_op.pointer.type_index = TypeIndex::fromTypeAndIndex(static_member->memberType(), static_member->type_index);
 							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->memberType())};
 							deref_op.pointer.pointer_depth = PointerDepth{1};
@@ -1581,7 +1581,7 @@
 					bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 					int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 				GlobalLoadOp op;
-				op.result.setType(type_node.type());
+				op.result.setType(type_node.category());
 				op.result.ir_type = toIrType(type_node.type());
 					op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 				op.result.value = result_temp;
@@ -1595,7 +1595,7 @@
 					if (!is_array_type) {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
-							type_node.type(), size_bits));
+							type_node.category(), size_bits));
 					}
 
 				// Return the temp variable that will hold the loaded value
@@ -1620,7 +1620,7 @@
 				bool is_ptr_or_ref = type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer();
 				int size_bits = (is_array_type || is_ptr_or_ref) ? 64 : static_cast<int>(type_node.size_in_bits());
 			GlobalLoadOp op;
-			op.result.setType(type_node.type());
+			op.result.setType(type_node.category());
 			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
@@ -1634,7 +1634,7 @@
 				if (!is_array_type) {
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
-						type_node.type(), size_bits));
+						type_node.category(), size_bits));
 				}
 
 			// Return the temp variable that will hold the loaded value

@@ -587,7 +587,7 @@
 
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.setType(type_node->type());
+					load_op.result.setType(type_node->category());
 					load_op.result.ir_type = toIrType(type_node->type());
 					load_op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					load_op.result.value = result_temp;
@@ -596,7 +596,7 @@
 
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
 						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
-						type_node->type(), size_bits));
+						type_node->category(), size_bits));
 
 					out = makeExprResult(
 						type_node->type(),
@@ -1027,7 +1027,7 @@
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			int increment_amount = (member->pointer_depth > 0) ?
-				getPointerElementSize(member->memberType(), member->type_index, member->pointer_depth) : 1;
+				getPointerElementSize(member->type_index.category(), member->type_index, member->pointer_depth) : 1;
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -1036,7 +1036,7 @@
 				TempVar ptr_temp = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = ptr_temp;
-				member_load.result.setType(member->memberType());
+				member_load.result.setType(member->type_index.category());
 				member_load.result.size_in_bits = SizeInBits{64};  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1060,7 +1060,7 @@
 
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.setType(member->memberType());
+				store_op.pointer.setType(member->type_index.category());
 				store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(member->memberType(), member->type_index);
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
@@ -1075,7 +1075,7 @@
 				TempVar current_val = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = current_val;
-				member_load.result.setType(member->memberType());
+				member_load.result.setType(member->type_index.category());
 				member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1425,7 +1425,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.operand.setType(operandType);
+			op.operand.setType(typeToCategory(operandType));
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 
@@ -1598,7 +1598,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.pointer.setType(operandType);
+			op.pointer.setType(typeToCategory(operandType));
 			op.pointer.type_index = TypeIndex::fromTypeAndIndex(operandType, operandIrOperands.type_index);
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
@@ -1744,7 +1744,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
-	this_arg.setType(operandType);
+	this_arg.setType(typeToCategory(operandType));
 	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
@@ -1843,7 +1843,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	int element_size = 1;
 	if (operand_pointer_depth > 0) {
 		is_pointer = true;
-		element_size = getPointerElementSize(operandType, operandIrResult.type_index, operand_pointer_depth);
+		element_size = getPointerElementSize(typeToCategory(operandType), operandIrResult.type_index, operand_pointer_depth);
 	}
 	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
 		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);
@@ -1858,7 +1858,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		}
@@ -1873,7 +1873,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.category()));
+			element_size = getSizeInBytes(type_node.category(), type_node.type_index(), get_type_size_bits(type_node.category()));
 			if (element_size == 0) {
 				element_size = 1;
 			}
@@ -1900,7 +1900,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
-			element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
+			element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
 			return true;
 		};
 
@@ -1965,7 +1965,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->memberType(), member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {

@@ -351,9 +351,8 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
-	const TypeCategory cat = typeToCategory(type);
-	// Use IrType to catch both Type::Struct and Type::UserDefined (which maps
+size_t AstToIr::getSizeInBytes(TypeCategory type, TypeIndex type_index, int size_in_bits) const {
+	// Use IrType to catch both TypeCategory::Struct and TypeCategory::UserDefined (which maps
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
 	if (isIrStructType(toIrType(type))) {
@@ -363,16 +362,16 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 				return struct_info->total_size;
 			}
 		}
-		// Type::Struct must always have a valid StructInfo; reaching here for
-		// a genuine Struct is a compiler bug.  Type::UserDefined may be a
+		// TypeCategory::Struct must always have a valid StructInfo; reaching here for
+		// a genuine Struct is a compiler bug.  TypeCategory::UserDefined may be a
 		// typedef to a primitive, so fall through to the generic path.
-		assert(cat != TypeCategory::Struct && "Type::Struct without valid StructInfo is a compiler bug");
+		assert(type != TypeCategory::Struct && "TypeCategory::Struct without valid StructInfo is a compiler bug");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
-	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
+	return static_cast<size_t>(getRuntimeValueSizeBits(categoryToType(type), type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
-int AstToIr::getPointerElementSize(Type type, TypeIndex type_index, int pointer_depth) const {
+int AstToIr::getPointerElementSize(TypeCategory type, TypeIndex type_index, int pointer_depth) const {
 	if (pointer_depth > 1) {
 		return 8;
 	}
@@ -380,21 +379,21 @@ int AstToIr::getPointerElementSize(Type type, TypeIndex type_index, int pointer_
 	return size != 0 ? size : 1;
 }
 
-Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
+TypeCategory AstToIr::getRuntimeValueType(TypeCategory semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
 	if (pointer_depth.is_pointer()) {
 		return semantic_type;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+	Type lowered_type = resolveRuntimeBaseType(categoryToType(semantic_type), type_index);
 	const TypeCategory lowered_cat = typeToCategory(lowered_type);
 
 	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
-			return enum_info->underlying_type;
+			return typeToCategory(enum_info->underlying_type);
 		}
 	}
 
-	return lowered_type;
+	return lowered_cat;
 }
 
 int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {

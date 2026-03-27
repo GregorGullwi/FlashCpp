@@ -1011,7 +1011,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			if (!is_integer_type(typeToCategory(operand_type))) {
 				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
 				if (!is_comparison) {
-					ctx.result_value.setType(int_type);
+					ctx.result_value.setType(typeToCategory(int_type));
 					ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
 				}
 				ctx.operand_type = int_type;

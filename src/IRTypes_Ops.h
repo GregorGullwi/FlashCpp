@@ -432,13 +432,13 @@ struct TypedValue {
 	// an enum-typed value don't leave TypeCategory::Enum behind).  Also keeps ir_type
 	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
 	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
-	void setType(Type t) noexcept {
+	void setType(TypeCategory cat) noexcept {
+		const Type t = categoryToType(cat);
 		type = t;
-		type_index = TypeIndex{type_index.index(), typeToCategory(t)};
+		type_index = TypeIndex{type_index.index(), cat};
 		ir_type = toIrType(t);
 		is_signed = isSignedType(t);
 	}
-	void setType(TypeCategory cat) noexcept { setType(categoryToType(cat)); }
 
 	// Returns the effective runtime representation type.
 	// During the transition period (Phase 1-3), some construction sites may not

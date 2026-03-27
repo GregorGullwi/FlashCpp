@@ -96,7 +96,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		auto it = eval_result.object_member_bindings.find(member_sv);
 		if (it == eval_result.object_member_bindings.end()) continue;
 		MemberStoreOp ms;
-		ms.value.setType(member.memberType());
+		ms.value.setType(member.type_index.category());
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.memberType())};
 		ms.object = struct_tmp_handle;
@@ -180,7 +180,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 
-									op.operand.setType(operand_type);
+									op.operand.setType(typeToCategory(operand_type));
 									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
@@ -1611,9 +1611,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);
 			if (return_type.is_rvalue_reference()) {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
 			} else {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
 			}
 		}
 

@@ -1430,7 +1430,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									}
 
 									MemberStoreOp member_store;
-									member_store.value.setType(member.memberType());
+									member_store.value.setType(member.type_index.category());
 									member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().handle();
@@ -2225,7 +2225,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											TempVar addr_var = var_counter.next();
 											AddressOfOp addr_op;
 											addr_op.result = addr_var;
-											addr_op.operand.setType(init_type.type());
+											addr_op.operand.setType(init_type.category());
 											addr_op.operand.ir_type = toIrType(init_type.type());
 											addr_op.operand.size_in_bits = SizeInBits{init_type.size_in_bits()};
 											addr_op.operand.pointer_depth = PointerDepth{};
@@ -2556,7 +2556,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.operand.setType(init_type);
+					addr_op.operand.setType(typeToCategory(init_type));
 					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
@@ -3124,7 +3124,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// First, generate a member access to load the value
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
-				load_op.result.setType(member.memberType());
+				load_op.result.setType(member.type_index.category());
 				load_op.result.ir_type = toIrType(member.memberType());
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;

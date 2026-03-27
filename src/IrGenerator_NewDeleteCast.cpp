@@ -618,7 +618,7 @@
 	void AstToIr::markReferenceMetadata(
 		const ExprResult& expr_operands,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		bool is_rvalue_ref,
 		const char* cast_name) {
@@ -638,7 +638,7 @@
 	void AstToIr::generateAddressOfForReference(
 		const std::variant<StringHandle, TempVar>& base,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name) {
@@ -667,7 +667,7 @@
 
 	ExprResult AstToIr::handleRValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
@@ -697,7 +697,7 @@
 
 	ExprResult AstToIr::handleLValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,

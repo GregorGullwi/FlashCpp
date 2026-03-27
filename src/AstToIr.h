@@ -307,27 +307,27 @@ private:
 	void markReferenceMetadata(
 		const ExprResult& expr_operands,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		bool is_rvalue_ref,
 		const char* cast_name = "cast");
 	void generateAddressOfForReference(
 		const std::variant<StringHandle, TempVar>& base,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprResult handleRValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name);
 	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
@@ -709,9 +709,9 @@ private:
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-	size_t getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const;
-	int getPointerElementSize(Type type, TypeIndex type_index, int pointer_depth) const;
-	Type getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const;
+	size_t getSizeInBytes(TypeCategory type, TypeIndex type_index, int size_in_bits) const;
+	int getPointerElementSize(TypeCategory type, TypeIndex type_index, int pointer_depth) const;
+	TypeCategory getRuntimeValueType(TypeCategory semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const;
 	int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;

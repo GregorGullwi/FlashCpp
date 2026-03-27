@@ -1090,7 +1090,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								if (!is_struct_type(typeToCategory(target_type))) {
 									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
 									          "' resolves to concrete type ", static_cast<int>(target_type));
-									dependent_arg.setType(target_type);
+									dependent_arg.setType(typeToCategory(target_type));
 									dependent_arg.is_dependent = false;  // Not dependent - resolves to concrete type
 								}
 							}

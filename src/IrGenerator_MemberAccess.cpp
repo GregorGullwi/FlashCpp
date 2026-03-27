@@ -475,7 +475,7 @@
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 
 									// Set index as TypedValue
-									payload.index.setType(index_result.typeEnum());
+									payload.index.setType(index_result.category());
 									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
@@ -1251,7 +1251,7 @@
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
-			global_load.result.setType(static_member->memberType());
+			global_load.result.setType(static_member->type_index.category());
 			global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 
@@ -1347,15 +1347,15 @@
 		lvalue_info.bitfield_width = member->bitfield_width;
 		lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
 		if (member_is_xvalue && !member->is_reference()) {
-			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->memberType(), member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type_index.category(), member_size_bits));
 		} else {
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->memberType(), member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type_index.category(), member_size_bits));
 		}
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
 		member_load.result.value = result_var;
-		member_load.result.setType(member->memberType());
+		member_load.result.setType(member->type_index.category());
 		member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};  // Convert bytes to bits
 
 		// Set base object, member name, and offset — using unwrapped values when applicable
@@ -3761,7 +3761,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
-		this_arg.setType(source.typeEnum());
+		this_arg.setType(source.category());
 		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = this_ptr;
@@ -3770,7 +3770,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		// Already a TempVar — for struct types this holds the object address
 		TypedValue this_arg;
-		this_arg.setType(source.typeEnum());
+		this_arg.setType(source.category());
 		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = std::get<TempVar>(source_value);

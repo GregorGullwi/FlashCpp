@@ -786,7 +786,7 @@
 						// Generate member access IR to load the function pointer
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
-						member_load.result.setType(member.memberType());
+						member_load.result.setType(member.type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand
@@ -1033,7 +1033,7 @@
 			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
-			vcall_op.result.setType(return_type.type());
+			vcall_op.result.setType(return_type.category());
 			vcall_op.result.ir_type = toIrType(return_type.type());
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
@@ -1383,7 +1383,7 @@
 					TempVar this_addr = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
-					addr_op.operand.setType(object_type.type());
+					addr_op.operand.setType(object_type.category());
 					addr_op.operand.ir_type = toIrType(object_type.type());
 					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1399,7 +1399,7 @@
 				TempVar this_addr = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
-				addr_op.operand.setType(object_type.type());
+				addr_op.operand.setType(object_type.category());
 				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1677,9 +1677,9 @@
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);
 			if (return_type.is_rvalue_reference()) {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
 			} else {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
 			}
 		}
 
