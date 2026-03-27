@@ -70,19 +70,14 @@ struct ConversionPlan {
 	}
 };
 
-// Build a unified conversion plan for two primitive Type values.
+// Build a unified conversion plan for two primitive TypeCategory values.
 // Returns both the ConversionRank (for overload resolution) and the
 // StandardConversionKind (for semantic annotation) in a single call.
 // Implements C++20 [conv], [conv.prom], [conv.rank] rules.
-inline ConversionPlan buildConversionPlan(Type from, Type to) {
-	// Use TypeCategory for safe classification checks in this helper, but keep the
-	// raw Type values available for rank/underlying-type helpers that still accept Type.
-	const TypeCategory from_category = typeToCategory(from);
-	const TypeCategory to_category = typeToCategory(to);
-
+inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCategory to_category) {
 	// Exact match (including Struct==Struct — same type, different struct variants
 	// are handled by the TypeSpecifierNode overload which has type_index).
-	if (from == to) {
+	if (from_category == to_category) {
 		return ConversionPlan::exact_match();
 	}
 
@@ -122,8 +117,8 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	// --- Integral -> Integral ---
 	if (isIntegralType(from_category) && isIntegralType(to_category)) {
 		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
-		const int from_rank = get_integer_rank(from);
-		const int to_rank = get_integer_rank(to);
+		const int from_rank = get_integer_rank(from_category);
+		const int to_rank = get_integer_rank(to_category);
 
 		// C++20 [conv.prom]: IntegralPromotion applies only to types with rank < int
 		// being promoted to exactly int or unsigned int (rank == INT_RANK).
@@ -183,6 +178,11 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 
 	// No valid conversion
 	return ConversionPlan::no_match();
+}
+
+// Legacy bridge for callers that still traffic in raw Type.
+inline ConversionPlan buildConversionPlan(Type from, Type to) {
+	return buildConversionPlan(typeToCategory(from), typeToCategory(to));
 }
 
 // Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
@@ -512,13 +512,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// rvalue reference can bind to a temporary materialized from an xvalue when
 				// a standard conversion is required.
 				if (!to_is_rvalue && to.is_const()) {
-					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
 						return plan;
 					}
 				}
 				if (from_is_rvalue && to_is_rvalue) {
-					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
 						return plan;
 					}
@@ -551,7 +551,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!types_match) {
 					// Allow conversions for const lvalue refs and rvalue refs by
 					// materializing a temporary of the referred-to type.
-					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
 						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
@@ -621,7 +621,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
-			return buildConversionPlan(categoryToType(from_resolved_category), categoryToType(to_resolved_category));
+			return buildConversionPlan(from_resolved_category, to_resolved_category);
 		}
 	}
 
@@ -687,7 +687,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 		return ConversionPlan::no_match();
 	}
-	return buildConversionPlan(categoryToType(from_type_category), categoryToType(to_type_category));
+	return buildConversionPlan(from_type_category, to_type_category);
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references).

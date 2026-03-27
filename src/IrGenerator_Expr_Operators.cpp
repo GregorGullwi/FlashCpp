@@ -643,7 +643,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 			auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
 			if (true_ts.has_value() && false_ts.has_value())
-				common_type = get_common_type(true_ts->type(), false_ts->type());
+				common_type = categoryToType(get_common_type(true_ts->category(), false_ts->category()));
 		}
 
 		// Evaluate true expression
@@ -1000,8 +1000,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// All other operators use usual arithmetic conversions per [expr.ass]/7.
 					const bool is_shift_op = (op == "<<=" || op == ">>=");
 					const Type commonType = is_shift_op
-						? promote_integer_type(gsi.bindingType())
-						: get_common_type(gsi.bindingType(), rhs_result.typeEnum());
+						? categoryToType(promote_integer_type(typeToCategory(gsi.bindingType())))
+						: categoryToType(get_common_type(typeToCategory(gsi.bindingType()), rhs_result.category()));
 
 					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
 					if (is_shift_op && is_floating_point_type(gsi.bindingType()))
@@ -1022,7 +1022,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						// Reject float RHS before promotion to avoid unnecessary conversion work.
 						if (is_floating_point_type(rhs_result.typeEnum()))
 							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
-						const Type promoted_rhs = promote_integer_type(rhs_result.typeEnum());
+						const Type promoted_rhs = categoryToType(promote_integer_type(rhs_result.category()));
 						if (rhs_result.typeEnum() != promoted_rhs) {
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
 								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.typeEnum()))
@@ -2512,8 +2512,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// NOT usual arithmetic conversions.  The result type is the promoted LHS type.
 		const bool is_shift_op = (op == "<<" || op == ">>" || op == "<<=" || op == ">>=");
 		Type commonType = is_shift_op
-			? promote_integer_type(lhsType)   // shift: result type = promoted LHS
-			: get_common_type(lhsType, rhsType);
+			? categoryToType(promote_integer_type(lhsExprResult.category()))   // shift: result type = promoted LHS
+			: categoryToType(get_common_type(lhsExprResult.category(), rhsExprResult.category()));
 
 		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
@@ -2533,7 +2533,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
 		// Phase 15: if sema missed the promotion and it's needed, assert.
 		if (is_shift_op) {
-			const Type promoted_rhs = promote_integer_type(rhsType);
+			const Type promoted_rhs = categoryToType(promote_integer_type(rhsExprResult.category()));
 			if (rhsType != promoted_rhs) {
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsType))

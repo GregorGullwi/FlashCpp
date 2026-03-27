@@ -49,20 +49,20 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 	}
 
 	const TypeSpecifierNode& type_spec = *type_opt;
-	if (!isIntegralType(type_spec.type())) {
+	if (!isIntegralType(type_spec.category())) {
 		return std::nullopt;
 	}
 
-	const Type promoted_type = promote_integer_type(type_spec.type());
+	const TypeCategory promoted_type = promote_integer_type(type_spec.category());
 	const int promoted_width = get_type_size_bits(promoted_type);
 	if (promoted_width > 0) {
-		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width);
+		return TypeSpecifierNode(categoryToType(promoted_type), TypeQualifier::None, promoted_width);
 	}
 
 	// Defensive fallback for unusual/dependent type shapes where the promoted
 	// type is known but the width table cannot provide a concrete bit-size yet.
 	if (type_spec.size_in_bits() > 0) {
-		return TypeSpecifierNode(promoted_type, TypeQualifier::None, type_spec.size_in_bits());
+		return TypeSpecifierNode(categoryToType(promoted_type), TypeQualifier::None, type_spec.size_in_bits());
 	}
 
 	return std::nullopt;
@@ -190,10 +190,10 @@ std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
 	if (!lhs.exact_type.has_value() || !rhs.exact_type.has_value()) {
 		return std::nullopt;
 	}
-	const Type result_type = get_common_type(lhs.exact_type->type(), rhs.exact_type->type());
+	const TypeCategory result_type = get_common_type(lhs.exact_type->category(), rhs.exact_type->category());
 	const int result_bits = get_type_size_bits(result_type);
 	if (result_bits > 0) {
-		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits);
+		return TypeSpecifierNode(categoryToType(result_type), TypeQualifier::None, result_bits);
 	}
 	return std::nullopt;
 }

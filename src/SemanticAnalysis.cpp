@@ -1957,7 +1957,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							// Skip non-primitive types
 						} else {
 							const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
-							const Type promoted = promote_integer_type(lhs_base);
+							const Type promoted = categoryToType(promote_integer_type(typeToCategory(lhs_base)));
 							if (promoted != lhs_base) {
 								CanonicalTypeDesc promoted_desc;
 								promoted_desc.base_type = promoted;
@@ -2474,7 +2474,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
 					const bool is_small_int =
 						(is_integer_type(operand_base) || operand_base == Type::Bool)
-						&& get_integer_rank(operand_base) < 3;  // rank of int
+						&& get_integer_rank(typeToCategory(operand_base)) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
 						promoted.base_type = Type::Int;
@@ -2523,7 +2523,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (l.base_type == Type::Invalid || r.base_type == Type::Invalid) return {};
 					if (isPlaceholderAutoType(l.base_type) || isPlaceholderAutoType(r.base_type)) return {};
 					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
-					const Type common = get_common_type(l.base_type, r.base_type);
+					const Type common = categoryToType(get_common_type(typeToCategory(l.base_type), typeToCategory(r.base_type)));
 					if (common == Type::Invalid) return {};
 					CanonicalTypeDesc desc;
 					desc.base_type = common;
@@ -2540,7 +2540,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
 				if (t_desc.base_type == Type::Struct || f_desc.base_type == Type::Struct) return {};
 				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
-				const Type common_t = get_common_type(t_desc.base_type, f_desc.base_type);
+				const Type common_t = categoryToType(get_common_type(typeToCategory(t_desc.base_type), typeToCategory(f_desc.base_type)));
 				if (common_t == Type::Invalid) return {};
 				CanonicalTypeDesc ternary_desc;
 				ternary_desc.base_type = common_t;
@@ -3206,7 +3206,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
 	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
 
-	const Type common = get_common_type(lhs_base, rhs_base);
+	const Type common = categoryToType(get_common_type(typeToCategory(lhs_base), typeToCategory(rhs_base)));
 	if (common == Type::Invalid) return;
 
 	// Intern the common type
@@ -3276,7 +3276,7 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
 	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
 
-	const Type common = get_common_type(lhs_base, rhs_base);
+	const Type common = categoryToType(get_common_type(typeToCategory(lhs_base), typeToCategory(rhs_base)));
 	if (common == Type::Invalid) return;
 	if (lhs_base == common) return;  // No back-conversion needed
 
@@ -3323,8 +3323,8 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	if (is_floating_point_type(lhs_base) || is_floating_point_type(rhs_base)) return;
 
 	// Independent integral promotion for each operand
-	const Type promoted_lhs = promote_integer_type(lhs_base);
-	const Type promoted_rhs = promote_integer_type(rhs_base);
+	const Type promoted_lhs = categoryToType(promote_integer_type(typeToCategory(lhs_base)));
+	const Type promoted_rhs = categoryToType(promote_integer_type(typeToCategory(rhs_base)));
 
 	if (promoted_lhs != lhs_base) {
 		CanonicalTypeDesc promoted_desc;
@@ -3365,7 +3365,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	}
 	if (is_floating_point_type(operand_base)) return;  // float/double: no promotion needed
 
-	const Type promoted = promote_integer_type(operand_base);
+	const Type promoted = categoryToType(promote_integer_type(typeToCategory(operand_base)));
 	if (promoted != operand_base) {
 		CanonicalTypeDesc promoted_desc;
 		promoted_desc.base_type = promoted;
@@ -4005,7 +4005,7 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// its type is void. The result type is the other branch's type — no conversion needed.
 	if (true_desc.base_type == Type::Void || false_desc.base_type == Type::Void) return;
 
-	Type common = get_common_type(true_desc.base_type, false_desc.base_type);
+	Type common = categoryToType(get_common_type(typeToCategory(true_desc.base_type), typeToCategory(false_desc.base_type)));
 	CanonicalTypeDesc common_desc;
 	common_desc.base_type = common;
 	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
