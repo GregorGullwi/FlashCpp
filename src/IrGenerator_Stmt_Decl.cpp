@@ -1587,7 +1587,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// info); then fall back to can_convert_type for types the sema pass couldn't
 					// infer (e.g., complex sub-expressions or function-call result values).
 					{
-						Type init_type  = init_operands.type;
+						Type init_type  = init_operands.typeEnum();
 						const Type decl_type  = type_node.type();
 						// Resolve enum to underlying type for conversion purposes.
 						// Enum values share the same bit representation as their underlying
@@ -1599,7 +1599,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							&& init_operands.type_index.index() < getTypeInfoCount()) {
 							if (const EnumTypeInfo* enum_info = getTypeInfo(init_operands.type_index).getEnumInfo()) {
 								init_type = enum_info->underlying_type;
-								init_operands.type = init_type;
+								init_operands.category_ = typeToCategory(init_type);
 							}
 						}
 						if (init_type != decl_type

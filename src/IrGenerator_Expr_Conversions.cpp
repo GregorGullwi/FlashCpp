@@ -414,7 +414,7 @@
 			arr_idx.element_size_bits = SizeInBits{element_size_bits};
 
 			// Capture index type information for proper sign extension
-			arr_idx.index_type_index = TypeIndex::fromTypeAndIndex(index_operands.type, index_operands.type_index);
+			arr_idx.index_type_index = TypeIndex::fromTypeAndIndex(index_operands.typeEnum(), index_operands.type_index);
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
@@ -2621,7 +2621,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const Token& source_token) {
 		const Type referred_type = ref_param_type.type();
 		// Convert the source value to the referred-to type.
-		ExprResult converted = generateTypeConversion(source_result, source_result.type, referred_type, source_token);
+		ExprResult converted = generateTypeConversion(source_result, source_result.typeEnum(), referred_type, source_token);
 		const int ref_type_bits = get_type_size_bits(referred_type);
 		// Materialize the converted value into a stack temporary.
 		TempVar conv_temp = var_counter.next();

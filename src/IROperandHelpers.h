@@ -80,7 +80,7 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 struct ExprResult {
-	Type type = Type::Void;
+	TypeCategory category_ = TypeCategory::Void;
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrOperand value{};
 	TypeIndex type_index {};
@@ -94,16 +94,16 @@ struct ExprResult {
 	// Both will be unified when ExprResult's type field is replaced by IrType
 	// (Phase 5).
 	IrType effectiveIrType() const {
-		if (ir_type != IrType::Void || type == Type::Void)
+		if (ir_type != IrType::Void || category_ == TypeCategory::Void)
 			return ir_type;
-		return toIrType(type);
+		return toIrType(category_);
 	}
 
-	// For ExprResult, type is the authoritative type of the expression (pointer level, not element level).
+	// For ExprResult, category_ is the authoritative type of the expression (pointer level, not element level).
 	// type_index carries identity info (struct/enum gTypeInfo slot) which may be the element type for pointers.
 	// So category() and typeEnum() delegate to the semantic type field directly.
-	TypeCategory category() const { return typeToCategory(type); }
-	Type typeEnum() const { return type; }
+	TypeCategory category() const { return category_; }
+	Type typeEnum() const { return categoryToType(category_); }
 };
 
 inline ExprResult makeExprResultImpl(
@@ -115,7 +115,7 @@ inline ExprResult makeExprResultImpl(
 	ValueStorage storage
 ) {
 	return {
-		.type = type,
+		.category_ = typeToCategory(type),
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
 		.type_index = type_index,
@@ -204,11 +204,11 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
-	tv.type = result.type;
+	tv.type = result.typeEnum();
 	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
-	tv.type_index = TypeIndex::fromTypeAndIndex(result.type, result.type_index);
+	tv.type_index = TypeIndex::fromTypeAndIndex(result.typeEnum(), result.type_index);
 	tv.pointer_depth = result.pointer_depth;
 	tv.storage = result.storage;
 	return tv;

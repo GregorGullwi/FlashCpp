@@ -2410,7 +2410,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			ExprResult operands = visitExpressionNode(elem.as<ExpressionNode>());
 			element_operands.push_back(operands);
 			if (i == 0) {
-				element_type = operands.type;
+				element_type = operands.typeEnum();
 				element_size_bits = operands.size_in_bits.value;
 			}
 		}
@@ -2552,7 +2552,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				throw InternalError("Primitive constructor call argument must be an expression");
 			}
 			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
-			return generateTypeConversion(arg_result, arg_result.type, type_spec.type(), constructorCallNode.called_from());
+			return generateTypeConversion(arg_result, arg_result.typeEnum(), type_spec.type(), constructorCallNode.called_from());
 		}
 		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
 	}

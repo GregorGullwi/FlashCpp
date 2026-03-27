@@ -1595,7 +1595,7 @@
 
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
-							Type literal_type = argument_result.type;
+							Type literal_type = argument_result.typeEnum();
 							int literal_size = argument_result.size_in_bits.value;
 
 							// Create a temporary variable to hold the literal value
@@ -1628,7 +1628,7 @@
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
-								Type expr_type = argument_result.type;
+								Type expr_type = argument_result.typeEnum();
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 

@@ -242,7 +242,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				functionCallNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
-					Type arg_type = argumentIrOperands.type;
+					Type arg_type = argumentIrOperands.typeEnum();
 					int arg_size = argumentIrOperands.size_in_bits.value;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
@@ -408,7 +408,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						} else {
 							// Normal argument - visit the expression
 							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							Type arg_type = argumentIrOperands.type;
+							Type arg_type = argumentIrOperands.typeEnum();
 							int arg_size = argumentIrOperands.size_in_bits.value;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
@@ -1132,7 +1132,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type && !materialized_selected_ctor) {
-				Type arg_type = argumentIrOperands.type;
+				Type arg_type = argumentIrOperands.typeEnum();
 				Type param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
@@ -1165,7 +1165,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 											param_base_type, param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
-										arg_type = argumentIrOperands.type;
+										arg_type = argumentIrOperands.typeEnum();
 										arg_type_index = argumentIrOperands.type_index;
 										sema_applied_arg_conversion = true;
 									}
@@ -1174,10 +1174,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						} else if (from_type != Type::Struct && to_type != Type::Struct) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != argumentIrOperands.type)
-								from_type = argumentIrOperands.type;
+							if (from_type == Type::Enum && from_type != argumentIrOperands.typeEnum())
+								from_type = argumentIrOperands.typeEnum();
 							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
-							arg_type = argumentIrOperands.type;
+							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;
 							sema_applied_arg_conversion = true;
 						}
@@ -1204,7 +1204,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 						}
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
-						arg_type = argumentIrOperands.type;
+						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
 					}
 				}
@@ -1395,7 +1395,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
-						Type literal_type = argumentIrOperands.type;
+						Type literal_type = argumentIrOperands.typeEnum();
 						int literal_size = argumentIrOperands.size_in_bits.value;
 
 						// Create a temporary variable to hold the literal value
@@ -1429,7 +1429,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-							Type expr_type = argumentIrOperands.type;
+							Type expr_type = argumentIrOperands.typeEnum();
 							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 

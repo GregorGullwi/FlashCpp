@@ -444,7 +444,7 @@
 		ExprResult ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
 		// Get the pointer type
-		Type ptr_type = ptr_operands.type;
+		Type ptr_type = ptr_operands.typeEnum();
 
 		// Convert IrOperand to IrValue
 		IrValue ptr_value = toIrValue(ptr_operands.value);
@@ -741,7 +741,7 @@
 		ExprResult expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
-		Type source_type = expr_operands.type;
+		Type source_type = expr_operands.typeEnum();
 		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {

@@ -1,7 +1,7 @@
 # Type system consolidation: audit and migration roadmap
 
 **Date**: 2026-03-27 (updated from 2026-03-26)
-**Status**: Milestones 1–7 complete. **All IR Op structs, FunctionParam, StaticLocalInfo, StructMember, StructStaticMember, LazyStaticMemberInfo, ArrayAccessOp, CatchBeginOp, ThrowOp, StackAllocOp, HeapAllocOp, ConversionOp, TypeConversionOp, GlobalVariableInfo, AddressOfMemberOp, ComputeAddressOp, VirtualCallOp, DereferenceOp, DereferenceStoreOp** have been migrated to `TypeIndex` with embedded `TypeCategory` (no raw `Type` field). `TypedValue::setType()` atomically stamps `TypeCategory`+`IrType`+`is_signed`. `effectiveIrType()` + `is_signed` are the codegen classification authorities. `current_function_return_type_index_` defaults to `{0, TypeCategory::Void}`. The `TypeSpecifierNode` overload of `buildConversionPlan()` now uses `TypeCategory`/`TypeIndex` for its alias-resolution, pointer/reference, and struct-identity checks; the primitive `buildConversionPlan(Type, Type)` overload remains bridge-based. Test baseline: **1756 pass / 105 expected-fail / 0 failures**.
+**Status**: Milestones 1–7 complete. **All IR Op structs, FunctionParam, StaticLocalInfo, StructMember, StructStaticMember, LazyStaticMemberInfo, ArrayAccessOp, CatchBeginOp, ThrowOp, StackAllocOp, HeapAllocOp, ConversionOp, TypeConversionOp, GlobalVariableInfo, AddressOfMemberOp, ComputeAddressOp, VirtualCallOp, DereferenceOp, DereferenceStoreOp, and `ExprResult`** have been migrated off raw `Type` storage. `ExprResult` now stores `TypeCategory category_` + `IrType ir_type`, with `typeEnum()` as a bridge accessor. `TypedValue::setType()` atomically stamps `TypeCategory`+`IrType`+`is_signed`. `effectiveIrType()` + `is_signed` are the codegen classification authorities. `current_function_return_type_index_` defaults to `{0, TypeCategory::Void}`. The `TypeSpecifierNode` overload of `buildConversionPlan()` now uses `TypeCategory`/`TypeIndex` for its alias-resolution, pointer/reference, and struct-identity checks, and the adjacent binary-operator helper layer (`effectiveBinaryOperatorTypeFromSpec()` / `makeBinaryOperatorTypeSpecifier()`) now operates on `TypeCategory`; the primitive `buildConversionPlan(Type, Type)` overload remains bridge-based. Test baseline: **1756 pass / 105 expected-fail / 0 failures**.
 
 **Remaining to delete the `Type` enum**: ~8 struct fields + ~350 call sites (local variables / switch dispatch) in the compiler source. See "What's left" section below.
 
@@ -37,15 +37,15 @@
 | 4 | `setupAndLoadArithmeticOperation` uses `effectiveIrType()` + `is_signed` for classification | ✅ Done |
 | 4 | `current_function_return_type_index_` default → `{0, TypeCategory::Void}` | ✅ Done |
 | 4 | Fix `evaluate_constructor_call` missing `WChar/Char8/Char16/Char32` switch cases | ✅ Done |
-| 5 | Migrate `ExprResult::type` field to pure `IrType`+`TypeCategory` (remove `Type type` from `ExprResult`) | ⬜ TODO — largest remaining step |
+| 5 | Migrate `ExprResult::type` field to pure `IrType`+`TypeCategory` (remove `Type type` from `ExprResult`) | ✅ Done — `ExprResult` now stores `TypeCategory category_`; factories and IR-generator callers use `typeEnum()`/`category()` bridges |
 | 5 | Migrate `StaticMemberDecl::type` field to `TypeIndex`-only | ✅ Done — constructor stamps `TypeIndex::fromTypeAndIndex`; `memberType()` derives from `type_index.category()` |
 | 5 | Migrate `CanonicalTypeAlias::type` to `TypeCategory` | ✅ Done — `type_cat` field + `typeEnum()` accessor; 14 read sites updated |
 | 5 | Migrate `TemplateArgumentValue::type` to `TypeCategory`/`TypeIndex` | ✅ Done — `type_index` carries category; `typeEnum()` accessor; `makeType()`/`makeValue()` stamp TypeCategory |
 | 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ✅ Done — `type_index` field with Void default; `bindingType()` accessor; 5 write + ~30 read sites updated |
 | 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ✅ Done — both parser helper structs now store `TypeCategory`; legacy consumers use temporary `typeEnum()` bridges |
 | 5 | Port all remaining switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp` to `TypeCategory`/`IrType` | ✅ Done — CodeView debug-type dispatch now routes through a shared `TypeCategory` helper |
-| 5 | Port Parser / ConstExpr / IR-generator local `Type type = …` variables to `TypeCategory`/`TypeIndex` | ◐ Partial — `Parser_TypeSpecifiers.cpp` and substantial `IrGenerator_Expr_Conversions.cpp` address/conversion paths migrated; broad file-by-file cleanup remains |
-| 5 | Port `buildConversionPlan` (`OverloadResolution.h`) to `TypeCategory`/`TypeIndex` | ◐ Partial — `buildConversionPlan(const TypeSpecifierNode&, const TypeSpecifierNode&)` now uses `TypeCategory`/`TypeIndex`; primitive `buildConversionPlan(Type, Type)` still bridges through raw `Type` |
+| 5 | Port Parser / ConstExpr / IR-generator local `Type type = …` variables to `TypeCategory`/`TypeIndex` | ◐ Partial — `Parser_TypeSpecifiers.cpp`, substantial `IrGenerator_Expr_Conversions.cpp`, and the `ExprResult` fallout batch across call/member/lambda IR generators are migrated; broad file-by-file cleanup remains |
+| 5 | Port `buildConversionPlan` (`OverloadResolution.h`) to `TypeCategory`/`TypeIndex` | ◐ Partial — `buildConversionPlan(const TypeSpecifierNode&, const TypeSpecifierNode&)` and the adjacent binary-operator helper layer now use `TypeCategory`/`TypeIndex`; primitive `buildConversionPlan(Type, Type)` still bridges through raw `Type` |
 | 6 | Remove `Type` enum and all `Type::*` references from the codebase | ⬜ FUTURE |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ✅ Done (`isTypeAlias()` flag) |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
@@ -58,34 +58,34 @@
 
 | Struct | File | Notes |
 |--------|------|-------|
-| `ExprResult::type` | `src/IROperandHelpers.h:83` | **Biggest remaining field** — used by all IR generators; needs `IrType`+`TypeCategory` replacement (Phase 5) |
 | ~~`GlobalStaticBindingInfo::type`~~ | ~~`src/AstToIr.h:79`~~ | ✅ Done — migrated to `type_index` + `bindingType()` |
 | ~~`CanonicalTypeAlias::type`~~ | ~~`src/AstNodeTypes_DeclNodes.h:903`~~ | ✅ Done — migrated to `type_cat` (TypeCategory) + `typeEnum()` |
 | ~~`TemplateArgumentValue::type`~~ | ~~`src/TemplateRegistry_Types.h:121`~~ | ✅ Done — TypeCategory embedded in `type_index`; `typeEnum()` accessor |
 | ~~`StaticMemberDecl::type`~~ | ~~`src/AstNodeTypes_Template.h:741`~~ | ✅ Done — constructor stamps `TypeIndex::fromTypeAndIndex`; `memberType()` derives from category |
 | ~~`Parser::ConstantValue::type`~~ | ~~`src/Parser.h:797`~~ | ✅ Done — now stores `TypeCategory` + `typeEnum()` bridge for `TemplateTypeArg` call sites |
 | ~~`TypedNumeric::type`~~ | ~~`src/Parser.h:1565`~~ | ✅ Done — now stores `TypeCategory`; sign remains in `TypeQualifier`; `typeEnum()` bridges to `NumericLiteralNode` |
+| *(none left in active compiler data structures)* | — | Remaining raw `Type` usage is now in call-site logic / helper APIs rather than persistent semantic or IR result structs |
 | `ElfFileWriter::CFIInstruction::Type` | `src/ElfFileWriter.h:368` | **Not the compiler Type enum** — local nested enum for CFI opcodes; no migration needed |
 
 ### Remaining call-site categories (still substantial, but reduced)
 
-1. **Local variable `Type type = …` / `.type` reads used only for classification** (still widespread in `IrGenerator_MemberAccess.cpp`, `IrGenerator_Expr_Operators.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, and helper sections of `OverloadResolution.h`): replace with `TypeCategory cat = …`, `.category()`, or direct `TypeIndex` reads.
-   - Recent progress: `Parser_TypeSpecifiers.cpp` migrated; `IrGenerator_Expr_Conversions.cpp` address-analysis / inc-dec paths migrated.
+1. **Local variable `Type type = …` / raw `Type` helper calls used only for classification** (still widespread in `IrGenerator_Expr_Operators.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, parser dispatch files, and some overload/codegen helper sections): replace with `TypeCategory cat = …`, `.category()`, or direct `TypeIndex` reads.
+   - Recent progress: `ExprResult` storage is now category-based; `Parser_TypeSpecifiers.cpp`, substantial `IrGenerator_Expr_Conversions.cpp`, and a broad IR-generator fallout batch (calls/member/lambda codegen) were migrated.
 
 2. **Parser `Type`-based dispatch** (still broad across `Parser_Expr_PrimaryExpr.cpp`, `Parser_Expr_PrimaryUnary.cpp`, `Parser_Expr_BinaryPrecedence.cpp`, `Parser_Statements.cpp`, `Parser_Decl_*`): these read `TypeSpecifierNode::type()` and switch on the result; migrate to `TypeSpecifierNode::category()` + `TypeCategory` switch.
 
 3. **`ObjFileWriter_*.cpp` symbol/EH/RTTI** (~30 sites): use `Type` for debug info and exception type tables; port to `TypeCategory`/`TypeIndex`.
 
-4. **Primitive `buildConversionPlan(Type, Type)` and adjacent binary-operator helpers in `OverloadResolution.h`**: the higher-level `TypeSpecifierNode` conversion path is now category/index based, but the primitive conversion core and helper functions like `effectiveBinaryOperatorTypeFromSpec()` / `makeBinaryOperatorTypeSpecifier()` still use raw `Type` as their public currency.
+4. **Primitive `buildConversionPlan(Type, Type)` in `OverloadResolution.h`**: the higher-level `TypeSpecifierNode` conversion path and the adjacent binary-operator helper layer are now category/index based, but the primitive conversion core still uses raw `Type` as its public currency.
 
 5. **`get_type_size_bits(Type)`, `categoryToType()`, `typeToCategory()`** helper functions: these are the *bridge* functions that allow migration to be incremental; they must be deleted last, after all callers are ported.
 
 ### Recommended next steps (current reality, largest blockers first)
 
-1. **Migrate `ExprResult::type`** — the largest single remaining step; replace `Type type` with `TypeCategory category_` + keep `IrType ir_type`, then update all `makeExprResult` factories and `.type`/`.typeEnum()` reads across the IR generators.
-2. **Finish the `OverloadResolution.h` migration** — keep the new `TypeCategory`/`TypeIndex` shape in `buildConversionPlan(const TypeSpecifierNode&, ...)`, then port the primitive `buildConversionPlan(Type, Type)` overload and the binary-operator helper layer away from raw `Type`.
-3. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, `IrGenerator_MemberAccess.cpp`, `ConstExprEvaluator_Members.cpp`, and the remaining parser dispatch files.
-4. **Port `ObjFileWriter_*.cpp` / exception-table debug uses** — these are comparatively isolated and should shrink the last codegen-facing `Type` dispatch paths.
+1. **Finish the primitive overload-resolution bridge** — port `buildConversionPlan(Type, Type)` and any remaining `Type`-based ranking helpers to `TypeCategory`/`TypeIndex`.
+2. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, and the remaining parser dispatch files.
+3. **Port `ObjFileWriter_*.cpp` / exception-table debug uses** — these are comparatively isolated and should shrink the last codegen-facing `Type` dispatch paths.
+4. **Reassess whether any remaining direct `.type` writes in helper construction sites should become category-native helpers** — e.g. construction-only lambdas and legacy bridge code that still fabricate raw `Type` before immediately stamping a `TypeIndex`.
 5. **Delete bridge functions** (`categoryToType`, `typeToCategory`, `toIrType(Type)`) and then the `Type` enum itself.
 
 ---

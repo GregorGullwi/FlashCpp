@@ -229,7 +229,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			// Generate code for the expression to throw
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
-			Type expr_type = expr_result.type;
+			Type expr_type = expr_result.typeEnum();
 			size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
 			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)

@@ -294,8 +294,8 @@
 							Type from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != operands.type)
-								from_type = operands.type;
+							if (from_type == Type::Enum && from_type != operands.typeEnum())
+								from_type = operands.typeEnum();
 							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;
 						}

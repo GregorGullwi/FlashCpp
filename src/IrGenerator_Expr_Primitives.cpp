@@ -182,7 +182,7 @@
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = PointerDepth{},
-					.ir_type = toIrType(object_result.type)
+					.ir_type = toIrType(object_result.typeEnum())
 				};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 			} else if (const auto* temp_var = std::get_if<TempVar>(&object_result.value)) {
@@ -200,7 +200,7 @@
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 
-		Type member_type = ptr_result.type;
+		Type member_type = ptr_result.typeEnum();
 		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 

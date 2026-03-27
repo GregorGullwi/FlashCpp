@@ -1281,20 +1281,24 @@ inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
 	return needs_type_index(type);
 }
 
-inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
-	Type type = spec.type();
-	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
-		type = getTypeInfo(spec.type_index()).type_;
+inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
+	return needs_type_index(cat);
+}
+
+inline TypeCategory effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
+	TypeCategory type = spec.category();
+	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
+		type = typeToCategory(getTypeInfo(spec.type_index()).type_);
 	}
-	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid()) {
-		return Type::Struct;
+	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
+		return TypeCategory::Struct;
 	}
 	return type;
 }
 
 inline bool isConcreteBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
-	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
-	if (type == Type::Invalid || type == Type::Void) {
+	TypeCategory type = effectiveBinaryOperatorTypeFromSpec(spec);
+	if (type == TypeCategory::Invalid || type == TypeCategory::Void) {
 		return false;
 	}
 	if (binaryOperatorUsesTypeIndexIdentity(type)) {
@@ -1310,21 +1314,21 @@ inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec
 		|| spec.is_member_object_pointer()) {
 		return false;
 	}
-	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
+	TypeCategory type = effectiveBinaryOperatorTypeFromSpec(spec);
 	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index().is_valid();
 }
 
-inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex type_index) {
-	Type effective_type = type;
+inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, TypeIndex type_index) {
+	TypeCategory effective_type = type;
 	int size_bits = 0;
 
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
-		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
+		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
 			if (type_info.resolvedType() != Type::Invalid && !type_info.isVoid()) {
-				effective_type = type_info.resolvedType();
-			} else if (effective_type == Type::Invalid || effective_type == Type::Void) {
-				effective_type = Type::Struct;
+				effective_type = typeToCategory(type_info.resolvedType());
+			} else if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void) {
+				effective_type = TypeCategory::Struct;
 			}
 		}
 
@@ -1335,20 +1339,20 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex ty
 		}
 	}
 
-	if (size_bits == 0 && effective_type != Type::Invalid && effective_type != Type::Void) {
+	if (size_bits == 0 && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
 		size_bits = get_type_size_bits(effective_type);
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {
-		return TypeSpecifierNode(effective_type, type_index, size_bits);
+		return TypeSpecifierNode(categoryToType(effective_type), type_index, size_bits);
 	}
 
-	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits);
+	return TypeSpecifierNode(categoryToType(effective_type), TypeQualifier::None, size_bits);
 }
 
 inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved = type_spec;
-	Type resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
+	TypeCategory resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
 	if (binaryOperatorUsesTypeIndexIdentity(resolved_type)) {
 		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
 	}
@@ -1565,15 +1569,15 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 }
 
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
-	Type effective_right_type = right_type;
+	TypeCategory effective_right_type = typeToCategory(right_type);
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
 		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
-			effective_right_type = Type::Invalid;
+			effective_right_type = TypeCategory::Invalid;
 		}
 	}
 	return findBinaryOperatorOverload(
-		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
+		makeBinaryOperatorTypeSpecifier(TypeCategory::Invalid, left_type_index),
 		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
 		operator_kind);
 }
@@ -1812,15 +1816,15 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const SymbolTable& symbol_table,
 	Type right_type)
 {
-	Type effective_right_type = right_type;
+	TypeCategory effective_right_type = typeToCategory(right_type);
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
 		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
-			effective_right_type = Type::Invalid;
+			effective_right_type = TypeCategory::Invalid;
 		}
 	}
 	return findBinaryOperatorOverloadWithFreeFunction(
-		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
+		makeBinaryOperatorTypeSpecifier(TypeCategory::Invalid, left_type_index),
 		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
 		operator_kind,
 		operator_symbol,

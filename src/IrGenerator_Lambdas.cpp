@@ -280,7 +280,7 @@
 							// For init-capture by reference [&y = x], we need to store the address of x
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init result
-								Type init_type = init_result.type;
+								Type init_type = init_result.typeEnum();
 								int init_size = init_result.size_in_bits.value;
 
 								// Generate AddressOf for the initializer

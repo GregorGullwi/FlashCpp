@@ -209,7 +209,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		if (init_expr.is<ExpressionNode>()) {
 			ExprResult init_result = visitExpressionNode(init_expr.as<ExpressionNode>());
-			store_type = init_result.type;
+			store_type = init_result.typeEnum();
 			store_size = init_result.size_in_bits.value;
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
@@ -382,7 +382,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			addr_member_op.result = address_temp;
 			addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
 			addr_member_op.member_offset = lvalue_info->offset;
-			addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(argument_result.type, argument_result.type_index);
+			addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(argument_result.typeEnum(), argument_result.type_index);
 			addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
 
@@ -651,15 +651,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Finalize common_type: if parser inference failed, fall back to true branch type
 		if (common_type == Type::Invalid)
-			common_type = true_result.type;
+			common_type = true_result.typeEnum();
 
 		// Convert true result to common type if needed.
 		// NOTE: sema annotations were already consumed above when determining common_type
 		// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
 		// there is no need to re-query the annotation here since both paths would produce
 		// the same generateTypeConversion call (sema_target == common_type by construction).
-		if (true_result.type != common_type)
-			true_result = generateTypeConversion(true_result, true_result.type, common_type, ternaryNode.get_token());
+		if (true_result.typeEnum() != common_type)
+			true_result = generateTypeConversion(true_result, true_result.typeEnum(), common_type, ternaryNode.get_token());
 
 		int result_size = get_type_size_bits(common_type);
 		if (result_size == 0) result_size = true_result.size_in_bits.value;
@@ -687,8 +687,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
 		// Convert false result to common type if needed (same reasoning as true branch above).
-		if (false_result.type != common_type)
-			false_result = generateTypeConversion(false_result, false_result.type, common_type, ternaryNode.get_token());
+		if (false_result.typeEnum() != common_type)
+			false_result = generateTypeConversion(false_result, false_result.typeEnum(), common_type, ternaryNode.get_token());
 
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
@@ -1001,7 +1001,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					const bool is_shift_op = (op == "<<=" || op == ">>=");
 					const Type commonType = is_shift_op
 						? promote_integer_type(gsi.bindingType())
-						: get_common_type(gsi.bindingType(), rhs_result.type);
+						: get_common_type(gsi.bindingType(), rhs_result.typeEnum());
 
 					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
 					if (is_shift_op && is_floating_point_type(gsi.bindingType()))
@@ -1434,7 +1434,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return;
 				}
 
-				Type effective_spec_type = effectiveBinaryOperatorTypeFromSpec(type_spec);
+				TypeCategory effective_spec_type = effectiveBinaryOperatorTypeFromSpec(type_spec);
 				if (!binaryOperatorUsesTypeIndexIdentity(effective_spec_type) || type_spec.type_index() != ir_type_index) {
 					type_spec.set_type(resolved_ir_type);
 					type_spec.set_type_index(ir_type_index);
@@ -3091,7 +3091,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = arg_result.type;
+		Type arg_type = arg_result.typeEnum();
 		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
@@ -3136,7 +3136,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = arg_result.type;
+		Type arg_type = arg_result.typeEnum();
 		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
@@ -4126,7 +4126,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult ptrExprResult = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 
 		// Extract pointer details
-		[[maybe_unused]] Type ptr_type = ptrExprResult.type;
+		[[maybe_unused]] Type ptr_type = ptrExprResult.typeEnum();
 		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits.value;
 
 		// For now, we just return the pointer unchanged

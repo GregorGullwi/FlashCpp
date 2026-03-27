@@ -138,7 +138,7 @@
 	ExpressionContext context) {
 		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
-			result.type = type;
+			result.category_ = typeToCategory(type);
 			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
@@ -512,7 +512,7 @@
 		ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
-		Type element_type = array_result.type;
+		Type element_type = array_result.typeEnum();
 		int element_size_bits = array_result.size_in_bits.value;
 
 		// Check if this is a pointer type (e.g., int* arr)
@@ -717,7 +717,7 @@
 		}
 
 		// Set index as TypedValue
-		Type index_type = index_result.type;
+		Type index_type = index_result.typeEnum();
 		int index_size = index_result.size_in_bits.value;
 		payload.index.type = index_type;
 		payload.index.ir_type = toIrType(index_type);
@@ -831,7 +831,7 @@
 		TypeIndex& base_type_index,
 		std::string_view error_context) {
 
-		base_type = operands.type;
+		base_type = operands.typeEnum();
 		if (const auto* temp_var = std::get_if<TempVar>(&operands.value)) {
 			base_object = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
@@ -846,7 +846,7 @@
 
 	ExprResult AstToIr::makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 		ExprResult result;
-		result.type = type;
+		result.category_ = typeToCategory(type);
 		result.ir_type = toIrType(type);
 		result.size_in_bits = size_bits;
 		result.value = result_var;
@@ -1884,7 +1884,7 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.type;
+			Type expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
@@ -1996,7 +1996,7 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.type;
+			Type expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
