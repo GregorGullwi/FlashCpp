@@ -222,7 +222,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						// Convert to TypedValue
 						TypedValue arg;
-						arg.type = type_node.type();
+						arg.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
 						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -463,7 +463,7 @@
 									TempVar func_ptr_temp = var_counter.next();
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
-									member_load.result.type = Type::FunctionPointer;
+									member_load.result.type_index = TypeIndex{member_load.result.type_index.index(), TypeCategory::FunctionPointer};
 									member_load.result.ir_type = IrType::FunctionPointer;
 									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;
@@ -786,7 +786,7 @@
 						// Generate member access IR to load the function pointer
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
-						member_load.result.type = member.type;
+						member_load.result.type_index = member.type_index;
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand
@@ -1033,7 +1033,7 @@
 			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
-			vcall_op.result.type = return_type.type();
+			vcall_op.result.type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
 			vcall_op.result.ir_type = toIrType(return_type.type());
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
@@ -1080,7 +1080,7 @@
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 					TypedValue tv;
-					tv.type = type_node.type();
+					tv.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
 					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1385,7 +1385,7 @@
 					TempVar this_addr = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
-					addr_op.operand.type = object_type.type();
+					addr_op.operand.type_index = TypeIndex::fromTypeAndIndex(object_type.type(), object_type.type_index());
 					addr_op.operand.ir_type = toIrType(object_type.type());
 					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1401,7 +1401,7 @@
 				TempVar this_addr = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
-				addr_op.operand.type = object_type.type();
+				addr_op.operand.type_index = TypeIndex::fromTypeAndIndex(object_type.type(), object_type.type_index());
 				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};

@@ -645,7 +645,7 @@
 		if (std::holds_alternative<StringHandle>(base)) {
 			AddressOfOp addr_op;
 			addr_op.result = result_var;
-			addr_op.operand.type = target_type;
+			addr_op.operand.type_index = TypeIndex{0, typeToCategory(target_type)}; addr_op.operand.ir_type = toIrType(target_type);
 			addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(target_size)};
 			addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 			addr_op.operand.value = std::get<StringHandle>(base);

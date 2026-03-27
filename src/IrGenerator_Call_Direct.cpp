@@ -96,7 +96,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		auto it = eval_result.object_member_bindings.find(member_sv);
 		if (it == eval_result.object_member_bindings.end()) continue;
 		MemberStoreOp ms;
-		ms.value.type = member.type;
+		ms.value.type_index = member.type_index; ms.value.ir_type = toIrType(member.type_index);
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.type)};
 		ms.object = struct_tmp_handle;
@@ -180,7 +180,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 
-									op.operand.type = operand_type;
+									op.operand.type_index = TypeIndex{op.operand.type_index.index(), typeToCategory(operand_type)}; op.operand.ir_type = toIrType(operand_type);
 									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;

@@ -443,7 +443,7 @@
 								TempVar lhs_val = var_counter.next();
 								MemberLoadOp lhs_load;
 								lhs_load.result.value = lhs_val;
-								lhs_load.result.type = member.type;
+								lhs_load.result.type_index = member.type_index;
 								lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								lhs_load.object = this_handle;
 								lhs_load.member_name = member.getName();
@@ -455,7 +455,7 @@
 								TempVar rhs_val = var_counter.next();
 								MemberLoadOp rhs_load;
 								rhs_load.result.value = rhs_val;
-								rhs_load.result.type = member.type;
+								rhs_load.result.type_index = member.type_index;
 								rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 								rhs_load.object = other_handle;
 								rhs_load.member_name = member.getName();
@@ -474,7 +474,7 @@
 								call_op.result = call_result;
 
 								TypedValue lhs_arg;
-								lhs_arg.type = Type::Struct;
+								lhs_arg.type_index = TypeIndex{0, TypeCategory::Struct};
 								lhs_arg.ir_type = IrType::Struct;
 								lhs_arg.size_in_bits = SizeInBits{64};
 								lhs_arg.value = lhs_val;
@@ -482,7 +482,7 @@
 								call_op.args.push_back(std::move(lhs_arg));
 
 								TypedValue rhs_arg;
-								rhs_arg.type = Type::Struct;
+								rhs_arg.type_index = TypeIndex{0, TypeCategory::Struct};
 								rhs_arg.ir_type = IrType::Struct;
 								rhs_arg.size_in_bits = SizeInBits{64};
 								rhs_arg.value = rhs_val;
@@ -524,7 +524,7 @@
 						TempVar lhs_val = var_counter.next();
 						MemberLoadOp lhs_load;
 						lhs_load.result.value = lhs_val;
-						lhs_load.result.type = member.type;
+						lhs_load.result.type_index = member.type_index;
 						lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						lhs_load.object = this_handle;
 						lhs_load.member_name = member.getName();
@@ -536,7 +536,7 @@
 						TempVar rhs_val = var_counter.next();
 						MemberLoadOp rhs_load;
 						rhs_load.result.value = rhs_val;
-						rhs_load.result.type = member.type;
+						rhs_load.result.type_index = member.type_index;
 						rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
 						rhs_load.object = other_handle;
 						rhs_load.member_name = member.getName();
@@ -675,7 +675,7 @@
 				// Pass 'this' as first arg
 				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
 				TypedValue this_arg;
-				this_arg.type = Type::Struct;
+				this_arg.type_index = TypeIndex{0, TypeCategory::Struct};
 				this_arg.ir_type = IrType::Struct;
 				this_arg.size_in_bits = SizeInBits{64};
 				this_arg.value = this_handle;
@@ -694,7 +694,7 @@
 					other_handle = StringTable::getOrInternStringHandle("other");
 				}
 				TypedValue other_arg;
-				other_arg.type = Type::Struct;
+				other_arg.type_index = TypeIndex{0, TypeCategory::Struct};
 				other_arg.ir_type = IrType::Struct;
 				other_arg.size_in_bits = SizeInBits{64};
 				other_arg.value = other_handle;
@@ -810,7 +810,7 @@
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
-							member_load.result.type = member.type;
+							member_load.result.type_index = member.type_index;
 							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
@@ -823,7 +823,7 @@
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type_index = member.type_index;
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -843,7 +843,7 @@
 						deref_operands.emplace_back(this_deref);  // result variable
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
-						deref_op.pointer.type = Type::Struct;
+						deref_op.pointer.type_index = TypeIndex{0, TypeCategory::Struct};
 						deref_op.pointer.ir_type = IrType::Struct;
 						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
@@ -1536,7 +1536,7 @@
 					// The value is a vtable symbol reference
 					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
 					// The actual symbol will be loaded using the vtable_symbol field
-					vptr_store.value.type = Type::Void;
+					vptr_store.value.type_index = TypeIndex{0, TypeCategory::Void};
 					vptr_store.value.ir_type = IrType::Void;
 					vptr_store.value.size_in_bits = SizeInBits{64};
 					vptr_store.value.value = static_cast<unsigned long long>(0);  // Placeholder
@@ -1643,7 +1643,7 @@
 									ctor_op.base_class_offset = static_cast<int>(member.offset);
 
 									TypedValue other_arg;
-									other_arg.type = Type::Struct;
+									other_arg.type_index = TypeIndex{0, TypeCategory::Struct};
 									other_arg.ir_type = IrType::Struct;
 									other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									other_arg.value = member_source_addr;
@@ -1665,7 +1665,7 @@
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
-							member_load.result.type = member.type;
+							member_load.result.type_index = member.type_index;
 							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
@@ -1678,7 +1678,7 @@
 							// Then, store the member to 'this'
 							// Format: [member_type, member_size, object_name, member_name, offset, value]
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type_index = member.type_index;
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1722,7 +1722,7 @@
 								for (const auto& member : struct_info->members) {
 									if (member.offset == offset && member.bitfield_width.has_value()) {
 										MemberStoreOp combined_store;
-										combined_store.value.type = member.type;
+										combined_store.value.type_index = member.type_index;
 										combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 										combined_store.value.value = combined_bitfield_values[offset];
 										combined_store.object = StringTable::getOrInternStringHandle("this");
@@ -1858,7 +1858,7 @@
 												if (nested_member_value.has_value()) {
 													// Generate nested member store
 													MemberStoreOp nested_member_store;
-													nested_member_store.value.type = nested_member.type;
+													nested_member_store.value.type_index = nested_member.type_index;
 													nested_member_store.value.size_in_bits = SizeInBits{static_cast<int>(nested_member.size * 8)};
 													nested_member_store.value.value = nested_member_value.value();
 													nested_member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1950,7 +1950,7 @@
 							}
 
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.type_index = member.type_index;
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -2039,7 +2039,7 @@
 												}
 											}
 											MemberStoreOp elem_store;
-											elem_store.value.type = member.type;
+											elem_store.value.type_index = member.type_index;
 											assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
 											elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
 											elem_store.value.value = elem_val;
@@ -2079,7 +2079,7 @@
 													}
 												}
 												MemberStoreOp nm_store;
-												nm_store.value.type = nm.type;
+												nm_store.value.type_index = nm.type_index;
 												nm_store.value.size_in_bits = SizeInBits{static_cast<int>(nm.size * 8)};
 												nm_store.value.value = nm_val;
 												nm_store.object = StringTable::getOrInternStringHandle("this");
@@ -2124,7 +2124,7 @@
 											IrValue arr_elem_val = (i == 0) ? member_value
 												: (arr_is_fp ? IrValue{0.0} : IrValue{0ULL});
 											MemberStoreOp arr_elem_store;
-											arr_elem_store.value.type = member.type;
+											arr_elem_store.value.type_index = member.type_index;
 											assert(arr_elem_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
 											arr_elem_store.value.size_in_bits = SizeInBits{static_cast<int>(arr_elem_size * 8)};
 											arr_elem_store.value.value = arr_elem_val;
@@ -2211,7 +2211,7 @@
 						}
 
 						MemberStoreOp member_store;
-						member_store.value.type = member.type;
+						member_store.value.type_index = member.type_index;
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 						member_store.value.value = member_value;
 						member_store.object = StringTable::getOrInternStringHandle("this");
@@ -2484,7 +2484,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_ptr.offset = static_cast<int>(ptr_member.offset);
 		// Create TypedValue for pointer to array - need to set pointer_depth explicitly
 		TypedValue ptr_value;
-		ptr_value.type = element_type;
+		ptr_value.type_index = TypeIndex{0, typeToCategory(element_type)}; ptr_value.ir_type = toIrType(element_type);
 		ptr_value.size_in_bits = SizeInBits{64};  // pointer size
 		ptr_value.value = array_name;
 		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array

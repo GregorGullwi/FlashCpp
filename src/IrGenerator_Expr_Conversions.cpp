@@ -458,7 +458,7 @@
 
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
-		op.result.type = Type::FunctionPointer;
+		op.result.type_index = TypeIndex{op.result.type_index.index(), TypeCategory::FunctionPointer};
 		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
@@ -579,7 +579,7 @@
 
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.type = type_node->type();
+					load_op.result.type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
 					load_op.result.ir_type = toIrType(type_node->type());
 					load_op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					load_op.result.value = result_temp;
@@ -933,7 +933,7 @@
 						payload.element_type = element_type;
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-						payload.index.type = Type::UnsignedLongLong;
+						payload.index.type_index = TypeIndex{payload.index.type_index.index(), TypeCategory::UnsignedLongLong};
 						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
@@ -1028,7 +1028,7 @@
 				TempVar ptr_temp = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = ptr_temp;
-				member_load.result.type = member->type;
+				member_load.result.type_index = member->type_index;
 				member_load.result.size_in_bits = SizeInBits{64};  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1052,7 +1052,7 @@
 
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.type = member->type;
+				store_op.pointer.type_index = member->type_index;
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
@@ -1066,7 +1066,7 @@
 				TempVar current_val = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = current_val;
-				member_load.result.type = member->type;
+				member_load.result.type_index = member->type_index;
 				member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1416,7 +1416,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.operand.type = operandType;
+			op.operand.type_index = TypeIndex{op.operand.type_index.index(), typeToCategory(operandType)}; op.operand.ir_type = toIrType(operandType);
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 
@@ -1589,7 +1589,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.pointer.type = operandType;
+			op.pointer.type_index = TypeIndex{op.pointer.type_index.index(), typeToCategory(operandType)}; op.pointer.ir_type = toIrType(operandType);
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};
@@ -1735,7 +1735,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
-	this_arg.type = operandType;
+	this_arg.type_index = TypeIndex{this_arg.type_index.index(), typeToCategory(operandType)}; this_arg.ir_type = toIrType(operandType);
 	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
@@ -1747,7 +1747,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	// since the fallback path may match a prefix function for a postfix call or vice versa.
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
-		dummy_arg.type = Type::Int;
+		dummy_arg.type_index = TypeIndex{dummy_arg.type_index.index(), TypeCategory::Int};
 		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
@@ -2624,7 +2624,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Take the address of the temporary and return it as the reference argument.
 		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
-		result.type = referred_type;
+		result.type_index = TypeIndex{result.type_index.index(), typeToCategory(referred_type)}; result.ir_type = toIrType(referred_type);
 		result.ir_type = toIrType(referred_type);
 		result.size_in_bits = SizeInBits{64};
 		result.value = addr_var;

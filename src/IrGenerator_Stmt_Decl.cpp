@@ -1428,7 +1428,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									}
 
 									MemberStoreOp member_store;
-									member_store.value.type = member.type;
+									member_store.value.type_index = member.type_index;
 									member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().handle();
@@ -1742,7 +1742,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
-					tv.type = elem_type;
+					tv.type_index = TypeIndex{0, typeToCategory(elem_type)};
 					tv.ir_type = toIrType(elem_type);
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
@@ -2224,7 +2224,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											TempVar addr_var = var_counter.next();
 											AddressOfOp addr_op;
 											addr_op.result = addr_var;
-											addr_op.operand.type = init_type.type();
+											addr_op.operand.type_index = TypeIndex::fromTypeAndIndex(init_type.type(), init_type.type_index());
 											addr_op.operand.ir_type = toIrType(init_type.type());
 											addr_op.operand.size_in_bits = SizeInBits{init_type.size_in_bits()};
 											addr_op.operand.pointer_depth = PointerDepth{};
@@ -2555,7 +2555,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.operand.type = init_type;
+					addr_op.operand.type_index = TypeIndex{0, typeToCategory(init_type)};
 					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
@@ -2962,7 +2962,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						// Pass the hidden variable as argument
 						TypedValue arg;
-						arg.type = init_type;
+						arg.type_index = TypeIndex{0, typeToCategory(init_type)};
 						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
@@ -3111,7 +3111,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = member.type;
+				init_val.type_index = member.type_index;
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3124,7 +3124,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// First, generate a member access to load the value
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
-				load_op.result.type = member.type;
+				load_op.result.type_index = member.type_index;
 				load_op.result.ir_type = toIrType(member.type);
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;
@@ -3144,7 +3144,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				binding_var_decl.type = member.type;
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = member.type;
+				init_val2.type_index = member.type_index;
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

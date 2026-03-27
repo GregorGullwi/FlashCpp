@@ -249,7 +249,7 @@
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
-				payload.index.type = Type::UnsignedLongLong;
+				payload.index.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
 				payload.index.value = flat_index;
@@ -385,7 +385,7 @@
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-					payload.index.type = Type::UnsignedLongLong;
+					payload.index.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
@@ -475,7 +475,7 @@
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 
 									// Set index as TypedValue
-									payload.index.type = index_result.type;
+									payload.index.type_index = index_result.type_index;
 									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
@@ -719,7 +719,7 @@
 		// Set index as TypedValue
 		Type index_type = index_result.type;
 		int index_size = index_result.size_in_bits.value;
-		payload.index.type = index_type;
+		payload.index.type_index = TypeIndex{0, typeToCategory(index_type)}; payload.index.ir_type = toIrType(index_type);
 		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
@@ -1087,7 +1087,7 @@
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
-							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.type_index = TypeIndex{load_copy_this.result.type_index.index(), TypeCategory::Struct};
 							load_copy_this.result.ir_type = IrType::Struct;
 							load_copy_this.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_size_bits)};
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1116,7 +1116,7 @@
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
-							load_this.result.type = Type::Void;
+							load_this.result.type_index = TypeIndex{load_this.result.type_index.index(), TypeCategory::Void};
 							load_this.result.ir_type = IrType::Void;
 							load_this.result.size_in_bits = SizeInBits{64};
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1250,7 +1250,7 @@
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
-			global_load.result.type = static_member->type;
+			global_load.result.type_index = static_member->type_index;
 			global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 
@@ -1354,7 +1354,7 @@
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
 		member_load.result.value = result_var;
-		member_load.result.type = member->type;
+		member_load.result.type_index = member->type_index;
 		member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};  // Convert bytes to bits
 
 		// Set base object, member name, and offset — using unwrapped values when applicable
@@ -3822,7 +3822,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
-		this_arg.type = source.type;
+		this_arg.type_index = source.type_index;
 		this_arg.ir_type = toIrType(source.type);
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = this_ptr;
@@ -3831,7 +3831,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		// Already a TempVar — for struct types this holds the object address
 		TypedValue this_arg;
-		this_arg.type = source.type;
+		this_arg.type_index = source.type_index;
 		this_arg.ir_type = toIrType(source.type);
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = std::get<TempVar>(source_value);
