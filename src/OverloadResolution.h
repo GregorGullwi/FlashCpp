@@ -368,10 +368,10 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-		Type from_resolved = from_canonical.typeEnum();
-		Type to_resolved = to_canonical.typeEnum();
-		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
-		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
+		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
+		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+		const TypeCategory from_resolved_category = from_resolved_index.category();
+		const TypeCategory to_resolved_category = to_resolved_index.category();
 
 		// Helper to check if the pointed-to type is const for first-level pointers.
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
@@ -396,7 +396,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Exact type match for pointers (after resolving aliases).
 		// For struct types we must additionally compare type_index so that Foo*
 		// and Bar* (both Type::Struct) are not treated as the same type.
-		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
+		if (from_resolved_category == to_resolved_category && from_pointee_is_const == to_pointee_is_const) {
 			// For struct pointer types, "same resolved Type" is not sufficient —
 			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
 			if (from_resolved_index.isStruct() &&
@@ -409,7 +409,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		
 		// If base types match but const qualifiers differ.
 		// For struct pointer types, different type_index means different types — no match.
-		if (from_resolved == to_resolved) {
+		if (from_resolved_category == to_resolved_category) {
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
@@ -451,7 +451,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via pointee const),
 		//       while "T* const" would have const on the pointer level itself.
-		if (to_resolved_index.category() == TypeCategory::Void) {
+		if (to_resolved_category == TypeCategory::Void) {
 			// Check const-correctness for the pointed-to type
 			// from_pointee_is_const checks if the pointee is const (e.g., "const char*")
 			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
@@ -481,11 +481,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.typeEnum();
-				Type to_base = to_canonical.typeEnum();
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
-				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
+				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
+				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+				const TypeCategory from_base_category = from_base_index.category();
+				const TypeCategory to_base_category = to_base_index.category();
+				if (from_is_rvalue == to_is_rvalue && from_base_category == to_base_category) {
 					// For struct types, "same base type" requires the same type_index.
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
 					// Type::Struct, so we must also compare type_index.
@@ -512,13 +512,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// rvalue reference can bind to a temporary materialized from an xvalue when
 				// a standard conversion is required.
 				if (!to_is_rvalue && to.is_const()) {
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
 					if (plan.is_valid) {
 						return plan;
 					}
 				}
 				if (from_is_rvalue && to_is_rvalue) {
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
 					if (plan.is_valid) {
 						return plan;
 					}
@@ -537,11 +537,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.typeEnum();
-				Type to_base = to_canonical.typeEnum();
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
-				bool types_match = (from_base == to_base);
+				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
+				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+				const TypeCategory from_base_category = from_base_index.category();
+				const TypeCategory to_base_category = to_base_index.category();
+				bool types_match = (from_base_category == to_base_category);
 				// For struct types, "same base type" requires the same type_index.
 				if (types_match && from_base_index.isStruct() &&
 					from_base_index.is_valid() && to_base_index.is_valid() &&
@@ -551,7 +551,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!types_match) {
 					// Allow conversions for const lvalue refs and rvalue refs by
 					// materializing a temporary of the referred-to type.
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(categoryToType(from_base_category), categoryToType(to_base_category));
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
 						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
@@ -588,12 +588,12 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-			Type from_resolved = from_canonical.typeEnum();
-			Type to_resolved = to_canonical.typeEnum();
-			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
-			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
+			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
+			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+			const TypeCategory from_resolved_category = from_resolved_index.category();
+			const TypeCategory to_resolved_category = to_resolved_index.category();
 			
-			if (from_resolved == to_resolved) {
+			if (from_resolved_category == to_resolved_category) {
 				// For struct types, "same base type" requires the same type_index.
 				// Two different struct types (e.g. Bar& → Foo) both resolve to
 				// Type::Struct, so we must also compare type_index.
@@ -621,7 +621,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
-			return buildConversionPlan(from_resolved, to_resolved);
+			return buildConversionPlan(categoryToType(from_resolved_category), categoryToType(to_resolved_category));
 		}
 	}
 
@@ -648,12 +648,10 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-	Type from_type = from_canonical.typeEnum();
-	Type to_type = to_canonical.typeEnum();
-	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_type, from_canonical.type_index);
-	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_type, to_canonical.type_index);
-	const TypeCategory from_type_category = typeToCategory(from_type);
-	const TypeCategory to_type_category = typeToCategory(to_type);
+	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
+	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+	const TypeCategory from_type_category = from_type_index.category();
+	const TypeCategory to_type_category = to_type_index.category();
 	
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
@@ -689,7 +687,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 		return ConversionPlan::no_match();
 	}
-	return buildConversionPlan(from_type, to_type);
+	return buildConversionPlan(categoryToType(from_type_category), categoryToType(to_type_category));
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references).

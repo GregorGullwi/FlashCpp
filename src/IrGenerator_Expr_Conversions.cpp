@@ -301,14 +301,14 @@
 			// Get object type to lookup member
 			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 
-			Type object_type = object_operands.type;
+			const TypeCategory object_category = object_operands.category();
 			TypeIndex type_index {};
 			if (object_operands.type_index.is_valid()) {
 				type_index = object_operands.type_index;
 			}
 
 			// Look up member information
-			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_type != Type::Struct) {
+			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_category != TypeCategory::Struct) {
 				return std::nullopt;
 			}
 
@@ -354,8 +354,8 @@
 			ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
 
-			Type element_type = array_operands.type;
-			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(element_type, array_operands.type_index);
+			const TypeCategory element_category = array_operands.category();
+			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), array_operands.type_index);
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -389,12 +389,12 @@
 				// Array from expression (e.g., member access: obj.arr_member[idx])
 				// array_operands[1] contains total array size, we need element size
 				// For primitive types, use the type's size directly
-				if (element_type == Type::Struct) {
+				if (element_category == TypeCategory::Struct) {
 					// For struct arrays, element_size_bits is already correct from member info
 					// (it contains the struct size, not the total array size)
 				} else {
 					// For primitive type arrays, get the element size from the type
-					element_size_bits = get_type_size_bits(element_type);
+					element_size_bits = get_type_size_bits(element_category);
 				}
 				// Try to get pointer depth from array_operands[3] if available
 				if (array_operands.pointer_depth.is_pointer()) {
@@ -429,7 +429,7 @@
 			}
 
 			base_components->array_indices.push_back(arr_idx);
-			base_components->final_type = element_type;
+			base_components->final_type = categoryToType(element_category);
 			base_components->final_type_index = element_type_index;
 			base_components->final_size_bits = SizeInBits{element_size_bits};
 			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
@@ -689,7 +689,7 @@
 
 						// Check that we have valid operands
 						{
-							Type element_type = array_operands.type;
+							const TypeCategory element_category = array_operands.category();
 							int element_size_bits = array_operands.size_in_bits.value;
 
 							// For arrays, array_operands[1] is the pointer size (64), not element size
@@ -730,7 +730,7 @@
 							}
 
 							// Look up member information
-							if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && element_type == Type::Struct) {
+							if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && element_category == TypeCategory::Struct) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -740,7 +740,7 @@
 									TempVar elem_addr_var = var_counter.next();
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
-									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, type_index);
+									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), type_index);
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
@@ -783,7 +783,7 @@
 					ExprResult object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
 
 					{
-						Type object_type = object_operands.type;
+						const TypeCategory object_category = object_operands.category();
 
 						// Get the struct type index
 						TypeIndex type_index {};
@@ -792,7 +792,7 @@
 						}
 
 						// Look up member information
-						if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && object_type == Type::Struct) {
+						if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && object_category == TypeCategory::Struct) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -876,10 +876,10 @@
 
 						// Get element type and size
 						const TypeSpecifierNode& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
-						Type element_type = type_node.type();
+						const TypeCategory element_category = type_node.category();
 						int element_size_bits = static_cast<int>(type_node.size_in_bits());
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(element_type);
+							element_size_bits = get_type_size_bits(element_category);
 						}
 						TypeIndex element_type_index = type_node.type_index();
 
@@ -938,7 +938,7 @@
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
-						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, element_type_index);
+						payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.setType(Type::UnsignedLongLong);
@@ -949,7 +949,7 @@
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
-						return makeExprResult(element_type, SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(categoryToType(element_category), SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -959,7 +959,7 @@
 				ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
-				Type element_type = array_operands.type;
+				const TypeCategory element_category = array_operands.category();
 				int element_size_bits = array_operands.size_in_bits.value;
 
 				// For arrays, array_operands[1] is the pointer size (64), not element size
@@ -999,7 +999,7 @@
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
-				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+				payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), {});
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)
@@ -1015,7 +1015,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
 				// Return pointer to element (64-bit pointer)
-				return makeExprResult(element_type, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeExprResult(categoryToType(element_category), SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 			}
 		}
 
@@ -2055,13 +2055,13 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (gsi.is_global_or_static) {
 			// For global/static: manually do load → add/sub 1 → store
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
-			Type elem_type = operandIrResult.type;
+			const TypeCategory elem_category = operandIrResult.category();
 			int elem_size = operandIrResult.size_in_bits.value;
 			IrValue loaded_val = toIrValue(operandIrResult.value);
 
 			if (is_prefix) {
 				BinaryOp bin_op{
-					.lhs = makeTypedValue(elem_type, SizeInBits{elem_size}, loaded_val),
+					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
 					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
@@ -2075,12 +2075,12 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				TempVar old_val = var_counter.next();
 				AssignmentOp save_op;
 				save_op.result = old_val;
-				save_op.lhs = makeTypedValue(elem_type, SizeInBits{elem_size}, old_val);
-				save_op.rhs = makeTypedValue(elem_type, SizeInBits{elem_size}, loaded_val);
+				save_op.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, old_val);
+				save_op.rhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 
 				BinaryOp bin_op{
-					.lhs = makeTypedValue(elem_type, SizeInBits{elem_size}, loaded_val),
+					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
 					.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
@@ -2511,7 +2511,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
-			if (value_result.type != Type::Struct || !value_result.type_index.is_valid()) {
+			if (value_result.category() != TypeCategory::Struct || !value_result.type_index.is_valid()) {
 				return;
 			}
 			if (value_result.type_index.index() >= getTypeInfoCount()) {
