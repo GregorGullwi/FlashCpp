@@ -352,6 +352,7 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
+	const TypeCategory cat = typeToCategory(type);
 	// Use IrType to catch both Type::Struct and Type::UserDefined (which maps
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
@@ -365,7 +366,7 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 		// Type::Struct must always have a valid StructInfo; reaching here for
 		// a genuine Struct is a compiler bug.  Type::UserDefined may be a
 		// typedef to a primitive, so fall through to the generic path.
-		assert(type != Type::Struct && "Type::Struct without valid StructInfo is a compiler bug");
+		assert(cat != TypeCategory::Struct && "Type::Struct without valid StructInfo is a compiler bug");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
 	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
@@ -385,8 +386,9 @@ Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, Poin
 	}
 
 	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+	const TypeCategory lowered_cat = typeToCategory(lowered_type);
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
 			return enum_info->underlying_type;
 		}
@@ -401,8 +403,10 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 	}
 
 	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+	const TypeCategory lowered_cat = typeToCategory(lowered_type);
+	const TypeCategory semantic_cat = typeToCategory(semantic_type);
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
 			return static_cast<int>(enum_info->underlying_size);
@@ -413,7 +417,7 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 		}
 	}
 
-	if (semantic_type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (semantic_cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (getTypeInfo(type_index).type_size_ > 0) {
 			return getTypeInfo(type_index).type_size_;
 		}

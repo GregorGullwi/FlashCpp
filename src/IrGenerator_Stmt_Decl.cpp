@@ -184,7 +184,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		return *same_type_ctor_preference;
 	}
 
-	return init_operands.typeEnum() == Type::Struct
+	return init_operands.category() == TypeCategory::Struct
+		&& target_type.category() == TypeCategory::Struct
 		&& init_operands.type_index.is_valid()
 		&& init_operands.type_index == target_type.type_index()
 		&& isExprResultXValue(init_operands);
@@ -323,13 +324,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 			};
 			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, Type member_type) -> unsigned long long {
-				if (member_type == Type::Float) {
+				const TypeCategory member_cat = typeToCategory(member_type);
+				if (member_cat == TypeCategory::Float) {
 					float fval = static_cast<float>(r.as_double());
 					uint32_t fbits = 0;
 					std::memcpy(&fbits, &fval, sizeof(float));
 					return static_cast<unsigned long long>(fbits);
 				}
-				if (member_type == Type::Double || member_type == Type::LongDouble) {
+				if (member_cat == TypeCategory::Double || member_cat == TypeCategory::LongDouble) {
 					double dval = r.as_double();
 					unsigned long long dbits = 0;
 					std::memcpy(&dbits, &dval, sizeof(double));
@@ -461,12 +463,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					return 0;
 				}
 
-				if (target_type == Type::Float) {
+				const TypeCategory target_cat = typeToCategory(target_type);
+				if (target_cat == TypeCategory::Float) {
 					float f = static_cast<float>(eval_result.as_double());
 					uint32_t f_bits;
 					std::memcpy(&f_bits, &f, sizeof(float));
 					return f_bits;
-				} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+				} else if (target_cat == TypeCategory::Double || target_cat == TypeCategory::LongDouble) {
 					double d = eval_result.as_double();
 					unsigned long long bits;
 					std::memcpy(&bits, &d, sizeof(double));
@@ -1528,14 +1531,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					{
 						Type init_type = init_operands.typeEnum();
 						TypeIndex init_type_index = init_operands.type_index;
+						const TypeCategory init_cat = init_operands.category();
 						const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
 						// Check if source and target types differ and source is a struct
 						bool need_conversion = (init_type != type_node.type()) ||
-						(init_type == Type::Struct && init_type_index != type_node.type_index());
+						(init_cat == TypeCategory::Struct && init_type_index != type_node.type_index());
 
 						bool conv_op_applied = false;
-						if (need_conversion && init_type == Type::Struct) {
+						if (need_conversion && init_cat == TypeCategory::Struct) {
 							// First check for a sema-annotated user-defined conversion
 							if (sema_ && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
@@ -1589,24 +1593,24 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					{
 						Type init_type  = init_operands.typeEnum();
 						const Type decl_type  = type_node.type();
+						TypeCategory init_cat = init_operands.category();
+						const TypeCategory decl_cat = type_node.category();
 						// Resolve enum to underlying type for conversion purposes.
 						// Enum values share the same bit representation as their underlying
 						// integer type, so we can treat them as their underlying type for
 						// standard conversions (e.g., enum→double needs IntToFloat).
 						// Also update init_operands.type so generateTypeConversion sees a
 						// consistent fromType (avoiding Enum vs Int mismatch in the operands).
-						if (init_type == Type::Enum && init_operands.type_index.is_valid()
-							&& init_operands.type_index.index() < getTypeInfoCount()) {
-							if (const EnumTypeInfo* enum_info = getTypeInfo(init_operands.type_index).getEnumInfo()) {
-								init_type = enum_info->underlying_type;
-								init_operands.category_ = typeToCategory(init_type);
-							}
+						if (init_cat == TypeCategory::Enum) {
+							init_cat = resolveEnumUnderlyingTypeCategory(init_cat, init_operands.type_index);
+							init_type = categoryToType(init_cat);
+							init_operands.category_ = init_cat;
 						}
 						if (init_type != decl_type
-							&& init_type  != Type::Struct && decl_type  != Type::Struct
-							&& init_type  != Type::Enum   && decl_type  != Type::Enum
-							&& init_type  != Type::Invalid && decl_type != Type::Invalid
-							&& !isPlaceholderAutoType(init_type) && !isPlaceholderAutoType(decl_type)
+							&& init_cat  != TypeCategory::Struct && decl_cat  != TypeCategory::Struct
+							&& init_cat  != TypeCategory::Enum   && decl_cat  != TypeCategory::Enum
+							&& init_cat  != TypeCategory::Invalid && decl_cat != TypeCategory::Invalid
+							&& !isPlaceholderAutoType(init_cat) && !isPlaceholderAutoType(decl_cat)
 							&& type_node.pointer_depth() == 0) {
 							bool sema_applied = false;
 							if (sema_ && init_node.is<ExpressionNode>()) {
@@ -1617,10 +1621,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
 									Type from_t = sema_->typeContext().get(cast_info.source_type_id).base_type;
 									const Type to_t   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-									if (from_t != Type::Struct && to_t != Type::Struct) {
+									if (typeToCategory(from_t) != TypeCategory::Struct && typeToCategory(to_t) != TypeCategory::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
-										if (from_t == Type::Enum && from_t != init_operands.typeEnum())
+										if (typeToCategory(from_t) == TypeCategory::Enum && from_t != init_operands.typeEnum())
 											from_t = init_operands.typeEnum();
 										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
 										sema_applied = true;
@@ -2068,12 +2072,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							{
 								Type init_type = init_operands.typeEnum();
 								TypeIndex init_type_index {};
+								const TypeCategory init_cat = init_operands.category();
 								if (init_operands.type_index.is_valid()) {
 									init_type_index = init_operands.type_index;
 								}
 
 								// Check if types differ
-								is_converting_ctor = (init_type != Type::Struct) || (init_type_index != type_node.type_index());
+								is_converting_ctor = (init_cat != TypeCategory::Struct) || (init_type_index != type_node.type_index());
 
 								if (is_converting_ctor && sema_ && init_node.is<ExpressionNode>()) {
 									const void* key = &init_node.as<ExpressionNode>();
@@ -2085,11 +2090,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											cast_info.selected_constructor) {
 											const CanonicalTypeDesc& target_desc =
 												sema_->typeContext().get(cast_info.target_type_id);
-											if (target_desc.base_type == Type::Struct &&
+											if (typeToCategory(target_desc.base_type) == TypeCategory::Struct &&
 												target_desc.type_index == type_node.type_index()) {
 												const CanonicalTypeDesc& source_desc =
 													sema_->typeContext().get(cast_info.source_type_id);
-												if (source_desc.base_type != Type::Invalid) {
+												if (typeToCategory(source_desc.base_type) != TypeCategory::Invalid) {
 													sema_selected_converting_ctor = cast_info.selected_constructor;
 													const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 													if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
@@ -2258,9 +2263,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									if (param_type->is_reference() || param_type->is_rvalue_reference()) {
 										init_arg.cv_qualifier = param_type->cv_qualifier();
 									}
-									if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
-										init_arg.type_index = param_type->type_index();
-									}
+								if (param_type->category() == TypeCategory::Struct && param_type->type_index().is_valid()) {
+									init_arg.type_index = param_type->type_index();
+								}
 								}
 
 								ctor_op.arguments.push_back(std::move(init_arg));
@@ -2720,7 +2725,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
 			return;  // Early return for array case
 
-		} else if (init_type != Type::Struct) {
+		} else if (typeToCategory(init_type) != TypeCategory::Struct) {
 			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
 			return;
 		}
@@ -2900,7 +2905,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if this overload's return type matches our element type
 							// or if it's the i-th function declaration (by order)
 							bool type_matches = (return_type.type() == element_type);
-							if (element_type == Type::Struct) {
+							if (typeToCategory(element_type) == TypeCategory::Struct) {
 								type_matches = type_matches && (return_type.type_index() == element_type_index);
 							}
 

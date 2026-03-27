@@ -1439,6 +1439,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				if (first_member.type_index.is_valid() && first_member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& elem_info = getTypeInfo(first_member.type_index);
 					Type elem_type = elem_info.type_;
+					const TypeCategory elem_cat = elem_info.category();
 					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
 					
 					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
@@ -1448,7 +1449,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						brace_token
 					);
 					// If it's a struct type, preserve the type_index
-					if (elem_type == Type::Struct) {
+					if (elem_cat == TypeCategory::Struct) {
 						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
 					}
 					element_type_node = elem_type_spec;
@@ -1750,7 +1751,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			if (target_member.type_index.is_valid() && target_member.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& member_type_info = getTypeInfo(target_member.type_index);
-				if (is_struct_type(target_member.memberType())) {
+				if (is_struct_type(target_member.type_index.category())) {
 					member_type_spec = TypeSpecifierNode(
 						member_type_info.type_,
 						target_member.type_index,
@@ -1767,7 +1768,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					member_type_spec.set_type_index(target_member.type_index);
 				}
 				have_member_type_spec = true;
-			} else if (target_member.memberType() != Type::Invalid) {
+			} else if (target_member.type_index.category() != TypeCategory::Invalid) {
 				member_type_spec = TypeSpecifierNode(
 					target_member.memberType(),
 					TypeQualifier::None,

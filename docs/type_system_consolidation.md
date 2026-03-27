@@ -69,10 +69,10 @@
 
 ### Remaining call-site categories (still substantial, but reduced)
 
-1. **Local variable `Type type = …` / raw `Type` helper calls used only for classification** (still present in `IrGenerator_Expr_Operators.cpp`, some `IrGenerator_Stmt_Decl.cpp` paths, `SemanticAnalysis.cpp` struct/enum classifier expressions, and some overload/codegen helper sections): replace with `TypeCategory cat = …`, `.category()`, or direct `TypeIndex` reads.
-   - Recent progress: `ExprResult` storage is now category-based; `Parser_TypeSpecifiers.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` template-argument `sizeof` logic, `Parser_Expr_BinaryPrecedence.cpp` SFINAE/alignment dispatch, `ConstExprEvaluator_Core.cpp` target-type conversion, `ConstExprEvaluator_Members.cpp` arithmetic/fundamental/type-trait classification, `IrGenerator_Expr_Conversions.cpp`, `IrGenerator_NewDeleteCast.cpp` new/delete classification, the member-access type-trait evaluator, a broad IR-generator fallout batch, `TypeTraitEvaluator.cpp` namespace helpers, `SemanticAnalysis.cpp` arithmetic promotion paths, and `IrGenerator_Expr_Primitives.cpp` member struct-check pattern were all migrated.
+1. **Local variable `Type type = …` / raw `Type` helper calls used only for classification** (still present in `IrGenerator_Expr_Operators.cpp`, some `IrGenerator_Stmt_Decl.cpp` bridge/conversion paths, `SemanticAnalysis.cpp` struct/enum classifier expressions, and some overload/codegen helper sections): replace with `TypeCategory cat = …`, `.category()`, or direct `TypeIndex` reads.
+   - Recent progress: `ExprResult` storage is now category-based; `Parser_TypeSpecifiers.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` template-argument `sizeof` logic, `Parser_Expr_BinaryPrecedence.cpp` SFINAE/alignment dispatch, `ConstExprEvaluator_Core.cpp` target-type conversion, `ConstExprEvaluator_Members.cpp` arithmetic/fundamental/type-trait classification, `IrGenerator_Expr_Conversions.cpp`, `IrGenerator_NewDeleteCast.cpp` new/delete classification, the member-access type-trait evaluator, a broad IR-generator fallout batch, `TypeTraitEvaluator.cpp` namespace helpers, `SemanticAnalysis.cpp` arithmetic promotion paths, `Parser_Statements.cpp` remaining struct/member classification paths, `IrGenerator_Helpers.cpp` runtime size/type guards, `IrGenerator_Stmt_Decl.cpp` float/enum/struct classification gates, and `IrGenerator_Expr_Primitives.cpp` member struct-check pattern were all migrated.
 
-2. **Parser `Type`-based dispatch** (still broad across `Parser_Statements.cpp`, `Parser_Decl_*`, and some remaining `Parser_Expr_BinaryPrecedence.cpp` construction sites): these read `TypeSpecifierNode::type()` and switch on the result; migrate to `TypeSpecifierNode::category()` + `TypeCategory` switch. (`Parser_Expr_PrimaryExpr.cpp` and `Parser_Expr_PrimaryUnary.cpp` are already clean.)
+2. **Parser `Type`-based dispatch** (still broad across `Parser_Decl_*` and some remaining `Parser_Expr_BinaryPrecedence.cpp` construction sites): these read `TypeSpecifierNode::type()` and switch on the result; migrate to `TypeSpecifierNode::category()` + `TypeCategory` switch. (`Parser_Statements.cpp`, `Parser_Expr_PrimaryExpr.cpp`, and `Parser_Expr_PrimaryUnary.cpp` are already clean for the remaining classification paths.)
 
 3. **`ObjFileWriter_*.cpp` symbol/EH/RTTI** — already clean; all four ObjFileWriter files have 0 `== Type::` comparisons.
 
@@ -82,8 +82,8 @@
 
 ### Recommended next steps (current reality, largest blockers first)
 
-1. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, `IrGenerator_Stmt_Decl.cpp`, `IrGenerator_Helpers.cpp`, the remaining `ConstExprEvaluator_Members.cpp` struct/array helper paths, and the remaining parser dispatch files.
-2. **Port parser `Type`-switch dispatch to `TypeCategory`** — especially `Parser_Statements.cpp` and remaining `Parser_Decl_*` files beyond the already-cleaned `Parser_Expr_BinaryPrecedence.cpp` SFINAE/alignment paths.
+1. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, the remaining bridge/conversion sites in `IrGenerator_Stmt_Decl.cpp`, the remaining `ConstExprEvaluator_Members.cpp` struct/array helper paths, and `SemanticAnalysis.cpp`.
+2. **Port parser `Type`-switch dispatch to `TypeCategory`** — especially the remaining `Parser_Decl_*` files beyond the already-cleaned `Parser_Statements.cpp` / `Parser_Expr_BinaryPrecedence.cpp` / primary-expression paths.
 3. **Collapse the remaining thin raw-`Type` compatibility wrappers** — once callers are gone, delete the `Type` overloads of `buildConversionPlan`, `get_integer_rank`, `promote_integer_type`, and `get_common_type`.
 4. **Delete bridge functions** (`categoryToType`, `typeToCategory`, `toIrType(Type)`) and then the `Type` enum itself.
 
