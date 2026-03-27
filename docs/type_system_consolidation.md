@@ -1,8 +1,94 @@
 # Type system consolidation: audit and migration roadmap
 
-**Date**: 2026-03-26  
-**Status**: Phase 1 (Option A) complete. Milestone 1 TODO 3 done. Milestone 2 TypeInfo helpers and sentinel done. Milestone 2.5 `is_type_alias_` flag done. Milestone 4 `isTemplatePlaceholder()` done. Milestone 6 (Option D Step 0) `gTypeInfo` accessor API done. Milestone 7 mechanical work is largely complete: `TypeCategory` is embedded in `TypeIndex`, TypeCategory-based helpers are in place, `TypeIndex` now uses `index_`, `TemplateTypeArg::base_type` and `TypeInfo::TemplateArgInfo::base_type` are removed, `TypeCreationResult` now covers the `add_*` helpers plus `add_empty_type_entry()`, `gNativeTypes` is keyed by `TypeCategory`, and the first file-by-file `Type::` → `TypeCategory::` migrations have landed. Remaining: mixed `Type` + `TypeIndex` hot-spot cleanup, broader `Type::` site migration, the separate `buildConversionPlan` migration PR, and eventual `Type` deletion.  
+**Date**: 2026-03-27 (updated)  
+**Status**: **New strategy in effect.** The incremental `Type → TypeCategory` migration (Milestone 7) is superseded by a direct `Type → TypeIndex` replacement strategy. Rather than migrating classification sites one-by-one from `Type::X` to `TypeCategory::X`, we now remove the `Type` enum from struct fields entirely and replace with `TypeIndex` (or `IrType` where only codegen-level info is needed). Functions that took `Type` as their only argument now take `TypeIndex` and use `.category()` internally for classification.  
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
+
+---
+
+## NEW: Direct Type → TypeIndex replacement plan (2026-03-27)
+
+### Strategy change
+
+The previous approach (Milestone 7) was migrating `Type::X` comparisons to `TypeCategory::X` comparisons site-by-site. This created a long transition period with bridge functions (`typeToCategory()`, `categoryToType()`) and kept the `Type` enum alive alongside `TypeCategory`. The `refactor-type-system-consolidation` branch attempted this and became unmaintainable due to mixed `Type`/`TypeCategory` usage spreading through the codebase.
+
+**New approach**: Skip the `TypeCategory` intermediate step. Replace `Type` with `TypeIndex` directly in all struct fields and function signatures. Since `TypeIndex` already carries a `TypeCategory category_` field, callers that need classification use `type_index.category()` which returns `TypeCategory`. This eliminates the need for bridge functions and gives us a single authoritative type token throughout the codebase.
+
+### Structural changes — remove Type from all data structures
+
+#### Group 1: Remove redundant Type fields (structs that already have TypeIndex)
+
+These structs carry both `Type type` and `TypeIndex type_index` — the `Type` field is redundant since `type_index.category()` provides the same information:
+
+| Struct | File | Field to remove | Replacement |
+|--------|------|-----------------|-------------|
+| `TypedValue` | `IRTypes_Ops.h:410` | `Type type` | Use `type_index.category()` or `ir_type` |
+| `ExprResult` | `IROperandHelpers.h:84` | `Type type` | Use `type_index.category()` or `ir_type` |
+| `StructMember` | `AstNodeTypes_TypeSystem.h:1063` | `Type type` | Use `type_index.category()` |
+| `StructStaticMember` | `AstNodeTypes_TypeSystem.h:1274` | `Type type` | Use `type_index.category()` |
+| `FunctionDeclOp` | `IRTypes_Ops.h:744` | `Type return_type` | Use `return_type_index.category()` |
+| `LambdaInfo` | `IrGenerator.h:93` | `Type return_type` | Use `return_type_index.category()` |
+| `TempVarMetadata` | `IRTypes_Registers.h:271` | `Type value_type` | Use `ir_type` or add `type_index` |
+| `IndirectStorageInfo` | `IRConverter_ConvertMain.h:121` | `Type value_type` | Use `ir_type` or add `type_index` |
+
+#### Group 2: Replace Type with TypeIndex (structs that only have Type)
+
+| Struct | File | Old field | New field |
+|--------|------|-----------|-----------|
+| `FunctionParam` | `IRTypes_Ops.h:725` | `Type type` | `TypeIndex type_index` |
+| `VariableDeclOp` | `IRTypes_Ops.h:845` | `Type type` | `TypeIndex type_index` |
+| `GlobalVariableDeclOp` | `IRTypes_Ops.h:871` | `Type type` | `TypeIndex type_index` |
+| `HeapAllocOp` | `IRTypes_Ops.h:889` | `Type type` | `TypeIndex type_index` |
+| `HeapAllocArrayOp` | `IRTypes_Ops.h:897` | `Type type` | `TypeIndex type_index` |
+| `PlacementNewOp` | `IRTypes_Ops.h:918` | `Type type` | `TypeIndex type_index` |
+| `TypeConversionOp` | `IRTypes_Ops.h` | `Type to_type` | `TypeIndex to_type_index` |
+| `FunctionSignature` | `AstNodeTypes_TypeSystem.h:1043` | `Type return_type` + `vector<Type>` | `TypeIndex return_type_index` + `vector<TypeIndex>` |
+| `ConstantValue` | `Parser.h:797` | `Type type` | `TypeIndex type_index` |
+| `TypedNumeric` | `Parser.h:1565` | `Type type` | `TypeIndex type_index` |
+| `GlobalStaticBindingInfo` | `AstToIr.h:78` | `Type type` | `TypeIndex type_index` |
+| `StaticLocalInfo` | `AstToIr.h:825` | `Type type` | `TypeIndex type_index` |
+| `GlobalVariableInfo` | `IRConverter_ConvertMain.h:1007` | `Type type` | `TypeIndex type_index` |
+| `StructTypeInfo::active_bitfield_type` | `AstNodeTypes_DeclNodes.h:21` | `Type` | `TypeIndex` |
+
+#### Group 3: Core type system structs
+
+| Struct | Change |
+|--------|--------|
+| `TypeInfo::type_` | Rename to `TypeCategory category_` — this IS the category tag, not identity |
+| `TypeSpecifierNode::type_` | Remove entirely; `.type()` method returns `type_index_.category()` as TypeCategory |
+| `NumericLiteralNode::type_` | Replace with `TypeIndex type_index_` |
+| `FoldExpressionNode::type_` | Replace with `TypeIndex type_index_` |
+| `IRConverter::current_function_return_type_` | Replace with `TypeIndex` |
+
+### Function signature changes
+
+Functions taking `Type` as sole argument become `TypeIndex`:
+- `toIrType(Type)` → `toIrType(TypeIndex)` (use `.category()` internally)
+- `get_type_size_bits(Type)` → `get_type_size_bits(TypeIndex)` (use `.category()`)
+- `makeTypedValue(Type, ...)` → `makeTypedValue(TypeIndex, ...)`
+- `makeExprResult(Type, ...)` → `makeExprResult(TypeIndex, ...)`
+- Classification helpers keep their `TypeCategory` overloads (these are the real workers); the `Type` overloads are deleted
+
+### Bridge function removal
+
+Once all `Type` fields and parameters are gone:
+- Delete `typeToCategory(Type)` — no longer needed
+- Delete `categoryToType(TypeCategory)` — no longer needed
+- Delete the `Type` enum itself
+
+### Migration order
+
+1. ✅ Update this document with new plan
+2. Remove `Type` from structs (Group 1 + Group 2 + Group 3)
+3. Update factory functions (`makeTypedValue`, `makeExprResult`, etc.)
+4. Update function signatures across IR generators, parser, semantic analysis
+5. Delete bridge functions and `Type` enum
+
+**Note**: It is acceptable to leave the build broken during this migration. Each commit moves toward the goal; compilation will be restored in follow-up patches.
+
+---
+
+## Previous plan (historical reference below)
 
 ---
 
