@@ -137,7 +137,7 @@
 		if (type_it == getTypesByNameMap().end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
-			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		const TypeInfo* closure_type = type_it->second;

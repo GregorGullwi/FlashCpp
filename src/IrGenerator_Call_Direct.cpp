@@ -270,7 +270,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -442,7 +442,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
