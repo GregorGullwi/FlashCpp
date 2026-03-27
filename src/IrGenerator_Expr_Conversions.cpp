@@ -1339,7 +1339,7 @@
 			// When sema_ is null (e.g., template instantiation), keep the fallback
 			// unconditionally to avoid dropping promotions.
 			if (!promoted && (typeToCategory(operandType) == TypeCategory::Bool ||
-				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
+				(is_integer_type(operandType) && get_integer_rank(typeToCategory(operandType)) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
 				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());

@@ -1029,9 +1029,7 @@ bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
 inline bool is_standard_arithmetic_type(Type type) {
 	return is_integer_type(type) || is_floating_point_type(type) || is_bool_type(type);
 }
-int get_integer_rank(Type type);
 int get_integer_rank(TypeCategory type);
-int get_floating_point_rank(Type type);
 int get_floating_point_rank(TypeCategory type);
 
 // Get the size of 'long' in bits based on the target data model
@@ -1046,12 +1044,8 @@ inline int get_wchar_size_bits() {
 
 int get_type_size_bits(Type type);
 int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
-Type promote_integer_type(Type type);
 TypeCategory promote_integer_type(TypeCategory type);
-Type promote_floating_point_type(Type type);
-Type get_common_type(Type left, Type right);
 TypeCategory get_common_type(TypeCategory left, TypeCategory right);
-bool requires_conversion(Type from, Type to);
 
 // Helper to calculate alignment from size in bytes
 // Standard alignment rules: min(size, 8) for most platforms, with special case for long double

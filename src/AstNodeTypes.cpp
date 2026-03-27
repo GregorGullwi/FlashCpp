@@ -401,10 +401,6 @@ int get_integer_rank(TypeCategory type) {
     }
 }
 
-int get_integer_rank(Type type) {
-	return get_integer_rank(typeToCategory(type));
-}
-
 int get_floating_point_rank(TypeCategory type) {
     // Floating-point conversion rank (higher rank = larger type)
     switch (type) {
@@ -417,10 +413,6 @@ int get_floating_point_rank(TypeCategory type) {
         default:
             return 0;
     }
-}
-
-int get_floating_point_rank(Type type) {
-	return get_floating_point_rank(typeToCategory(type));
 }
 
 int get_type_size_bits(Type type) {
@@ -501,16 +493,6 @@ TypeCategory promote_integer_type(TypeCategory type) {
             // Types int and larger don't get promoted
             return type;
     }
-}
-
-Type promote_integer_type(Type type) {
-	return categoryToType(promote_integer_type(typeToCategory(type)));
-}
-
-Type promote_floating_point_type(Type type) {
-    // Floating-point promotions: float promotes to double in some contexts
-    // For now, keep types as-is (no automatic promotion)
-    return type;
 }
 
 // Helper function to get the unsigned version of an integer type
@@ -633,14 +615,6 @@ TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
 
     // Rule 3: Convert both to unsigned version of the signed type
     return get_unsigned_version(signed_type);
-}
-
-Type get_common_type(Type left, Type right) {
-	return categoryToType(get_common_type(typeToCategory(left), typeToCategory(right)));
-}
-
-bool requires_conversion(Type from, Type to) {
-    return from != to && is_integer_type(from) && is_integer_type(to);
 }
 
 // Helper function to get CV-qualifier string
