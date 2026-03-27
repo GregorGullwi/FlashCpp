@@ -44,7 +44,7 @@
 | 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ✅ Done — `type_index` field with Void default; `bindingType()` accessor; 5 write + ~30 read sites updated |
 | 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ✅ Done — both parser helper structs now store `TypeCategory`; legacy consumers use temporary `typeEnum()` bridges |
 | 5 | Port all remaining switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp` to `TypeCategory`/`IrType` | ✅ Done — CodeView debug-type dispatch now routes through a shared `TypeCategory` helper |
-| 5 | Port Parser / ConstExpr / IR-generator local `Type type = …` variables to `TypeCategory`/`TypeIndex` | ◐ Partial — `Parser_TypeSpecifiers.cpp`, substantial `IrGenerator_Expr_Conversions.cpp`, the `ExprResult` fallout batch across call/member/lambda IR generators, and arithmetic-type consumers in `ConstExprEvaluator_Members.cpp` / `SemanticAnalysis.cpp` are migrated; broad file-by-file cleanup remains |
+| 5 | Port Parser / ConstExpr / IR-generator local `Type type = …` variables to `TypeCategory`/`TypeIndex` | ◐ Partial — `Parser_TypeSpecifiers.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` template-argument `sizeof` handling, substantial `IrGenerator_Expr_Conversions.cpp`, the `ExprResult` fallout batch across call/member/lambda IR generators, `ConstExprEvaluator_Core.cpp` target-type conversion dispatch, the member-access type-trait evaluator in `IrGenerator_MemberAccess.cpp`, and arithmetic-type consumers in `ConstExprEvaluator_Members.cpp` / `SemanticAnalysis.cpp` are migrated; broad file-by-file cleanup remains |
 | 5 | Port `buildConversionPlan` (`OverloadResolution.h`) to `TypeCategory`/`TypeIndex` | ◐ Partial — `buildConversionPlan(const TypeSpecifierNode&, const TypeSpecifierNode&)`, the adjacent binary-operator helper layer, and the primitive arithmetic ranking/promotion helpers now use `TypeCategory`/`TypeIndex`; the raw-`Type` primitive overload remains as a thin compatibility wrapper |
 | 6 | Remove `Type` enum and all `Type::*` references from the codebase | ⬜ FUTURE |
 | — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ✅ Done (`isTypeAlias()` flag) |
@@ -70,7 +70,7 @@
 ### Remaining call-site categories (still substantial, but reduced)
 
 1. **Local variable `Type type = …` / raw `Type` helper calls used only for classification** (still widespread in `IrGenerator_Expr_Operators.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, parser dispatch files, and some overload/codegen helper sections): replace with `TypeCategory cat = …`, `.category()`, or direct `TypeIndex` reads.
-   - Recent progress: `ExprResult` storage is now category-based; `Parser_TypeSpecifiers.cpp`, substantial `IrGenerator_Expr_Conversions.cpp`, and a broad IR-generator fallout batch (calls/member/lambda codegen) were migrated.
+   - Recent progress: `ExprResult` storage is now category-based; `Parser_TypeSpecifiers.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` template-argument `sizeof` logic, `ConstExprEvaluator_Core.cpp` target-type conversion, substantial `IrGenerator_Expr_Conversions.cpp`, the member-access type-trait evaluator, and a broad IR-generator fallout batch (calls/member/lambda codegen) were migrated.
 
 2. **Parser `Type`-based dispatch** (still broad across `Parser_Expr_PrimaryExpr.cpp`, `Parser_Expr_PrimaryUnary.cpp`, `Parser_Expr_BinaryPrecedence.cpp`, `Parser_Statements.cpp`, `Parser_Decl_*`): these read `TypeSpecifierNode::type()` and switch on the result; migrate to `TypeSpecifierNode::category()` + `TypeCategory` switch.
 
@@ -82,7 +82,7 @@
 
 ### Recommended next steps (current reality, largest blockers first)
 
-1. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, `SemanticAnalysis.cpp`, and the remaining parser dispatch files.
+1. **Finish file-by-file local-variable cleanup** — prioritize `IrGenerator_Expr_Operators.cpp`, `IrGenerator_NewDeleteCast.cpp`, `SemanticAnalysis.cpp`, the remaining `ConstExprEvaluator_Members.cpp` trait/value dispatch, and the remaining parser dispatch files.
 2. **Port parser `Type`-switch dispatch to `TypeCategory`** — especially the large expression/statement parser files that still switch on `TypeSpecifierNode::type()`.
 3. **Port `ObjFileWriter_*.cpp` / exception-table debug uses** — these are comparatively isolated and should shrink the last codegen-facing `Type` dispatch paths.
 4. **Collapse the remaining thin raw-`Type` compatibility wrappers** — once callers are gone, delete the `Type` overloads of `buildConversionPlan`, `get_integer_rank`, `promote_integer_type`, and `get_common_type`.

@@ -63,51 +63,32 @@ namespace {
 		}
 	}
 
+	EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
+		const TypeCategory category = target_type.category();
+		EvalResult result = (category == TypeCategory::Bool)
+			? EvalResult::from_bool(expr_result.as_bool())
+			: (isFloatingPointType(category)
+				? EvalResult::from_double(expr_result.as_double())
+				: ((isIntegralType(category) || category == TypeCategory::Enum) &&
+					(target_type.type() == Type::Bool || is_unsigned_integer_type(target_type.type()))
+					? EvalResult::from_uint(expr_result.as_uint_raw())
+					: EvalResult::from_int(expr_result.as_int())));
+		result.set_exact_type(target_type);
+		return result;
+	}
+
 }
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
-	switch (target_type.type()) {
-		case Type::Bool:
-		{
-			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		{
-			EvalResult result = EvalResult::from_int(expr_result.as_int());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-		{
-			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-		{
-			EvalResult result = EvalResult::from_double(expr_result.as_double());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		default:
-			return EvalResult::error(invalidTypeErrorStr);
+	const TypeCategory category = target_type.category();
+	if (category == TypeCategory::Bool ||
+		isIntegralType(category) ||
+		isFloatingPointType(category) ||
+		category == TypeCategory::Enum) {
+		return makeConvertedEvalResult(target_type, expr_result);
 	}
+
+	return EvalResult::error(invalidTypeErrorStr);
 }
 
 // Main evaluation entry point

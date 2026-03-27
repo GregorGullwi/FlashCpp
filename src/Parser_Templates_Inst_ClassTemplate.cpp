@@ -93,6 +93,24 @@ static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 	return {nullptr, nullptr};
 }
 
+static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
+	int size_in_bytes = get_type_size_bits(arg.category()) / 8;
+	if (size_in_bytes > 0) {
+		return size_in_bytes;
+	}
+
+	const TypeCategory category = arg.category();
+	if ((category == TypeCategory::Struct || category == TypeCategory::UserDefined) &&
+		arg.type_index.index() < getTypeInfoCount()) {
+		const TypeInfo& ti = getTypeInfo(arg.type_index);
+		if (const StructTypeInfo* si = ti.getStructInfo()) {
+			return static_cast<int>(si->total_size);
+		}
+	}
+
+	return 8;
+}
+
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info)
@@ -920,29 +938,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												// Found the matching template parameter - use its filled value
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
 												if (filled_arg.typeEnum() != Type::Invalid) {
-													// Calculate the size of the filled type
-													int size_in_bytes = get_type_size_bits(filled_arg.category()) / 8;
-													if (size_in_bytes == 0)
-													{
-														switch (filled_arg.typeEnum()) {
-															case Type::Struct:
-															case Type::UserDefined:
-																// For struct types, we need to look up the size from TypeInfo
-																if (filled_arg.type_index.index() < getTypeInfoCount()) {
-																	const TypeInfo& ti = getTypeInfo(filled_arg.type_index);
-																	if (ti.isStruct()) {
-																		const StructTypeInfo* si = ti.getStructInfo();
-																		if (si) {
-																			size_in_bytes = si->total_size;
-																		}
-																	}
-																}
-																break;
-															default:
-																size_in_bytes = 8; // Default to 64 bits if unknown
-																break;
-														}
-													}
+													const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
 
 													if (size_in_bytes > 0) {
 														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
@@ -2909,42 +2905,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											// Found the matching template parameter - use its filled value
 											const TemplateTypeArg& filled_arg = filled_template_args[j];
 											if (filled_arg.typeEnum() != Type::Invalid) {
-												// Calculate the size of the filled type
-												int size_in_bytes = 0;
-												switch (filled_arg.typeEnum()) {
-													case Type::Bool:
-													case Type::Char:
-													case Type::UnsignedChar:
-														size_in_bytes = 1;
-														break;
-													case Type::Short:
-													case Type::UnsignedShort:
-														size_in_bytes = 2;
-														break;
-													case Type::Int:
-													case Type::UnsignedInt:
-													case Type::Float:
-														size_in_bytes = 4;
-														break;
-													case Type::Long:
-													case Type::UnsignedLong:
-													case Type::LongLong:
-													case Type::UnsignedLongLong:
-													case Type::Double:
-														size_in_bytes = 8;
-														break;
-													case Type::Struct:
-														// For struct types, we need to look up the actual size
-														if (filled_arg.type_index.index() < getTypeInfoCount()) {
-															const TypeInfo& struct_type = getTypeInfo(filled_arg.type_index);
-															if (struct_type.getStructInfo()) {
-																size_in_bytes = struct_type.getStructInfo()->total_size;
-															}
-														}
-														break;
-													default:
-														break;
-												}
+												const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
 												if (size_in_bytes > 0) {
 													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
 													FLASH_LOG(Templates, Debug, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");

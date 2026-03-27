@@ -2889,18 +2889,13 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 					
 					// Convert the stored value based on the template argument type
-					switch (value_arg.typeEnum()) {
-						case Type::Bool:
-							return EvalResult::from_bool(value_arg.intValue() != 0);
-						case Type::UnsignedChar:
-						case Type::UnsignedShort:
-						case Type::UnsignedInt:
-						case Type::UnsignedLong:
-						case Type::UnsignedLongLong:
-							return EvalResult::from_uint(static_cast<unsigned long long>(value_arg.intValue()));
-						default:
-							return EvalResult::from_int(value_arg.intValue());
+					if (value_arg.category() == TypeCategory::Bool) {
+						return EvalResult::from_bool(value_arg.intValue() != 0);
 					}
+					if (is_unsigned_integer_type(value_arg.typeEnum())) {
+						return EvalResult::from_uint(static_cast<unsigned long long>(value_arg.intValue()));
+					}
+					return EvalResult::from_int(value_arg.intValue());
 				};
 				
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
@@ -5533,15 +5528,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsSigned:
-			result = ((type == Type::Char || type == Type::Short || type == Type::Int ||
-			          type == Type::Long || type == Type::LongLong)
-			          && !is_reference && pointer_depth == 0);
+			result = is_signed_integer_type(type) && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsUnsigned:
-			result = ((type == Type::Bool || type == Type::UnsignedChar || type == Type::UnsignedShort ||
-			          type == Type::UnsignedInt || type == Type::UnsignedLong || type == Type::UnsignedLongLong)
-			          && !is_reference && pointer_depth == 0);
+			result = (type == Type::Bool || is_unsigned_integer_type(type)) && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsBoundedArray:

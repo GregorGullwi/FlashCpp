@@ -2158,13 +2158,28 @@
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 		Type type = type_spec.type();
+		const TypeCategory type_category = type_spec.category();
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
+		auto getStructInfoIfPlainObject = [](const TypeSpecifierNode& spec) -> const StructTypeInfo* {
+			if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.pointer_depth() != 0 ||
+				spec.type_index().index() >= getTypeInfoCount()) {
+				return nullptr;
+			}
+			return getTypeInfo(spec.type_index()).getStructInfo();
+		};
+
+		auto getStructPairIfPlainObjects = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs)
+			-> std::pair<const StructTypeInfo*, const StructTypeInfo*> {
+			const StructTypeInfo* lhs_struct = getStructInfoIfPlainObject(lhs);
+			const StructTypeInfo* rhs_struct = getStructInfoIfPlainObject(rhs);
+			return {lhs_struct, rhs_struct};
+		};
 
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
 		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index().index() < getTypeInfoCount()) ? &getTypeInfo(type_spec.type_index()) : nullptr;
-		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
+		[[maybe_unused]] const StructTypeInfo* outer_struct_info = getStructInfoIfPlainObject(type_spec);
 
 		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
@@ -2176,17 +2191,8 @@
 						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Both types must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.category() == TypeCategory::Struct &&
-						!is_reference && pointer_depth == 0 &&
-						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index().index() < getTypeInfoCount() &&
-						derived_spec.type_index().index() < getTypeInfoCount()) {
-
-							const TypeInfo& base_info = getTypeInfo(type_spec.type_index());
-							const TypeInfo& derived_info = getTypeInfo(derived_spec.type_index());
-							const StructTypeInfo* base_struct = base_info.getStructInfo();
-							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-
+						if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
+							base_struct && derived_struct) {
 							if (base_struct && derived_struct) {
 								// Same type is considered base of itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2264,7 +2270,7 @@
 							result = true;
 						}
 						// Derived to base conversion for class types
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2323,7 +2329,7 @@
 							result = true;
 						}
 						// Derived to base conversion for class types (nothrow if no virtual base)
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2347,10 +2353,7 @@
 
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					result = struct_info && struct_info->has_vtable;
 				}
 				break;
@@ -2359,10 +2362,7 @@
 				// A final class cannot be derived from
 				// Note: This requires tracking 'final' keyword on classes
 				// For now, check if any member function is marked final
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Check if any virtual function is marked final
 						for (const auto& func : struct_info->member_functions) {
@@ -2377,20 +2377,14 @@
 
 			case TypeTraitKind::IsAbstract:
 				// An abstract class has at least one pure virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					result = struct_info && struct_info->is_abstract;
 				}
 				break;
 
 			case TypeTraitKind::IsEmpty:
 				// An empty class has no non-static data members (excluding empty base classes)
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Check if there are no non-static data members
 						// and no virtual functions (vtable pointer would be a member)
@@ -2407,10 +2401,7 @@
 				//   - No private or protected non-static data members
 				//   - No virtual functions
 				//   - No virtual, private, or protected base classes
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Check aggregate conditions:
 						// 1. No user-declared constructors (check member_functions for non-implicit constructors)
@@ -2528,10 +2519,7 @@
 				if (isScalarType(type, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// POD: no virtual functions, no user-defined ctors, all members same access
 						bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -2566,8 +2554,7 @@
 				if (isScalarType(type, is_reference, pointer_depth) || is_reference) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				pointer_depth == 0) {
+				else if (type_category == TypeCategory::Struct && pointer_depth == 0 && type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
@@ -2589,19 +2576,12 @@
 
 			case TypeTraitKind::IsSigned:
 				// __is_signed - checks if integral type is signed
-				result = ((type == Type::Char) |  // char is signed on most platforms
-			(type == Type::Short) | (type == Type::Int) |
-			(type == Type::Long) | (type == Type::LongLong))
-			& !is_reference & (pointer_depth == 0);
+				result = is_signed_integer_type(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnsigned:
 				// __is_unsigned - checks if integral type is unsigned
-				result = ((type == Type::Bool) |  // bool is considered unsigned
-			(type == Type::UnsignedChar) | (type == Type::UnsignedShort) |
-			(type == Type::UnsignedInt) | (type == Type::UnsignedLong) |
-			(type == Type::UnsignedLongLong))
-			& !is_reference & (pointer_depth == 0);
+				result = (type == Type::Bool || is_unsigned_integer_type(type)) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
@@ -2636,10 +2616,7 @@
 					}
 				}
 				// Class types: check for appropriate constructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						const auto& arg_types = traitNode.additional_type_nodes();
 						if (arg_types.empty()) {
@@ -2661,10 +2638,7 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined ctors
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
 					}
@@ -2679,10 +2653,7 @@
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
 				// user-defined ctors are noexcept only if marked noexcept
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
 						// only depends on whether the selected constructor is noexcept.
@@ -2758,9 +2729,7 @@
 							result = isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth());
 						}
 						// Class types: check for assignment operator
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 							if (struct_info && !struct_info->is_union) {
 								// If has copy/move assignment or no user-defined, assume assignable
 								result = struct_info->hasCopyAssignmentOperator() ||
@@ -2785,10 +2754,7 @@
 							result = true;
 						}
 						// Class types: no virtual, no user-defined assignment
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-						!is_reference && pointer_depth == 0) {
-							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 							if (struct_info && !struct_info->is_union) {
 								result = !struct_info->has_vtable &&
 								!struct_info->hasCopyAssignmentOperator() &&
@@ -2815,8 +2781,8 @@
 						// user-defined ops are noexcept only if marked noexcept
 						// Note: For assignability, the first type is typically T& (lvalue reference),
 						// so we check the underlying struct type regardless of reference qualifier
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-						pointer_depth == 0) {
+						else if (type_category == TypeCategory::Struct && pointer_depth == 0 &&
+							type_spec.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
@@ -2869,10 +2835,7 @@
 					result = true;
 				}
 				// Class types: check for accessible destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Assume destructible unless we can prove otherwise
 						// (no deleted destructor check available yet)
@@ -2888,10 +2851,7 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Trivially destructible if no vtable and no user-defined destructor
 						result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
@@ -2910,10 +2870,7 @@
 				}
 				// Class types: check via recursive isStructNothrowDestructible to handle
 				// implicit destructors whose noexcept status depends on base/member dtors.
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						result = isStructNothrowDestructible(struct_info);
 					}
@@ -2944,10 +2901,7 @@
 			case TypeTraitKind::HasVirtualDestructor:
 				// __has_virtual_destructor(T) - Check if T has a virtual destructor
 				// Only class types can have virtual destructors
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Check if the destructor is explicitly marked as virtual
 						// A class has a virtual destructor if:
@@ -2988,10 +2942,10 @@
 						if (type == second_spec.type() &&
 						pointer_depth == second_spec.pointer_depth() &&
 						is_reference == second_spec.is_reference()) {
-							if (type == Type::Struct) {
-								result = (type_spec.type_index() == second_spec.type_index());
-							} else {
-								result = true;
+						if (type_category == TypeCategory::Struct) {
+							result = (type_spec.type_index() == second_spec.type_index());
+						} else {
+							result = true;
 							}
 						}
 						// Different standard layout types with same size
@@ -3014,17 +2968,8 @@
 						const TypeSpecifierNode& derived_spec = derived_node.as<TypeSpecifierNode>();
 
 						// Both must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.category() == TypeCategory::Struct &&
-						!is_reference && pointer_depth == 0 &&
-						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index().index() < getTypeInfoCount() &&
-						derived_spec.type_index().index() < getTypeInfoCount()) {
-
-							const TypeInfo& base_info = getTypeInfo(type_spec.type_index());
-							const TypeInfo& derived_info = getTypeInfo(derived_spec.type_index());
-							const StructTypeInfo* base_struct = base_info.getStructInfo();
-							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-
+						if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
+							base_struct && derived_struct) {
 							if (base_struct && derived_struct) {
 								// Same type is pointer interconvertible with itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
