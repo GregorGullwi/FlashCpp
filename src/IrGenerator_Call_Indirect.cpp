@@ -77,7 +77,7 @@
 					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-					call_op.return_type_index = TypeIndex::fromTypeAndIndex(Type::Void, {});
+					call_op.return_type_index = TypeIndex{0, TypeCategory::Void};
 					call_op.return_size_in_bits = SizeInBits{0};
 				}
 
@@ -107,13 +107,13 @@
 									arg_types.push_back(type_node);
 								} else {
 									// Default to int
-									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
 								}
 							} else {
-								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
 							}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
 						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
 								static_cast<unsigned char>(literal->sizeInBits())));
@@ -500,8 +500,8 @@
 							}
 
 							// Not a function pointer member - set object_type for regular member function lookup
-							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
-							resolved_member->size * 8, Token());  // size in bits
+							object_type = TypeSpecifierNode(TypeCategory::Struct, resolved_member->type_index,
+							resolved_member->size * 8, Token(), CVQualifier::None, ReferenceQualifier::None);  // size in bits
 							resolved_member_object_type = true;
 						}
 					}
@@ -1210,19 +1210,19 @@
 										}
 										arg_types.push_back(type_node);
 									} else {
-										arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+										arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
 									}
 								} else {
-									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
 								}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
 							} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 								arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
 									static_cast<unsigned char>(literal->sizeInBits())));
 							} else {
 								// Default to int for complex expressions
-								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
 							}
 						});
 

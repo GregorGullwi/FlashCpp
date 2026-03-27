@@ -929,7 +929,7 @@ ParseResult Parser::parse_lambda_expression() {
                         // If we couldn't deduce (possibly due to circular dependency guard),
                         // default to int as a safe fallback
                         if (!deduced_type.has_value()) {
-                            deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                            deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
                             all_return_types.emplace_back(*deduced_type, lambda_token);
                             FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
                         }
@@ -1237,7 +1237,7 @@ ParseResult Parser::parse_lambda_expression() {
                 
                 // Try to infer type from the initializer expression
                 if (init_expr.is<NumericLiteralNode>()) {
-                    var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                    var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
                 } else if (init_expr.is<IdentifierNode>()) {
                     // Look up the identifier's type
                     auto init_id = init_expr.as<IdentifierNode>().nameHandle();
@@ -1253,7 +1253,7 @@ ParseResult Parser::parse_lambda_expression() {
                     const auto& expr_node = init_expr.as<ExpressionNode>();
                     if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
                         // For binary operations, assume int type for arithmetic
-                        var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                        var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
                     } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
                         auto init_id = std::get<IdentifierNode>(expr_node).nameHandle();
                         auto init_symbol = lookup_symbol(init_id);

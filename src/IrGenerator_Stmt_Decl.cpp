@@ -797,7 +797,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						str_name_builder.append(static_cast<uint64_t>(string_literal_counter_++));
 						StringHandle str_sym = StringTable::getOrInternStringHandle(str_name_builder.commit());
 						GlobalVariableDeclOp str_op;
-						str_op.type_index = TypeIndex::fromTypeAndIndex(Type::Char, {});
+						str_op.type_index = TypeIndex{0, TypeCategory::Char};
 						str_op.size_in_bits = SizeInBits{8};
 						str_op.var_name = str_sym;
 						str_op.element_count = str_bytes.size();

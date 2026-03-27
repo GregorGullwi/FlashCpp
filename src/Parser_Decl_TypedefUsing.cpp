@@ -1335,7 +1335,7 @@ ParseResult Parser::parse_typedef_declaration()
 		ast_nodes_.push_back(enum_node);
 
 		// Create type specifier for the typedef
-		type_spec = TypeSpecifierNode(Type::Enum, TypeQualifier::None, underlying_size, typedef_keyword);
+		type_spec = TypeSpecifierNode(TypeCategory::Enum, TypeQualifier::None, underlying_size, typedef_keyword);
 		type_spec.set_type_index(enum_type_index);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else if (is_inline_struct) {

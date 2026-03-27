@@ -77,7 +77,7 @@ private:
 		bool is_global_or_static = false;
 		StringHandle store_name;
 		// TypeCategory is embedded in type_index; default = Void to preserve original sentinel.
-		TypeIndex type_index = TypeIndex::fromTypeAndIndex(Type::Void, TypeIndex{});
+		TypeIndex type_index = TypeIndex{0, TypeCategory::Void};
 		SizeInBits size_in_bits;
 
 		// Returns the legacy Type enum derived from the embedded TypeCategory.

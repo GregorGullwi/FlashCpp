@@ -1944,7 +1944,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 						auto type_it = getTypesByNameMap().find(current_struct_name_);
 						if (type_it != getTypesByNameMap().end() && type_it->second) {
 							const TypeInfo& type_info = *type_it->second;
-							object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+							object_type_opt = TypeSpecifierNode(TypeCategory::Struct, type_info.type_index_, type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						}
 					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {

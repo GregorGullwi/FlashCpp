@@ -1274,11 +1274,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(TypeCategory::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeCategory::Struct, TypeIndex{}, 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1289,7 +1289,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 	}
 	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const auto& literal = std::get<NumericLiteralNode>(expr);
@@ -1388,7 +1388,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		    op_kind == tok::Less || op_kind == tok::Greater ||
 		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
 		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
-			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 		}
 
 		// For bitwise/arithmetic operators, check the LHS type
@@ -1420,7 +1420,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Default: return int for arithmetic/bitwise operations
-		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+		return TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		// For unary operators, handle type transformations
@@ -1588,11 +1588,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(TypeCategory::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeCategory::Struct, TypeIndex{}, 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
@@ -1652,7 +1652,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(member_ctx.struct_type_index);
-						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+						object_type_opt = TypeSpecifierNode(TypeCategory::Struct, type_info.type_index_, type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
 					}
 				}
 			}
@@ -1698,7 +1698,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
-		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
+		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
 	}
 	else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		// For ternary expressions (cond ? true_expr : false_expr), determine the common type

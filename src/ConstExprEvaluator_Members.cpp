@@ -23,16 +23,16 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {
-		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 	}
 	if (std::holds_alternative<long long>(value.value)) {
-		return TypeSpecifierNode(Type::LongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::LongLong, TypeQualifier::None, 64);
 	}
 	if (value.is_uint()) {
-		return TypeSpecifierNode(Type::UnsignedLongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::UnsignedLongLong, TypeQualifier::None, 64);
 	}
 	if (std::holds_alternative<double>(value.value)) {
-		return TypeSpecifierNode(Type::Double, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64);
 	}
 
 	return std::nullopt;

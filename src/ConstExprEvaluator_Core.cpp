@@ -115,7 +115,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// Check what type of expression it is
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		EvalResult result = EvalResult::from_bool(bool_literal->value());
-		result.set_exact_type(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
 		return result;
 	}
 

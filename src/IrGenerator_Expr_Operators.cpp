@@ -1502,7 +1502,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const auto& id = std::get<IdentifierNode>(expr);
 				if (id.name() == "nullptr") {
-					return TypeSpecifierNode(Type::Nullptr, TypeQualifier::None, 64, id.identifier_token());
+					return TypeSpecifierNode(TypeCategory::Nullptr, TypeQualifier::None, 64, id.identifier_token());
 				}
 				if (auto symbol = symbol_table.lookup(id.name())) {
 					const DeclarationNode* decl_ptr = nullptr;
@@ -1527,7 +1527,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits());
 			}
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
-				return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+				return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 			}
 			if (std::holds_alternative<StringLiteralNode>(expr)) {
 				TypeSpecifierNode str_type(Type::Char, TypeQualifier::None, 8);
@@ -3290,7 +3290,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
 			load_offset.pointer.setType(TypeCategory::UnsignedInt);  // Reading a 32-bit unsigned offset
-			load_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
+			load_offset.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedInt};
 			load_offset.pointer.ir_type = IrType::Integer;
 			load_offset.pointer.size_in_bits = SizeInBits{32};  // gp_offset/fp_offset is 32 bits
 			load_offset.pointer.pointer_depth = PointerDepth{1};
@@ -3380,7 +3380,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp load_reg_save_ptr;
 			load_reg_save_ptr.result = reg_save_area_ptr;
 			load_reg_save_ptr.pointer.setType(TypeCategory::UnsignedLongLong);
-			load_reg_save_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+			load_reg_save_ptr.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 			load_reg_save_ptr.pointer.ir_type = IrType::Integer;
 			load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 			load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
@@ -3440,7 +3440,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			DereferenceStoreOp store_offset;
 			store_offset.pointer.setType(TypeCategory::UnsignedInt);
-			store_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
+			store_offset.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedInt};
 			store_offset.pointer.ir_type = IrType::Integer;
 			store_offset.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 			store_offset.pointer.pointer_depth = PointerDepth{1};
@@ -3494,7 +3494,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			DereferenceOp load_overflow_ptr;
 			load_overflow_ptr.result = overflow_ptr;
 			load_overflow_ptr.pointer.setType(TypeCategory::UnsignedLongLong);
-			load_overflow_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+			load_overflow_ptr.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 			load_overflow_ptr.pointer.ir_type = IrType::Integer;
 			load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
 			load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
@@ -3532,7 +3532,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Store updated overflow_arg_area back to structure
 			DereferenceStoreOp store_overflow;
 			store_overflow.pointer.setType(TypeCategory::UnsignedLongLong);
-			store_overflow.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+			store_overflow.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 			store_overflow.pointer.ir_type = IrType::Integer;
 			store_overflow.pointer.size_in_bits = SizeInBits{64};
 			store_overflow.pointer.pointer_depth = PointerDepth{1};
@@ -3571,7 +3571,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp load_offset;
 				load_offset.result = current_offset;
 				load_offset.pointer.setType(TypeCategory::UnsignedInt);
-				load_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
+				load_offset.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedInt};
 				load_offset.pointer.ir_type = IrType::Integer;
 				load_offset.pointer.size_in_bits = SizeInBits{32};
 				load_offset.pointer.pointer_depth = PointerDepth{1};
@@ -3655,7 +3655,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp load_reg_save_ptr;
 				load_reg_save_ptr.result = reg_save_area_ptr;
 				load_reg_save_ptr.pointer.setType(TypeCategory::UnsignedLongLong);
-				load_reg_save_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+				load_reg_save_ptr.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 				load_reg_save_ptr.pointer.ir_type = IrType::Integer;
 				load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};
 				load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
@@ -3712,7 +3712,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				DereferenceStoreOp store_offset;
 				store_offset.pointer.setType(TypeCategory::UnsignedInt);
-				store_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
+				store_offset.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedInt};
 				store_offset.pointer.ir_type = IrType::Integer;
 				store_offset.pointer.size_in_bits = SizeInBits{64};
 				store_offset.pointer.pointer_depth = PointerDepth{1};
@@ -3765,7 +3765,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				DereferenceOp load_overflow_ptr;
 				load_overflow_ptr.result = overflow_ptr;
 				load_overflow_ptr.pointer.setType(TypeCategory::UnsignedLongLong);
-				load_overflow_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+				load_overflow_ptr.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 				load_overflow_ptr.pointer.ir_type = IrType::Integer;
 				load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
 				load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
@@ -3801,7 +3801,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				DereferenceStoreOp store_overflow;
 				store_overflow.pointer.setType(TypeCategory::UnsignedLongLong);
-				store_overflow.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+				store_overflow.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 				store_overflow.pointer.ir_type = IrType::Integer;
 				store_overflow.pointer.size_in_bits = SizeInBits{64};
 				store_overflow.pointer.pointer_depth = PointerDepth{1};
@@ -3844,7 +3844,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					DereferenceOp deref_ptr_op;
 					deref_ptr_op.result = struct_ptr;
 					deref_ptr_op.pointer.setType(TypeCategory::UnsignedLongLong);
-					deref_ptr_op.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
+					deref_ptr_op.pointer.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 					deref_ptr_op.pointer.ir_type = IrType::Integer;
 					deref_ptr_op.pointer.size_in_bits = SizeInBits{64};
 					deref_ptr_op.pointer.pointer_depth = PointerDepth{1};

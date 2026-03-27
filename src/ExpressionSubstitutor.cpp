@@ -1090,7 +1090,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					if (type_it != getTypesByNameMap().end()) {
 						TypeIndex new_type_index = type_it->second->type_index_;
 						FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
-						return TypeSpecifierNode(Type::Struct, new_type_index, 64, Token{}, type.cv_qualifier());
+						return TypeSpecifierNode(TypeCategory::Struct, new_type_index, 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
 					}
 					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
 				} else {

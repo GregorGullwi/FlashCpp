@@ -4782,7 +4782,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
 						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
-						auto type_spec = TypeSpecifierNode(Type::Struct, type_index, type_size, identifier_token);
+						auto type_spec = TypeSpecifierNode(TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
 							return init_result;
