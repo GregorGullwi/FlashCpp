@@ -125,7 +125,7 @@
 		FunctionDeclOp func_decl_op;
 
 		// Return type information
-		func_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
+		func_decl_op.return_type_index = ret_type.type_index();
 
 		int actual_return_size = getTypeSpecSizeBits(ret_type);
 
@@ -149,7 +149,7 @@
 		// Use fromTypeAndIndex to ensure TypeCategory is embedded even for primitive types
 		// (TypeSpecifierNode built with the Type-only constructor stores TypeIndex{0} with
 		// TypeCategory::Invalid; fromTypeAndIndex falls back to typeToCategory(type) in that case).
-		current_function_return_type_index_ = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
+		current_function_return_type_index_ = ret_type.type_index();
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		if (returns_struct_by_value) {
@@ -289,7 +289,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam param_info;
-			param_info.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
+			param_info.type_index = param_type.type_index();
 			param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
@@ -371,7 +371,7 @@
 					if (struct_info) {
 						Token this_token = func_decl.identifier_token();
 						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-							Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+							TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 						this_type.as<TypeSpecifierNode>().add_pointer_level();
 						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 						symbol_table.insert("this"sv, this_decl);
@@ -495,8 +495,8 @@
 								// Check if result != 0 (members not equal)
 								TempVar ne_result = var_counter.next();
 								BinaryOp ne_op{
-									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
-									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+									.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{call_result}),
+									.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{0ULL}),
 									.result = IrValue{ne_result}
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -628,7 +628,7 @@
 					if (struct_info) {
 						Token this_token = func_decl.identifier_token();
 						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-							Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+							TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 						this_type.as<TypeSpecifierNode>().add_pointer_level();
 						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 						symbol_table.insert("this"sv, this_decl);
@@ -707,8 +707,8 @@
 				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
 				BinaryOp cmp_op{
-					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
-					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+					.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{call_result}),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, IrValue{0ULL}),
 					.result = IrValue{cmp_result}
 				};
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
@@ -739,7 +739,7 @@
 					// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 					Token this_token = func_decl.identifier_token();  // Use function token for location
 					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-						Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+						TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 					// Mark 'this' as a pointer to struct (not a struct value)
 					this_type.as<TypeSpecifierNode>().add_pointer_level();
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -1231,7 +1231,7 @@
 			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
 			Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), type_token);
+				TypeCategory::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
 			symbol_table.insert(node.name(), decl_node);
 			return;
@@ -1244,7 +1244,7 @@
 			std::string_view enumerator_name = StringTable::getStringView(e.name);
 			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				Type::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token);
+				TypeCategory::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
 			symbol_table.insert(enumerator_name, decl_node);
 		}
@@ -1322,7 +1322,7 @@
 				);
 			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
-				TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+				TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 					ctor_function_name, return_type, node.parameter_nodes(),
 					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false));
@@ -1342,7 +1342,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam func_param;
-			func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
+			func_param.type_index = param_type.type_index();
 			func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
@@ -1398,7 +1398,7 @@
 				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 				Token this_token = node.name_token();  // Use constructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+					TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 				// Mark 'this' as a pointer to struct (not a struct value)
 				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -2317,7 +2317,7 @@
 				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 				Token this_token = node.name_token();  // Use destructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+					TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 				// Mark 'this' as a pointer to struct (not a struct value)
 				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -2512,7 +2512,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
 	return makeExprResult(
-		Type::Struct,
+		TypeCategory::Struct,
 		SizeInBits{static_cast<int>(init_list_size_bits)},
 		IrOperand{init_list_name},
 		TypeIndex{init_list_type_index}

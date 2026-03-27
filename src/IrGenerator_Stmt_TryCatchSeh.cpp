@@ -121,7 +121,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				if (!exception_var_name.empty()) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
-					decl_op.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
+					decl_op.type_index = type_node.type_index();
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 

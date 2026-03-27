@@ -95,8 +95,8 @@
 
 									// Generate: element_ptr = result_var + (i * element_size)
 									BinaryOp offset_op{
-										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+										.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -149,8 +149,8 @@
 
 								// Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
-									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+									.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -216,8 +216,8 @@
 
 									TempVar element_ptr = var_counter.next();
 									BinaryOp offset_op{
-										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+										.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -254,8 +254,8 @@
 							if (init.is<ExpressionNode>()) {
 								TempVar element_ptr = var_counter.next();
 								BinaryOp offset_op{
-									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+									.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -279,8 +279,8 @@
 					TempVar i_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 						.result = i_var,
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
+						.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 0ULL),
 					}, Token()));
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -288,15 +288,15 @@
 					// cmp = (i_var < count)
 					TempVar cmp_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_value),
+						.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, count_value),
 						.result = cmp_var,
 					}, Token()));
 
 					CondBranchOp cond;
 					cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
 					cond.label_false = loop_end;
-					cond.condition = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
+					cond.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_var);
 					// We use a body label right after the branch
 					auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
 					cond.label_true = loop_body;
@@ -307,16 +307,16 @@
 					// offset_var = i_var * elem_sz
 					TempVar offset_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
+						.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 						.result = offset_var,
 					}, Token()));
 
 					// elem_ptr = result_var + offset_var
 					TempVar elem_ptr = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
+						.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
+						.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_var),
 						.result = elem_ptr,
 					}, Token()));
 
@@ -329,8 +329,8 @@
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
+						.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 1ULL),
 						.result = i_var,
 					}, Token()));
 
@@ -492,8 +492,8 @@
 						// Read count from cookie: raw_ptr = ptr - 8
 						TempVar raw_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 8ULL),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 8ULL),
 							.result = raw_ptr,
 						}, Token()));
 
@@ -501,7 +501,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{0, TypeCategory::UnsignedLongLong}, PointerDepth{1}),
+							.pointer = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{0, TypeCategory::UnsignedLongLong}, PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -516,8 +516,8 @@
 						TempVar i_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 							.result = i_var,
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_var),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, count_var),
 						}, Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -525,36 +525,36 @@
 						// if i_var == 0 goto loop_end
 						TempVar cmp_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 0ULL),
 							.result = cmp_var,
 						}, Token()));
 						CondBranchOp cond;
 						cond.label_true  = loop_body;
 						cond.label_false = loop_end;
-						cond.condition   = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
+						cond.condition   = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_var);
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
 						// i_var = i_var - 1  (decrement first, so index runs count-1..0)
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 1ULL),
 							.result = i_var,
 						}, Token()));
 
 						// elem_ptr = ptr + i_var * elem_sz
 						TempVar offset_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 							.result = offset_var,
 						}, Token()));
 						TempVar elem_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
+							.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_var),
 							.result = elem_ptr,
 						}, Token()));
 

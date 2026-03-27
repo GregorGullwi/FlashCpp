@@ -150,11 +150,12 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 // to ensure ir_type is always populated from the semantic type at construction time.
 // ============================================================================
 
-/// Basic TypedValue factory — sets ir_type and TypeCategory in type_index automatically.
+/// Basic TypedValue factory — sets ir_type, is_signed, and TypeCategory in type_index automatically.
 inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value) {
 	TypedValue tv;
 	tv.type = type;
 	tv.ir_type = toIrType(type);
+	tv.is_signed = isSignedType(type);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
 	tv.type_index = TypeIndex::fromTypeAndIndex(type, {});

@@ -1075,7 +1075,7 @@ public:
 	TypeSpecifierNode() = default;
 	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
+		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, typeToCategory(type)}) {}
 
 	// TypeCategory-first constructor — preferred for new code.
 	// Converts cat to the legacy Type via categoryToType() and stores it; the TypeIndex
@@ -1084,10 +1084,11 @@ public:
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
-	// Constructor for struct types
+	// Constructor for struct types — always stamps TypeCategory from t into type_index_ so
+	// type_index() is authoritative and callers don't need fromTypeAndIndex().
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
+		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex::fromTypeAndIndex(type, type_index)), reference_qualifier_(reference_qualifier) {}
 
 	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
 	// Ensures the category embedded in type_index_ is always taken from cat, even if the

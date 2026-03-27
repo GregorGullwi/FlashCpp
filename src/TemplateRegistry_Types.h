@@ -284,6 +284,10 @@ struct TemplateTypeArg {
 		arg.type_index = makeTypeIndex(t, idx);
 		return arg;
 	}
+
+	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx = TypeIndex{}) {
+		return makeType(categoryToType(cat), idx);
+	}
 	
 	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {
 		return TemplateTypeArg(ts);  // delegate to existing constructor

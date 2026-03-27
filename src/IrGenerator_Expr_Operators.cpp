@@ -1400,7 +1400,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Pass RHS value as second argument
 							call_op.args.push_back(toTypedValue(rhsExprResult));
 
-							call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+							call_op.return_type_index = return_type.type_index();
 							call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
@@ -1733,7 +1733,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.result = result_var;
 				call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 				call_op.is_member_function = false;
-				call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {

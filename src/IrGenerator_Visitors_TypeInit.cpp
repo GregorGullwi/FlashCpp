@@ -1592,7 +1592,7 @@ const Token& token)
 			member.memberType(),
 			element_size_bits,
 			base_object,
-			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1623,7 +1623,7 @@ const Token& token)
 				member.memberType(),
 				element_size_bits,
 				base_object,
-				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,
@@ -1795,7 +1795,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	func_decl_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+	func_decl_op.return_type_index = return_type.type_index();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 
@@ -1829,7 +1829,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}

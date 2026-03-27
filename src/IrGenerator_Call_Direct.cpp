@@ -373,7 +373,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					call_op.is_variadic = false;
 
 					// Add the object (self) as the first argument (this pointer)
-					call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+					call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 
 					// Generate IR for the remaining arguments and collect types for mangling
 					std::vector<TypeSpecifierNode> arg_types;
@@ -399,7 +399,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						if (is_self_arg) {
 							// For the self argument in recursive lambda calls, pass the reference directly
 							// Don't call visitExpressionNode which would dereference it
-							call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+							call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 
 							// Type for mangling is rvalue reference to closure type
 							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
@@ -1501,7 +1501,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
 		}
 		const auto& return_type = *best_return_type;
-		call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+		call_op.return_type_index = return_type.type_index();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())

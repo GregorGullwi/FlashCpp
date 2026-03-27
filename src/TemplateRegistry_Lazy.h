@@ -1216,7 +1216,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					TemplateTypeArg type_arg;
-					type_arg.type_index = TypeIndex::fromTypeAndIndex(type_spec.type(), type_spec.type_index());
+					type_arg.type_index = type_spec.type_index();
 					type_arg.ref_qualifier = type_spec.reference_qualifier();
 					type_arg.pointer_depth = type_spec.pointer_depth();
 					type_arg.cv_qualifier = type_spec.cv_qualifier();

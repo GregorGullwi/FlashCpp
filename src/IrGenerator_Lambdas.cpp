@@ -90,7 +90,7 @@
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-			info.return_type_index = TypeIndex::fromTypeAndIndex(ret_type_node.type(), ret_type_node.type_index());
+			info.return_type_index = ret_type_node.type_index();
 			info.return_size = ret_type_node.size_in_bits();
 			info.returns_reference = ret_type_node.is_reference();
 			if (info.returns_reference) {
@@ -652,7 +652,7 @@
 				if (isPlaceholderAutoType(param_type.type())) {
 					throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
 				}
-				func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();
@@ -795,7 +795,7 @@
 				if (isPlaceholderAutoType(param_type.type())) {
 					throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");
 				}
-				func_param.type_index = TypeIndex::fromTypeAndIndex(param_type.type(), param_type.type_index());
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();

@@ -73,7 +73,7 @@
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
-					call_op.return_type_index = TypeIndex::fromTypeAndIndex(ret_type.type(), ret_type.type_index());
+					call_op.return_type_index = ret_type.type_index();
 					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
@@ -1050,7 +1050,7 @@
 			populateReferenceReturnInfo(vcall_op, return_type);
 			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
-			vcall_op.object_type_index = TypeIndex::fromTypeAndIndex(object_type.type(), object_type.type_index());
+			vcall_op.object_type_index = object_type.type_index();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar
@@ -1130,7 +1130,7 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
+							template_args.push_back(TemplateTypeArg::makeType(TypeCategory::Bool));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
 							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
@@ -1326,7 +1326,7 @@
 				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();
 			}
 			const auto& return_type = *return_type_ptr;
-			call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+			call_op.return_type_index = return_type.type_index();
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
 			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
 			populateReferenceReturnInfo(call_op, return_type);
@@ -1484,7 +1484,7 @@
 					// Check if this is a function being passed as a function pointer argument
 					if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 						// Function being passed as function pointer - just pass its name
-						call_op.args.push_back(makeTypedValue(Type::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
+						call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();

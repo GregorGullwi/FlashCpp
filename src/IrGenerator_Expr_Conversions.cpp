@@ -365,7 +365,7 @@
 				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-					element_type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
+					element_type_index = type_node.type_index();
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
@@ -535,7 +535,7 @@
 							// Create CallOp
 							CallOp call_op;
 							call_op.result = ret_var;
-							call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+							call_op.return_type_index = return_type.type_index();
 							// For pointer return types, use 64-bit size (pointer size on x64)
 							if (return_type.pointer_depth() > 0) {
 								call_op.return_size_in_bits = SizeInBits{64};
@@ -1722,7 +1722,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op;
 	call_op.result = ret_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = TypeIndex::fromTypeAndIndex(return_type.type(), return_type.type_index());
+	call_op.return_type_index = return_type.type_index();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 		call_op.return_size_in_bits = SizeInBits{static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8)};
