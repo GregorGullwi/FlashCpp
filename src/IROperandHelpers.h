@@ -130,6 +130,12 @@ inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand v
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, storage);
 }
 
+/// TypeCategory bridge overload — converts cat to the legacy Type via categoryToType()
+/// so call sites that have already adopted TypeCategory do not need explicit conversions.
+inline ExprResult makeExprResult(TypeCategory cat, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
+	return makeExprResultImpl(categoryToType(cat), size_in_bits, std::move(value), type_index, pointer_depth, storage);
+}
+
 /// Returns a copy of \p tv with the storage discriminator set to \p storage.
 /// Mirrors the ExprResult overload above for TypedValue construction sites.
 inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
@@ -176,6 +182,29 @@ inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue val
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
 	tv.ref_qualifier = ref_qual;
 	return tv;
+}
+
+// ============================================================================
+// TypeCategory bridge overloads for makeTypedValue
+//
+// Call sites that have already adopted TypeCategory can use these overloads
+// directly instead of calling categoryToType() at every use.  They delegate
+// to the corresponding Type overloads above.
+// ============================================================================
+
+/// TypeCategory bridge — basic form.
+inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value) {
+	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value));
+}
+
+/// TypeCategory bridge — with type_index.
+inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
+	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), type_index);
+}
+
+/// TypeCategory bridge — with type_index and pointer_depth.
+inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
+	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), type_index, pointer_depth);
 }
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {

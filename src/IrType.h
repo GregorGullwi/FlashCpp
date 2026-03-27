@@ -95,6 +95,8 @@ inline bool isIrPointerLikeType(IrType t) { return t == IrType::FunctionPointer 
 /// type_index through ExprResult / TypedValue rather than hard-coding the
 /// three-way disjunction at each call site.
 inline bool carriesSemanticTypeIndex(Type t) { return needs_type_index(t); }
+/// TypeCategory overload — delegates to the Type version via categoryToType.
+inline bool carriesSemanticTypeIndex(TypeCategory cat) { return carriesSemanticTypeIndex(categoryToType(cat)); }
 
 // ============================================================================
 // Formatting support for IrType (for FLASH_LOG_FORMAT and std::format)

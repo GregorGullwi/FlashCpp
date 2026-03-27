@@ -2396,7 +2396,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			return emitFloatNonZeroTest(condition);
 		}
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
-		if (!sema_applied_bool_conv && condition.typeEnum() == Type::Struct) {
+		if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 			TypeIndex cond_type_idx = condition.type_index;
 			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
@@ -2528,7 +2528,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		};
 
 		auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
-			if (value_result.typeEnum() == Type::Struct) {
+			if (value_result.category() == TypeCategory::Struct) {
 				if (std::holds_alternative<TempVar>(value_result.value)) {
 					registerStructTempDestructorIfNeeded(value_result);
 					return value_result;

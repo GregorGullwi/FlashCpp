@@ -4310,7 +4310,7 @@ const Token& token) {
 			return;
 		}
 
-		if (lhs_operands.typeEnum() != Type::Struct || rhs_operands.typeEnum() != Type::Struct) {
+		if (lhs_operands.category() != TypeCategory::Struct || rhs_operands.category() != TypeCategory::Struct) {
 			return;
 		}
 
