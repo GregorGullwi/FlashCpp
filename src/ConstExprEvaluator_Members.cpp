@@ -2808,7 +2808,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				struct TraitInput {
-					Type base_type;
+					TypeCategory base_type;
 					TypeIndex type_index;
 					size_t pointer_depth;
 					ReferenceQualifier ref_qualifier;
@@ -2820,7 +2820,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				auto evaluateTypeTraitFromInput = [](TypeTraitKind trait_kind, const TraitInput& input) {
-					return evaluateTypeTrait(trait_kind, input.base_type, input.type_index,
+					return evaluateTypeTrait(trait_kind, categoryToType(input.base_type), input.type_index,
 						input.ref_qualifier != ReferenceQualifier::None,
 						input.ref_qualifier == ReferenceQualifier::RValueReference,
 						input.ref_qualifier == ReferenceQualifier::LValueReference,
@@ -2839,7 +2839,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					const auto& arg_info = resolved_type_info->template_args_[0];
 					TraitInput input{
-						.base_type = arg_info.typeEnum(),
+						.base_type = arg_info.category(),
 						.type_index = arg_info.type_index,
 						.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
 						.ref_qualifier = arg_info.ref_qualifier,
@@ -2852,7 +2852,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					if (input.type_index.is_valid() && input.type_index.index() < getTypeInfoCount()) {
 						input.type_info = &getTypeInfo(input.type_index);
-						input.base_type = input.type_info->type_;
+						input.base_type = input.type_index.category();
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
 						input.struct_info = input.type_info->getStructInfo();
@@ -5414,11 +5414,11 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 }
 
 // Helper functions for type checking
-bool Evaluator::isArithmeticType(Type type) {
+bool Evaluator::isArithmeticType(TypeCategory type) {
 	return ::isArithmeticType(type);
 }
 
-bool Evaluator::isFundamentalType(Type type) {
+bool Evaluator::isFundamentalType(TypeCategory type) {
 	return ::isFundamentalType(type);
 }
 
@@ -5443,7 +5443,6 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 	TypeCategory type_cat = type_spec.category();
-	Type type = categoryToType(type_cat);
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
@@ -5496,11 +5495,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsArithmetic:
-			result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
+			result = isArithmeticType(type_cat) & !is_reference & (pointer_depth == 0);
 			break;
 
 		case TypeTraitKind::IsFundamental:
-			result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
+			result = isFundamentalType(type_cat) & !is_reference & (pointer_depth == 0);
 			break;
 
 		case TypeTraitKind::IsObject:
@@ -5508,7 +5507,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsScalar:
-			result = (isArithmeticType(type) ||
+			result = (isArithmeticType(type_cat) ||
 			          type_cat == TypeCategory::Enum || type_cat == TypeCategory::Nullptr ||
 			          type_cat == TypeCategory::MemberObjectPointer || type_cat == TypeCategory::MemberFunctionPointer ||
 			          pointer_depth > 0)
@@ -5516,7 +5515,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsCompound:
-			result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
+			result = !(isFundamentalType(type_cat) & !is_reference & (pointer_depth == 0));
 			break;
 
 		case TypeTraitKind::IsConst:
@@ -5528,11 +5527,16 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsSigned:
-			result = is_signed_integer_type(type) && !is_reference && pointer_depth == 0;
+			result = (type_cat == TypeCategory::Char || type_cat == TypeCategory::Short ||
+			          type_cat == TypeCategory::Int || type_cat == TypeCategory::Long ||
+			          type_cat == TypeCategory::LongLong) && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsUnsigned:
-			result = (type == Type::Bool || is_unsigned_integer_type(type)) && !is_reference && pointer_depth == 0;
+			result = (type_cat == TypeCategory::Bool || type_cat == TypeCategory::UnsignedChar ||
+			          type_cat == TypeCategory::UnsignedShort || type_cat == TypeCategory::UnsignedInt ||
+			          type_cat == TypeCategory::UnsignedLong || type_cat == TypeCategory::UnsignedLongLong) &&
+			         !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsBoundedArray:
@@ -5556,7 +5560,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
 			
 			// Check for void - always incomplete
-			if (type == Type::Void && pointer_depth == 0 && !is_reference) {
+			if (type_cat == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 				return EvalResult::from_bool(false);
 			}
 			
@@ -5567,7 +5571,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			
 			// Check for incomplete class/struct types
 			// A type is incomplete if it's a struct/class with no StructTypeInfo
-			if (is_struct_type(type) &&
+			if (is_struct_type(type_cat) &&
 			    pointer_depth == 0 && !is_reference) {
 				TypeIndex type_idx = type_spec.type_index();
 				if (type_idx.is_valid()) {

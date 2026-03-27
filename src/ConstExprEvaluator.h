@@ -538,8 +538,8 @@ public:
 			const IdentifierNode& identifier,
 			size_t index,
 			EvaluationContext& context);
-		static bool isArithmeticType(Type type);
-		static bool isFundamentalType(Type type);
+		static bool isArithmeticType(TypeCategory type);
+		static bool isFundamentalType(TypeCategory type);
 
 	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {

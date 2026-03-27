@@ -9,7 +9,7 @@
 
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
 		TypeCategory type_cat = type_spec.category();
-		Type type = categoryToType(type_cat);
+		const Type allocated_type = type_spec.type();
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
 		int pointer_depth = static_cast<int>(type_spec.pointer_depth());
 
@@ -27,7 +27,7 @@
 
 			ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 			TypedValue init_value = toTypedValue(init_operands);
-			emitDereferenceStore(init_value, type, size_in_bits, pointer_var, Token());
+			emitDereferenceStore(init_value, allocated_type, size_in_bits, pointer_var, Token());
 		};
 
 		// Check if this is an array allocation (with or without placement)
@@ -59,7 +59,7 @@
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
+				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
@@ -158,7 +158,7 @@
 								// Evaluate the initializer expression
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -168,7 +168,7 @@
 				// Create HeapAllocArrayOp
 				HeapAllocArrayOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
+				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
@@ -178,7 +178,7 @@
 				bool needs_ctor_loop = false;
 				const StructTypeInfo* array_struct_info = nullptr;
 				StringHandle array_struct_name_handle{};
-				if (type == Type::Struct) {
+				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
 					if (type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_index);
@@ -197,7 +197,7 @@
 				const auto& array_inits = newExpr.constructor_args();
 				if (array_inits.size() > 0) {
 					// For struct types, call constructor for each element
-					if (type == Type::Struct) {
+					if (type_cat == TypeCategory::Struct) {
 						TypeIndex type_index = type_spec.type_index();
 						if (type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index);
@@ -262,7 +262,7 @@
 
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -346,7 +346,7 @@
 			// Create PlacementNewOp
 			PlacementNewOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
+			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
@@ -355,7 +355,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
-			if (type == Type::Struct) {
+			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_index);
@@ -392,14 +392,14 @@
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(type, type_spec.type_index());
+			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 
 			ir_.addInstruction(IrInstruction(IrOpcode::HeapAlloc, std::move(op), Token()));
 
 			// If this is a struct type with a constructor, generate constructor call
-			if (type == Type::Struct) {
+			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_index);
@@ -436,7 +436,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(allocated_type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -444,15 +444,15 @@
 		ExprResult ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
 		// Get the pointer type
-		Type ptr_type = ptr_operands.typeEnum();
+		TypeCategory ptr_type = ptr_operands.category();
 
 		// Convert IrOperand to IrValue
 		IrValue ptr_value = toIrValue(ptr_operands.value);
 
 		// Check if we need to call destructor (for struct types with a user-defined destructor).
-		// ptr_operands[3] is the type_index when the expression type is Type::Struct (index 0 is invalid).
+		// ptr_operands[3] is the type_index when the expression type is TypeCategory::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
-		if (ptr_type == Type::Struct && !deleteExpr.is_array() &&
+		if (ptr_type == TypeCategory::Struct && !deleteExpr.is_array() &&
 		(ptr_operands.type_index.is_valid())) {
 			unsigned long long type_idx_val = ptr_operands.type_index.index();
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
@@ -479,7 +479,7 @@
 		if (deleteExpr.is_array()) {
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
-			if (ptr_type == Type::Struct &&
+			if (ptr_type == TypeCategory::Struct &&
 			(ptr_operands.type_index.is_valid())) {
 				unsigned long long type_idx_val = ptr_operands.type_index.index();
 				if (type_idx_val > 0 && type_idx_val < getTypeInfoCount()) {

@@ -339,7 +339,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!decl) return TypeIndex{};
 						if (!decl->type_node().is<TypeSpecifierNode>()) return TypeIndex{};
 						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						if (!is_struct_type(type_spec.type())) return TypeIndex{};
+						if (!is_struct_type(type_spec.category())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
 						if (type_idx.index() < getTypeInfoCount()) {
@@ -369,11 +369,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
 						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
-						Type resolved_type = getTypeInfo(type_idx).type_;
-						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
-							resolved_type = Type::Struct;
+						TypeCategory resolved_type = type_idx.category();
+						if (resolved_type == TypeCategory::Invalid || resolved_type == TypeCategory::Void) {
+							resolved_type = TypeCategory::Struct;
 						}
-						type_spec->set_type(resolved_type);
+						type_spec->set_type(categoryToType(resolved_type));
 					};
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
@@ -1674,7 +1674,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 			// Successfully parsed a type specifier - check if followed by ')'
 			if (consume(")"_tok)) {
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				Type parsed_type = type_spec.type();
+				TypeCategory parsed_type = type_spec.category();
 				
 				// Use existing get_type_alignment function for consistency
 				int type_size_bits = get_type_size_bits(parsed_type);
@@ -1698,7 +1698,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				}
 				
 				// For other types, use the standard alignment function
-				alignment = get_type_alignment(parsed_type, type_size_bytes);
+				alignment = get_type_alignment(categoryToType(parsed_type), type_size_bytes);
 				discard_saved_token(pre_type_pos);
 				discard_saved_token(saved_pos);
 				return alignment;
