@@ -74,11 +74,7 @@ struct ConversionPlan {
 // Returns both the ConversionRank (for overload resolution) and the
 // StandardConversionKind (for semantic annotation) in a single call.
 // Implements C++20 [conv], [conv.prom], [conv.rank] rules.
-inline ConversionPlan buildConversionPlan(Type from, Type to) {
-	// Use TypeCategory for safe classification checks in this helper, but keep the
-	// raw Type values available for rank/underlying-type helpers that still accept Type.
-	const TypeCategory from_category = typeToCategory(from);
-	const TypeCategory to_category = typeToCategory(to);
+inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCategory to_category) {
 
 	// Exact match (including Struct==Struct — same type, different struct variants
 	// are handled by the TypeSpecifierNode overload which has type_index).
@@ -198,14 +194,14 @@ inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.
-inline TypeConversionResult can_convert_type(Type from, Type to) {
+inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to) {
 	return buildConversionPlan(from, to).toResult();
 }
 
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
-inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = TypeIndex{}) {
+inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_category, TypeIndex target_type_index = TypeIndex{}) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
 	if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
@@ -218,7 +214,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 			target_type_name = StringTable::getStringView(getTypeInfo(target_type_index).name());
 		} else {
 			// For primitive types, use the helper function to get the type name
-			target_type_name = getTypeName(target_type);
+			target_type_name = getTypeName(categoryToType(target_category));
 			if (target_type_name.empty()) {
 				return false;
 			}
@@ -263,7 +259,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 			// Search base classes recursively
 			for (const auto& base_spec : source_struct_info->base_classes) {
 				if (base_spec.type_index.is_valid() && base_spec.type_index.index() < getTypeInfoCount()) {
-					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
+					if (hasConversionOperator(base_spec.type_index, target_category, target_type_index)) {
 						return true;
 					}
 				}

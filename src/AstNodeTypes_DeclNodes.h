@@ -1246,9 +1246,9 @@ public:
 // Plain `auto` follows template-argument-deduction-style stripping of top-level
 // references/cv for value returns, while `decltype(auto)` preserves the exact
 // type category and qualifiers of the deduced expression.
-inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
-	assert(isPlaceholderAutoType(placeholder_type));
-	if (placeholder_type != Type::Auto) {
+inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placeholder_cat, TypeSpecifierNode deduced_type) {
+	assert(isPlaceholderAutoType(categoryToType(placeholder_cat)));
+	if (placeholder_cat != TypeCategory::Auto) {
 		return deduced_type;
 	}
 

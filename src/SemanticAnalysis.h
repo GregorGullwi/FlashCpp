@@ -131,8 +131,8 @@ private:
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
 	void resolveRemainingAutoReturns();
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);
-	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type);
-	TypeSpecifierNode finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const;
+	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_cat);
+	TypeSpecifierNode finalizePlaceholderDeduction(TypeCategory placeholder_cat, const TypeSpecifierNode& deduced_type) const;
 
 	// Infer the canonical type of a simple expression without full evaluation.
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).

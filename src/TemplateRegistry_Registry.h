@@ -324,42 +324,42 @@ public:
 		return getInstantiation(key);
 	}
 	
-	// Helper to convert Type to string for mangling
-	static std::string_view typeToString(Type type) {
-		switch (type) {
-			case Type::Int: return "int";
-			case Type::Float: return "float";
-			case Type::Double: return "double";
-			case Type::Bool: return "bool";
-			case Type::Char: return "char";
-			case Type::Long: return "long";
-			case Type::LongLong: return "longlong";
-			case Type::Short: return "short";
-			case Type::UnsignedInt: return "uint";
-			case Type::UnsignedLong: return "ulong";
-			case Type::UnsignedLongLong: return "ulonglong";
-			case Type::UnsignedShort: return "ushort";
-			case Type::UnsignedChar: return "uchar";
+	// Helper to convert TypeCategory to string for mangling
+	static std::string_view typeToString(TypeCategory cat) {
+		switch (cat) {
+			case TypeCategory::Int: return "int";
+			case TypeCategory::Float: return "float";
+			case TypeCategory::Double: return "double";
+			case TypeCategory::Bool: return "bool";
+			case TypeCategory::Char: return "char";
+			case TypeCategory::Long: return "long";
+			case TypeCategory::LongLong: return "longlong";
+			case TypeCategory::Short: return "short";
+			case TypeCategory::UnsignedInt: return "uint";
+			case TypeCategory::UnsignedLong: return "ulong";
+			case TypeCategory::UnsignedLongLong: return "ulonglong";
+			case TypeCategory::UnsignedShort: return "ushort";
+			case TypeCategory::UnsignedChar: return "uchar";
 			default: return "?";
 		}
 	}
 
-	// Helper to convert string to Type for parsing mangled names
-	static Type stringToType(std::string_view str) {
-		if (str == "int") return Type::Int;
-		if (str == "float") return Type::Float;
-		if (str == "double") return Type::Double;
-		if (str == "bool") return Type::Bool;
-		if (str == "char") return Type::Char;
-		if (str == "long") return Type::Long;
-		if (str == "longlong") return Type::LongLong;
-		if (str == "short") return Type::Short;
-		if (str == "uint") return Type::UnsignedInt;
-		if (str == "ulong") return Type::UnsignedLong;
-		if (str == "ulonglong") return Type::UnsignedLongLong;
-		if (str == "ushort") return Type::UnsignedShort;
-		if (str == "uchar") return Type::UnsignedChar;
-		return Type::Invalid;
+	// Helper to convert string to TypeCategory for parsing mangled names
+	static TypeCategory stringToTypeCategory(std::string_view str) {
+		if (str == "int") return TypeCategory::Int;
+		if (str == "float") return TypeCategory::Float;
+		if (str == "double") return TypeCategory::Double;
+		if (str == "bool") return TypeCategory::Bool;
+		if (str == "char") return TypeCategory::Char;
+		if (str == "long") return TypeCategory::Long;
+		if (str == "longlong") return TypeCategory::LongLong;
+		if (str == "short") return TypeCategory::Short;
+		if (str == "uint") return TypeCategory::UnsignedInt;
+		if (str == "ulong") return TypeCategory::UnsignedLong;
+		if (str == "ulonglong") return TypeCategory::UnsignedLongLong;
+		if (str == "ushort") return TypeCategory::UnsignedShort;
+		if (str == "uchar") return TypeCategory::UnsignedChar;
+		return TypeCategory::Invalid;
 	}
 
 	// Generate a mangled name for a template instantiation using hash-based naming

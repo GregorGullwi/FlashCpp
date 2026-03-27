@@ -289,9 +289,9 @@ private:
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
 	ExprResult generateOffsetofIr(const OffsetofExprNode& offsetofNode);
-	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const;
-	bool isArithmeticType(Type type) const;
-	bool isFundamentalType(Type type) const;
+	bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth) const;
+	bool isArithmeticType(TypeCategory cat) const;
+	bool isFundamentalType(TypeCategory cat) const;
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
@@ -638,7 +638,7 @@ private:
 	// These can be used by both the unified handler and special-case code
 
 	// Emit ArrayStore instruction
-	void emitArrayStore(Type element_type, int element_size_bits,
+	void emitArrayStore(TypeIndex element_type_index, int element_size_bits,
 		std::variant<StringHandle, TempVar> array,
 		const TypedValue& index, const TypedValue& value,
 		int64_t member_offset, bool is_pointer_to_array,
@@ -779,15 +779,15 @@ private:
 	}
 
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
-	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token());
+	TempVar emitAddressOf(TypeIndex type_index, int size_in_bits, IrValue source, Token token = Token());
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
-	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
+	TempVar emitDereference(TypeIndex pointee_type_index, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
 
 	// ============================================================================
 	// Return IR helper
 	// ============================================================================
-	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token);
+	void emitReturn(IrValue return_value, TypeIndex return_type_index, int return_size, const Token& token);
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;
