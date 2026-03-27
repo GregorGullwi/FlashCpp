@@ -1551,7 +1551,6 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
@@ -1616,7 +1615,7 @@
 				}
 			}
 			// Handle struct types
-			else if (typeToCategory(type) == TypeCategory::Struct) {				size_t type_index = type_spec.type_index().index();
+			else if (type_spec.category() == TypeCategory::Struct) {				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
 					return ExprResult{};
@@ -1922,10 +1921,9 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
 
 			// Handle struct types
-			if (typeToCategory(type) == TypeCategory::Struct) {
+			if (type_spec.category() == TypeCategory::Struct) {
 				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
@@ -1944,7 +1942,7 @@
 			else {
 				// For primitive types, use standard alignment calculation
 				size_t size_in_bytes = type_spec.size_in_bits() / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, typeToCategory(type));
+				alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 			}
 		}
 		else {
@@ -2051,15 +2049,14 @@
 		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
+	bool AstToIr::isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const {
 		if (is_reference) return false;
 		if (pointer_depth > 0) return true;  // Pointers are scalar
-		TypeCategory cat = typeToCategory(type);
-		return is_standard_arithmetic_type(cat)
-			|| cat == TypeCategory::Enum
-			|| cat == TypeCategory::Nullptr
-			|| cat == TypeCategory::MemberObjectPointer
-			|| cat == TypeCategory::MemberFunctionPointer;
+		return is_standard_arithmetic_type(type)
+			|| type == TypeCategory::Enum
+			|| type == TypeCategory::Nullptr
+			|| type == TypeCategory::MemberObjectPointer
+			|| type == TypeCategory::MemberFunctionPointer;
 	}
 
 	// Recursively check whether a struct is trivially copyable:
@@ -2117,11 +2114,11 @@
 		return true;
 	}
 
-	bool AstToIr::isArithmeticType(Type type) const {
+	bool AstToIr::isArithmeticType(TypeCategory type) const {
 		return ::isArithmeticType(type);
 	}
 
-	bool AstToIr::isFundamentalType(Type type) const {
+	bool AstToIr::isFundamentalType(TypeCategory type) const {
 		return ::isFundamentalType(type);
 	}
 
@@ -2218,7 +2215,7 @@
 						const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Check if all properties match exactly
-						result = (type == second_spec.type() &&
+						result = (type_category == second_spec.category() &&
 						is_reference == second_spec.is_reference() &&
 						is_rvalue_reference == second_spec.is_rvalue_reference() &&
 						pointer_depth == second_spec.pointer_depth() &&
@@ -2238,8 +2235,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2264,7 +2261,7 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is convertible to any pointer type
-						else if (typeToCategory(from_type) == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types
@@ -2298,8 +2295,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2323,7 +2320,7 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is nothrow convertible to any pointer type
-						else if (typeToCategory(from_type) == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types (nothrow if no virtual base)
@@ -2462,7 +2459,7 @@
 					}
 				}
 				// Scalar types are standard layout
-				else if (isScalarType(type, is_reference, pointer_depth)) {
+				else if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				break;
@@ -2483,7 +2480,7 @@
 				// - Classes with no virtual, no user-defined copy/move ctors,
 				//   no user-defined copy/move assignment ops, no user-defined dtor,
 				//   and all base classes also trivially copyable
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (isIrStructType(toIrType(type)) &&
@@ -2497,7 +2494,7 @@
 			case TypeTraitKind::IsTrivial:
 				// A trivial type is trivially copyable and has a trivial default constructor,
 				// and all base classes are also trivial.
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (isIrStructType(toIrType(type)) &&
@@ -2511,7 +2508,7 @@
 			case TypeTraitKind::IsPod:
 				// POD (Plain Old Data) = trivial + standard layout (C++03 compatible)
 				// In C++11+, this is deprecated but still useful
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
@@ -2546,7 +2543,7 @@
 				//   - Trivial destructor
 				//   - Aggregate type OR has at least one constexpr constructor
 				//   - All non-static data members are literal types
-				if (isScalarType(type, is_reference, pointer_depth) || is_reference) {
+				if (isScalarType(type_category, is_reference, pointer_depth) || is_reference) {
 					result = true;
 				}
 				else if (type_category == TypeCategory::Struct && pointer_depth == 0 && type_spec.type_index().index() < getTypeInfoCount()) {
@@ -2596,7 +2593,7 @@
 			case TypeTraitKind::IsConstructible:
 				// __is_constructible(T, Args...) - Check if T can be constructed with Args...
 				// For scalar types, default constructible (no args) or copy constructible (same type arg)
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					const auto& arg_types = traitNode.additional_type_nodes();
 					if (arg_types.empty()) {
 						// Default constructible - all scalars are default constructible
@@ -2605,8 +2602,8 @@
 						// Copy/conversion construction - check if types are compatible
 						const TypeSpecifierNode& arg_spec = arg_types[0].as<TypeSpecifierNode>();
 						// Same type or convertible arithmetic types
-						result = (arg_spec.type() == type) ||
-						(isScalarType(arg_spec.type(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
+						result = (arg_spec.category() == type_category) ||
+						(isScalarType(arg_spec.category(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
 						!arg_spec.is_reference() && arg_spec.pointer_depth() == 0);
 					}
 				}
@@ -2629,7 +2626,7 @@
 			case TypeTraitKind::IsTriviallyConstructible:
 				// __is_trivially_constructible(T, Args...) - Check if T can be trivially constructed
 				// Scalar types are trivially constructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined ctors
@@ -2643,7 +2640,7 @@
 			case TypeTraitKind::IsNothrowConstructible:
 				// __is_nothrow_constructible(T, Args...) - Check if T can be constructed without throwing
 				// Scalar types don't throw
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
@@ -2719,9 +2716,9 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// For scalar types, check type compatibility
-						if (isScalarType(type, is_reference, pointer_depth)) {
+						if (isScalarType(type_category, is_reference, pointer_depth)) {
 							// Scalars are assignable from compatible types
-							result = isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth());
+							result = isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth());
 						}
 						// Class types: check for assignment operator
 						else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
@@ -2744,8 +2741,8 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// Scalar types are trivially assignable
-						if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+						if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 							result = true;
 						}
 						// Class types: no virtual, no user-defined assignment
@@ -2768,8 +2765,8 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// Scalar types don't throw on assignment
-						if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+						if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 							result = true;
 						}
 						// Class types: implicitly-generated assignment ops are noexcept;
@@ -2826,7 +2823,7 @@
 			case TypeTraitKind::IsDestructible:
 				// __is_destructible(T) - Check if T can be destroyed
 				// All scalar types are destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: check for accessible destructor
@@ -2842,7 +2839,7 @@
 			case TypeTraitKind::IsTriviallyDestructible:
 				// __is_trivially_destructible(T) - Check if T can be trivially destroyed
 				// Scalar types are trivially destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
@@ -2860,7 +2857,7 @@
 			case TypeTraitKind::IsNothrowDestructible:
 				// __is_nothrow_destructible(T) - Check if T can be destroyed without throwing
 				// Scalar types don't throw on destruction
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: check via recursive isStructNothrowDestructible to handle
@@ -2875,7 +2872,7 @@
 			case TypeTraitKind::HasTrivialDestructor:
 				// __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
 				// Scalar types are trivially destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
@@ -2934,7 +2931,7 @@
 						const TypeSpecifierNode& second_spec = second_node.as<TypeSpecifierNode>();
 
 						// Same type is always layout compatible with itself
-						if (type == second_spec.type() &&
+						if (type_category == second_spec.category() &&
 						pointer_depth == second_spec.pointer_depth() &&
 						is_reference == second_spec.is_reference()) {
 						if (type_category == TypeCategory::Struct) {
@@ -2944,8 +2941,8 @@
 							}
 						}
 						// Different standard layout types with same size
-						else if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(second_spec.type(), second_spec.is_reference(), second_spec.pointer_depth())) {
+						else if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.pointer_depth())) {
 							result = (type_spec.size_in_bits() == second_spec.size_in_bits());
 						}
 					}

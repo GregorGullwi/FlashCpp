@@ -294,9 +294,9 @@ private:
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
 	ExprResult generateOffsetofIr(const OffsetofExprNode& offsetofNode);
-	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const;
-	bool isArithmeticType(Type type) const;
-	bool isFundamentalType(Type type) const;
+	bool isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const;
+	bool isArithmeticType(TypeCategory type) const;
+	bool isFundamentalType(TypeCategory type) const;
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
