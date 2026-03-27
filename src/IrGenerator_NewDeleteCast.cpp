@@ -500,7 +500,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{}, PointerDepth{1}),
+							.pointer = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {}), PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0

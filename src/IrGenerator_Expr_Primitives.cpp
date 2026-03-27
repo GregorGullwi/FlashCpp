@@ -1510,6 +1510,7 @@
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
 							deref_op.pointer.type = static_member->memberType();
+							deref_op.pointer.type_index = TypeIndex::fromTypeAndIndex(static_member->memberType(), static_member->type_index);
 							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->memberType())};
 							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;

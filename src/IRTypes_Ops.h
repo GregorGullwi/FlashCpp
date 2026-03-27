@@ -421,6 +421,11 @@ struct TypedValue {
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
+	TypeCategory category() const {
+		const TypeCategory category_from_index = type_index.category();
+		return (category_from_index != TypeCategory::Invalid) ? category_from_index : typeToCategory(type);
+	}
+	Type typeEnum() const { return categoryToType(category()); }
 
 	// Returns the effective runtime representation type.
 	// During the transition period (Phase 1-3), some construction sites may not

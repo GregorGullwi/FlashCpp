@@ -1061,6 +1061,7 @@
 				// Store back through pointer
 				DereferenceStoreOp store_op;
 				store_op.pointer.type = member->memberType();
+				store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(member->memberType(), member->type_index);
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
@@ -1598,6 +1599,7 @@
 
 			// Populate TypedValue with full type information
 			op.pointer.type = operandType;
+			op.pointer.type_index = TypeIndex::fromTypeAndIndex(operandType, operandIrOperands.type_index);
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};

@@ -845,6 +845,7 @@
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
 						deref_op.pointer.type = Type::Struct;
+						deref_op.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, {});
 						deref_op.pointer.ir_type = IrType::Struct;
 						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");

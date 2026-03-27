@@ -574,7 +574,7 @@ public:
 			// Print type and size from TypedValue
 			// If pointer_depth > 1, result is still a pointer (64 bits)
 			// If pointer_depth == 1, result is the pointee type
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.pointer.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.pointer.category())) {
 				oss << type_info->name();
 			}
 
@@ -602,7 +602,7 @@ public:
 			oss << "store_through_ptr ";
 
 			// Print pointer type and size
-			if (const TypeInfo* ptr_type_info = findNativeType(typeToCategory(op.pointer.type))) {
+			if (const TypeInfo* ptr_type_info = findNativeType(op.pointer.category())) {
 				oss << ptr_type_info->name();
 			}
 			oss << op.pointer.size_in_bits;
