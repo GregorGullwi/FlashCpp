@@ -977,7 +977,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			.operand_type = operand_type,
 			.operand_size_in_bits = operand_size
 		};
-		// Propagate signedness so downstream consumers don't need to query via isSignedType(ctx.result_value.typeEnum()).
+		// Propagate signedness so downstream consumers don't need to query via ctx.result_value.is_signed.
 		// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
 		ctx.result_value.is_signed = isSignedType(result_type);
 
@@ -1013,7 +1013,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			ctx.operand_type = Type::UnsignedLongLong;
 			ctx.operand_size_in_bits = 64;
 		}
-		if (!is_integer_type(ctx.result_value.typeEnum()) && !is_bool_type(ctx.result_value.typeEnum()) && !is_floating_point_type(ctx.result_value.typeEnum())) {
+		if (!isIrIntegerType(ctx.result_value.effectiveIrType()) && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			auto type_name = getTypeName(ctx.result_value.typeEnum());
 			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.typeEnum())) : std::string(type_name);
 			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got " + type_desc);
@@ -1513,7 +1513,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 		if (ctx.result_physical_reg == X64Register::Count) {
-			if (is_floating_point_type(ctx.result_value.type)) {
+			if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 				ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 			} else {
 				ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1548,7 +1548,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
 		// This can happen when all registers are in use and spilling picks the same register twice
-		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !is_floating_point_type(ctx.result_value.type)) {
+		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			// Get the LHS variable's stack location and reload it into a different register
 			auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 			if (reg_info.stackVariableOffset != INT_MIN) {
@@ -1612,7 +1612,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 				} else {
 					emitMovToFrameSized(
 						SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
-						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
+						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 					);
 				}
 			}
@@ -1668,7 +1668,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.typeEnum())}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed}
 						);
 					}
 					// Can release source register since result is now tracked in the destination register
@@ -1692,7 +1692,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.typeEnum())}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed}
 						);
 					}
 					// Keep the value in the register for subsequent operations
@@ -9296,14 +9296,14 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			int final_result_offset = variable_scopes.back().variables[*string].offset;
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 			);
 		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 			);
 		}
 

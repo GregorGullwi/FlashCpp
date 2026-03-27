@@ -99,11 +99,11 @@ struct ExprResult {
 		return toIrType(type);
 	}
 
-	TypeCategory category() const {
-		const TypeCategory category_from_index = type_index.category();
-		return (category_from_index != TypeCategory::Invalid) ? category_from_index : typeToCategory(type);
-	}
-	Type typeEnum() const { return categoryToType(category()); }
+	// For ExprResult, type is the authoritative type of the expression (pointer level, not element level).
+	// type_index carries identity info (struct/enum gTypeInfo slot) which may be the element type for pointers.
+	// So category() and typeEnum() delegate to the semantic type field directly.
+	TypeCategory category() const { return typeToCategory(type); }
+	Type typeEnum() const { return type; }
 };
 
 inline ExprResult makeExprResultImpl(
@@ -118,7 +118,7 @@ inline ExprResult makeExprResultImpl(
 		.type = type,
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
-		.type_index = TypeIndex::fromTypeAndIndex(type, type_index),
+		.type_index = type_index,
 		.pointer_depth = pointer_depth,
 		.ir_type = toIrType(type),
 		.storage = storage

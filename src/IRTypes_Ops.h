@@ -427,11 +427,16 @@ struct TypedValue {
 	}
 	Type typeEnum() const { return categoryToType(category()); }
 
-	// Atomically update the semantic type and stamp the TypeCategory into type_index.
-	// Preserves any existing type_index.index_ (struct/enum identity).
+	// Atomically update the semantic type, always stamping the new TypeCategory into
+	// type_index (overrides any pre-existing category so callers like setType(ULL) on
+	// an enum-typed value don't leave TypeCategory::Enum behind).  Also keeps ir_type
+	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
+	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
 	void setType(Type t) noexcept {
 		type = t;
-		type_index = TypeIndex::fromTypeAndIndex(t, type_index);
+		type_index = TypeIndex{type_index.index(), typeToCategory(t)};
+		ir_type = toIrType(t);
+		is_signed = isSignedType(t);
 	}
 
 	// Returns the effective runtime representation type.
