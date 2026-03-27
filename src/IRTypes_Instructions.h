@@ -315,7 +315,7 @@ public:
 				const auto& arg = op.args[i];
 
 				// Type and size
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(arg.type))) {
+				if (const TypeInfo* type_info = findNativeType(arg.category())) {
 					oss << type_info->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -440,7 +440,7 @@ public:
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
-			oss << ", [" << static_cast<int>(op.index.type) << "][" << op.index.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.index.typeEnum()) << "][" << op.index.size_in_bits << "] ";
 
 			if (const auto* ull_val = std::get_if<unsigned long long>(&op.index.value))
 				oss << *ull_val;
@@ -462,11 +462,11 @@ public:
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
-			oss << ", [" << static_cast<int>(op.index.type) << "][" << op.index.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.index.typeEnum()) << "][" << op.index.size_in_bits << "] ";
 
 			printTypedValue(oss, op.index);
 
-			oss << ", [" << static_cast<int>(op.value.type) << "][" << op.value.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.value.typeEnum()) << "][" << op.value.size_in_bits << "] ";
 
 			printTypedValue(oss, op.value);
 			break;
@@ -499,7 +499,7 @@ public:
 			oss << '%' << op.result.var_number << " = addressof ";
 
 			// Print type and size from TypedValue
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.operand.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.operand.category())) {
 				oss << type_info->name();
 			}
 			oss << op.operand.size_in_bits;
@@ -648,7 +648,7 @@ public:
 			oss << " = member_access ";
 
 			// Type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.result.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.result.category())) {
 				oss << type_info->name();
 			}
 			oss << op.result.size_in_bits << " ";
@@ -679,7 +679,7 @@ public:
 			oss << "member_store ";
 
 			// Type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.value.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.value.category())) {
 				oss << type_info->name();
 			}
 			oss << op.value.size_in_bits << " ";
@@ -720,7 +720,7 @@ public:
 			// Add constructor arguments
 			for (const auto& arg : op.arguments) {
 				oss << " ";
-				const TypeCategory arg_cat = typeToCategory(arg.type);
+				const TypeCategory arg_cat = arg.category();
 				if (const TypeInfo* type_info = findNativeType(arg_cat)) {
 					oss << type_info->name();
 				} else if (needs_type_index(arg_cat)) {
@@ -790,7 +790,7 @@ public:
 					const auto& arg = op.arguments[i];
 
 					// Type and size
-					if (const TypeInfo* arg_type_info = findNativeType(typeToCategory(arg.type))) {
+					if (const TypeInfo* arg_type_info = findNativeType(arg.category())) {
 						oss << arg_type_info->name();
 					}
 					oss << arg.size_in_bits << " ";
@@ -1123,7 +1123,7 @@ public:
 			// Arguments with type information
 			for (const auto& arg : op.arguments) {
 				oss << ", ";
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(arg.type))) {
+				if (const TypeInfo* type_info = findNativeType(arg.category())) {
 					oss << type_info->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -1154,7 +1154,7 @@ public:
 				default: break;
 			}
 			// Format: from_type from_size from_value to to_type to_size
-			if (const TypeInfo* from_type_info = findNativeType(typeToCategory(op.from.type))) {
+			if (const TypeInfo* from_type_info = findNativeType(op.from.category())) {
 				oss << from_type_info->name();
 			}
 			oss << op.from.size_in_bits << " ";

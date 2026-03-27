@@ -249,7 +249,7 @@
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
-				payload.index.type = Type::UnsignedLongLong;
+				payload.index.setType(Type::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
 				payload.index.value = flat_index;
@@ -385,7 +385,7 @@
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-					payload.index.type = Type::UnsignedLongLong;
+					payload.index.setType(Type::UnsignedLongLong);
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
@@ -475,7 +475,7 @@
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 
 									// Set index as TypedValue
-									payload.index.type = index_result.type;
+									payload.index.setType(index_result.typeEnum());
 									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
@@ -3817,12 +3817,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
-		TempVar this_ptr = emitAddressOf(source.type, source.size_in_bits.value,
+		TempVar this_ptr = emitAddressOf(source.typeEnum(), source.size_in_bits.value,
 			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
-		this_arg.type = source.type;
-		this_arg.ir_type = toIrType(source.type);
+		this_arg.setType(source.typeEnum());
+		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = this_ptr;
 		this_arg.type_index = source.type_index;
@@ -3830,8 +3830,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		// Already a TempVar — for struct types this holds the object address
 		TypedValue this_arg;
-		this_arg.type = source.type;
-		this_arg.ir_type = toIrType(source.type);
+		this_arg.setType(source.typeEnum());
+		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = std::get<TempVar>(source_value);
 		this_arg.type_index = source.type_index;

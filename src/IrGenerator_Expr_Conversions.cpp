@@ -26,7 +26,7 @@
 			// mapped fromType to the underlying int).  Ensure the returned ExprResult
 			// reflects the requested target type so downstream consumers see the
 			// correct primitive type for signedness / domain queries.
-			if (operands.type != toType) {
+			if (operands.typeEnum() != toType) {
 				return makeExprResult(
 					toType,
 					SizeInBits{toSize},
@@ -941,7 +941,7 @@
 						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-						payload.index.type = Type::UnsignedLongLong;
+						payload.index.setType(Type::UnsignedLongLong);
 						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
@@ -1060,7 +1060,7 @@
 
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.type = member->memberType();
+				store_op.pointer.setType(member->memberType());
 				store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(member->memberType(), member->type_index);
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
@@ -1285,7 +1285,7 @@
 		}
 
 		// Get the type of the operand
-		Type operandType = operandIrOperands.type;
+		Type operandType = operandIrOperands.typeEnum();
 		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits.value;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
@@ -1327,8 +1327,8 @@
 					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
 					if (from_t != Type::Struct && to_t != Type::Struct) {
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
-						if (from_t != operandIrOperands.type && from_t == Type::Enum)
-							from_t = operandIrOperands.type;
+						if (from_t != operandIrOperands.typeEnum() && from_t == Type::Enum)
+							from_t = operandIrOperands.typeEnum();
 						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
 						operandType = to_t;
 						promoted = true;
@@ -1598,7 +1598,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.pointer.type = operandType;
+			op.pointer.setType(operandType);
 			op.pointer.type_index = TypeIndex::fromTypeAndIndex(operandType, operandIrOperands.type_index);
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
@@ -1744,7 +1744,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
-	this_arg.type = operandType;
+	this_arg.setType(operandType);
 	this_arg.ir_type = toIrType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
@@ -1756,7 +1756,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	// since the fallback path may match a prefix function for a postfix call or vice versa.
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
-		dummy_arg.type = Type::Int;
+		dummy_arg.setType(Type::Int);
 		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
@@ -1814,7 +1814,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<StringHandle>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
+			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -1828,7 +1828,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<TempVar>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
+			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -2392,11 +2392,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
 		//    Guard: pointer types (even float*/double*) are integer-width addresses
 		//    and must use TEST, not FloatNotEqual.
-		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.type)) {
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 			return emitFloatNonZeroTest(condition);
 		}
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
-		if (!sema_applied_bool_conv && condition.type == Type::Struct) {
+		if (!sema_applied_bool_conv && condition.typeEnum() == Type::Struct) {
 			TypeIndex cond_type_idx = condition.type_index;
 			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
@@ -2466,8 +2466,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
 					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
 					Type ctor_from_t = from_desc.base_type;
-					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.type)
-						ctor_from_t = arg_result.type;
+					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.typeEnum())
+						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
 						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 					}
@@ -2475,8 +2475,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				} else if (from_t != Type::Struct && to_t != Type::Struct) {
 					// Sema may annotate as Type::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
-					if (from_t == Type::Enum && from_t != arg_result.type)
-						from_t = arg_result.type;
+					if (from_t == Type::Enum && from_t != arg_result.typeEnum())
+						from_t = arg_result.typeEnum();
 					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
 				}
@@ -2485,13 +2485,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		// Phase 15: sema must annotate all standard constructor arg conversions.
 		if (!sema_applied && param_type.pointer_depth() == 0 &&
-			arg_result.type != param_base_type) {
-			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
+			arg_result.typeEnum() != param_base_type) {
+			TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type))
-					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
+					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
-				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
+				arg_result = generateTypeConversion(arg_result, arg_result.typeEnum(), param_base_type, source_token);
 			}
 		}
 
@@ -2528,7 +2528,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		};
 
 		auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
-			if (value_result.type == Type::Struct) {
+			if (value_result.typeEnum() == Type::Struct) {
 				if (std::holds_alternative<TempVar>(value_result.value)) {
 					registerStructTempDestructorIfNeeded(value_result);
 					return value_result;
@@ -2538,12 +2538,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			TempVar temp_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = temp_var;
-			assign_op.lhs = makeTypedValue(value_result.type, value_result.size_in_bits, temp_var);
+			assign_op.lhs = makeTypedValue(value_result.typeEnum(), value_result.size_in_bits, temp_var);
 			assign_op.rhs = toTypedValue(value_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
-			TempVar addr_var = emitAddressOf(value_result.type, value_result.size_in_bits.value, IrValue(temp_var), source_token);
-			return makeExprResult(value_result.type, SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+			TempVar addr_var = emitAddressOf(value_result.typeEnum(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			return makeExprResult(value_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		if (binding_info->binds_directly()) {
@@ -2583,11 +2583,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				}
 
 				TempVar addr_var = emitAddressOf(
-					arg_result.type,
+					arg_result.typeEnum(),
 					arg_result.size_in_bits.value,
 					IrValue(expr_var),
 					source_token);
-				return makeExprResult(arg_result.type, SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(arg_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			return std::nullopt;
@@ -2603,8 +2603,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
 			Type from_t = from_desc.base_type;
 			const Type to_t = to_desc.base_type;
-			if (from_t == Type::Enum && from_t != arg_result.type) {
-				from_t = arg_result.type;
+			if (from_t == Type::Enum && from_t != arg_result.typeEnum()) {
+				from_t = arg_result.typeEnum();
 			}
 			if (from_t == Type::Struct || to_t == Type::Struct) {
 				return std::nullopt;

@@ -836,7 +836,7 @@ void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrT
 		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
 		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
+		ctx.result_value.setType(Type::Bool);
 		ctx.result_value.size_in_bits = SizeInBits{8};
 		ctx.result_physical_reg = bool_reg;
 
@@ -977,7 +977,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			.operand_type = operand_type,
 			.operand_size_in_bits = operand_size
 		};
-		// Propagate signedness so downstream consumers don't need to query via isSignedType(ctx.result_value.type).
+		// Propagate signedness so downstream consumers don't need to query via isSignedType(ctx.result_value.typeEnum()).
 		// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
 		ctx.result_value.is_signed = isSignedType(result_type);
 
@@ -997,7 +997,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			if (!is_integer_type(operand_type)) {
 				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
 				if (!is_comparison) {
-					ctx.result_value.type = int_type;
+					ctx.result_value.setType(int_type);
 					ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
 				}
 				ctx.operand_type = int_type;
@@ -1007,15 +1007,15 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// Pointer-like and struct types: force 64-bit integer semantics
 			// for pointer offset calculations
 			if (!is_comparison) {
-				ctx.result_value.type = Type::UnsignedLongLong;
+				ctx.result_value.setType(Type::UnsignedLongLong);
 				ctx.result_value.size_in_bits = SizeInBits{64};
 			}
 			ctx.operand_type = Type::UnsignedLongLong;
 			ctx.operand_size_in_bits = 64;
 		}
-		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			auto type_name = getTypeName(ctx.result_value.type);
-			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.type)) : std::string(type_name);
+		if (!is_integer_type(ctx.result_value.typeEnum()) && !is_bool_type(ctx.result_value.typeEnum()) && !is_floating_point_type(ctx.result_value.typeEnum())) {
+			auto type_name = getTypeName(ctx.result_value.typeEnum());
+			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.typeEnum())) : std::string(type_name);
 			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got " + type_desc);
 		}
 
@@ -1612,7 +1612,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 				} else {
 					emitMovToFrameSized(
 						SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
-						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
 					);
 				}
 			}
@@ -1668,7 +1668,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.typeEnum())}
 						);
 					}
 					// Can release source register since result is now tracked in the destination register
@@ -1692,7 +1692,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.typeEnum())}
 						);
 					}
 					// Keep the value in the register for subsequent operations
@@ -4792,8 +4792,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
-				? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
-				: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
+				? TypeSpecifierNode(arg.typeEnum(), arg.type_index, arg.size_in_bits.value)
+				: TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg.size_in_bits.value);
 			if (arg.pointer_depth.is_pointer()) {
 				for (int i = 0; i < arg.pointer_depth.value; ++i) {
 					ts.add_pointer_level();
@@ -9296,14 +9296,14 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			int final_result_offset = variable_scopes.back().variables[*string].offset;
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
 			);
 		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.typeEnum())}  // dest
 			);
 		}
 
@@ -9679,7 +9679,7 @@ X64Register IrToObjConverter<TWriterClass>::loadOperandIntoRegister(const IrInst
 template<class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const TypedValue& typed_value)  {
 		X64Register reg = X64Register::Count;
-		bool is_signed = isSignedType(typed_value.type);
+		bool is_signed = isSignedType(typed_value.typeEnum());
 
 		if (std::holds_alternative<TempVar>(typed_value.value)) {
 			auto temp = std::get<TempVar>(typed_value.value);
@@ -11785,7 +11785,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				}
 
 				// Load index with proper sign extension based on index type
-				bool is_signed = isSignedType(op.index.type);
+				bool is_signed = isSignedType(op.index.typeEnum());
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11806,7 +11806,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			} else {
 				// Array is a regular variable
 				// Load index with proper sign extension based on index type
-				bool is_signed = isSignedType(op.index.type);
+				bool is_signed = isSignedType(op.index.typeEnum());
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11857,7 +11857,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 
 			// Load index into index_reg with proper sign extension based on index type
-			bool is_signed = isSignedType(op.index.type);
+			bool is_signed = isSignedType(op.index.typeEnum());
 			emitMovFromFrameSized(
 				SizedRegister{index_reg, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11970,7 +11970,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 				);
 
 				// Multiply index by element size
@@ -12001,7 +12001,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 				);
 
 				// Multiply index by element size
@@ -12597,7 +12597,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 					}
 					FLASH_LOG_FORMAT(Codegen, Warning,
 						"MemberAccess: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
-						member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+						member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.typeEnum()),
 						op.result.pointer_depth, op.result.type_index);
 					regAlloc.release(temp_reg);
 					return;
@@ -12649,7 +12649,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				}
 				FLASH_LOG_FORMAT(Codegen, Warning,
 					"MemberAccess pointer path: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
-					member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+					member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.typeEnum()),
 					op.result.pointer_depth, op.result.type_index);
 				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
@@ -13270,7 +13270,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			// However, we mark it in indirect_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value, op.result);
+			setAddressOnlyInfo(result_offset, op.operand.typeEnum(), op.operand.size_in_bits.value, op.result);
 
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -13966,7 +13966,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// Process arguments (if any)
 		for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
 			const auto& arg = op.arguments[i];
-			Type argType = arg.type;
+			Type argType = arg.typeEnum();
 
 			// Determine if this is a floating-point argument
 			bool is_float_arg = is_floating_point_type(argType);

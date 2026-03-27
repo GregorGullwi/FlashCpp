@@ -405,7 +405,7 @@
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
 				.lhs = makeTypedValue(condition_type, SizeInBits{static_cast<int>(condition_size)}, toIrValue(condition_result.value)),
-				.rhs = makeTypedValue(case_value_result.type, case_value_result.size_in_bits, toIrValue(case_value_result.value)),
+				.rhs = makeTypedValue(case_value_result.typeEnum(), case_value_result.size_in_bits, toIrValue(case_value_result.value)),
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));

@@ -257,7 +257,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
 	TypedValue result;
-	result.type = Type::Struct;
+	result.setType(Type::Struct);
 	result.ir_type = IrType::Struct;
 	result.size_in_bits = SizeInBits{static_cast<int>(actual_size_bits)};
 	result.value = IrValue(temp);
@@ -308,7 +308,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
 
 	auto makeReferenceAddressValue = [&](TempVar address_temp) {
-		value.type = argument_result.type;
+		value.setType(argument_result.typeEnum());
 		value.ir_type = argument_result.ir_type;
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 		value.value = address_temp;
@@ -323,7 +323,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		assign_op.rhs = source_value;
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 
-		TempVar addr_var = emitAddressOf(source_value.type, source_value.size_in_bits.value, IrValue(temp_var), token);
+		TempVar addr_var = emitAddressOf(source_value.typeEnum(), source_value.size_in_bits.value, IrValue(temp_var), token);
 		makeReferenceAddressValue(addr_var);
 	};
 
@@ -388,7 +388,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
-				argument_result.type,
+				argument_result.typeEnum(),
 				argument_result.size_in_bits,
 				category);
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
@@ -399,7 +399,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
-				argument_result.type,
+				argument_result.typeEnum(),
 				argument_result.size_in_bits.value,
 				IrValue(arg_temp),
 				token);
@@ -879,9 +879,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Defensive: sema source type should match the expression's runtime type.
 			// Exception: sema may annotate as Type::Enum while codegen resolves enum
 			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
-			if (from_t != expr.type) {
+			if (from_t != expr.typeEnum()) {
 				if (from_t == Type::Enum)
-					from_t = expr.type;
+					from_t = expr.typeEnum();
 				else
 					throw InternalError("sema annotation source type does not match expr.type");
 			}
@@ -935,10 +935,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type) &&
-						rhsExprResult.type != gsi.type && gsi.type != Type::Void) {
-						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.type) && is_standard_arithmetic_type(gsi.type))
-							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.type)) + " -> " + std::string(getTypeName(gsi.type)) + ")");
-						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.type, gsi.type, binaryOperatorNode.get_token());
+						rhsExprResult.typeEnum() != gsi.type && gsi.type != Type::Void) {
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(gsi.type))
+							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.type)) + ")");
+						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.typeEnum(), gsi.type, binaryOperatorNode.get_token());
 					}
 
 					// Materialize the final assigned value into a stack temp before GlobalStore.
@@ -1020,21 +1020,21 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Phase 15: prefer sema annotation; log warning on fallback.
 					if (is_shift_op) {
 						// Reject float RHS before promotion to avoid unnecessary conversion work.
-						if (is_floating_point_type(rhs_result.type))
+						if (is_floating_point_type(rhs_result.typeEnum()))
 							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
-						const Type promoted_rhs = promote_integer_type(rhs_result.type);
-						if (rhs_result.type != promoted_rhs) {
+						const Type promoted_rhs = promote_integer_type(rhs_result.typeEnum());
+						if (rhs_result.typeEnum() != promoted_rhs) {
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
-								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type))
-								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
-								rhs_result = generateTypeConversion(rhs_result, rhs_result.type, promoted_rhs, binaryOperatorNode.get_token());
+								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.typeEnum()))
+								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
+								rhs_result = generateTypeConversion(rhs_result, rhs_result.typeEnum(), promoted_rhs, binaryOperatorNode.get_token());
 							}
 						}
-					} else if (rhs_result.type != commonType) {
+					} else if (rhs_result.typeEnum() != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
-							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.type) && is_standard_arithmetic_type(commonType))
-							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.type)) + " -> " + std::string(getTypeName(commonType)) + ")");
-							rhs_result = generateTypeConversion(rhs_result, rhs_result.type, commonType, binaryOperatorNode.get_token());
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.typeEnum()) && is_standard_arithmetic_type(commonType))
+							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(commonType)) + ")");
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.typeEnum(), commonType, binaryOperatorNode.get_token());
 						}
 					}
 
@@ -1175,8 +1175,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Get the types and sizes of the operands
-		Type lhsType = lhsExprResult.type;
-		Type rhsType = rhsExprResult.type;
+		Type lhsType = lhsExprResult.typeEnum();
+		Type rhsType = rhsExprResult.typeEnum();
 		int lhsSize = lhsExprResult.size_in_bits.value;
 		int rhsSize = rhsExprResult.size_in_bits.value;
 
@@ -1387,7 +1387,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
-							this_arg.type = lhsType;
+							this_arg.setType(lhsType);
 							this_arg.ir_type = toIrType(lhsType);
 							this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
@@ -1908,7 +1908,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Add 'this' pointer as first argument
 				TypedValue this_arg;
-				this_arg.type = lhsType;
+				this_arg.setType(lhsType);
 				this_arg.ir_type = toIrType(lhsType);
 				this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 				this_arg.value = lhs_addr;
@@ -2095,7 +2095,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Add the LHS object as the first argument (this pointer)
 							// For member functions, the this pointer is passed by name or temp var
 							TypedValue lhs_arg;
-							lhs_arg.type = lhsType;
+							lhs_arg.setType(lhsType);
 							lhs_arg.ir_type = toIrType(lhsType);
 							lhs_arg.size_in_bits = SizeInBits{lhsSize};
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
@@ -3283,7 +3283,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar current_offset = var_counter.next();
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
-			load_offset.pointer.type = Type::UnsignedInt;  // Reading a 32-bit unsigned offset
+			load_offset.pointer.setType(Type::UnsignedInt);  // Reading a 32-bit unsigned offset
 			load_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
 			load_offset.pointer.ir_type = IrType::Integer;
 			load_offset.pointer.size_in_bits = SizeInBits{32};  // gp_offset/fp_offset is 32 bits
@@ -3373,7 +3373,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar reg_save_area_ptr = var_counter.next();
 			DereferenceOp load_reg_save_ptr;
 			load_reg_save_ptr.result = reg_save_area_ptr;
-			load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
+			load_reg_save_ptr.pointer.setType(Type::UnsignedLongLong);
 			load_reg_save_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 			load_reg_save_ptr.pointer.ir_type = IrType::Integer;
 			load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
@@ -3433,7 +3433,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 
 			DereferenceStoreOp store_offset;
-			store_offset.pointer.type = Type::UnsignedInt;
+			store_offset.pointer.setType(Type::UnsignedInt);
 			store_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
 			store_offset.pointer.ir_type = IrType::Integer;
 			store_offset.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
@@ -3487,7 +3487,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar overflow_ptr = var_counter.next();
 			DereferenceOp load_overflow_ptr;
 			load_overflow_ptr.result = overflow_ptr;
-			load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
+			load_overflow_ptr.pointer.setType(Type::UnsignedLongLong);
 			load_overflow_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 			load_overflow_ptr.pointer.ir_type = IrType::Integer;
 			load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
@@ -3525,7 +3525,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			// Store updated overflow_arg_area back to structure
 			DereferenceStoreOp store_overflow;
-			store_overflow.pointer.type = Type::UnsignedLongLong;
+			store_overflow.pointer.setType(Type::UnsignedLongLong);
 			store_overflow.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 			store_overflow.pointer.ir_type = IrType::Integer;
 			store_overflow.pointer.size_in_bits = SizeInBits{64};
@@ -3564,7 +3564,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar current_offset = var_counter.next();
 				DereferenceOp load_offset;
 				load_offset.result = current_offset;
-				load_offset.pointer.type = Type::UnsignedInt;
+				load_offset.pointer.setType(Type::UnsignedInt);
 				load_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
 				load_offset.pointer.ir_type = IrType::Integer;
 				load_offset.pointer.size_in_bits = SizeInBits{32};
@@ -3648,7 +3648,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar reg_save_area_ptr = var_counter.next();
 				DereferenceOp load_reg_save_ptr;
 				load_reg_save_ptr.result = reg_save_area_ptr;
-				load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
+				load_reg_save_ptr.pointer.setType(Type::UnsignedLongLong);
 				load_reg_save_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 				load_reg_save_ptr.pointer.ir_type = IrType::Integer;
 				load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};
@@ -3705,7 +3705,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_off), functionCallNode.called_from()));
 
 				DereferenceStoreOp store_offset;
-				store_offset.pointer.type = Type::UnsignedInt;
+				store_offset.pointer.setType(Type::UnsignedInt);
 				store_offset.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedInt, {});
 				store_offset.pointer.ir_type = IrType::Integer;
 				store_offset.pointer.size_in_bits = SizeInBits{64};
@@ -3758,7 +3758,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar overflow_ptr = var_counter.next();
 				DereferenceOp load_overflow_ptr;
 				load_overflow_ptr.result = overflow_ptr;
-				load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
+				load_overflow_ptr.pointer.setType(Type::UnsignedLongLong);
 				load_overflow_ptr.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 				load_overflow_ptr.pointer.ir_type = IrType::Integer;
 				load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
@@ -3794,7 +3794,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
 
 				DereferenceStoreOp store_overflow;
-				store_overflow.pointer.type = Type::UnsignedLongLong;
+				store_overflow.pointer.setType(Type::UnsignedLongLong);
 				store_overflow.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 				store_overflow.pointer.ir_type = IrType::Integer;
 				store_overflow.pointer.size_in_bits = SizeInBits{64};
@@ -3837,7 +3837,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					TempVar struct_ptr = var_counter.next();
 					DereferenceOp deref_ptr_op;
 					deref_ptr_op.result = struct_ptr;
-					deref_ptr_op.pointer.type = Type::UnsignedLongLong;
+					deref_ptr_op.pointer.setType(Type::UnsignedLongLong);
 					deref_ptr_op.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::UnsignedLongLong, {});
 					deref_ptr_op.pointer.ir_type = IrType::Integer;
 					deref_ptr_op.pointer.size_in_bits = SizeInBits{64};
@@ -4235,7 +4235,7 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.typeEnum();
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
@@ -4310,7 +4310,7 @@ const Token& token) {
 			return;
 		}
 
-		if (lhs_operands.type != Type::Struct || rhs_operands.type != Type::Struct) {
+		if (lhs_operands.typeEnum() != Type::Struct || rhs_operands.typeEnum() != Type::Struct) {
 			return;
 		}
 
@@ -4357,14 +4357,14 @@ const Token& token) {
 			// Build TypedValue for value with LHS type/size but RHS value
 			// This is important: the size must match the array element type
 			TypedValue value_tv;
-			value_tv.type = lhs_operands.type;
+			value_tv.setType(lhs_operands.typeEnum());
 			value_tv.ir_type = lhs_operands.effectiveIrType();
 			value_tv.size_in_bits = lhs_operands.size_in_bits;
 			value_tv.value = toIrValue(rhs_operands.value);
 
 			// Emit the store using helper
 			emitArrayStore(
-				lhs_operands.type,                 // element_type
+				lhs_operands.typeEnum(),             // element_type
 				lhs_operands.size_in_bits.value,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
@@ -4396,7 +4396,7 @@ const Token& token) {
 			// Build TypedValue with LHS type/size but RHS value
 			// This is important: the size must match the member being stored to, not the RHS
 			TypedValue value_tv;
-			value_tv.type = lhs_operands.type;
+			value_tv.setType(lhs_operands.typeEnum());
 			value_tv.ir_type = lhs_operands.effectiveIrType();
 			value_tv.size_in_bits = SizeInBits{static_cast<int>(lhs_size)};
 			value_tv.value = toIrValue(rhs_operands.value);
@@ -4478,7 +4478,7 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.type;
+	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.typeEnum();
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
@@ -4620,7 +4620,7 @@ std::string_view op) {
 		// Create ArrayAccessOp to load current value
 		ArrayAccessOp load_op;
 		load_op.result = current_value_temp;
-		load_op.element_type_index = TypeIndex::fromTypeAndIndex(lhs_operands.type, lhs_operands.type_index);
+		load_op.element_type_index = TypeIndex::fromTypeAndIndex(lhs_operands.typeEnum(), lhs_operands.type_index);
 		load_op.element_size_in_bits = lhs_operands.size_in_bits.value;
 		load_op.array = lv_info.base;
 		load_op.index = index_tv;
@@ -4634,7 +4634,7 @@ std::string_view op) {
 
 		// Create the binary operation
 		BinaryOp bin_op;
-		bin_op.lhs.setType(lhs_operands.type);
+		bin_op.lhs.setType(lhs_operands.typeEnum());
 		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = current_value_temp;
@@ -4645,14 +4645,14 @@ std::string_view op) {
 
 		// Finally, store the result back to the array element
 		TypedValue result_tv;
-		result_tv.type = lhs_operands.type;
+		result_tv.setType(lhs_operands.typeEnum());
 		result_tv.ir_type = lhs_operands.effectiveIrType();
 		result_tv.size_in_bits = lhs_operands.size_in_bits;
 		result_tv.value = result_temp;
 
 		// Emit the store using helper
 		emitArrayStore(
-			lhs_operands.type,                 // element_type
+			lhs_operands.typeEnum(),             // element_type
 			lhs_operands.size_in_bits.value,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index
@@ -4677,7 +4677,7 @@ std::string_view op) {
 		// lhs_temp already holds the loaded value (from GlobalLoad in LHS evaluation)
 		TempVar result_temp = var_counter.next();
 		BinaryOp bin_op;
-		bin_op.lhs.setType(lhs_operands.type);
+		bin_op.lhs.setType(lhs_operands.typeEnum());
 		bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 		bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 		bin_op.lhs.value = lhs_temp;
@@ -4739,7 +4739,7 @@ std::string_view op) {
 
 	MemberLoadOp load_op;
 	load_op.result.value = current_value_temp;
-	load_op.result.setType(lhs_operands.type);
+	load_op.result.setType(lhs_operands.typeEnum());
 	load_op.result.ir_type = lhs_operands.effectiveIrType();
 	load_op.result.size_in_bits = lhs_operands.size_in_bits;
 	load_op.object = lv_info.base;
@@ -4758,7 +4758,7 @@ std::string_view op) {
 
 	// Create the binary operation (size_in_bits is already SizeInBits — direct assignment)
 	BinaryOp bin_op;
-	bin_op.lhs.setType(lhs_operands.type);
+	bin_op.lhs.setType(lhs_operands.typeEnum());
 	bin_op.lhs.ir_type = lhs_operands.effectiveIrType();
 	bin_op.lhs.size_in_bits = lhs_operands.size_in_bits;
 	bin_op.lhs.value = current_value_temp;
@@ -4769,7 +4769,7 @@ std::string_view op) {
 
 	// Finally, store the result back to the lvalue
 	TypedValue result_tv;
-	result_tv.type = lhs_operands.type;
+	result_tv.setType(lhs_operands.typeEnum());
 	result_tv.ir_type = lhs_operands.effectiveIrType();
 	result_tv.size_in_bits = lhs_operands.size_in_bits;
 	result_tv.value = result_temp;

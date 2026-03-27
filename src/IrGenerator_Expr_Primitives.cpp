@@ -178,7 +178,7 @@
 				AddressOfOp addr_op;
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
-					.type = object_result.type,
+					.type = object_result.typeEnum(),
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = PointerDepth{},

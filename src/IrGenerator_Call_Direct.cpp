@@ -113,7 +113,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
-			irOperands.emplace_back(result.type);
+			irOperands.emplace_back(result.typeEnum());
 			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
@@ -988,7 +988,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
-				if (agg.type != Type::Void) return agg;
+				if (agg.typeEnum() != Type::Void) return agg;
 			}
 
 			// Scalar integer / bool / enum

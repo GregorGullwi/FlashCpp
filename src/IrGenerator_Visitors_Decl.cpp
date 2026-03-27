@@ -475,7 +475,7 @@
 								call_op.result = call_result;
 
 								TypedValue lhs_arg;
-								lhs_arg.type = Type::Struct;
+								lhs_arg.setType(Type::Struct);
 								lhs_arg.ir_type = IrType::Struct;
 								lhs_arg.size_in_bits = SizeInBits{64};
 								lhs_arg.value = lhs_val;
@@ -483,7 +483,7 @@
 								call_op.args.push_back(std::move(lhs_arg));
 
 								TypedValue rhs_arg;
-								rhs_arg.type = Type::Struct;
+								rhs_arg.setType(Type::Struct);
 								rhs_arg.ir_type = IrType::Struct;
 								rhs_arg.size_in_bits = SizeInBits{64};
 								rhs_arg.value = rhs_val;
@@ -676,7 +676,7 @@
 				// Pass 'this' as first arg
 				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
 				TypedValue this_arg;
-				this_arg.type = Type::Struct;
+				this_arg.setType(Type::Struct);
 				this_arg.ir_type = IrType::Struct;
 				this_arg.size_in_bits = SizeInBits{64};
 				this_arg.value = this_handle;
@@ -695,7 +695,7 @@
 					other_handle = StringTable::getOrInternStringHandle("other");
 				}
 				TypedValue other_arg;
-				other_arg.type = Type::Struct;
+				other_arg.setType(Type::Struct);
 				other_arg.ir_type = IrType::Struct;
 				other_arg.size_in_bits = SizeInBits{64};
 				other_arg.value = other_handle;
@@ -844,7 +844,7 @@
 						deref_operands.emplace_back(this_deref);  // result variable
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
-						deref_op.pointer.type = Type::Struct;
+						deref_op.pointer.setType(Type::Struct);
 						deref_op.pointer.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, {});
 						deref_op.pointer.ir_type = IrType::Struct;
 						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
@@ -1607,7 +1607,7 @@
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
-							other_arg.type = Type::Struct;  // Parameter type (struct reference)
+							other_arg.setType(Type::Struct);  // Parameter type (struct reference)
 							other_arg.ir_type = IrType::Struct;
 							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8)};
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
@@ -1645,7 +1645,7 @@
 									ctor_op.base_class_offset = static_cast<int>(member.offset);
 
 									TypedValue other_arg;
-									other_arg.type = Type::Struct;
+									other_arg.setType(Type::Struct);
 									other_arg.ir_type = IrType::Struct;
 									other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									other_arg.value = member_source_addr;

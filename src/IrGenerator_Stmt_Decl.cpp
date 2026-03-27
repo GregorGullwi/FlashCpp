@@ -184,7 +184,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		return *same_type_ctor_preference;
 	}
 
-	return init_operands.type == Type::Struct
+	return init_operands.typeEnum() == Type::Struct
 		&& init_operands.type_index.is_valid()
 		&& init_operands.type_index == target_type.type_index()
 		&& isExprResultXValue(init_operands);
@@ -1014,7 +1014,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		std::vector<IrOperand> operands;
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
 			operands.reserve(operands.size() + 4);
-			operands.emplace_back(result.type);
+			operands.emplace_back(result.typeEnum());
 			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
 			operands.emplace_back(static_cast<int>(result.storage));
@@ -1526,7 +1526,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
-						Type init_type = init_operands.type;
+						Type init_type = init_operands.typeEnum();
 						TypeIndex init_type_index = init_operands.type_index;
 						const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
@@ -1620,8 +1620,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									if (from_t != Type::Struct && to_t != Type::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
-										if (from_t == Type::Enum && from_t != init_operands.type)
-											from_t = init_operands.type;
+										if (from_t == Type::Enum && from_t != init_operands.typeEnum())
+											from_t = init_operands.typeEnum();
 										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
 										sema_applied = true;
 									}
@@ -2066,7 +2066,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
 							{
-								Type init_type = init_operands.type;
+								Type init_type = init_operands.typeEnum();
 								TypeIndex init_type_index {};
 								if (init_operands.type_index.is_valid()) {
 									init_type_index = init_operands.type_index;
@@ -2439,7 +2439,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		ExprResult init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
 
 		// Extract initializer type information
-		Type init_type = init_operands.type;
+		Type init_type = init_operands.typeEnum();
 		int init_size = init_operands.size_in_bits.value;
 		TypeIndex init_type_index {};
 

@@ -98,6 +98,12 @@ struct ExprResult {
 			return ir_type;
 		return toIrType(type);
 	}
+
+	TypeCategory category() const {
+		const TypeCategory category_from_index = type_index.category();
+		return (category_from_index != TypeCategory::Invalid) ? category_from_index : typeToCategory(type);
+	}
+	Type typeEnum() const { return categoryToType(category()); }
 };
 
 inline ExprResult makeExprResultImpl(
@@ -112,7 +118,7 @@ inline ExprResult makeExprResultImpl(
 		.type = type,
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
-		.type_index = type_index,
+		.type_index = TypeIndex::fromTypeAndIndex(type, type_index),
 		.pointer_depth = pointer_depth,
 		.ir_type = toIrType(type),
 		.storage = storage

@@ -1009,8 +1009,8 @@
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
-			load_op.lhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, source_ptr);
-			load_op.rhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, var_name_handle);
+			load_op.lhs = makeTypedValue(expr_operands.typeEnum(), expr_operands.size_in_bits, source_ptr);
+			load_op.rhs = makeTypedValue(expr_operands.typeEnum(), expr_operands.size_in_bits, var_name_handle);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};

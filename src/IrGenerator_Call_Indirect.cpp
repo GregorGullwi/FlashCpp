@@ -419,7 +419,7 @@
 					std::vector<TypedValue> arguments;
 					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 					});
 
 					IndirectCallOp op{
@@ -479,7 +479,7 @@
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 										ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-										arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+										arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 									});
 
 									IndirectCallOp op{
@@ -597,7 +597,7 @@
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size,
 					memberFunctionCallNode.called_from());
-				if (agg.type != Type::Void) return agg;
+				if (agg.typeEnum() != Type::Void) return agg;
 			}
 			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
@@ -819,7 +819,7 @@
 						std::vector<TypedValue> arguments;
 						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 							ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-							arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+							arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 						});
 
 						IndirectCallOp op{
