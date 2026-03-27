@@ -90,10 +90,10 @@
 				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
 
 				// Get struct type information
-				Type return_type = currentFunctionReturnType();
+				TypeCategory return_category = current_function_return_type_index_.category();
 				int return_size = current_function_return_size_;
 
-				if (return_type != Type::Struct) {
+				if (return_category != TypeCategory::Struct) {
 					FLASH_LOG(Codegen, Error, "InitializerListNode in return statement for non-struct type");
 					return;
 				}
@@ -166,7 +166,7 @@
 				emitDestructorsForNonLocalExit(0);
 
 				// Now return the temporary variable
-				emitReturn(temp_var, return_type, return_size, node.return_token());
+				emitReturn(temp_var, categoryToType(return_category), return_size, node.return_token());
 				return;
 			}
 
@@ -213,11 +213,11 @@
 
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			{
-				Type expr_type = operands.type;
+				TypeCategory expr_category = operands.category();
 
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
-				if (expr_type == Type::Void && current_function_return_type_index_.category() == TypeCategory::Void) {
+				if (expr_category == TypeCategory::Void && current_function_return_type_index_.category() == TypeCategory::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
 					emitDestructorsForNonLocalExit(0);
@@ -233,11 +233,13 @@
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
-				Type expr_type = operands.type;
+				Type expr_type = operands.typeEnum();
+				TypeCategory expr_category = operands.category();
 				int expr_size = operands.size_in_bits.value;
 
 				// Get the current function's return type
-				Type return_type = currentFunctionReturnType();
+				TypeCategory return_category = current_function_return_type_index_.category();
+				Type return_type = categoryToType(return_category);
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
 					return_type,
@@ -253,7 +255,8 @@
 				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 						operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
 					operands = *materialized;
-					expr_type = operands.type;
+					expr_type = operands.typeEnum();
+					expr_category = operands.category();
 					expr_size = operands.size_in_bits.value;
 					sema_applied_conversion = true;
 				}
@@ -272,7 +275,7 @@
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
-								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
@@ -305,13 +308,13 @@
 				if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 					// Check for user-defined conversion operator (fallback when sema did not run)
 					// If expr is a struct type with a conversion operator to return_type, call it
-					if (expr_type == Type::Struct) {
+					if (expr_category == TypeCategory::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
 						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
