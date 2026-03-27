@@ -382,7 +382,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			addr_member_op.result = address_temp;
 			addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
 			addr_member_op.member_offset = lvalue_info->offset;
-			addr_member_op.member_type = argument_result.type;
+			addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(argument_result.type, argument_result.type_index);
 			addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
 

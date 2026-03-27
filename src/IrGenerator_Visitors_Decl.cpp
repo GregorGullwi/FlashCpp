@@ -1633,7 +1633,7 @@
 									addr_member_op.result = member_source_addr;
 									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
 									addr_member_op.member_offset = static_cast<int>(member.offset);
-									addr_member_op.member_type = member.memberType();
+									addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 

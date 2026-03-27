@@ -13378,7 +13378,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 		// Record that the stack slot already holds an address so later consumers
 		// (notably by-address constructor-call lowering) load it with MOV instead
 		// of taking the address of the spill slot with LEA.
-		setAddressOnlyInfo(result_offset, op.member_type, op.member_size_in_bits, op.result);
+		setAddressOnlyInfo(result_offset, op.memberType(), op.member_size_in_bits, op.result);
 
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
@@ -13459,7 +13459,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 
 				// Load index into RCX with proper size and sign extension
-				bool is_signed = isSignedType(arr_idx.index_type);
+				bool is_signed = isSignedType(arr_idx.indexType());
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
@@ -13482,7 +13482,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 				int64_t index_offset = it->second.offset;
 
 				// Load index into RCX with proper size and sign extension
-				bool is_signed = isSignedType(arr_idx.index_type);
+				bool is_signed = isSignedType(arr_idx.indexType());
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}

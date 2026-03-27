@@ -618,7 +618,8 @@ struct AddressOfMemberOp {
 	TempVar result;									// Result temp var (pointer to member)
 	StringHandle base_object;						// Base object (variable name)
 	int member_offset = 0;							// Byte offset of member in struct
-	Type member_type;								// Type of the member
+	TypeIndex member_type_index {};					// Type of the member (TypeCategory embedded)
+	Type memberType() const { return categoryToType(member_type_index.category()); }
 	int member_size_in_bits = 0;					// Size of member
 };
 
@@ -633,7 +634,8 @@ struct ComputeAddressOp {
 	struct ArrayIndex {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
 		SizeInBits element_size_bits;                // Size of array element
-		Type index_type;                             // Type of the index (for proper sign extension)
+		TypeIndex index_type_index {};               // Type of the index (for proper sign extension; TypeCategory embedded)
+		Type indexType() const { return categoryToType(index_type_index.category()); }
 		SizeInBits index_size_bits;                  // Size of the index in bits
 	};
 	std::vector<ArrayIndex> array_indices;
@@ -641,7 +643,8 @@ struct ComputeAddressOp {
 	// Member offset accumulation (for chained member access)
 	int total_member_offset = 0;                     // Sum of all member offsets
 	
-	Type result_type = Type::Invalid;                // Type of final address
+	TypeIndex result_type_index {};                  // Type of final address (TypeCategory embedded)
+	Type resultType() const { return categoryToType(result_type_index.category()); }
 	SizeInBits result_size_bits;                            // Size in bits
 };
 
@@ -680,7 +683,8 @@ struct DestructorCallOp {
 // Virtual function call through vtable
 struct VirtualCallOp {
 	TypedValue result;                               // Return value (type, size, and result temp var)
-	Type object_type;                                // Type of the object
+	TypeIndex object_type_index {};                  // Type of the object (TypeCategory embedded)
+	Type objectType() const { return categoryToType(object_type_index.category()); }
 	int object_size;                                 // Size of object in bits
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this')
 	int vtable_index;                                // Index into vtable

@@ -1050,7 +1050,7 @@
 			populateReferenceReturnInfo(vcall_op, return_type);
 			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
-			vcall_op.object_type = object_type.type();
+			vcall_op.object_type_index = TypeIndex::fromTypeAndIndex(object_type.type(), object_type.type_index());
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar

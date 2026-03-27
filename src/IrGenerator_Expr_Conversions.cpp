@@ -254,6 +254,9 @@
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
 					result.final_type = binding_info.type;
+					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
+					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
+					result.final_type_index = TypeIndex::fromTypeAndIndex(binding_info.type, {});
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
@@ -272,6 +275,7 @@
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
 			result.final_type = type_node->type();
+			result.final_type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
 			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
@@ -326,6 +330,7 @@
 
 			// Update type to member type
 			base_components->final_type = result.member->memberType();
+			base_components->final_type_index = TypeIndex::fromTypeAndIndex(result.member->memberType(), result.member->type_index);
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
@@ -350,6 +355,7 @@
 
 
 			Type element_type = array_operands.type;
+			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(element_type, array_operands.type_index);
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -359,6 +365,7 @@
 				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					element_type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_node.type_index());
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
@@ -407,7 +414,7 @@
 			arr_idx.element_size_bits = SizeInBits{element_size_bits};
 
 			// Capture index type information for proper sign extension
-			arr_idx.index_type = index_operands.type;
+			arr_idx.index_type_index = TypeIndex::fromTypeAndIndex(index_operands.type, index_operands.type_index);
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
@@ -423,6 +430,7 @@
 
 			base_components->array_indices.push_back(arr_idx);
 			base_components->final_type = element_type;
+			base_components->final_type_index = element_type_index;
 			base_components->final_size_bits = SizeInBits{element_size_bits};
 			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
 
@@ -648,7 +656,7 @@
 				compute_addr_op.base = addr_components->base;
 				compute_addr_op.array_indices = std::move(addr_components->array_indices);
 				compute_addr_op.total_member_offset = addr_components->total_member_offset;
-				compute_addr_op.result_type = addr_components->final_type;
+				compute_addr_op.result_type_index = addr_components->final_type_index;
 				compute_addr_op.result_size_bits = addr_components->final_size_bits;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
@@ -812,7 +820,7 @@
 									addr_member_op.result = result_var;
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
-									addr_member_op.member_type = member_result.member->memberType();
+									addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(member_result.member->memberType(), member_result.member->type_index);
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));

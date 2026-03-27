@@ -523,7 +523,7 @@ public:
 			assert(hasTypedPayload() && "AddressOfMember instruction must use typed payload");
 			const auto& op = getTypedPayload<AddressOfMemberOp>();
 			oss << '%' << op.result.var_number << " = addressof_member ";
-			oss << "[" << static_cast<int>(op.member_type) << "]" << op.member_size_in_bits << " ";
+			oss << "[" << static_cast<int>(op.memberType()) << "]" << op.member_size_in_bits << " ";
 			oss << '%' << StringTable::getStringView(op.base_object);
 			oss << " (offset: " << op.member_offset << ")";
 		}
@@ -534,7 +534,7 @@ public:
 			assert(hasTypedPayload() && "ComputeAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ComputeAddressOp>();
 			oss << '%' << op.result.var_number << " = compute_address ";
-			oss << "[" << static_cast<int>(op.result_type) << "]" << op.result_size_bits << " ";
+			oss << "[" << static_cast<int>(op.resultType()) << "]" << op.result_size_bits << " ";
 
 			// Print base
 			if (const auto* string = std::get_if<StringHandle>(&op.base)) {
@@ -554,7 +554,7 @@ public:
 				} else {
 					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
 				}
-				oss << " [" << static_cast<int>(arr_idx.index_type) << "]" << arr_idx.index_size_bits;
+				oss << " [" << static_cast<int>(arr_idx.indexType()) << "]" << arr_idx.index_size_bits;
 				oss << " (elem_size: " << arr_idx.element_size_bits << " bits)";
 			}
 
@@ -767,7 +767,7 @@ public:
 			oss << '%' << std::get<TempVar>(op.result.value).var_number << " = virtual_call ";
 
 			// Object type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.object_type))) {
+			if (const TypeInfo* type_info = findNativeType(op.object_type_index.category())) {
 				oss << type_info->name();
 			}
 			oss << op.object_size << " %";
@@ -1474,4 +1474,3 @@ private:
 
 // Include helper functions now that all types are defined
 #include "IROperandHelpers.h"
-
