@@ -867,7 +867,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Returns true and applies the conversion when a non-struct sema slot exists for the node.
 		// When expected_target is valid (not Invalid), the annotation's target type must match; otherwise
 		// the helper returns false so the caller's fallback policy runs instead.
-		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node, Type expected_target = Type::Invalid) -> bool {
+		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node, TypeCategory expected_cat = TypeCategory::Invalid) -> bool {
 			if (!sema_ || !node.is<ExpressionNode>()) return false;
 			const void* key = &node.as<ExpressionNode>();
 			const auto slot = sema_->getSlot(key);
@@ -876,7 +876,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
 			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return false;
-			TypeCategory expected_cat = typeToCategory(expected_target);
 			if (expected_cat != TypeCategory::Invalid && typeToCategory(to_t) != expected_cat) return false;
 			// Defensive: sema source type should match the expression's runtime type.
 			// Exception: sema may annotate as Enum while codegen resolves enum
@@ -936,7 +935,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 					// Phase 15: sema should annotate global/static assignment conversions.
-					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.bindingType()) &&
+					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), typeToCategory(gsi.bindingType())) &&
 						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
 						if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsExprResult.typeEnum())) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())))
 							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
@@ -1001,20 +1000,20 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// NOT usual arithmetic conversions. The result type is the promoted LHS type.
 					// All other operators use usual arithmetic conversions per [expr.ass]/7.
 					const bool is_shift_op = (op == "<<=" || op == ">>=");
-					const Type commonType = is_shift_op
-						? categoryToType(promote_integer_type(typeToCategory(gsi.bindingType())))
-						: categoryToType(get_common_type(typeToCategory(gsi.bindingType()), rhs_result.category()));
+					const TypeCategory commonType = is_shift_op
+						? promote_integer_type(typeToCategory(gsi.bindingType()))
+						: get_common_type(typeToCategory(gsi.bindingType()), rhs_result.category());
 
 					// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
 					if (is_shift_op && is_floating_point_type(typeToCategory(gsi.bindingType())))
 						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 
 					ExprResult lhs_operand = makeExprResult(gsi.bindingType(), gsi.size_in_bits, IrOperand{loaded}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-					if (gsi.bindingType() != commonType) {
+					if (typeToCategory(gsi.bindingType()) != commonType) {
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
-							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())) && is_standard_arithmetic_type(typeToCategory(commonType)))
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())) && is_standard_arithmetic_type(commonType))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.bindingType())) + " -> " + std::string(getTypeName(commonType)) + ")");
-							lhs_operand = generateTypeConversion(lhs_operand, typeToCategory(gsi.bindingType()), typeToCategory(commonType), binaryOperatorNode.get_token());
+							lhs_operand = generateTypeConversion(lhs_operand, typeToCategory(gsi.bindingType()), commonType, binaryOperatorNode.get_token());
 						}
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -1032,17 +1031,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 								rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), typeToCategory(promoted_rhs), binaryOperatorNode.get_token());
 							}
 						}
-					} else if (rhs_result.typeEnum() != commonType) {
+					} else if (rhs_result.category() != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
-							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())) && is_standard_arithmetic_type(typeToCategory(commonType)))
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())) && is_standard_arithmetic_type(commonType))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(commonType)) + ")");
-							rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), typeToCategory(commonType), binaryOperatorNode.get_token());
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), commonType, binaryOperatorNode.get_token());
 						}
 					}
 
 					// Select the correct opcode for the common type.
 					IrOpcode arith_opcode = *base_opcode;
-					if (is_floating_point_type(typeToCategory(commonType))) {
+					if (is_floating_point_type(commonType)) {
 						if (arith_opcode == IrOpcode::Modulo)
 							throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
 						if (arith_opcode == IrOpcode::BitwiseAnd || arith_opcode == IrOpcode::BitwiseOr || arith_opcode == IrOpcode::BitwiseXor)
@@ -1055,7 +1054,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 						else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
 						else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
-					} else if (is_unsigned_integer_type(typeToCategory(commonType))) {
+					} else if (is_unsigned_integer_type(commonType)) {
 						if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::UnsignedDivide;
 						else if (arith_opcode == IrOpcode::Modulo) arith_opcode = IrOpcode::UnsignedModulo;
 						else if (arith_opcode == IrOpcode::ShiftRight) arith_opcode = IrOpcode::UnsignedShiftRight;
@@ -1072,15 +1071,15 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 					// Convert result back to global's type if needed
 					ExprResult op_result = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-					if (commonType != gsi.bindingType()) {
+					if (commonType != typeToCategory(gsi.bindingType())) {
 						// Phase 17: verify sema annotated the back-conversion.
 						if (sema_ && sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(typeToCategory(commonType)) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType()))) {
+							is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType()))) {
 							auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 							if (!back_conv.has_value())
 								throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 						}
-						op_result = generateTypeConversion(op_result, typeToCategory(commonType), typeToCategory(gsi.bindingType()), binaryOperatorNode.get_token());
+						op_result = generateTypeConversion(op_result, commonType, typeToCategory(gsi.bindingType()), binaryOperatorNode.get_token());
 					}
 
 					// Materialize the conversion result into a stack-flushed temporary
@@ -2469,7 +2468,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// Convert RHS to LHS type if they differ — lhsType is the ground truth for the destination.
 			// Phase 15: prefer sema annotation; log warning on fallback for arithmetic types.
 			if (rhsType != lhsType) {
-				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
+				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsCat)) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)) && is_standard_arithmetic_type(typeToCategory(lhsType)))
 						throw InternalError(std::string("Phase 15: sema missed local assignment (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(lhsType), binaryOperatorNode.get_token());
@@ -2517,9 +2516,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 		// NOT usual arithmetic conversions.  The result type is the promoted LHS type.
 		const bool is_shift_op = (op == "<<" || op == ">>" || op == "<<=" || op == ">>=");
-		Type commonType = is_shift_op
-			? categoryToType(promote_integer_type(lhsExprResult.category()))   // shift: result type = promoted LHS
-			: categoryToType(get_common_type(lhsExprResult.category(), rhsExprResult.category()));
+		TypeCategory commonType = is_shift_op
+			? promote_integer_type(lhsExprResult.category())   // shift: result type = promoted LHS
+			: get_common_type(lhsExprResult.category(), rhsExprResult.category());
 
 		// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 		const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
@@ -2527,11 +2526,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Phase 15: generate conversions — prefer sema annotations; log warning on fallback.
 		// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 		// guard, expected-target verification, enum type mismatch handling, and conversion.
-		if (lhsType != commonType) {
+		if (lhsCat != commonType) {
 			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(lhsType)) && is_standard_arithmetic_type(typeToCategory(commonType)))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(lhsType)) && is_standard_arithmetic_type(commonType))
 					throw InternalError(std::string("Phase 15: sema missed binary LHS (") + std::string(getTypeName(lhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
-				lhsExprResult = generateTypeConversion(lhsExprResult, typeToCategory(lhsType), typeToCategory(commonType), binaryOperatorNode.get_token());
+				lhsExprResult = generateTypeConversion(lhsExprResult, typeToCategory(lhsType), commonType, binaryOperatorNode.get_token());
 			}
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -2547,11 +2546,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(promoted_rhs), binaryOperatorNode.get_token());
 				}
 			}
-		} else if (rhsType != commonType) {
+		} else if (rhsCat != commonType) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)) && is_standard_arithmetic_type(typeToCategory(commonType)))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)) && is_standard_arithmetic_type(commonType))
 					throw InternalError(std::string("Phase 15: sema missed binary RHS (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
-				rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(commonType), binaryOperatorNode.get_token());
+				rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), commonType, binaryOperatorNode.get_token());
 			}
 		}
 
@@ -2560,11 +2559,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// promoted/converted for the operation, the compound-assign opcodes would store the
 		// result into the temporary (losing the original variable binding). Fix: perform the
 		// binary operation explicitly, convert the result back to LHS type, and store it.
-		if (isCompoundAssignmentOp(op) && lhsType != commonType) {
+		if (isCompoundAssignmentOp(op) && lhsCat != commonType) {
 			if (const auto base_opcode = compoundOpToBaseOpcode(op); base_opcode.has_value()) {
 				IrOpcode arith_opcode = *base_opcode;
 				// Upgrade to the correct opcode for the common type.
-				if (is_floating_point_type(typeToCategory(commonType))) {
+				if (is_floating_point_type(commonType)) {
 					// C++20 [expr.mul]/4: % requires integral operands; diagnose ill-formed code.
 					if (arith_opcode == IrOpcode::Modulo)
 						throw CompileError("Operator %= is not defined for floating-point operands (C++20 [expr.mul]/4)");
@@ -2575,7 +2574,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					else if (arith_opcode == IrOpcode::Subtract) arith_opcode = IrOpcode::FloatSubtract;
 					else if (arith_opcode == IrOpcode::Multiply) arith_opcode = IrOpcode::FloatMultiply;
 					else if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::FloatDivide;
-				} else if (is_unsigned_integer_type(typeToCategory(commonType))) {
+				} else if (is_unsigned_integer_type(commonType)) {
 					if (arith_opcode == IrOpcode::Divide) arith_opcode = IrOpcode::UnsignedDivide;
 					else if (arith_opcode == IrOpcode::Modulo) arith_opcode = IrOpcode::UnsignedModulo;
 					else if (arith_opcode == IrOpcode::ShiftRight) arith_opcode = IrOpcode::UnsignedShiftRight;
@@ -2593,13 +2592,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// 2. Convert result back to original LHS type
 				// Phase 17: verify sema annotated the back-conversion (ownership transfer).
 				if (sema_ && sema_normalized_current_function_ &&
-					is_standard_arithmetic_type(typeToCategory(commonType)) && is_standard_arithmetic_type(typeToCategory(lhsType))) {
+					is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(typeToCategory(lhsType))) {
 					auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 					if (!back_conv.has_value())
 						throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 				}
 				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-				ExprResult converted = generateTypeConversion(op_expr, typeToCategory(commonType), typeToCategory(lhsType), binaryOperatorNode.get_token());
+				ExprResult converted = generateTypeConversion(op_expr, commonType, typeToCategory(lhsType), binaryOperatorNode.get_token());
 
 				// 3. Store back to original LHS variable
 				// original_lhs_value was the value of lhsExprResult before type conversion
@@ -2621,7 +2620,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 
 		// Check if we're dealing with floating-point operations
-		bool is_floating_point_op = is_floating_point_type(typeToCategory(commonType));
+		bool is_floating_point_op = is_floating_point_type(commonType);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
@@ -2656,7 +2655,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 		// Division operations (typed)
 		else if (op == "/" && !is_floating_point_op) {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedDivide : IrOpcode::Divide;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedDivide : IrOpcode::Divide;
 
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
@@ -2670,7 +2669,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		else if (op == "%") {
 			if (is_floating_point_op)
 				throw CompileError("Operator % is not defined for floating-point operands (C++20 [expr.mul]/4)");
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedModulo : IrOpcode::Modulo;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedModulo : IrOpcode::Modulo;
 
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
@@ -2682,7 +2681,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 		// Right shift operations (typed)
 		else if (op == ">>") {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedShiftRight : IrOpcode::ShiftRight;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedShiftRight : IrOpcode::ShiftRight;
 
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
@@ -2733,7 +2732,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<" && !is_floating_point_op) {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
 				.rhs = toTypedValue(rhsExprResult),
@@ -2743,7 +2742,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<=" && !is_floating_point_op) {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedLessEqual : IrOpcode::LessEqual;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessEqual : IrOpcode::LessEqual;
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
 				.rhs = toTypedValue(rhsExprResult),
@@ -2753,7 +2752,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">" && !is_floating_point_op) {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
 				.rhs = toTypedValue(rhsExprResult),
@@ -2763,7 +2762,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">=" && !is_floating_point_op) {
-			opcode = is_unsigned_integer_type(typeToCategory(commonType)) ? IrOpcode::UnsignedGreaterEqual : IrOpcode::GreaterEqual;
+			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterEqual : IrOpcode::GreaterEqual;
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsExprResult),
 				.rhs = toTypedValue(rhsExprResult),
@@ -2860,7 +2859,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		else if (op == ">>=") {
 			// For unsigned types, use logical shift right (SHR) instead of arithmetic (SAR).
 			// ShrAssign always emits SAR which sign-extends the MSB — wrong for unsigned.
-			if (is_unsigned_integer_type(typeToCategory(commonType))) {
+			if (is_unsigned_integer_type(commonType)) {
 				// Decompose into: result = lhs >> rhs; store back to lhs
 				TempVar shr_result = var_counter.next();
 				BinaryOp shr_op{
@@ -2879,7 +2878,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				} else {
 					throw InternalError("Compound assignment LHS must be a variable");
 				}
-				assign_op.rhs = { commonType, SizeInBits{get_type_size_bits(commonType)}, shr_result };
+				assign_op.rhs = makeTypedValue(commonType, SizeInBits{get_type_size_bits(commonType)}, shr_result);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			} else {
 				BinaryOp bin_op{
