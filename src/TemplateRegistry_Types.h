@@ -259,20 +259,7 @@ struct TemplateTypeArg {
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
-		: type_index(TypeIndex{0, typeToCategory(type)})
-		, ref_qualifier(ReferenceQualifier::None)
-		, pointer_depth(0)
-		, pointer_cv_qualifiers()
-		, cv_qualifier(CVQualifier::None)
-		, is_array(false)
-		, array_size(std::nullopt)
-		, member_pointer_kind(MemberPointerKind::None)
-		, is_value(true)
-		, value(val)
-		, is_pack(false)
-		, is_dependent(false)
-		, is_template_template_arg(false)
-		, template_name_handle() {}
+		: TemplateTypeArg(val, typeToCategory(type)) {}
 
 	TemplateTypeArg(int64_t val, TypeCategory category)
 		: type_index(TypeIndex{0, category})

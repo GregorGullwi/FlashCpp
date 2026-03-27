@@ -794,7 +794,7 @@ private:
         // Public members are intentional for this lightweight data structure
         struct ConstantValue {
                 int64_t value;
-                TypeCategory type = TypeCategory::Invalid;
+                TypeCategory type;
 
                 Type typeEnum() const noexcept { return categoryToType(type); }
         };
