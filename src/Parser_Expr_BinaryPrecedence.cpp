@@ -562,20 +562,16 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		// Check for 'l' or 'L' suffix (long double)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
-		// Branchless type selection
-		// If is_float: TypeCategory::Float, else if is_long_double: TypeCategory::LongDouble, else TypeCategory::Double
-		typeInfo.type = static_cast<TypeCategory>(
-			static_cast<int>(TypeCategory::Float) * is_float +
-			static_cast<int>(TypeCategory::LongDouble) * is_long_double * (!is_float) +
-			static_cast<int>(TypeCategory::Double) * (!is_float) * (!is_long_double)
-		);
-
-		// Branchless size selection: float=32, double=64, long double=80
-		typeInfo.sizeInBits = static_cast<unsigned char>(
-			32 * is_float +
-			80 * is_long_double * (!is_float) +
-			64 * (!is_float) * (!is_long_double)
-		);
+		if (is_float) {
+			typeInfo.type = TypeCategory::Float;
+			typeInfo.sizeInBits = 32;
+		} else if (is_long_double) {
+			typeInfo.type = TypeCategory::LongDouble;
+			typeInfo.sizeInBits = 80;
+		} else {
+			typeInfo.type = TypeCategory::Double;
+			typeInfo.sizeInBits = 64;
+		}
 
 		typeInfo.typeQualifier = TypeQualifier::None;
 		return typeInfo;
