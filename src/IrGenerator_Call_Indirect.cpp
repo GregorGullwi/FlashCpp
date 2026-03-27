@@ -1500,7 +1500,7 @@
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1538,7 +1538,7 @@
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1620,7 +1620,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 							// Now take the address of the temporary
-							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
+							TempVar addr_var = emitAddressOf(typeToCategory(literal_type), literal_size, IrValue(temp_var));
 
 							// Pass the address
 							call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
@@ -1632,7 +1632,7 @@
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 
-								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+								TempVar addr_var = emitAddressOf(typeToCategory(expr_type), expr_size, IrValue(expr_var));
 
 								call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
 									IrValue(addr_var), ReferenceQualifier::LValueReference));

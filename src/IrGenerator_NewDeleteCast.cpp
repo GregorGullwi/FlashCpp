@@ -27,7 +27,7 @@
 
 			ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 			TypedValue init_value = toTypedValue(init_operands);
-			emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
+			emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, pointer_var, Token());
 		};
 
 		// Check if this is an array allocation (with or without placement)
@@ -158,7 +158,7 @@
 								// Evaluate the initializer expression
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -262,7 +262,7 @@
 
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, element_ptr, Token());
 							}
 						}
 					}

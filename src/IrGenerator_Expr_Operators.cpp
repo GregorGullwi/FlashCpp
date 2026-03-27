@@ -2472,7 +2472,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), lhsType)) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)) && is_standard_arithmetic_type(typeToCategory(lhsType)))
 						throw InternalError(std::string("Phase 15: sema missed local assignment (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
-					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, lhsType, binaryOperatorNode.get_token());
+					rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(lhsType), binaryOperatorNode.get_token());
 				}
 			}
 			// Now both are the same type, create assignment
@@ -2531,7 +2531,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(lhsType)) && is_standard_arithmetic_type(typeToCategory(commonType)))
 					throw InternalError(std::string("Phase 15: sema missed binary LHS (") + std::string(getTypeName(lhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
-				lhsExprResult = generateTypeConversion(lhsExprResult, lhsType, commonType, binaryOperatorNode.get_token());
+				lhsExprResult = generateTypeConversion(lhsExprResult, typeToCategory(lhsType), typeToCategory(commonType), binaryOperatorNode.get_token());
 			}
 		}
 		// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -2544,14 +2544,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)))
 						throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
-					rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, promoted_rhs, binaryOperatorNode.get_token());
+					rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(promoted_rhs), binaryOperatorNode.get_token());
 				}
 			}
 		} else if (rhsType != commonType) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsType)) && is_standard_arithmetic_type(typeToCategory(commonType)))
 					throw InternalError(std::string("Phase 15: sema missed binary RHS (") + std::string(getTypeName(rhsType)) + " -> " + std::string(getTypeName(commonType)) + ")");
-				rhsExprResult = generateTypeConversion(rhsExprResult, rhsType, commonType, binaryOperatorNode.get_token());
+				rhsExprResult = generateTypeConversion(rhsExprResult, typeToCategory(rhsType), typeToCategory(commonType), binaryOperatorNode.get_token());
 			}
 		}
 
@@ -2599,7 +2599,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsType)) + ")");
 				}
 				ExprResult op_expr = makeExprResult(commonType, SizeInBits{get_type_size_bits(commonType)}, IrOperand{op_result}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
-				ExprResult converted = generateTypeConversion(op_expr, commonType, lhsType, binaryOperatorNode.get_token());
+				ExprResult converted = generateTypeConversion(op_expr, typeToCategory(commonType), typeToCategory(lhsType), binaryOperatorNode.get_token());
 
 				// 3. Store back to original LHS variable
 				// original_lhs_value was the value of lhsExprResult before type conversion
@@ -3941,7 +3941,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// We just need to assign the address of the va_list structure to the user's va_list variable.
 
 			// Get address of the va_list structure
-			TempVar va_list_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+			TempVar va_list_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0ExprResult.value
@@ -3991,7 +3991,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// This enables proper overflow support when >5 variadic int args are passed
 
 				// Get address of va_list structure
-				TempVar va_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+				TempVar va_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 
 				// Assign to va_list variable
 				AssignmentOp assign_op;
@@ -4371,7 +4371,7 @@ const Token& token) {
 
 			// Emit the store using helper
 			emitArrayStore(
-				lhs_operands.typeEnum(),             // element_type
+				lhs_operands.category(),             // element_type
 				lhs_operands.size_in_bits.value,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
@@ -4438,7 +4438,7 @@ const Token& token) {
 			// Emit the store using helper
 			emitDereferenceStore(
 				value_tv,
-				pointee_type,
+				typeToCategory(pointee_type),
 				pointee_size_bits,
 				lv_info.base,                    // pointer
 				token
@@ -4586,7 +4586,7 @@ std::string_view op) {
 		if (std::holds_alternative<TempVar>(base_value)) {
 			emitDereferenceStore(
 				result_tv,
-				lvalue_type,
+				typeToCategory(lvalue_type),
 				lvalue_size_bits,
 				std::get<TempVar>(base_value),
 				token
@@ -4660,7 +4660,7 @@ std::string_view op) {
 
 		// Emit the store using helper
 		emitArrayStore(
-			lhs_operands.typeEnum(),             // element_type
+			lhs_operands.category(),             // element_type
 			lhs_operands.size_in_bits.value,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index

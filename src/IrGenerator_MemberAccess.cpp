@@ -1420,7 +1420,7 @@
 					PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 			}
 
-			TempVar deref_var = emitDereference(member->memberType(), 64, 1, IrValue(result_var), Token());
+			TempVar deref_var = emitDereference(typeToCategory(member->memberType()), 64, 1, IrValue(result_var), Token());
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
@@ -3580,7 +3580,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						}
 					}
 
-					if (resolved_type == target_type) {
+					if (typeToCategory(resolved_type) == target_type) {
 						// Prefer non-const match for non-const source; const for const source
 						if (source_is_const == member_func.is_const()) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");

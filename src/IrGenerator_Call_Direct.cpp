@@ -1156,13 +1156,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
+									src_type_info.getStructInfo(), typeToCategory(param_base_type), param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
 									const int param_size = static_cast<int>(param_type->size_in_bits());
 									if (auto result = emitConversionOperatorCall(argumentIrOperands, src_type_info, *conv_op,
-											param_base_type, param_type->type_index(), param_size,
+											typeToCategory(param_base_type), param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
 										arg_type = argumentIrOperands.typeEnum();
@@ -1176,7 +1176,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							// constants to their underlying type; use actual runtime type.
 							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
 								from_type = argumentIrOperands.typeEnum();
-							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
+							argumentIrOperands = generateTypeConversion(argumentIrOperands, typeToCategory(from_type), typeToCategory(to_type), functionCallNode.called_from());
 							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;
 							sema_applied_arg_conversion = true;
@@ -1203,7 +1203,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							throw InternalError(std::string("Phase 15: sema missed function call argument conversion (")
 								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 						}
-						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
+						argumentIrOperands = generateTypeConversion(argumentIrOperands, typeToCategory(arg_type), typeToCategory(param_base_type), functionCallNode.called_from());
 						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
 					}
@@ -1291,14 +1291,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						// Look for a conversion operator to the parameter type
 						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
+							source_type_info.getStructInfo(), typeToCategory(param_base_type), param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
 								StringTable::getStringView(source_type_info.name()),
 								" to parameter type");
 							if (auto result = emitConversionOperatorCall(argumentIrOperands, source_type_info, *conv_op,
-									param_base_type, param_type->type_index(), param_size, Token()))
+									typeToCategory(param_base_type), param_type->type_index(), param_size, Token()))
 								argumentIrOperands = *result;
 						}
 					}
@@ -1340,7 +1340,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// For arrays, we need to pass the address of the first element
 					// Create a temporary for the address
 					// Generate AddressOf IR instruction to get the address of the array
-					TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+					TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -1358,7 +1358,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1367,7 +1367,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-					TempVar deref_var = emitDereference(type_node.type(), 64, 1,
+					TempVar deref_var = emitDereference(type_node.category(), 64, 1,
 						StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
@@ -1420,7 +1420,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 						// Now take the address of the temporary
-						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
+						TempVar addr_var = emitAddressOf(typeToCategory(literal_type), literal_size, IrValue(temp_var));
 
 						// Pass the address
 						irOperands.emplace_back(literal_type);
@@ -1460,7 +1460,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								appendArgumentIrResult(argumentIrOperands);
 							} else {
 								// Need to take address of the value
-								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
+								TempVar addr_var = emitAddressOf(typeToCategory(expr_type), expr_size, IrValue(expr_var));
 
 								irOperands.emplace_back(expr_type);
 								irOperands.emplace_back(64);  // Pointer size
