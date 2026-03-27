@@ -820,7 +820,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		// Return a numeric literal with the result (1 or 0)
 		auto result_node = emplace_node<ExpressionNode>(
-			NumericLiteralNode(builtin_token, static_cast<unsigned long long>(result), Type::Int, TypeQualifier::None, 32));
+			NumericLiteralNode(builtin_token, static_cast<unsigned long long>(result), TypeCategory::Int, TypeQualifier::None, 32));
 
 		return ParseResult::success(result_node);
 	}

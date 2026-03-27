@@ -3368,7 +3368,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			                name_token.line(), name_token.column(),
 			                name_token.file_index());
 			auto zero_node = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+				NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
 			
 			// Create comparison operator token for comparing result with 0
 			Token comparison_token(Token::Type::Operator, overloadableOperatorToString(op_kind),

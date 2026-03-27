@@ -3158,7 +3158,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									Token zero_tok(Token::Type::Literal, "0"sv,
 										identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 									args_ref.push_back(emplace_node<ExpressionNode>(
-										NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+										NumericLiteralNode(zero_tok, 0ULL, TypeCategory::Int, TypeQualifier::None, 32)));
 									continue;
 								}
 								return ParseResult::error(
@@ -4976,7 +4976,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										Token zero_tok(Token::Type::Literal, "0"sv,
 											identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 										args.push_back(emplace_node<ExpressionNode>(
-											NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+											NumericLiteralNode(zero_tok, 0ULL, TypeCategory::Int, TypeQualifier::None, 32)));
 										continue;
 									}
 									return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
@@ -5540,7 +5540,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::string_view len_placeholder_sv = "0";
 					Token len_token(Token::Type::Literal, len_placeholder_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
 					auto len_node = emplace_node<ExpressionNode>(
-						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), Type::UnsignedLong, TypeQualifier::None, 64));
+						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), TypeCategory::UnsignedLong, TypeQualifier::None, 64));
 					args.push_back(len_node);
 					
 					result = emplace_node<ExpressionNode>(
@@ -5636,7 +5636,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Handle nullptr literal - represented as null pointer constant (0)
 		// The actual type will be determined by context (can convert to any pointer type)
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_,
-			0ULL, Type::Int, TypeQualifier::None, 64));
+			0ULL, TypeCategory::Int, TypeQualifier::None, 64));
 		advance();
 	}
 	else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "this"sv) {
@@ -5692,7 +5692,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// (e.g., function parameter type, variable declaration type, etc.)
 			// The actual value doesn't matter, only that it represents a braced initializer
 			NumericLiteralValue val = static_cast<unsigned long long>(0);
-			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, Type::Int, TypeQualifier::None, 32));
+			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, TypeCategory::Int, TypeQualifier::None, 32));
 			return ParseResult::success(*result);
 		}
 		

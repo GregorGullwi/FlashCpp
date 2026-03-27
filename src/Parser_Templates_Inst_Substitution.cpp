@@ -246,7 +246,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 			std::string_view val_str = StringBuilder().append(value).commit();
 			Token value_token(Token::Type::Literal, val_str, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
-				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), Type::Int, TypeQualifier::None, 32));
+				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), TypeCategory::Int, TypeQualifier::None, 32));
 		}
 	}
 	

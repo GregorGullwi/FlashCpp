@@ -599,7 +599,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
 			Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
-				NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
+				NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), TypeCategory::Int, TypeQualifier::None, 64)
 			);
 		}
 	};
@@ -1696,7 +1696,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 							Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
 							return emplace_node<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32)
 							);
 						};
 						
@@ -3786,7 +3786,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								int64_t val = template_args_to_use[i].value;
 								Token num_token(Token::Type::Literal, StringBuilder().append(val).commit(), 0, 0, 0);
 								auto num_literal = emplace_node<ExpressionNode>(
-									NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+									NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32)
 								);
 								substituted_array_size = num_literal;
 								break;
@@ -4164,7 +4164,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 					Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
 					return emplace_node<ExpressionNode>(
-						NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+						NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32)
 					);
 				};
 				
@@ -4426,7 +4426,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
 						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 						substituted_initializer = emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32)
 						);
 						FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
 					}
@@ -6323,7 +6323,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 						Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
 						return emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32)
 						);
 					};
 					

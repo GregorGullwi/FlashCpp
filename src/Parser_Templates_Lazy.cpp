@@ -711,7 +711,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 			Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
-				NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+				NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32)
 			);
 		};
 		
@@ -772,7 +772,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
 							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 							substituted_initializer = emplace_node<ExpressionNode>(
-								NumericLiteralNode(num_token, static_cast<unsigned long long>(*fold_result), Type::Int, TypeQualifier::None, 64)
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(*fold_result), TypeCategory::Int, TypeQualifier::None, 64)
 							);
 						}
 					}
@@ -851,7 +851,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(-static_cast<uint64_t>(val))).commit();
 						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 						auto& literal_node = emplace_node_ref<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), Type::Int, TypeQualifier::None, 64)).second;
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(-static_cast<uint64_t>(val)), TypeCategory::Int, TypeQualifier::None, 64)).second;
 						Token minus_token(Token::Type::Operator, "-"sv, 0, 0, 0);
 						substituted_initializer = emplace_node<ExpressionNode>(
 							UnaryOperatorNode(minus_token, ASTNode(&literal_node), true, false));
@@ -859,7 +859,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
 						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 						substituted_initializer = emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 64));
+							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 64));
 					}
 					FLASH_LOG(Templates, Debug, "Evaluated lazy static member initializer to constant: ", val);
 				}

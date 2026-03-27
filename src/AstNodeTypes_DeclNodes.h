@@ -1485,6 +1485,7 @@ using NumericLiteralValue = std::variant<unsigned long long, double>;
 class NumericLiteralNode {
 public:
 	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_(type), size_(size), qualifier_(qualifier), identifier_(identifier) {}
+	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_(categoryToType(cat)), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
 	std::string_view token() const { return identifier_.value(); }
 	NumericLiteralValue value() const { return value_; }

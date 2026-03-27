@@ -657,7 +657,7 @@
 					StringHandle size_str = StringTable::createStringHandle(sb);
 					Token size_token(Token::Type::Literal, StringTable::getStringView(size_str), 0, 0, 0);
 					array_size_node = ASTNode::emplace_node<ExpressionNode>(
-						NumericLiteralNode(size_token, static_cast<unsigned long long>(inferred_size), Type::Int, TypeQualifier::None, 32)
+						NumericLiteralNode(size_token, static_cast<unsigned long long>(inferred_size), TypeCategory::Int, TypeQualifier::None, 32)
 					);
 				}
 			}
