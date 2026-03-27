@@ -5527,15 +5527,11 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsSigned:
-			result = (type_cat == TypeCategory::Char || type_cat == TypeCategory::Short ||
-			          type_cat == TypeCategory::Int || type_cat == TypeCategory::Long ||
-			          type_cat == TypeCategory::LongLong) && !is_reference && pointer_depth == 0;
+			result = is_signed_integer_type(categoryToType(type_cat)) && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsUnsigned:
-			result = (type_cat == TypeCategory::Bool || type_cat == TypeCategory::UnsignedChar ||
-			          type_cat == TypeCategory::UnsignedShort || type_cat == TypeCategory::UnsignedInt ||
-			          type_cat == TypeCategory::UnsignedLong || type_cat == TypeCategory::UnsignedLongLong) &&
+			result = (type_cat == TypeCategory::Bool || is_unsigned_integer_type(categoryToType(type_cat))) &&
 			         !is_reference && pointer_depth == 0;
 			break;
 

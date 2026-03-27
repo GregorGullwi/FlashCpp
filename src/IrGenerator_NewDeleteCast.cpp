@@ -9,7 +9,7 @@
 
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
 		TypeCategory type_cat = type_spec.category();
-		const Type allocated_type = type_spec.type();
+		const Type allocated_type_enum = type_spec.type();
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
 		int pointer_depth = static_cast<int>(type_spec.pointer_depth());
 
@@ -27,7 +27,7 @@
 
 			ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 			TypedValue init_value = toTypedValue(init_operands);
-			emitDereferenceStore(init_value, allocated_type, size_in_bits, pointer_var, Token());
+			emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 		};
 
 		// Check if this is an array allocation (with or without placement)
@@ -59,7 +59,7 @@
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
+				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
@@ -158,7 +158,7 @@
 								// Evaluate the initializer expression
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, allocated_type, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -168,7 +168,7 @@
 				// Create HeapAllocArrayOp
 				HeapAllocArrayOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
+				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
@@ -262,7 +262,7 @@
 
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, allocated_type, size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -346,7 +346,7 @@
 			// Create PlacementNewOp
 			PlacementNewOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
+			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
@@ -392,7 +392,7 @@
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type, type_spec.type_index());
+			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 
@@ -436,7 +436,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(allocated_type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(allocated_type_enum, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
