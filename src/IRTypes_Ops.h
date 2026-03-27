@@ -447,7 +447,7 @@ struct TypedValue {
 	IrType effectiveIrType() const {
 		// Return ir_type if it was explicitly set (non-Void), or if the semantic
 		// type IS Void (to avoid toIrType recomputation for genuinely void values).
-		if (ir_type != IrType::Void || type == Type::Void)
+		if (ir_type != IrType::Void || typeToCategory(type) == TypeCategory::Void)
 			return ir_type;
 		return toIrType(type);
 	}

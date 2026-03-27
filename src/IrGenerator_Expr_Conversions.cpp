@@ -58,7 +58,7 @@
 					assert(std::holds_alternative<double>(operands.value) &&
 						"float literal must be stored as double in IrOperand");
 					const double src_val = std::get<double>(operands.value);
-					if (toType == Type::Bool) {
+					if (typeToCategory(toType) == TypeCategory::Bool) {
 						// C++20 [conv.bool]: zero → false, any other value → true.
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -277,7 +277,7 @@
 			result.final_type = type_node->type();
 			result.final_type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
-			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
+			if (typeToCategory(result.final_type) == TypeCategory::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
@@ -1289,7 +1289,7 @@
 		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits.value;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
-		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
+		if (unaryOperatorNode.op() == "+" && typeToCategory(operandType) == TypeCategory::Struct) {
 			size_t struct_type_index = operandIrOperands.type_index.index();
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
@@ -1327,7 +1327,7 @@
 					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
 					if (from_t != Type::Struct && to_t != Type::Struct) {
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
-						if (from_t != operandIrOperands.typeEnum() && from_t == Type::Enum)
+						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
 							from_t = operandIrOperands.typeEnum();
 						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
 						operandType = to_t;
@@ -1338,7 +1338,7 @@
 			// Phase 15: sema should annotate all unary operand integral promotions.
 			// When sema_ is null (e.g., template instantiation), keep the fallback
 			// unconditionally to avoid dropping promotions.
-			if (!promoted && (operandType == Type::Bool ||
+			if (!promoted && (typeToCategory(operandType) == TypeCategory::Bool ||
 				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
@@ -2307,7 +2307,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 		const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 		const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
-		if (from_t == Type::Struct || to_t == Type::Struct) return Type::Invalid;
+		if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return Type::Invalid;
 		return to_t;
 	}
 
@@ -2365,7 +2365,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				// Phase 23: Struct → bool via user-defined operator bool().
 				// Sema annotates as UserDefined; call emitConversionOperatorCall.
 				if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-					from_desc.base_type == Type::Struct) {
+					typeToCategory(from_desc.base_type) == TypeCategory::Struct) {
 					// Sema already verified the operator exists via structHasConversionOperatorTo;
 					// set flag immediately so the fallback doesn't duplicate this lookup.
 					sema_applied_bool_conv = true;
@@ -2433,7 +2433,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				Type from_t = from_desc.base_type;
 				const Type to_t = to_desc.base_type;
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
-					from_desc.base_type == Type::Struct) {
+					typeToCategory(from_desc.base_type) == TypeCategory::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
 					if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
@@ -2466,7 +2466,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
 					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
 					Type ctor_from_t = from_desc.base_type;
-					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.typeEnum())
+					if (typeToCategory(ctor_from_t) == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
 						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
 						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
@@ -2475,7 +2475,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				} else if (from_t != Type::Struct && to_t != Type::Struct) {
 					// Sema may annotate as Type::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
-					if (from_t == Type::Enum && from_t != arg_result.typeEnum())
+					if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum())
 						from_t = arg_result.typeEnum();
 					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
@@ -2603,10 +2603,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
 			Type from_t = from_desc.base_type;
 			const Type to_t = to_desc.base_type;
-			if (from_t == Type::Enum && from_t != arg_result.typeEnum()) {
+			if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
 				from_t = arg_result.typeEnum();
 			}
-			if (from_t == Type::Struct || to_t == Type::Struct) {
+			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) {
 				return std::nullopt;
 			}
 			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);

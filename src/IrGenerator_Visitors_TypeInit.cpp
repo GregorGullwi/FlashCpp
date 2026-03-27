@@ -616,7 +616,7 @@
 										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
 											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
-												if (target_type == Type::Float) {
+												if (typeToCategory(target_type) == TypeCategory::Float) {
 													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 													ctx.storage_duration = ConstExpr::StorageDuration::Static;
 													ctx.parser = parser_;
@@ -627,7 +627,7 @@
 														std::memcpy(&f_bits, &f, sizeof(float));
 														return f_bits;
 													}
-												} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+												} else if (typeToCategory(target_type) == TypeCategory::Double || typeToCategory(target_type) == TypeCategory::LongDouble) {
 													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 													ctx.storage_duration = ConstExpr::StorageDuration::Static;
 													ctx.parser = parser_;

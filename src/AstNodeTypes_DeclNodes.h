@@ -853,8 +853,8 @@ struct TypeInfo
 	Type resolvedType()          const { return type_; }
 	bool isStructLike()          const { return category() == TypeCategory::Struct
 	                                         || category() == TypeCategory::UserDefined
-	                                         || (isTypeAlias() && type_ == Type::UserDefined); }
-	bool isVoid()                const { return type_ == Type::Void; }
+	                                         || (isTypeAlias() && typeToCategory(type_) == TypeCategory::UserDefined); }
+	bool isVoid()                const { return typeToCategory(type_) == TypeCategory::Void; }
 	bool isPrimitive()           const { return is_primitive_type(type_); }
 	bool needsTypeIndex()        const { return needs_type_index(type_); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
@@ -1057,7 +1057,7 @@ bool requires_conversion(Type from, Type to);
 // Standard alignment rules: min(size, 8) for most platforms, with special case for long double
 inline size_t calculate_alignment_from_size(size_t size_in_bytes, Type type) {
 	// Special case for long double on x86-64: often has 16-byte alignment
-	if (type == Type::LongDouble) {
+	if (typeToCategory(type) == TypeCategory::LongDouble) {
 		return 16;
 	}
 	// Standard alignment: same as size, up to 8 bytes

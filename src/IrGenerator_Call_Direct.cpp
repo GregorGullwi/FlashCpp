@@ -47,13 +47,13 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
 static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
-	if (member_type == Type::Float) {
+	if (typeToCategory(member_type) == TypeCategory::Float) {
 		float fval = static_cast<float>(r.as_double());
 		uint32_t fbits = 0;
 		std::memcpy(&fbits, &fval, sizeof(float));
 		return static_cast<unsigned long long>(fbits);
 	}
-	if (member_type == Type::Double || member_type == Type::LongDouble) {
+	if (typeToCategory(member_type) == TypeCategory::Double || typeToCategory(member_type) == TypeCategory::LongDouble) {
 		double dval = r.as_double();
 		unsigned long long dbits = 0;
 		std::memcpy(&dbits, &dval, sizeof(double));
@@ -973,12 +973,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
 			// Float / double
-			if (ret_type == Type::Float) {
+			if (typeToCategory(ret_type) == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
 				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+			if (typeToCategory(ret_type) == TypeCategory::Double || typeToCategory(ret_type) == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
 				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -1148,7 +1148,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							from_type == Type::Struct) {
+							typeToCategory(from_type) == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
@@ -1174,7 +1174,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						} else if (from_type != Type::Struct && to_type != Type::Struct) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != argumentIrOperands.typeEnum())
+							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
 								from_type = argumentIrOperands.typeEnum();
 							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
 							arg_type = argumentIrOperands.typeEnum();
@@ -1211,7 +1211,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
 				// This handles implicit conversions via converting constructors
-				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
+				if (arg_type != param_base_type && typeToCategory(param_base_type) == TypeCategory::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
 					if (param_type_index.is_valid() && param_type_index.index() < getTypeInfoCount()) {
@@ -1283,7 +1283,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				}
 
 				// Check if argument is struct type and parameter expects different type
-				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
+				if (typeToCategory(arg_type) == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
 						const int param_size = static_cast<int>(param_type->size_in_bits());
@@ -1451,7 +1451,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							}
 
 							// Fallback heuristic: 64-bit struct type likely holds an address
-							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+							if (!is_already_address && expr_size == 64 && typeToCategory(expr_type) == TypeCategory::Struct) {
 								is_already_address = true;
 							}
 

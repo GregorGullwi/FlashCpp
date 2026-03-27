@@ -793,10 +793,10 @@
 		}
 
 		// For enum to int or int to enum, we can just change the type
-		if ((source_type == Type::Enum && target_type == Type::Int) ||
-		(source_type == Type::Int && target_type == Type::Enum) ||
-		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
-		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
+		if ((typeToCategory(source_type) == TypeCategory::Enum && typeToCategory(target_type) == TypeCategory::Int) ||
+		(typeToCategory(source_type) == TypeCategory::Int && typeToCategory(target_type) == TypeCategory::Enum) ||
+		(typeToCategory(source_type) == TypeCategory::Enum && typeToCategory(target_type) == TypeCategory::UnsignedInt) ||
+		(typeToCategory(source_type) == TypeCategory::UnsignedInt && typeToCategory(target_type) == TypeCategory::Enum)) {
 			// Return the value with the new type
 			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
@@ -878,7 +878,7 @@
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
 		// e.g. static_cast<bool>(42) must produce 1, not 42
-		if (is_integer_type(source_type) && target_type == Type::Bool) {
+		if (is_integer_type(source_type) && typeToCategory(target_type) == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
@@ -890,7 +890,7 @@
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
-		if (is_floating_point_type(source_type) && target_type == Type::Bool) {
+		if (is_floating_point_type(source_type) && typeToCategory(target_type) == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),

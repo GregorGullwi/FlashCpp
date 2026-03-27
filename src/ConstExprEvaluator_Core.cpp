@@ -70,7 +70,7 @@ namespace {
 			: (isFloatingPointType(category)
 				? EvalResult::from_double(expr_result.as_double())
 				: ((isIntegralType(category) || category == TypeCategory::Enum) &&
-					(target_type.type() == Type::Bool || is_unsigned_integer_type(target_type.type()))
+					(target_type.category() == TypeCategory::Bool || is_unsigned_integer_type(target_type.type()))
 					? EvalResult::from_uint(expr_result.as_uint_raw())
 					: EvalResult::from_int(expr_result.as_int())));
 		result.set_exact_type(target_type);
@@ -2827,7 +2827,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					std::optional<size_t> array_size = type_spec.array_size();
 					
 					// Check for void - always incomplete
-					if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+					if (typeToCategory(base_type) == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 						return EvalResult::from_bool(false);
 					}
 					

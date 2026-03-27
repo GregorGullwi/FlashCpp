@@ -753,7 +753,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// In template bodies, a UserDefined type alias (e.g., _Tp_alloc_type) may resolve to a struct
 	// at instantiation time. Treat it as a deferred base class.
 	bool is_dependent_type_alias = false;
-	if (!is_template_param && !is_dependent_placeholder && base_type_info->resolvedType() == Type::UserDefined &&
+	if (!is_template_param && !is_dependent_placeholder && typeToCategory(base_type_info->resolvedType()) == TypeCategory::UserDefined &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_dependent_type_alias = true;
 	}
@@ -790,7 +790,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 	TypeIndex result_type_index = original_type.type_index();
 
 	// Only substitute UserDefined types (which might be template parameters)
-	if (result_type == Type::UserDefined) {
+	if (typeToCategory(result_type) == TypeCategory::UserDefined) {
 		// First try to get the type name from the token (useful for type aliases parsed inside templates
 		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
 		std::string_view type_name;
@@ -984,7 +984,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// This requires a valid type_index to look up the alias info
 			if (!found_match && result_type_index.is_valid() && result_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(result_type_index);
-				if (type_info.resolvedType() == Type::UserDefined && type_info.type_index_ != result_type_index) {
+				if (typeToCategory(type_info.resolvedType()) == TypeCategory::UserDefined && type_info.type_index_ != result_type_index) {
 					// This is a type alias - recursively check what it resolves to
 					if (type_info.type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& alias_target_info = getTypeInfo(type_info.type_index_);
@@ -1393,7 +1393,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// For bitwise/arithmetic operators, check the LHS type
 		// If LHS is an enum, check for free function operator overloads
-		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
+		if (lhs_type_opt.has_value() && lhs_type_opt->category() == TypeCategory::Enum) {
 			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
 			StringBuilder op_name_builder;
 			op_name_builder.append("operator"sv);
@@ -1544,7 +1544,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const ASTNode& object_node = member_call.object();
 		if (object_node.is<ExpressionNode>()) {
 			auto object_type_opt = get_expression_type(object_node);
-			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
+			if (object_type_opt.has_value() && object_type_opt->category() == TypeCategory::Struct) {
 				size_t struct_type_index = object_type_opt->type_index().index();
 				if (struct_type_index < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});

@@ -1939,7 +1939,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// arg_type_index here would be incorrect after a variadic pack
 					// expansion, since arg_type_index advances through multiple arg slots
 					// for a single function parameter, breaking the correspondence.
-					if (subst_type == Type::UserDefined &&
+					if (typeToCategory(subst_type) == TypeCategory::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
 					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&

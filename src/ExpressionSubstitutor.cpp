@@ -658,13 +658,13 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			
 			// Determine the type based on the template argument's base_type
 			Type literal_type = arg.typeEnum();
-			if (literal_type == Type::Template || literal_type == Type::UserDefined) {
+			if (typeToCategory(literal_type) == TypeCategory::Template || typeToCategory(literal_type) == TypeCategory::UserDefined) {
 				// For template parameters, default to int
 				literal_type = Type::Int;
 			}
 			
 			// Handle bool types specially with BoolLiteralNode
-			if (literal_type == Type::Bool) {
+			if (typeToCategory(literal_type) == TypeCategory::Bool) {
 				std::string_view bool_str = (arg.value != 0) ? "true" : "false";
 				Token bool_token(Token::Type::Keyword, bool_str, 0, 0, 0);
 				BoolLiteralNode& bool_literal = gChunkedAnyStorage.emplace_back<BoolLiteralNode>(

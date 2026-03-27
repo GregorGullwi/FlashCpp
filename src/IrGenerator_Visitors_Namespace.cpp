@@ -269,7 +269,7 @@
 						const Type annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
 						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							annotated_source_type == Type::Struct) {
+							typeToCategory(annotated_source_type) == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
@@ -294,7 +294,7 @@
 							Type from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != operands.typeEnum())
+							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != operands.typeEnum())
 								from_type = operands.typeEnum();
 							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;

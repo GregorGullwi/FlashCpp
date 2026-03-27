@@ -94,7 +94,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		Token zero_token(Token::Type::Literal, "0"sv, type_token.line(), type_token.column(), type_token.file_index());
 		
 		// Use 0.0 for floating point types, 0 for integral types
-		if (cast_type == Type::Double || cast_type == Type::Float) {
+		if (typeToCategory(cast_type) == TypeCategory::Double || typeToCategory(cast_type) == TypeCategory::Float) {
 			auto zero_expr = emplace_node<ExpressionNode>(
 				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size)
 			);

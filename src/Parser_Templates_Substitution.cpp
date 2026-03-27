@@ -902,7 +902,7 @@ ASTNode Parser::substituteTemplateParameters(
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
-				if (substituted_type == Type::Struct || substituted_type == Type::UserDefined) {
+				if (typeToCategory(substituted_type) == TypeCategory::Struct || typeToCategory(substituted_type) == TypeCategory::UserDefined) {
 					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,
