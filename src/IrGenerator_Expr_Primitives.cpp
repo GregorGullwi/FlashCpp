@@ -407,7 +407,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 						}
 
-						TypeIndex type_index = (member->memberType() == Type::Struct) ? member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -440,7 +440,7 @@
 					lvalue_info.member_name = member->getName();
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-					TypeIndex type_index = (member->memberType() == Type::Struct) ? member->type_index : TypeIndex{};
+					TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 					return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
 				}
 			}
@@ -588,7 +588,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->memberType() == Type::Struct) ? member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -623,7 +623,7 @@
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
-						TypeIndex type_index = (member->memberType() == Type::Struct) ? member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 				}
@@ -800,7 +800,7 @@
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
 						}
 
-						TypeIndex type_index = (member->memberType() == Type::Struct) ? member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
 					}
 
@@ -830,7 +830,7 @@
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
-						TypeIndex type_index = (static_member->memberType() == Type::Struct) ? static_member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 						return makeIdentifierResult(static_member->memberType(), member_size_bits, result_temp, type_index);
 					}
 				}
@@ -1515,12 +1515,12 @@
 							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
-							TypeIndex type_index = (static_member->memberType() == Type::Struct) ? static_member->type_index : TypeIndex{};
+							TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 							return makeExprResult(static_member->memberType(), SizeInBits{get_type_size_bits(static_member->memberType())}, IrOperand{deref_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 						}
 
 						// Return the temp variable that will hold the loaded value
-						TypeIndex type_index = (static_member->memberType() == Type::Struct) ? static_member->type_index : TypeIndex{};
+						TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 						return makeExprResult(static_member->memberType(), SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}

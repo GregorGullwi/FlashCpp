@@ -2,41 +2,41 @@
 
 namespace TypeTraitEval {
 
-inline bool isScalarType(Type type, bool is_reference, size_t pointer_depth) {
+inline bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth) {
 	if (is_reference) return false;
 	if (pointer_depth > 0) return true;  // Pointers are scalar
-	return (type == Type::Bool || type == Type::Char || type == Type::Short ||
-	        type == Type::Int || type == Type::Long || type == Type::LongLong ||
-	        type == Type::UnsignedChar || type == Type::UnsignedShort ||
-	        type == Type::UnsignedInt || type == Type::UnsignedLong ||
-	        type == Type::UnsignedLongLong || type == Type::Float ||
-	        type == Type::Double || type == Type::LongDouble || type == Type::Enum ||
-	        type == Type::Nullptr || type == Type::MemberObjectPointer ||
-	        type == Type::MemberFunctionPointer);
+	return (cat == TypeCategory::Bool || cat == TypeCategory::Char || cat == TypeCategory::Short ||
+	        cat == TypeCategory::Int || cat == TypeCategory::Long || cat == TypeCategory::LongLong ||
+	        cat == TypeCategory::UnsignedChar || cat == TypeCategory::UnsignedShort ||
+	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::UnsignedLong ||
+	        cat == TypeCategory::UnsignedLongLong || cat == TypeCategory::Float ||
+	        cat == TypeCategory::Double || cat == TypeCategory::LongDouble || cat == TypeCategory::Enum ||
+	        cat == TypeCategory::Nullptr || cat == TypeCategory::MemberObjectPointer ||
+	        cat == TypeCategory::MemberFunctionPointer);
 }
 
-inline bool isIntegral(Type type) {
-	return (type == Type::Bool || type == Type::Char || 
-	        type == Type::UnsignedChar || type == Type::Short ||
-	        type == Type::UnsignedShort || type == Type::Int ||
-	        type == Type::UnsignedInt || type == Type::Long ||
-	        type == Type::UnsignedLong || type == Type::LongLong ||
-	        type == Type::UnsignedLongLong);
+inline bool isIntegral(TypeCategory cat) {
+	return (cat == TypeCategory::Bool || cat == TypeCategory::Char ||
+	        cat == TypeCategory::UnsignedChar || cat == TypeCategory::Short ||
+	        cat == TypeCategory::UnsignedShort || cat == TypeCategory::Int ||
+	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::Long ||
+	        cat == TypeCategory::UnsignedLong || cat == TypeCategory::LongLong ||
+	        cat == TypeCategory::UnsignedLongLong);
 }
 
-inline bool isFloatingPoint(Type type) {
-	return (type == Type::Float || type == Type::Double || type == Type::LongDouble);
+inline bool isFloatingPoint(TypeCategory cat) {
+	return (cat == TypeCategory::Float || cat == TypeCategory::Double || cat == TypeCategory::LongDouble);
 }
 
-inline bool isSigned(Type type) {
-	return (type == Type::Char || type == Type::Short || type == Type::Int ||
-	        type == Type::Long || type == Type::LongLong);
+inline bool isSigned(TypeCategory cat) {
+	return (cat == TypeCategory::Char || cat == TypeCategory::Short || cat == TypeCategory::Int ||
+	        cat == TypeCategory::Long || cat == TypeCategory::LongLong);
 }
 
-inline bool isUnsigned(Type type) {
-	return (type == Type::Bool || type == Type::UnsignedChar || type == Type::UnsignedShort ||
-	        type == Type::UnsignedInt || type == Type::UnsignedLong ||
-	        type == Type::UnsignedLongLong);
+inline bool isUnsigned(TypeCategory cat) {
+	return (cat == TypeCategory::Bool || cat == TypeCategory::UnsignedChar || cat == TypeCategory::UnsignedShort ||
+	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::UnsignedLong ||
+	        cat == TypeCategory::UnsignedLongLong);
 }
 
 
@@ -130,6 +130,7 @@ TypeTraitResult evaluateTypeTrait(
 	const StructTypeInfo* struct_info
 ) {
 	using namespace TypeTraitEval;
+	const TypeCategory cat = typeToCategory(base_type);
 	bool result = false;
 	
 	switch (kind) {
@@ -148,7 +149,7 @@ TypeTraitResult evaluateTypeTrait(
 			// - Bounded array types with incomplete element types
 			
 			// Check for void - always incomplete
-			if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+			if (cat == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 				return TypeTraitResult::success_false();
 			}
 			
@@ -158,7 +159,7 @@ TypeTraitResult evaluateTypeTrait(
 			}
 			
 			// Check for incomplete class/struct types (struct_info is null for incomplete types)
-			if (is_struct_type(base_type) &&
+			if (is_struct_type(cat) &&
 			    !struct_info && pointer_depth == 0 && !is_reference) {
 				return TypeTraitResult::success_false();
 			}
@@ -167,19 +168,19 @@ TypeTraitResult evaluateTypeTrait(
 			return TypeTraitResult::success_true();
 			
 		case TypeTraitKind::IsVoid:
-			result = (base_type == Type::Void && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::Void && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsNullptr:
-			result = (base_type == Type::Nullptr && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::Nullptr && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsIntegral:
-			result = isIntegral(base_type) && !is_reference && pointer_depth == 0;
+			result = isIntegral(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsFloatingPoint:
-			result = isFloatingPoint(base_type) && !is_reference && pointer_depth == 0;
+			result = isFloatingPoint(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsArray:
@@ -199,15 +200,15 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsMemberObjectPointer:
-			result = (base_type == Type::MemberObjectPointer && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::MemberObjectPointer && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsMemberFunctionPointer:
-			result = (base_type == Type::MemberFunctionPointer && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::MemberFunctionPointer && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsEnum:
-			result = (base_type == Type::Enum && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::Enum && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsUnion:
@@ -215,12 +216,12 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsClass:
-			result = is_struct_type(base_type) &&
+			result = is_struct_type(cat) &&
 			         struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsFunction:
-			result = (base_type == Type::Function && !is_reference && pointer_depth == 0);
+			result = (cat == TypeCategory::Function && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsReference:
@@ -228,23 +229,23 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsArithmetic:
-			result = isArithmeticType(base_type) && !is_reference && pointer_depth == 0;
+			result = isArithmeticType(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsFundamental:
-			result = isFundamentalType(base_type) && !is_reference && pointer_depth == 0;
+			result = isFundamentalType(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsObject:
-			result = (base_type != Type::Function) && (base_type != Type::Void) && !is_reference && !is_rvalue_reference;
+			result = (cat != TypeCategory::Function) && (cat != TypeCategory::Void) && !is_reference && !is_rvalue_reference;
 			break;
 			
 		case TypeTraitKind::IsScalar:
-			result = isScalarType(base_type, is_reference, pointer_depth);
+			result = isScalarType(cat, is_reference, pointer_depth);
 			break;
 			
 		case TypeTraitKind::IsCompound:
-			result = !(isFundamentalType(base_type) && !is_reference && pointer_depth == 0);
+			result = !(isFundamentalType(cat) && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsConst:
@@ -256,11 +257,11 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsSigned:
-			result = isSigned(base_type) && !is_reference && pointer_depth == 0;
+			result = isSigned(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsUnsigned:
-			result = isUnsigned(base_type) && !is_reference && pointer_depth == 0;
+			result = isUnsigned(cat) && !is_reference && pointer_depth == 0;
 			break;
 			
 		case TypeTraitKind::IsBoundedArray:
@@ -331,21 +332,18 @@ TypeTraitResult evaluateTypeTrait(
 						}
 					}
 				}
-			} else if (isScalarType(base_type, is_reference, pointer_depth)) {
+			} else if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			}
 			break;
 			
 		case TypeTraitKind::HasUniqueObjectRepresentations:
-			result = ((base_type == Type::Char || base_type == Type::Short || base_type == Type::Int ||
-			           base_type == Type::Long || base_type == Type::LongLong || base_type == Type::UnsignedChar ||
-			           base_type == Type::UnsignedShort || base_type == Type::UnsignedInt ||
-			           base_type == Type::UnsignedLong || base_type == Type::UnsignedLongLong)
+			result = (isIntegral(cat) && cat != TypeCategory::Bool
 			          && !is_reference && pointer_depth == 0);
 			break;
 			
 		case TypeTraitKind::IsTriviallyCopyable:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
 				result = !struct_info->has_vtable;
@@ -353,7 +351,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsTrivial:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
 				result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -361,7 +359,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsPod:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
 				bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -379,7 +377,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsLiteralType:
-			if (isScalarType(base_type, is_reference, pointer_depth) || is_reference) {
+			if (isScalarType(cat, is_reference, pointer_depth) || is_reference) {
 				result = true;
 			} else if (struct_info && pointer_depth == 0) {
 				result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -387,7 +385,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsDestructible:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
 				result = true;  // Assume destructible unless proven otherwise
@@ -396,7 +394,7 @@ TypeTraitResult evaluateTypeTrait(
 			
 		case TypeTraitKind::IsTriviallyDestructible:
 		case TypeTraitKind::HasTrivialDestructor:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
 				if (!struct_info->is_union) {
@@ -408,7 +406,7 @@ TypeTraitResult evaluateTypeTrait(
 			break;
 			
 		case TypeTraitKind::IsNothrowDestructible:
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;
 			} else if (struct_info && !is_reference && pointer_depth == 0) {
 				result = isStructNothrowDestructible(struct_info);
@@ -438,7 +436,7 @@ TypeTraitResult evaluateTypeTrait(
 		case TypeTraitKind::IsTriviallyConstructible:
 		case TypeTraitKind::IsNothrowConstructible:
 			// These need variadic type arguments, return failure for simple evaluation
-			if (isScalarType(base_type, is_reference, pointer_depth)) {
+			if (isScalarType(cat, is_reference, pointer_depth)) {
 				result = true;  // Scalars are always default constructible
 			} else if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
 				if (kind == TypeTraitKind::IsConstructible) {
@@ -483,7 +481,7 @@ TypeTraitResult evaluateTypeTrait(
 ) {
 	return evaluateTypeTrait(
 		kind,
-		type_spec.type(),
+		categoryToType(type_spec.category()),
 		type_spec.type_index(),
 		type_spec.is_reference(),
 		type_spec.is_rvalue_reference(),

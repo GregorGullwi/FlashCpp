@@ -195,6 +195,15 @@ inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
 	return base_type;
 }
 
+// TypeCategory overload: resolve Enum to its underlying integer category.
+inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeCategory cat, TypeIndex type_index) {
+	if (cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
+			return typeToCategory(ei->underlying_type);
+	}
+	return cat;
+}
+
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.

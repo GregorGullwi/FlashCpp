@@ -1956,14 +1956,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							lhs_desc.base_type == Type::Invalid || isPlaceholderAutoType(lhs_desc.base_type)) {
 							// Skip non-primitive types
 						} else {
-							const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
-							const Type promoted = categoryToType(promote_integer_type(typeToCategory(lhs_base)));
-							if (promoted != lhs_base) {
+							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
+							const TypeCategory promoted_cat = promote_integer_type(lhs_cat);
+							if (promoted_cat != lhs_cat) {
 								CanonicalTypeDesc promoted_desc;
-								promoted_desc.base_type = promoted;
+								promoted_desc.base_type = categoryToType(promoted_cat);
 								const CanonicalTypeId promoted_id = type_context_.intern(promoted_desc);
 								CanonicalTypeDesc lhs_base_desc;
-								lhs_base_desc.base_type = lhs_base;
+								lhs_base_desc.base_type = categoryToType(lhs_cat);
 								const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 								storeCompoundAssignBackConvSlot(e, promoted_id, lhs_base_id);
 							}
@@ -2471,17 +2471,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!operand_id) return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
 					// Resolve enum to underlying type
-					const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
+					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(operand_desc.base_type), operand_desc.type_index);
 					const bool is_small_int =
-						(is_integer_type(operand_base) || operand_base == Type::Bool)
-						&& get_integer_rank(typeToCategory(operand_base)) < 3;  // rank of int
+						(isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool)
+						&& get_integer_rank(operand_cat) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
 						promoted.base_type = Type::Int;
 						return type_context_.intern(promoted);
 					}
 					CanonicalTypeDesc result_desc;
-					result_desc.base_type = operand_base;
+					result_desc.base_type = categoryToType(operand_cat);
 					return type_context_.intern(result_desc);
 				}
 				// Logical NOT always returns bool
@@ -3203,15 +3203,15 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
-	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
-	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
 
-	const Type common = categoryToType(get_common_type(typeToCategory(lhs_base), typeToCategory(rhs_base)));
-	if (common == Type::Invalid) return;
+	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
+	if (common_cat == TypeCategory::Invalid) return;
 
 	// Intern the common type
 	CanonicalTypeDesc common_desc;
-	common_desc.base_type = common;
+	common_desc.base_type = categoryToType(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id, lhs_type_id);
@@ -3273,20 +3273,20 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	if (lhs_desc.base_type == Type::Invalid || rhs_desc.base_type == Type::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
 
-	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
-	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
 
-	const Type common = categoryToType(get_common_type(typeToCategory(lhs_base), typeToCategory(rhs_base)));
-	if (common == Type::Invalid) return;
-	if (lhs_base == common) return;  // No back-conversion needed
+	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
+	if (common_cat == TypeCategory::Invalid) return;
+	if (lhs_cat == common_cat) return;  // No back-conversion needed
 
 	// Build the back-conversion: common → lhs_base
 	CanonicalTypeDesc common_desc;
-	common_desc.base_type = common;
+	common_desc.base_type = categoryToType(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	CanonicalTypeDesc lhs_base_desc;
-	lhs_base_desc.base_type = lhs_base;
+	lhs_base_desc.base_type = categoryToType(lhs_cat);
 	const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 
 	storeCompoundAssignBackConvSlot(bin_op, common_type_id, lhs_base_id);
@@ -3316,24 +3316,24 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
-	const Type lhs_base = resolveEnumUnderlyingType(lhs_desc.base_type, lhs_desc.type_index);
-	const Type rhs_base = resolveEnumUnderlyingType(rhs_desc.base_type, rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
 
 	// Shift is only defined for integral operands
-	if (is_floating_point_type(lhs_base) || is_floating_point_type(rhs_base)) return;
+	if (isFloatingPointType(lhs_cat) || isFloatingPointType(rhs_cat)) return;
 
 	// Independent integral promotion for each operand
-	const Type promoted_lhs = categoryToType(promote_integer_type(typeToCategory(lhs_base)));
-	const Type promoted_rhs = categoryToType(promote_integer_type(typeToCategory(rhs_base)));
+	const TypeCategory promoted_lhs = promote_integer_type(lhs_cat);
+	const TypeCategory promoted_rhs = promote_integer_type(rhs_cat);
 
-	if (promoted_lhs != lhs_base) {
+	if (promoted_lhs != lhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = promoted_lhs;
+		promoted_desc.base_type = categoryToType(promoted_lhs);
 		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc), lhs_type_id);
 	}
-	if (promoted_rhs != rhs_base) {
+	if (promoted_rhs != rhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = promoted_rhs;
+		promoted_desc.base_type = categoryToType(promoted_rhs);
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc), rhs_type_id);
 	}
 }
@@ -3356,19 +3356,19 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (isPlaceholderAutoType(operand_desc.base_type)) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
-	const Type operand_base = resolveEnumUnderlyingType(operand_desc.base_type, operand_desc.type_index);
+	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(operand_desc.base_type), operand_desc.type_index);
 
 	// Unary +, -, ~ are only defined for arithmetic types
 	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
-	if (unary_op.op() == "~" && is_floating_point_type(operand_base)) {
+	if (unary_op.op() == "~" && isFloatingPointType(operand_cat)) {
 		throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 	}
-	if (is_floating_point_type(operand_base)) return;  // float/double: no promotion needed
+	if (isFloatingPointType(operand_cat)) return;  // float/double: no promotion needed
 
-	const Type promoted = categoryToType(promote_integer_type(typeToCategory(operand_base)));
-	if (promoted != operand_base) {
+	const TypeCategory promoted_cat = promote_integer_type(operand_cat);
+	if (promoted_cat != operand_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = promoted;
+		promoted_desc.base_type = categoryToType(promoted_cat);
 		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
 	}
 }
