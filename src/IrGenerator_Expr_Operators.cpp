@@ -627,31 +627,32 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// arithmetic types, the usual arithmetic conversions determine the common type.
 		// The sema pass annotates each branch with a conversion to the common type.
 		// We also try parser type inference as a fallback.
-		Type common_type = Type::Invalid;
+		TypeCategory common_cat = TypeCategory::Invalid;
 		// Check sema annotations: if either branch has a conversion annotation, that
 		// tells us the target (common) type.
 		if (sema_) {
-			Type true_target = getSemaAnnotatedTargetType(ternaryNode.true_expr());
-			Type false_target = getSemaAnnotatedTargetType(ternaryNode.false_expr());
-			if (true_target != Type::Invalid)
-				common_type = true_target;
-			else if (false_target != Type::Invalid)
-				common_type = false_target;
+			TypeCategory true_cat = typeToCategory(getSemaAnnotatedTargetType(ternaryNode.true_expr()));
+			TypeCategory false_cat = typeToCategory(getSemaAnnotatedTargetType(ternaryNode.false_expr()));
+			if (true_cat != TypeCategory::Invalid)
+				common_cat = true_cat;
+			else if (false_cat != TypeCategory::Invalid)
+				common_cat = false_cat;
 		}
 		// Fallback: try parser type inference
-		if (common_type == Type::Invalid && parser_) {
+		if (common_cat == TypeCategory::Invalid && parser_) {
 			auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 			auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
 			if (true_ts.has_value() && false_ts.has_value())
-				common_type = categoryToType(get_common_type(true_ts->category(), false_ts->category()));
+				common_cat = get_common_type(true_ts->category(), false_ts->category());
 		}
 
 		// Evaluate true expression
 		ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
-		// Finalize common_type: if parser inference failed, fall back to true branch type
-		if (common_type == Type::Invalid)
-			common_type = true_result.typeEnum();
+		// Finalize common_cat: if parser inference failed, fall back to true branch type
+		if (common_cat == TypeCategory::Invalid)
+			common_cat = true_result.category();
+		Type common_type = categoryToType(common_cat);
 
 		// Convert true result to common type if needed.
 		// NOTE: sema annotations were already consumed above when determining common_type
@@ -864,7 +865,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Helper: prefer sema annotation over local policy for operand conversions on global/static paths.
 		// Returns true and applies the conversion when a non-struct sema slot exists for the node.
-		// When expected_target != Type::Invalid, the annotation's target type must match; otherwise
+		// When expected_target is valid (not Invalid), the annotation's target type must match; otherwise
 		// the helper returns false so the caller's fallback policy runs instead.
 		auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node, Type expected_target = Type::Invalid) -> bool {
 			if (!sema_ || !node.is<ExpressionNode>()) return false;
@@ -874,13 +875,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 			Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
-			if (from_t == Type::Struct || to_t == Type::Struct) return false;
-			if (expected_target != Type::Invalid && to_t != expected_target) return false;
+			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return false;
+			TypeCategory expected_cat = typeToCategory(expected_target);
+			if (expected_cat != TypeCategory::Invalid && typeToCategory(to_t) != expected_cat) return false;
 			// Defensive: sema source type should match the expression's runtime type.
-			// Exception: sema may annotate as Type::Enum while codegen resolves enum
+			// Exception: sema may annotate as Enum while codegen resolves enum
 			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
 			if (from_t != expr.typeEnum()) {
-				if (from_t == Type::Enum)
+				if (typeToCategory(from_t) == TypeCategory::Enum)
 					from_t = expr.typeEnum();
 				else
 					throw InternalError("sema annotation source type does not match expr.type");
@@ -935,7 +937,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.bindingType()) &&
-						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.bindingType() != Type::Void) {
+						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
 						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(gsi.bindingType()))
 							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.typeEnum(), gsi.bindingType(), binaryOperatorNode.get_token());
@@ -974,7 +976,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				const auto gsi = resolveGlobalOrStaticBinding(lhs_ident);
 
-				if (gsi.is_global_or_static && gsi.bindingType() != Type::Void && gsi.size_in_bits.is_set()) {
+				if (gsi.is_global_or_static && gsi.type_index.category() != TypeCategory::Void && gsi.size_in_bits.is_set()) {
 					// Load current value from global
 					TempVar loaded = var_counter.next();
 					GlobalLoadOp load_op;
@@ -1179,6 +1181,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		Type rhsType = rhsExprResult.typeEnum();
 		int lhsSize = lhsExprResult.size_in_bits.value;
 		int rhsSize = rhsExprResult.size_in_bits.value;
+		TypeCategory lhsCat = lhsExprResult.category();
+		TypeCategory rhsCat = rhsExprResult.category();
 
 		auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 			if (!parser_) {
@@ -1239,7 +1243,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					}
 				}
 
-				if (!is_already_address && operand_size == 64 && operand_type == Type::Struct) {
+				if (!is_already_address && operand_size == 64 && typeToCategory(operand_type) == TypeCategory::Struct) {
 					is_already_address = true;
 				}
 
@@ -1276,8 +1280,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for struct assignment with user-defined operator=(non-struct)
 		// This handles patterns like: struct_var = primitive_value
 		// where struct has operator=(int), operator=(double), etc.
-		if (op == "=" && lhsType == Type::Struct &&
-			rhsType != Type::Struct &&
+		if (op == "=" && lhsCat == TypeCategory::Struct &&
+			rhsCat != TypeCategory::Struct &&
 			!rhsExprResult.type_index.is_valid() &&
 			lhsExprResult.type_index.is_valid()) {
 			// Get the type index of the struct
@@ -1674,7 +1678,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				can_try_spaceship_rewrite =
 					!overload_result.has_match
 					&& requires_user_defined_operator
-					&& lhsType == Type::Struct
+					&& lhsCat == TypeCategory::Struct
 					&& (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
 
 				if (!overload_result.has_match && requires_user_defined_operator && !can_try_spaceship_rewrite) {
@@ -1874,12 +1878,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Resolve actual return type - defaulted operator<=> has 'auto' return type
 				// that is deduced to int (returning -1/0/1)
 				Type resolved_return_type = return_type.type();
+				TypeCategory resolved_cat = return_type.category();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
-				if (isPlaceholderAutoType(resolved_return_type) && op == "<=>") {
+				if (isPlaceholderAutoType(resolved_cat) && op == "<=>") {
 					resolved_return_type = Type::Int;
+					resolved_cat = TypeCategory::Int;
 					actual_return_size = 32;
 				}
-				if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index().is_valid()) {
+				if (actual_return_size == 0 && resolved_cat == TypeCategory::Struct && return_type.type_index().is_valid()) {
 					// Look up struct size from type info
 					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
@@ -1948,10 +1954,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 			if (op == "<=>" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}",
-				static_cast<int>(lhsType), lhsType == Type::Struct);
+				static_cast<int>(lhsType), lhsCat == TypeCategory::Struct);
 
 			// Check if LHS is a struct type
-			if (lhsType == Type::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			if (lhsCat == TypeCategory::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
 				// Get the LHS value - can be an identifier, member access, or other expression
@@ -2449,8 +2455,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Special handling for assignment: convert RHS to LHS type instead of finding common type
 		// For assignment, we don't want to promote the LHS
 		if (op == "=") {
-			if (lhsType == Type::Struct
-				&& rhsType == Type::Struct
+			if (lhsCat == TypeCategory::Struct
+				&& rhsCat == TypeCategory::Struct
 				&& lhsExprResult.type_index.is_valid()
 				&& rhsExprResult.type_index.is_valid()
 				&& lhsExprResult.type_index == rhsExprResult.type_index
@@ -3206,7 +3212,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const auto& type_spec = arg1.as<TypeSpecifierNode>();
 			requested_type = type_spec.type();
 			requested_size = static_cast<int>(type_spec.size_in_bits());
-			is_float_type = (requested_type == Type::Float || requested_type == Type::Double);
+			is_float_type = (typeToCategory(requested_type) == TypeCategory::Float || typeToCategory(requested_type) == TypeCategory::Double);
 		} else if (arg1.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
 			// Old path: IdentifierNode with type name
 			std::string_view type_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
@@ -3828,7 +3834,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Win64 ABI: structs > 8 bytes are passed by pointer in variadic calls,
 				// so the stack slot holds a pointer to the struct, not the struct itself.
 				// We need to read the pointer first, then dereference it.
-				bool is_indirect_struct = (requested_type == Type::Struct && requested_size > 64);
+				bool is_indirect_struct = (typeToCategory(requested_type) == TypeCategory::Struct && requested_size > 64);
 
 				TempVar value = var_counter.next();
 				if (is_indirect_struct) {
@@ -4235,12 +4241,13 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.typeEnum();
+	TypeCategory lvalue_cat = (typeToCategory(lhs_meta.value_type) != TypeCategory::Invalid) ? typeToCategory(lhs_meta.value_type) : lhs_operands.category();
+	Type lvalue_type = categoryToType(lvalue_cat);
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
-		if (isIrStructType(toIrType(lvalue_type))) {
+		if (isIrStructType(toIrType(lvalue_cat))) {
 			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
@@ -4478,12 +4485,13 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	Type lvalue_type = (lhs_meta.value_type != Type::Invalid) ? lhs_meta.value_type : lhs_operands.typeEnum();
+	TypeCategory lvalue_cat = (typeToCategory(lhs_meta.value_type) != TypeCategory::Invalid) ? typeToCategory(lhs_meta.value_type) : lhs_operands.category();
+	Type lvalue_type = categoryToType(lvalue_cat);
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
-		if (isIrStructType(toIrType(lvalue_type))) {
+		if (isIrStructType(toIrType(lvalue_cat))) {
 			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
 				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {

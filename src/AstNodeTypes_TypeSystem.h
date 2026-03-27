@@ -846,6 +846,57 @@ constexpr bool isFloatingPointType(TypeCategory cat) {
 		|| cat == TypeCategory::LongDouble;
 }
 
+// TypeCategory overloads for the Type-based helpers in AstNodeTypes.cpp.
+// These allow call sites to avoid categoryToType() round-trips.
+constexpr bool is_integer_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool is_bool_type(TypeCategory cat) {
+	return cat == TypeCategory::Bool;
+}
+
+// Note: WChar/Char8/Char16/Char32 are always unsigned in this implementation;
+// the target-dependent signedness of WChar only matters at the Type level.
+constexpr bool is_unsigned_integer_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool is_standard_arithmetic_type(TypeCategory cat) {
+	return is_integer_type(cat) || isFloatingPointType(cat) || is_bool_type(cat);
+}
+
 // Identity record that travels with every deferred/lazy template member.
 // Slice 1 populates the source-side fields; Slice 2 fills instantiated_lookup_name.
 struct DeferredMemberIdentity {

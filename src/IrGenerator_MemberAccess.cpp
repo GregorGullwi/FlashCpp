@@ -272,10 +272,10 @@
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 				Type element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
-				TypeIndex element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
 
 				// Get element size for struct types
-				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index.is_valid()) {
+				if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
 					const TypeInfo& type_info = getTypeInfo(element_type_index);
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
@@ -854,8 +854,9 @@
 		result.storage = storage;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
-		if (type == Type::Struct ||
-			(type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
+		TypeCategory cat = typeToCategory(type);
+		if (cat == TypeCategory::Struct ||
+			(cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
 			result.type_index = TypeIndex{type_index};
 		}
 		return result;
@@ -1513,7 +1514,7 @@
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
 							size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
-							if (ref_size == 0 && static_member->memberType() == Type::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
+							if (ref_size == 0 && typeToCategory(static_member->memberType()) == TypeCategory::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(static_member->type_index).getStructInfo();
 								if (si) ref_size = si->total_size;
 							}
@@ -1615,8 +1616,7 @@
 				}
 			}
 			// Handle struct types
-			else if (type == Type::Struct) {
-				size_t type_index = type_spec.type_index().index();
+			else if (typeToCategory(type) == TypeCategory::Struct) {				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
 					return ExprResult{};
@@ -1888,7 +1888,7 @@
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (expr_type == Type::Struct) {
+			if (typeToCategory(expr_type) == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("sizeof(struct_expression) not fully implemented yet");
@@ -1925,7 +1925,7 @@
 			Type type = type_spec.type();
 
 			// Handle struct types
-			if (type == Type::Struct) {
+			if (typeToCategory(type) == TypeCategory::Struct) {
 				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
@@ -2000,7 +2000,7 @@
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (expr_type == Type::Struct) {
+			if (typeToCategory(expr_type) == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("alignof(struct_expression) not fully implemented yet");
@@ -2054,14 +2054,12 @@
 	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
 		if (is_reference) return false;
 		if (pointer_depth > 0) return true;  // Pointers are scalar
-		return (type == Type::Bool || type == Type::Char || type == Type::Short ||
-		type == Type::Int || type == Type::Long || type == Type::LongLong ||
-		type == Type::UnsignedChar || type == Type::UnsignedShort ||
-		type == Type::UnsignedInt || type == Type::UnsignedLong ||
-		type == Type::UnsignedLongLong || type == Type::Float ||
-		type == Type::Double || type == Type::LongDouble || type == Type::Enum ||
-		type == Type::Nullptr || type == Type::MemberObjectPointer ||
-		type == Type::MemberFunctionPointer);
+		TypeCategory cat = typeToCategory(type);
+		return is_standard_arithmetic_type(cat)
+			|| cat == TypeCategory::Enum
+			|| cat == TypeCategory::Nullptr
+			|| cat == TypeCategory::MemberObjectPointer
+			|| cat == TypeCategory::MemberFunctionPointer;
 	}
 
 	// Recursively check whether a struct is trivially copyable:
@@ -2266,7 +2264,7 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (typeToCategory(from_type) == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types
@@ -2325,7 +2323,7 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is nothrow convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (typeToCategory(from_type) == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types (nothrow if no virtual base)
@@ -2444,7 +2442,7 @@
 				// - All non-static data members have same access control
 				// - No base classes with non-static data members
 				// - No base classes of the same type as first non-static data member
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (typeToCategory(type) == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2472,10 +2470,7 @@
 			case TypeTraitKind::HasUniqueObjectRepresentations:
 				// Types with no padding bits have unique object representations
 				// Integral types (except bool), and trivially copyable types without padding
-				if ((type == Type::Char || type == Type::Short || type == Type::Int ||
-				type == Type::Long || type == Type::LongLong || type == Type::UnsignedChar ||
-				type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				if (is_integer_type(typeToCategory(type))
 				&& !is_reference && pointer_depth == 0) {
 					result = true;
 				}
@@ -2581,7 +2576,7 @@
 
 			case TypeTraitKind::IsUnsigned:
 				// __is_unsigned - checks if integral type is unsigned
-				result = (type == Type::Bool || is_unsigned_integer_type(type)) & !is_reference & (pointer_depth == 0);
+				result = (typeToCategory(type) == TypeCategory::Bool || is_unsigned_integer_type(typeToCategory(type))) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
@@ -2884,7 +2879,7 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				else if (typeToCategory(type) == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2999,7 +2994,7 @@
 			case TypeTraitKind::UnderlyingType:
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
-				if (type == Type::Enum && !is_reference && pointer_depth == 0 &&
+				if (typeToCategory(type) == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -3567,16 +3562,16 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 					// This handles cases like `operator value_type()` where `using value_type = T;`
 					// Use recursive resolution to handle chains of type aliases
-					if (resolved_type == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+					if (typeToCategory(resolved_type) == TypeCategory::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
 						TypeIndex current_type_index = type_spec.type_index();
 						int max_depth = 10;  // Prevent infinite loops from circular aliases
-						while (resolved_type == Type::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
+						while (typeToCategory(resolved_type) == TypeCategory::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
 							const TypeInfo& alias_type_info = getTypeInfo(current_type_index);
-							if (!alias_type_info.isVoid() && alias_type_info.resolvedType() != Type::UserDefined) {
+							if (!alias_type_info.isVoid() && typeToCategory(alias_type_info.resolvedType()) != TypeCategory::UserDefined) {
 								resolved_type = alias_type_info.resolvedType();
 								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
 								break;
-							} else if (alias_type_info.resolvedType() == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
+							} else if (typeToCategory(alias_type_info.resolvedType()) == TypeCategory::UserDefined && alias_type_info.type_index_ != current_type_index) {
 								// Follow the chain of aliases
 								current_type_index = alias_type_info.type_index_;
 							} else {
@@ -3601,7 +3596,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// but the return type wasn't fully updated in the AST.
 					// Note: target_type can never be Struct, Enum, or UserDefined here — getTypeName()
 					// returns "" for those types, causing an early `return nullptr` above (line 3470-3472).
-					if (resolved_type == Type::UserDefined) {
+					if (typeToCategory(resolved_type) == TypeCategory::UserDefined) {
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
