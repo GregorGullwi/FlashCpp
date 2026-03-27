@@ -180,11 +180,6 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 	return ConversionPlan::no_match();
 }
 
-// Legacy bridge for callers that still traffic in raw Type.
-inline ConversionPlan buildConversionPlan(Type from, Type to) {
-	return buildConversionPlan(typeToCategory(from), typeToCategory(to));
-}
-
 // Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
 // Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
 inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
@@ -208,7 +203,7 @@ inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeCategory cat, TypeInde
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.
 inline TypeConversionResult can_convert_type(Type from, Type to) {
-	return buildConversionPlan(from, to).toResult();
+	return buildConversionPlan(typeToCategory(from), typeToCategory(to)).toResult();
 }
 
 // Helper function to find a conversion operator in a struct
@@ -353,7 +348,7 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • lvalue / rvalue references (binding rules, ref-qualification compatibility)
 //   • user-defined conversions (conversion operators and single-argument constructors)
 //   • struct-type matching (by TypeIndex, not just Type::Struct equality)
-//   • primitive types — delegates to buildConversionPlan(Type,Type)
+//   • primitive types — delegates to buildConversionPlan(TypeCategory, TypeCategory)
 // Returns ConversionPlan (rank + StandardConversionKind + validity) covering all cases.
 //
 // IMPORTANT: For correct lvalue-vs-rvalue-reference matching the caller must:

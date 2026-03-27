@@ -2999,7 +2999,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.base_type, from_desc.type_index);
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.base_type, to_desc.type_index);
-	const ConversionPlan plan = buildConversionPlan(from_canonical.typeEnum(), to_canonical.typeEnum());
+	const ConversionPlan plan = buildConversionPlan(from_canonical.type_cat, to_canonical.type_cat);
 	if (!plan.is_valid) return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
@@ -3233,7 +3233,7 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
 	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(src_desc.base_type, src_desc.type_index);
 	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(tgt_desc.base_type, tgt_desc.type_index);
-	const ConversionPlan plan = buildConversionPlan(src_canonical.typeEnum(), tgt_canonical.typeEnum());
+	const ConversionPlan plan = buildConversionPlan(src_canonical.type_cat, tgt_canonical.type_cat);
 	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
 
 	ImplicitCastInfo cast_info;
