@@ -5447,7 +5447,8 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	Type type = type_spec.type();
+	TypeCategory type_cat = type_spec.category();
+	Type type = categoryToType(type_cat);
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
@@ -5457,20 +5458,25 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	// Evaluate the type trait based on its kind
 	switch (trait_expr.kind()) {
 		case TypeTraitKind::IsVoid:
-			result = (type == Type::Void && !is_reference && pointer_depth == 0);
+			result = (type_cat == TypeCategory::Void && !is_reference && pointer_depth == 0);
 			break;
 
 		case TypeTraitKind::IsIntegral:
-			result = (type == Type::Bool ||
-			         type == Type::Char ||
-			         type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-			         type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-			         type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+			result = (type_cat == TypeCategory::Bool ||
+			         type_cat == TypeCategory::Char ||
+			         type_cat == TypeCategory::Short ||
+			         type_cat == TypeCategory::Int ||
+			         type_cat == TypeCategory::Long ||
+			         type_cat == TypeCategory::LongLong ||
+			         type_cat == TypeCategory::UnsignedChar ||
+			         type_cat == TypeCategory::UnsignedShort ||
+			         type_cat == TypeCategory::UnsignedInt ||
+			         type_cat == TypeCategory::UnsignedLong || type_cat == TypeCategory::UnsignedLongLong)
 			         && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsFloatingPoint:
-			result = (type == Type::Float || type == Type::Double || type == Type::LongDouble)
+			result = (type_cat == TypeCategory::Float || type_cat == TypeCategory::Double || type_cat == TypeCategory::LongDouble)
 			         && !is_reference && pointer_depth == 0;
 			break;
 
@@ -5503,13 +5509,13 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsObject:
-			result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
+			result = (type_cat != TypeCategory::Function) & (type_cat != TypeCategory::Void) & !is_reference & !is_rvalue_reference;
 			break;
 
 		case TypeTraitKind::IsScalar:
 			result = (isArithmeticType(type) ||
-			          type == Type::Enum || type == Type::Nullptr ||
-			          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
+			          type_cat == TypeCategory::Enum || type_cat == TypeCategory::Nullptr ||
+			          type_cat == TypeCategory::MemberObjectPointer || type_cat == TypeCategory::MemberFunctionPointer ||
 			          pointer_depth > 0)
 			          && !is_reference;
 			break;

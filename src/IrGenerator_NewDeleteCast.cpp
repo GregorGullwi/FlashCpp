@@ -8,14 +8,15 @@
 		}
 
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
-		Type type = type_spec.type();
+		TypeCategory type_cat = type_spec.category();
+		Type type = categoryToType(type_cat);
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
 		int pointer_depth = static_cast<int>(type_spec.pointer_depth());
 
 		// Create a temporary variable for the result (pointer to allocated memory)
 		TempVar result_var = var_counter.next();
 		auto emit_scalar_new_initializer = [&](TempVar pointer_var) {
-			if (type == Type::Struct || newExpr.constructor_args().size() == 0) {
+			if (type_cat == TypeCategory::Struct || newExpr.constructor_args().size() == 0) {
 				return;
 			}
 
@@ -71,7 +72,7 @@
 				const auto& array_inits = newExpr.constructor_args();
 				if (array_inits.size() > 0) {
 					// For struct types, call constructor for each element
-					if (type == Type::Struct) {
+					if (type_cat == TypeCategory::Struct) {
 						TypeIndex type_index = type_spec.type_index();
 						if (type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index);
