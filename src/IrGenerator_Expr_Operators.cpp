@@ -1374,7 +1374,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							AddressOfOp addr_op;
 							addr_op.result = lhs_addr;
 							addr_op.operand.setType(lhsCat);
-							addr_op.operand.ir_type = toIrType(categoryToType(lhsCat));
+							addr_op.operand.ir_type = toIrType(lhsCat);
 							addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 							addr_op.operand.pointer_depth = PointerDepth{};
 							std::visit([&addr_op](auto&& val) { addr_op.operand.value = val; }, lhs_value);
@@ -1388,7 +1388,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// Pass 'this' pointer as first argument
 							TypedValue this_arg;
 							this_arg.setType(lhsCat);
-							this_arg.ir_type = toIrType(categoryToType(lhsCat));
+							this_arg.ir_type = toIrType(lhsCat);
 							this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 							this_arg.value = lhs_addr;
 							call_op.args.push_back(this_arg);
@@ -1855,7 +1855,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				AddressOfOp addr_op;
 				addr_op.result = lhs_addr;
 				addr_op.operand.setType(lhsCat);
-				addr_op.operand.ir_type = toIrType(categoryToType(lhsCat));
+				addr_op.operand.ir_type = toIrType(lhsCat);
 				addr_op.operand.size_in_bits = SizeInBits{lhsSize};
 				addr_op.operand.pointer_depth = PointerDepth{};  // TODO: Verify pointer depth
 				// Convert std::variant<StringHandle, TempVar> to IrValue
@@ -1911,7 +1911,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Add 'this' pointer as first argument
 				TypedValue this_arg;
 				this_arg.setType(lhsCat);
-				this_arg.ir_type = toIrType(categoryToType(lhsCat));
+				this_arg.ir_type = toIrType(lhsCat);
 				this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 				this_arg.value = lhs_addr;
 				call_op.args.push_back(this_arg);
@@ -2098,7 +2098,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							// For member functions, the this pointer is passed by name or temp var
 							TypedValue lhs_arg;
 							lhs_arg.setType(lhsCat);
-							lhs_arg.ir_type = toIrType(categoryToType(lhsCat));
+							lhs_arg.ir_type = toIrType(lhsCat);
 							lhs_arg.size_in_bits = SizeInBits{lhsSize};
 							// Convert lhs_value (which can be string_view or TempVar) to IrValue
 							if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {

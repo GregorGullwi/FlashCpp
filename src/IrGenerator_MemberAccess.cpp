@@ -847,7 +847,7 @@
 	ExprResult AstToIr::makeMemberResult(TypeCategory type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 		ExprResult result;
 		result.category_ = type;
-		result.ir_type = toIrType(categoryToType(type));
+		result.ir_type = toIrType(type);
 		result.size_in_bits = size_bits;
 		result.value = result_var;
 		result.pointer_depth = pointer_depth;
