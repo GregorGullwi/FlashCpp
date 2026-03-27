@@ -937,7 +937,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											if (prev_param.name() == type_name) {
 												// Found the matching template parameter - use its filled value
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
-												if (filled_arg.typeEnum() != Type::Invalid) {
+												if (filled_arg.category() != TypeCategory::Invalid) {
 													const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
 
 													if (size_in_bytes > 0) {
@@ -2172,7 +2172,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									substituted_type = concrete_arg.typeEnum();
 									substituted_type_index = concrete_arg.type_index;
 									// Only call get_type_size_bits for basic types
-									if (substituted_type != Type::UserDefined) {
+									if (!is_struct_type(typeToCategory(substituted_type))) {
 										substituted_size = static_cast<unsigned char>(get_type_size_bits(substituted_type));
 									} else {
 										// For UserDefined types, look up the size from the type registry
@@ -2904,7 +2904,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (prev_param.name() == sizeof_type_name) {
 											// Found the matching template parameter - use its filled value
 											const TemplateTypeArg& filled_arg = filled_template_args[j];
-											if (filled_arg.typeEnum() != Type::Invalid) {
+											if (filled_arg.category() != TypeCategory::Invalid) {
 												const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
 												if (size_in_bytes > 0) {
 													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
@@ -5157,7 +5157,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
 									);
-									if (subst_type != Type::UserDefined || subst_index.is_valid()) {
+									if (typeToCategory(subst_type) != TypeCategory::UserDefined || subst_index.is_valid()) {
 										return_type = subst_type;
 										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
@@ -5578,7 +5578,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
 									);
-									if (subst_type != Type::UserDefined || subst_index.is_valid()) {
+									if (typeToCategory(subst_type) != TypeCategory::UserDefined || subst_index.is_valid()) {
 										return_type = subst_type;
 										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 

@@ -597,7 +597,7 @@
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size,
 					memberFunctionCallNode.called_from());
-				if (agg.typeEnum() != Type::Void) return agg;
+				if (agg.category() != TypeCategory::Void) return agg;
 			}
 			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}

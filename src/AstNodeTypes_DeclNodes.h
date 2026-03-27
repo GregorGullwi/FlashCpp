@@ -918,7 +918,7 @@ struct CanonicalTypeAlias {
 // (placeholder / parse-time fallback cases).
 inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if (type != Type::UserDefined || !type_index.is_valid()) {
+	if (typeToCategory(type) != TypeCategory::UserDefined || !type_index.is_valid()) {
 		return {type, type_index};
 	}
 
@@ -930,10 +930,10 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
 		// resolvedType() returns the effective underlying type stored in type_.
 		// Stop when we reach a concrete non-void non-UserDefined type.
-		if (!type_info.isVoid() && type_info.resolvedType() != Type::UserDefined) {
+		if (!type_info.isVoid() && typeToCategory(type_info.resolvedType()) != TypeCategory::UserDefined) {
 			return {type_info.resolvedType(), type_info.type_index_};
 		}
-		if (type_info.resolvedType() != Type::UserDefined ||
+		if (typeToCategory(type_info.resolvedType()) != TypeCategory::UserDefined ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -1279,7 +1279,7 @@ public:
 // type category and qualifiers of the deduced expression.
 inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
 	assert(isPlaceholderAutoType(placeholder_type));
-	if (placeholder_type != Type::Auto) {
+	if (typeToCategory(placeholder_type) != TypeCategory::Auto) {
 		return deduced_type;
 	}
 

@@ -988,7 +988,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
-				if (agg.typeEnum() != Type::Void) return agg;
+				if (agg.category() != TypeCategory::Void) return agg;
 			}
 
 			// Scalar integer / bool / enum
@@ -1171,7 +1171,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 									}
 								}
 							}
-						} else if (from_type != Type::Struct && to_type != Type::Struct) {
+						} else if (!is_struct_type(typeToCategory(from_type)) && !is_struct_type(typeToCategory(to_type))) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
 							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())

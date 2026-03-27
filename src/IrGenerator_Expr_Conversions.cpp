@@ -248,7 +248,7 @@
 			{
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 				if (binding_info.is_global_or_static &&
-					binding_info.bindingType() != Type::Void &&
+					binding_info.type_index.category() != TypeCategory::Void &&
 					binding_info.size_in_bits.is_set()) {
 					AddressComponents result;
 					result.base = binding_info.store_name;
@@ -580,7 +580,7 @@
 
 			if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-				if (binding_info.is_global_or_static && binding_info.bindingType() != Type::Void && binding_info.size_in_bits.is_set()) {
+				if (binding_info.is_global_or_static && binding_info.type_index.category() != TypeCategory::Void && binding_info.size_in_bits.is_set()) {
 					int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 						? 64
 						: static_cast<int>(type_node->size_in_bits());
@@ -1325,7 +1325,7 @@
 					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 					Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
 					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
-					if (from_t != Type::Struct && to_t != Type::Struct) {
+					if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
 						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
 							from_t = operandIrOperands.typeEnum();
@@ -1373,7 +1373,7 @@
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
-			if (!is_integer_type(operandType) && operandType != Type::Bool) {
+			if (!is_integer_type(operandType) && typeToCategory(operandType) != TypeCategory::Bool) {
 				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 			}
 			// Bitwise NOT - use UnaryOp struct
@@ -1660,7 +1660,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const ExprResult& operandIrResult,
 	bool is_prefix
 ) {
-	if (operandType != Type::Struct)
+	if (!is_struct_type(typeToCategory(operandType)))
 		return std::nullopt;
 
 	TypeIndex operand_type_index = operandIrResult.type_index;
@@ -2454,8 +2454,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					}
 				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					ci.selected_constructor &&
-					from_desc.base_type != Type::Struct &&
-					param_base_type != Type::Struct) {
+					from_desc.category() != TypeCategory::Struct &&
+					typeToCategory(param_base_type) != TypeCategory::Struct) {
 					// Pre-bind conversion: target is the selected constructor's first parameter type,
 					// not the outer param type (which may be the struct being constructed).
 					const auto& ctor_params = ci.selected_constructor->parameter_nodes();
@@ -2472,7 +2472,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 					}
 					sema_applied = true;
-				} else if (from_t != Type::Struct && to_t != Type::Struct) {
+				} else if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
 					// Sema may annotate as Type::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
 					if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum())
@@ -2750,7 +2750,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
-		if (target_desc.base_type != Type::Struct ||
+		if (target_desc.category() != TypeCategory::Struct ||
 			target_desc.type_index != target_type.type_index()) {
 			return std::nullopt;
 		}

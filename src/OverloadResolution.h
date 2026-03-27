@@ -1329,7 +1329,7 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, Type
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
 		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (type_info.resolvedType() != Type::Invalid && !type_info.isVoid()) {
+			if (typeToCategory(type_info.resolvedType()) != TypeCategory::Invalid && !type_info.isVoid()) {
 				effective_type = typeToCategory(type_info.resolvedType());
 			} else if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void) {
 				effective_type = TypeCategory::Struct;

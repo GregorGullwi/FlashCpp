@@ -945,7 +945,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Template parameters are stored as Type::UserDefined without struct_info_,
 								// so this check correctly excludes them while accepting concrete types.
 								if (underlying.struct_info_ != nullptr || 
-								    underlying.resolvedType() != Type::UserDefined) {
+								    typeToCategory(underlying.resolvedType()) != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");

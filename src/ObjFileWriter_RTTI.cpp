@@ -610,7 +610,7 @@ void ObjectFileWriter::add_vtable(std::string_view vtable_symbol, std::span<cons
 //   _CT??_R0H@84     (CatchableType, 0x24 bytes)
 //   ??_R0H@8         (RTTI Type Descriptor, created on-demand if missing)
 std::string ObjectFileWriter::get_or_create_builtin_throwinfo(Type type) {
-	if (type != Type::Int) {
+	if (typeToCategory(type) != TypeCategory::Int) {
 		return std::string();
 	}
 

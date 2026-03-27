@@ -290,7 +290,7 @@
 									}
 								}
 							}
-						} else if (annotated_source_type != Type::Struct && to_type != Type::Struct) {
+						} else if (!is_struct_type(typeToCategory(annotated_source_type)) && !is_struct_type(typeToCategory(to_type))) {
 							Type from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
