@@ -690,7 +690,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
-					TemplateTypeArg const_arg(const_value->value, const_value->type);
+					TemplateTypeArg const_arg(const_value->value, const_value->typeEnum());
 					
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {
@@ -853,7 +853,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				
 				if (evaluated_static_member && static_member_value.has_value()) {
 					// Successfully evaluated static member - create template argument
-					TemplateTypeArg const_arg(static_member_value->value, static_member_value->type);
+					TemplateTypeArg const_arg(static_member_value->value, static_member_value->typeEnum());
 					
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {

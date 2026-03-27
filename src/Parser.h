@@ -794,7 +794,9 @@ private:
         // Public members are intentional for this lightweight data structure
         struct ConstantValue {
                 int64_t value;
-                Type type;
+                TypeCategory type = TypeCategory::Invalid;
+
+                Type typeEnum() const noexcept { return categoryToType(type); }
         };
         
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
@@ -1562,10 +1564,12 @@ public:  // Public methods for template instantiation
 };
 
 struct TypedNumeric {
-        Type type = Type::Int;
+        TypeCategory type = TypeCategory::Int;
         TypeQualifier typeQualifier = TypeQualifier::None;
         unsigned char sizeInBits = 0;
         NumericLiteralValue value = 0ULL;
+
+        Type typeEnum() const noexcept { return categoryToType(type); }
 };
 
 // =============================================================================

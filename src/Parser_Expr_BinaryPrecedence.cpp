@@ -563,11 +563,11 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
 		// Branchless type selection
-		// If is_float: Type::Float, else if is_long_double: Type::LongDouble, else Type::Double
-		typeInfo.type = static_cast<Type>(
-			static_cast<int>(Type::Float) * is_float +
-			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +
-			static_cast<int>(Type::Double) * (!is_float) * (!is_long_double)
+		// If is_float: TypeCategory::Float, else if is_long_double: TypeCategory::LongDouble, else TypeCategory::Double
+		typeInfo.type = static_cast<TypeCategory>(
+			static_cast<int>(TypeCategory::Float) * is_float +
+			static_cast<int>(TypeCategory::LongDouble) * is_long_double * (!is_float) +
+			static_cast<int>(TypeCategory::Double) * (!is_float) * (!is_long_double)
 		);
 
 		// Branchless size selection: float=32, double=64, long double=80
@@ -604,17 +604,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	// Constexpr lookup table stores the resolved type directly to avoid redundant counting.
 	struct IntSuffixInfo {
 		std::string_view text;
-		Type signed_type;
-		Type unsigned_type;
+		TypeCategory signed_type;
+		TypeCategory unsigned_type;
 	};
 	static constexpr IntSuffixInfo int_suffix_table[] = {
-		{"u",   Type::UnsignedInt,      Type::UnsignedInt},
-		{"l",   Type::Long,             Type::UnsignedLong},
-		{"ul",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"lu",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"ll",  Type::LongLong,         Type::UnsignedLongLong},
-		{"ull", Type::UnsignedLongLong, Type::UnsignedLongLong},
-		{"llu", Type::UnsignedLongLong, Type::UnsignedLongLong},
+		{"u",   TypeCategory::UnsignedInt,      TypeCategory::UnsignedInt},
+		{"l",   TypeCategory::Long,             TypeCategory::UnsignedLong},
+		{"ul",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"lu",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"ll",  TypeCategory::LongLong,         TypeCategory::UnsignedLongLong},
+		{"ull", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
+		{"llu", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
 	};
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
@@ -651,17 +651,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			// Decimal unsuffixed: int → long → long long (signed only).
 			// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
 			if (int_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 64 && abs_val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::Long;
+				typeInfo.type = TypeCategory::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type = TypeCategory::LongLong;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			}
 		} else {
@@ -672,22 +672,22 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			unsigned long long long_max_unsigned  = (long_bits == 64) ? 0xFFFFFFFFFFFFFFFFULL : (1ULL << long_bits) - 1;
 
 			if (val <= int_max_signed) {
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= int_max_unsigned) {
-				typeInfo.type = Type::UnsignedInt;
+				typeInfo.type = TypeCategory::UnsignedInt;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= long_max_signed) {
-				typeInfo.type = Type::Long;
+				typeInfo.type = TypeCategory::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= long_max_unsigned) {
-				typeInfo.type = Type::UnsignedLong;
+				typeInfo.type = TypeCategory::UnsignedLong;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type = TypeCategory::LongLong;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::UnsignedLongLong;
+				typeInfo.type = TypeCategory::UnsignedLongLong;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			}
 		}

@@ -42,7 +42,7 @@
 | 5 | Migrate `CanonicalTypeAlias::type` to `TypeCategory` | ✅ Done — `type_cat` field + `typeEnum()` accessor; 14 read sites updated |
 | 5 | Migrate `TemplateArgumentValue::type` to `TypeCategory`/`TypeIndex` | ✅ Done — `type_index` carries category; `typeEnum()` accessor; `makeType()`/`makeValue()` stamp TypeCategory |
 | 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ✅ Done — `type_index` field with Void default; `bindingType()` accessor; 5 write + ~30 read sites updated |
-| 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ⬜ TODO |
+| 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ✅ Done — both parser helper structs now store `TypeCategory`; legacy consumers use temporary `typeEnum()` bridges |
 | 5 | Port all remaining switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp` to `TypeCategory`/`IrType` | ⬜ TODO (~100 sites) |
 | 5 | Port Parser and ConstExpr local `Type type = …` variables to `TypeCategory`/`TypeIndex` (~250 sites) | ⬜ TODO |
 | 5 | Port `buildConversionPlan` (`OverloadResolution.h`) to `TypeCategory`/`TypeIndex` | ⬜ TODO |
@@ -63,8 +63,8 @@
 | ~~`CanonicalTypeAlias::type`~~ | ~~`src/AstNodeTypes_DeclNodes.h:903`~~ | ✅ Done — migrated to `type_cat` (TypeCategory) + `typeEnum()` |
 | ~~`TemplateArgumentValue::type`~~ | ~~`src/TemplateRegistry_Types.h:121`~~ | ✅ Done — TypeCategory embedded in `type_index`; `typeEnum()` accessor |
 | ~~`StaticMemberDecl::type`~~ | ~~`src/AstNodeTypes_Template.h:741`~~ | ✅ Done — constructor stamps `TypeIndex::fromTypeAndIndex`; `memberType()` derives from category |
-| `Parser::ConstantValue::type` | `src/Parser.h:797` | Parser-internal literal constant; migrate to `TypeCategory` |
-| `TypedNumeric::type` | `src/Parser.h:1565` | Numeric literal type tag; migrate to `TypeCategory` |
+| ~~`Parser::ConstantValue::type`~~ | ~~`src/Parser.h:797`~~ | ✅ Done — now stores `TypeCategory` + `typeEnum()` bridge for `TemplateTypeArg` call sites |
+| ~~`TypedNumeric::type`~~ | ~~`src/Parser.h:1565`~~ | ✅ Done — now stores `TypeCategory`; sign remains in `TypeQualifier`; `typeEnum()` bridges to `NumericLiteralNode` |
 | `ElfFileWriter::CFIInstruction::Type` | `src/ElfFileWriter.h:368` | **Not the compiler Type enum** — local nested enum for CFI opcodes; no migration needed |
 
 ### Remaining call-site categories (~350 sites total)
