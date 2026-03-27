@@ -726,7 +726,7 @@
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
-		Type target_type = target_type_node.type();
+		TypeCategory target_type = target_type_node.type_index().category();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		size_t target_pointer_depth = target_type_node.pointer_depth();
 
@@ -785,7 +785,7 @@
 		// More complex casts (e.g., pointer casts, numeric conversions) would need additional logic
 
 		// If the types are the same, just return the expression as-is
-		if (source_type == target_type && source_size == target_size) {
+		if (typeToCategory(source_type) == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
 				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
@@ -793,16 +793,16 @@
 		}
 
 		// For enum to int or int to enum, we can just change the type
-		if ((typeToCategory(source_type) == TypeCategory::Enum && typeToCategory(target_type) == TypeCategory::Int) ||
-		(typeToCategory(source_type) == TypeCategory::Int && typeToCategory(target_type) == TypeCategory::Enum) ||
-		(typeToCategory(source_type) == TypeCategory::Enum && typeToCategory(target_type) == TypeCategory::UnsignedInt) ||
-		(typeToCategory(source_type) == TypeCategory::UnsignedInt && typeToCategory(target_type) == TypeCategory::Enum)) {
+		if ((typeToCategory(source_type) == TypeCategory::Enum && target_type == TypeCategory::Int) ||
+		(typeToCategory(source_type) == TypeCategory::Int && target_type == TypeCategory::Enum) ||
+		(typeToCategory(source_type) == TypeCategory::Enum && target_type == TypeCategory::UnsignedInt) ||
+		(typeToCategory(source_type) == TypeCategory::UnsignedInt && target_type == TypeCategory::Enum)) {
 			// Return the value with the new type
 			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
-		if (is_floating_point_type(typeToCategory(source_type)) && is_integer_type(typeToCategory(target_type))) {
+		if (is_floating_point_type(typeToCategory(source_type)) && is_integer_type(target_type)) {
 			TempVar result_temp = var_counter.next();
 			// Extract IrValue from IrOperand - visitExpressionNode returns [type, size, value]
 			// where value is TempVar, string_view, unsigned long long, or double
@@ -821,7 +821,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
+				.to_type_index = target_type_node.type_index(),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
@@ -829,7 +829,7 @@
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
-		if (is_integer_type(typeToCategory(source_type)) && is_floating_point_type(typeToCategory(target_type))) {
+		if (is_integer_type(typeToCategory(source_type)) && is_floating_point_type(target_type)) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -845,7 +845,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
+				.to_type_index = target_type_node.type_index(),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
@@ -853,7 +853,7 @@
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
-		if (is_floating_point_type(typeToCategory(source_type)) && is_floating_point_type(typeToCategory(target_type)) && source_type != target_type) {
+		if (is_floating_point_type(typeToCategory(source_type)) && is_floating_point_type(target_type) && typeToCategory(source_type) != target_type) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -869,7 +869,7 @@
 			TypeConversionOp op{
 				.result = result_temp,
 				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type_index = TypeIndex::fromTypeAndIndex(target_type, {}),
+				.to_type_index = target_type_node.type_index(),
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
@@ -878,7 +878,7 @@
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
 		// e.g. static_cast<bool>(42) must produce 1, not 42
-		if (is_integer_type(typeToCategory(source_type)) && typeToCategory(target_type) == TypeCategory::Bool) {
+		if (is_integer_type(typeToCategory(source_type)) && target_type == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
@@ -890,7 +890,7 @@
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
-		if (is_floating_point_type(typeToCategory(source_type)) && typeToCategory(target_type) == TypeCategory::Bool) {
+		if (is_floating_point_type(typeToCategory(source_type)) && target_type == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
@@ -1027,7 +1027,7 @@
 		ir_.addInstruction(IrOpcode::DynamicCast, std::move(op), dynamicCastNode.cast_token());
 
 		// Get result type and size for metadata and return value
-		Type result_type = target_type_node.type();
+		TypeCategory result_type = target_type_node.type_index().category();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
 
 		// For reference types, the result is a pointer (64 bits), not the struct size
@@ -1057,7 +1057,7 @@
 
 		// Get the target type from the type specifier
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
-		Type target_type = target_type_node.type();
+		TypeCategory target_type = target_type_node.type_index().category();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
@@ -1085,7 +1085,7 @@
 
 		// Get the target type from the type specifier
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
-		Type target_type = target_type_node.type();
+		TypeCategory target_type = target_type_node.type_index().category();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		int target_pointer_depth = target_type_node.pointer_depth();
 
