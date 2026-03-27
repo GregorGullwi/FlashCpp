@@ -1,7 +1,10 @@
 # Type system consolidation: audit and migration roadmap
 
-**Date**: 2026-03-26  
-**Status**: Phase 1 (Option A) complete. Milestones 1–7 well progressed. `TypeInfo::resolvedType()` accessor added; `TypeInfo::isVoid()` helper added; `TypeInfo::isStructLike()` now uses `category()` with alias-chain fallback; all alias-traversal sites migrated to use `resolvedType()` (`canonicalize_type_alias`, `IrGenerator_MemberAccess.cpp`, `OverloadResolution.h`, `Parser_Expr_QualLookup.cpp`, `Parser_Templates_Params.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp`); `TypeSpecifierNode::is_function_pointer()/is_member_function_pointer()/is_member_object_pointer()` migrated to `category()`; `TypeSpecifierNode::getReadableString()` migrated to `category()` with `TypeCategory::TypeAlias` case added; `ConstExprEvaluator_Core.cpp` constructor-call switches migrated to `TypeCategory`; `getTypeName(TypeCategory)` overload added. Remaining: codegen switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp`, `IrType.cpp` hot spots, `current_function_return_type_` field migration, and eventual `Type` deletion.  
+**Date**: 2026-03-27 (updated from 2026-03-26)
+**Status**: Milestones 1–7 complete. **All IR Op structs, FunctionParam, StaticLocalInfo, StructMember, StructStaticMember, LazyStaticMemberInfo, ArrayAccessOp, CatchBeginOp, ThrowOp, StackAllocOp, HeapAllocOp, ConversionOp, TypeConversionOp, GlobalVariableInfo, AddressOfMemberOp, ComputeAddressOp, VirtualCallOp, DereferenceOp, DereferenceStoreOp** have been migrated to `TypeIndex` with embedded `TypeCategory` (no raw `Type` field). `TypedValue::setType()` atomically stamps `TypeCategory`+`IrType`+`is_signed`. `effectiveIrType()` + `is_signed` are the codegen classification authorities. `current_function_return_type_index_` defaults to `{0, TypeCategory::Void}`. Test baseline: **1756 pass / 105 expected-fail / 0 failures**.
+
+**Remaining to delete the `Type` enum**: ~8 struct fields + ~350 call sites (local variables / switch dispatch) in the compiler source. See "What's left" section below.
+
 **Related docs**: `docs/2026-03-12_ENUM_IR_LOWERING_PLAN.md`
 
 ---
@@ -19,15 +22,74 @@
 | 2 | Add `TypeInfo` query helpers (`isStructLike`, `isPrimitive`, `needsTypeIndex`, `isTemplatePlaceholder`) | ✅ Done |
 | 2 | Resolve `Type::UserDefined` ambiguity: split enum or add `is_type_alias` flag (§7.1) | ✅ Done (`is_type_alias_` flag + `isTypeAlias()`) |
 | 2 | Add `static_assert` enum-count sentinel for `Type` (§7.3) | ✅ Done (`Type::Count_` + static_assert) |
-| 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ⬜ TODO |
+| 3 | Convert mixed `Type` + `TypeIndex` call sites to prefer `TypeIndex` as the source of truth | ✅ Done — all IR Op structs, FunctionParam, StaticLocalInfo, StructMember/StructStaticMember/LazyStaticMemberInfo migrated |
 | 3 | Upgrade or document `resolve_type_alias` chain-following behavior (§7.1 option b) | ✅ Done (isolated recursive canonicalization PR) |
 | 3 | Document `buildConversionPlan` as legitimate `Type`-primary consumer (§7.2) | ✅ Done |
 | 4 | Consolidate `is_integral_type` / `isIntegralType` to one definition | ✅ Done (removed `is_integral_type`; use `isIntegralType`) |
-| 5 | Audit remaining `Type`-only consumers and decide whether `Type` stays as a cached category | ⬜ TODO |
-| 6 | Create `gTypeInfo` accessor API — Option D Step 0 (§5, Milestone 6) | ✅ Done (`getTypeInfo`, `getTypeInfoMut`, `findTypeByName`, `findNativeType`, `getTypeInfoCount`, `forEachTypeInfo`; `extern` declarations removed) |
-| 7 | Add `TypeCategory`, embed in `TypeIndex`, migrate all `Type` usages — Option D Steps 1-3 (§5, Milestone 7) | 🔄 All `TypeSpecifierNode::type()` sites migrated; all `TypeInfo::type_` alias-traversal sites migrated; `toIrType(TypeCategory)` and `toIrType(TypeInfo)` overloads added; `IrGenerator_MemberAccess` TypeInfo.type_ reads use `toIrType(ti)`. Remaining: `current_function_return_type_` (Type field in IRConverter) migration + eventual `Type` deletion |
-| — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ⬜ TODO |
+| 4 | Migrate `FunctionParam` to `TypeIndex`-only (no `Type type` field) | ✅ Done — `TypeIndex type_index` with `paramType()` helper |
+| 4 | Migrate `StaticLocalInfo` to `TypeIndex`-only | ✅ Done |
+| 4 | Migrate `StructMember`, `StructStaticMember`, `LazyStaticMemberInfo` to `TypeIndex`-only | ✅ Done |
+| 4 | Migrate all IR Op structs (Stack/Heap/Array/Catch/Throw/Conversion/Global) to `TypeIndex`-only | ✅ Done |
+| 4 | Migrate `DereferenceOp`, `DereferenceStoreOp` pointer `TypeIndex` stamping | ✅ Done |
+| 4 | Migrate `AddressOfMemberOp`, `ComputeAddressOp`, `VirtualCallOp` to `TypeIndex` | ✅ Done |
+| 4 | `TypedValue::setType()` atomically stamps `TypeCategory` + `IrType` + `is_signed` | ✅ Done |
+| 4 | `makeTypedValue()` and all overloads stamp `TypeCategory` via `TypeIndex::fromTypeAndIndex` | ✅ Done |
+| 4 | `setupAndLoadArithmeticOperation` uses `effectiveIrType()` + `is_signed` for classification | ✅ Done |
+| 4 | `current_function_return_type_index_` default → `{0, TypeCategory::Void}` | ✅ Done |
+| 4 | Fix `evaluate_constructor_call` missing `WChar/Char8/Char16/Char32` switch cases | ✅ Done |
+| 5 | Migrate `ExprResult::type` field to pure `IrType`+`TypeCategory` (remove `Type type` from `ExprResult`) | ⬜ TODO — largest remaining step |
+| 5 | Migrate `StaticMemberDecl::type` field to `TypeIndex`-only | ⬜ TODO |
+| 5 | Migrate `CanonicalTypeAlias::type` and `TemplateArgumentValue::type` to `TypeCategory`/`TypeIndex` | ⬜ TODO |
+| 5 | Migrate `GlobalStaticBindingInfo::type` (`AstToIr.h:79`) to `TypeIndex` | ⬜ TODO |
+| 5 | Migrate `Parser::ConstantValue::type` and `TypedNumeric::type` to `TypeCategory` | ⬜ TODO |
+| 5 | Port all remaining switch-dispatch on `Type` in `IRConverter_ConvertMain.cpp` to `TypeCategory`/`IrType` | ⬜ TODO (~100 sites) |
+| 5 | Port Parser and ConstExpr local `Type type = …` variables to `TypeCategory`/`TypeIndex` (~250 sites) | ⬜ TODO |
+| 5 | Port `buildConversionPlan` (`OverloadResolution.h`) to `TypeCategory`/`TypeIndex` | ⬜ TODO |
+| 6 | Remove `Type` enum and all `Type::*` references from the codebase | ⬜ FUTURE |
+| — | Resolve `Type::UserDefined` semantic ambiguity (§7.1) — prerequisite for Milestone 3 | ✅ Done (`isTypeAlias()` flag) |
 | — | Migrate `buildConversionPlan` with dedicated test coverage (§7.2) | ⬜ TODO |
+
+---
+
+## What's left to remove the `Type` enum
+
+### Remaining `Type type` struct fields (must be migrated to `TypeIndex`/`TypeCategory`)
+
+| Struct | File | Notes |
+|--------|------|-------|
+| `ExprResult::type` | `src/IROperandHelpers.h:83` | **Biggest remaining field** — used by all IR generators; needs `IrType`+`TypeCategory` replacement (Phase 5) |
+| `GlobalStaticBindingInfo::type` | `src/AstToIr.h:79` | Semantic struct; intentional read site; migrate to `TypeIndex` |
+| `CanonicalTypeAlias::type` | `src/AstNodeTypes_DeclNodes.h:903` | Local alias-chain output; migrate to `TypeCategory`/`TypeIndex` |
+| `TemplateArgumentValue::type` | `src/TemplateRegistry_Types.h:121` | Template arg representation; migrate to `TypeCategory`/`TypeIndex` |
+| `StaticMemberDecl::type` | `src/AstNodeTypes_Template.h:741` | Has `memberType()` forwarder; drop raw `Type type` field |
+| `Parser::ConstantValue::type` | `src/Parser.h:797` | Parser-internal literal constant; migrate to `TypeCategory` |
+| `TypedNumeric::type` | `src/Parser.h:1565` | Numeric literal type tag; migrate to `TypeCategory` |
+| `ElfFileWriter::CFIInstruction::Type` | `src/ElfFileWriter.h:368` | **Not the compiler Type enum** — local nested enum for CFI opcodes; no migration needed |
+
+### Remaining call-site categories (~350 sites total)
+
+1. **Local variable `Type type = …`** (~50 sites in `IrGenerator_MemberAccess.cpp`, `ConstExprEvaluator_Members.cpp`, `IrGenerator_NewDeleteCast.cpp`, `OverloadResolution.h`, `Parser_TypeSpecifiers.cpp`): replace with `TypeCategory cat = …` or read `TypeIndex` directly.
+
+2. **Parser `Type`-based dispatch** (~90 sites across `Parser_Expr_PrimaryExpr.cpp`, `Parser_Expr_PrimaryUnary.cpp`, `Parser_Expr_BinaryPrecedence.cpp`, `Parser_Statements.cpp`, `Parser_Decl_*`): these read `TypeSpecifierNode::type()` and switch on the result; migrate to `TypeSpecifierNode::category()` + `TypeCategory` switch.
+
+3. **`IRConverter_ConvertMain.cpp` codegen dispatch** (~11 remaining sites): switch arms that check `Type::Struct`, `Type::Enum`, etc.; replace with `TypeCategory`/`IrType` arms.
+
+4. **`ObjFileWriter_*.cpp` symbol/EH/RTTI** (~30 sites): use `Type` for debug info and exception type tables; port to `TypeCategory`/`TypeIndex`.
+
+5. **`buildConversionPlan` in `OverloadResolution.h`** (§7.2): deeply entangled with raw `Type` comparisons; needs dedicated migration + test coverage.
+
+6. **`get_type_size_bits(Type)`, `categoryToType()`, `typeToCategory()`** helper functions: these are the *bridge* functions that allow migration to be incremental; they must be deleted last, after all callers are ported.
+
+### Recommended next steps (smallest-first approach)
+
+1. **Migrate `StaticMemberDecl::type`** — already has `memberType()` helper; just drop the raw `Type` field and update 4 constructor call sites.
+2. **Migrate `CanonicalTypeAlias::type`** — replace with `TypeCategory` (it only stores the resolved category, never a struct TypeIndex).
+3. **Migrate `TemplateArgumentValue::type`** — replace with `TypeCategory`; update factory methods and ~5 read sites.
+4. **Migrate `GlobalStaticBindingInfo::type`** — replace with a `TypeIndex` field; update 3 read sites in `AstToIr.h`.
+5. **Migrate `ExprResult::type`** — the largest single step; replace `Type type` with `TypeCategory category_` + keep `IrType ir_type`; update all `makeExprResult` factory calls and every read of `.type` or `.typeEnum()` across `~350` call sites.
+6. **Port `buildConversionPlan`** — requires migrating all `Type`-based binary-operator overload checks to `TypeCategory`.
+7. **Port remaining Parser/ConstExpr local variables** — mechanical; do file-by-file.
+8. **Delete bridge functions** (`categoryToType`, `typeToCategory`, `toIrType(Type)`) and the `Type` enum itself.
 
 ---
 
