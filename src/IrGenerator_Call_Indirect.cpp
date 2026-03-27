@@ -121,7 +121,7 @@
 							// For complex expressions, evaluate and get type
 							ExprResult operand_result = visitExpressionNode(arg_expr);
 							arg_types.push_back(TypeSpecifierNode(
-								operand_result.type,
+								operand_result.typeEnum(),
 								TypeQualifier::None,
 								static_cast<unsigned char>(operand_result.size_in_bits.value)
 							));

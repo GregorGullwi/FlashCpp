@@ -4886,7 +4886,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// Fallback to old logic: infer from argument types
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
-				Type paramType = arg.type;
+				Type paramType = arg.typeEnum();
 				int paramSize = arg.size_in_bits.value;
 				TypeIndex arg_type_index = arg.type_index;
 				bool arg_is_reference = arg.is_reference();  // Check if marked as reference
@@ -5077,7 +5077,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
-			Type paramType = param_type_spec ? param_type_spec->type() : arg.type;
+			Type paramType = param_type_spec ? param_type_spec->type() : arg.typeEnum();
 			int paramSize = param_type_spec ? getTypeSpecSizeBits(*param_type_spec) : arg.size_in_bits.value;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = param_type_spec
@@ -14613,11 +14613,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
-					TypedValue source_value;
-					source_value.type = throw_op.exceptionType();
-					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
-					source_value.type_index = throw_op.type_index;
-					source_value.value = throw_op.exception_value;
+					TypedValue source_value = makeTypedValue(throw_op.exceptionType(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 				}
 
@@ -14761,11 +14757,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 
 				bool exception_constructed = false;
 				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
-					TypedValue source_value;
-					source_value.type = throw_op.exceptionType();
-					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
-					source_value.type_index = throw_op.type_index;
-					source_value.value = throw_op.exception_value;
+					TypedValue source_value = makeTypedValue(throw_op.exceptionType(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 

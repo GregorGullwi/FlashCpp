@@ -2327,8 +2327,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 			// Materialize a 0.0 constant with the same float type as the condition.
-			// The caller guarantees cond.type is Float or Double.
-			ExprResult zero = makeExprResult(cond.type, cond.size_in_bits, IrOperand{0.0}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			// The caller guarantees cond.typeEnum() is Float or Double.
+			ExprResult zero = makeExprResult(cond.typeEnum(), cond.size_in_bits, IrOperand{0.0}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			// Emit: result = (cond != 0.0)
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
