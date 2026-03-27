@@ -966,7 +966,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
-	TypeIndex current_function_return_type_index_ {};  // TypeCategory embedded; replaces Type current_function_return_type_
+	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // TypeCategory embedded; replaces Type current_function_return_type_
 	int current_function_return_size_in_bits_ = 0;
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)

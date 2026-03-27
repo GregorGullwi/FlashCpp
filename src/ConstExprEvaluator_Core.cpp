@@ -1345,6 +1345,15 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 					result.set_exact_type(type_spec);
 					return result;
 				}
+			case TypeCategory::WChar:
+			case TypeCategory::Char8:
+			case TypeCategory::Char16:
+			case TypeCategory::Char32:
+				{
+					EvalResult result = EvalResult::from_uint(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case TypeCategory::Float:
 			case TypeCategory::Double:
 			case TypeCategory::LongDouble:

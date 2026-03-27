@@ -811,7 +811,7 @@ private:
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	int current_function_return_size_;   // Current function's return size in bits
-	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types (TypeCategory embedded)
+	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
 
 	// Convenience accessor: converts the embedded TypeCategory back to the legacy Type
 	// enum for call sites that still require a Type value (emitReturn, member_type, etc.).

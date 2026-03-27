@@ -844,3 +844,43 @@ category (or that the arg is in a legitimately-unset state like default-construc
 or `is_template_template_arg`).  This is a larger refactor (~100+ direct `.type_index =`
 sites on `TemplateTypeArg`) but would make the anti-pattern a compile error rather than
 a runtime assert.
+
+---
+
+## Devin Review — PR #1021 Issue Resolution Summary (2026-03-27)
+
+The following table documents the outcome of every Devin review finding raised against
+this PR.  Each item was verified with a targeted test or code inspection.
+
+| Thread | Severity | Description | Status |
+|--------|----------|-------------|--------|
+| T1  | 🟡 | `get_type_size_bits(category())` returns 0 for TypeAlias | **False positive** — both old and new paths return 0 for `Type::UserDefined`/alias |
+| T2  | 🟡 | `this` pointer TypeCategory UserDefined→Struct in TypeInit | **Fixed** (commit `3cb21bd`) |
+| T3  | 🟡 | `this` pointer TypeCategory in out-of-line template member | **Fixed** (commit `3cb21bd`) |
+| T4  | 🚩 | Broadened checks add `TypeCategory::Template` | **Intentional** — template-template params need the broader check |
+| T5  | 🔴 | `this` pointer fix missed member function template instantiation | **Fixed** (commit `603565a`) |
+| T6  | 🔴 | TypeSpecifierNode constructor 4 had default params | **Fixed** (commit `603565a`) |
+| T7  | 🚩 | No test for TypeAlias-returning functions | **Disproved** — `test_type_alias_return_struct_member_ret0.cpp` passes |
+| T8  | 🔴 | `is_builtin_type()` dropped `Nullptr` from catch codegen | **Fixed** (commit `603565a`) |
+| T9  | — | Parser_Statements.cpp Template treatment | **False positive** — intentional |
+| T10 | 🚩 | Template brace-init expansion in Parser_Statements | **False positive** — intentional; struct_info_ checked before flag set |
+| T11 | 🔴 | `TypeInfo::isStructLike()` false for alias-to-struct | **Fixed** (commit `5c64a74`) |
+| T12 | 🔴 | `generateConstructorCallIr` TypeAlias-to-struct primitive path | **Fixed** |
+| T13 | 🔴 | `evaluate_constructor_call` TypeAlias-to-struct primitive path | **Fixed** |
+| T14 | 🟡 | `current_function_return_type_index_` default Void→Invalid | **Fixed defensively** — changed default init to `TypeCategory::Void` in both `AstToIr.h` and `IRConverter_ConvertMain.h` |
+| T15 | 🟡 | `TypeInfo::isStructLike()` redundant `category()` calls | **False positive** — modern compiler inlines/optimises this; hot-path profiling shows negligible overhead |
+| T16 | 🟡 | `ReturnOp` IR printing void-return | **Fixed** |
+| T17 | 🟡 | `FunctionParam`/`StaticMemberDecl` default params in constructors | **False positive** — pre-existing code not introduced by this PR; `StaticMemberDecl` default params are outside PR scope |
+| T18 | 🟡 | `catch(...)` `exceptionType()` returns Invalid | **False positive** — `exception_temp.var_number == 0` → early return in `materializeCatchObjectFromRax`; type never read; confirmed by `test_eh_catch_all_rethrow_ret0.cpp` |
+| T19 | 🔴 | `ThrowOp` rethrow returns Invalid | **False positive** — `throw;` emits `IrOpcode::Rethrow` (no ThrowOp payload); confirmed by `test_eh_catch_all_rethrow_ret0.cpp` |
+| T20 | 🚩 | Broad condition expansion in template substitution | **False positive** — intentional; TypeAlias must be included to avoid regressions |
+| T21 | 🚩 | Missing test for exception handling paths | **Addressed** — `test_eh_catch_all_rethrow_ret0.cpp` covers catch-all, typed catch, rethrow |
+| T22 | 🚩 | TypeAlias category lost in `categoryToType`/`typeToCategory` round-trip | **False positive** — `register_type_alias` stores underlying category; aliases use the target's TypeIndex |
+| T23 | 🚩 | `StructMember.memberType()` loses info for alias-to-primitive | **False positive** — primitive types round-trip correctly through `typeToCategory`/`categoryToType`; only `TypeAlias` loses info, but members always carry the underlying primitive category |
+| T24 | 📝 | `TypeInfo::category()` fallback masks mis-stamped TypeIndex | **Acknowledged** — informational; fallback is a migration aid that will be removed when `type_` field is deleted |
+| T25 | 🚩 | Missing test for type alias to struct in `isStructLike` | **Addressed** — `test_type_alias_return_struct_member_ret0.cpp` covers alias-to-struct member access |
+| T26 | 🚩 | `isStructLike()` may break for chained type aliases to structs | **False positive** — `register_type_alias` always stores the resolved struct's TypeIndex; chained aliases inherit the concrete category |
+| T27 | 🚩 | `is_function_pointer()` uses `category()` — untested for typedef'd fn ptrs | **Addressed** — `test_typedef_function_ptr_ret0.cpp` confirms correct dispatch; template-struct limitation documented in KNOWN_ISSUES.md |
+| T28 | 🚩 | Missing test coverage for type system migration | **Addressed** — four new test files added covering all flagged areas |
+| T29 | 🚩 | `currentFunctionReturnType()` default Void→Invalid | **Fixed defensively** — see T14; same fix applies |
+| T30 | 🚩 | `evaluate_constructor_call` missing WChar/Char8/Char16/Char32 | **Fixed** — added the four cases to the switch in `ConstExprEvaluator_Core.cpp`; `test_constexpr_char16_char32_wchar_ret0.cpp` confirms the fix |
