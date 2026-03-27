@@ -1552,13 +1552,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
 											const TypeInfo& src_info = getTypeInfo(source_type_index);
 											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
+												src_info.getStructInfo(), type_node.category(), type_node.type_index(),
 												isExprConstQualified(init_node));
 											if (conv_op) {
 												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
 													StringTable::getStringView(src_info.name()), " to target type");
 												if (auto result = emitConversionOperatorCall(init_operands, src_info, *conv_op,
-														type_node.type(), type_node.type_index(), target_size, decl.identifier_token())) {
+														type_node.category(), type_node.type_index(), target_size, decl.identifier_token())) {
 													init_operands = *result;
 													conv_op_applied = true;
 												}
@@ -1572,14 +1572,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& source_type_info = getTypeInfo(init_type_index);
 								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
+									source_type_info.getStructInfo(), type_node.category(), type_node.type_index(),
 									isExprConstQualified(init_node));
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
 										StringTable::getStringView(source_type_info.name()),
 										" to target type");
 									if (auto result = emitConversionOperatorCall(init_operands, source_type_info, *conv_op,
-											type_node.type(), type_node.type_index(), target_size, decl.identifier_token()))
+											type_node.category(), type_node.type_index(), target_size, decl.identifier_token()))
 										init_operands = *result;
 								}
 							}
@@ -1626,7 +1626,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										// constants to their underlying type; use actual runtime type.
 										if (typeToCategory(from_t) == TypeCategory::Enum && from_t != init_operands.typeEnum())
 											from_t = init_operands.typeEnum();
-										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
+										init_operands = generateTypeConversion(init_operands, typeToCategory(from_t), typeToCategory(to_t), decl.identifier_token());
 										sema_applied = true;
 									}
 								}
@@ -1638,7 +1638,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
 									if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(init_type)) && is_standard_arithmetic_type(typeToCategory(decl_type)))
 										throw InternalError(std::string("Phase 15: sema missed variable init conversion (") + std::string(getTypeName(init_type)) + " -> " + std::string(getTypeName(decl_type)) + ")");
-									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
+									init_operands = generateTypeConversion(init_operands, typeToCategory(init_type), typeToCategory(decl_type), decl.identifier_token());
 								}
 							}
 						}

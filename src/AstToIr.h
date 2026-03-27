@@ -202,7 +202,7 @@ private:
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
-	ExprResult generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token);
+	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
 	// Apply sema-annotated contextual bool conversion to a condition expression.
 	// If the sema pass annotated the condition with BooleanConversion (e.g. float→bool),
 	// emit the proper type conversion.  Falls back to a local conversion for
@@ -643,7 +643,7 @@ private:
 	// These can be used by both the unified handler and special-case code
 
 	// Emit ArrayStore instruction
-	void emitArrayStore(Type element_type, int element_size_bits,
+	void emitArrayStore(TypeCategory element_type, int element_size_bits,
 		std::variant<StringHandle, TempVar> array,
 		const TypedValue& index, const TypedValue& value,
 		int64_t member_offset, bool is_pointer_to_array,
@@ -660,7 +660,7 @@ private:
 		size_t bitfield_bit_offset = 0);
 
 	// Emit DereferenceStore instruction
-	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
+	void emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
 	std::variant<StringHandle, TempVar> pointer,
 	const Token& token);
 
@@ -677,7 +677,7 @@ private:
 	//                  refuses to call non-const ones when set.
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
-		Type target_type,
+		TypeCategory target_type,
 		TypeIndex target_type_index,
 		bool source_is_const) const;
 
@@ -701,7 +701,7 @@ private:
 		const ExprResult& source,
 		const TypeInfo& source_type_info,
 		const StructMemberFunction& conv_op,
-		Type target_type,
+		TypeCategory target_type,
 		TypeIndex target_type_index,
 		int target_size_bits,
 		const Token& token);
@@ -784,18 +784,15 @@ private:
 	}
 
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
-	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token());
+	TempVar emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token = Token());
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
-	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
+	TempVar emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
 
 	// ============================================================================
 	// Return IR helper
 	// ============================================================================
-	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token);
-	void emitReturn(IrValue return_value, TypeCategory return_type_cat, int return_size, const Token& token) {
-		emitReturn(std::move(return_value), categoryToType(return_type_cat), return_size, token);
-	}
+	void emitReturn(IrValue return_value, TypeCategory return_type, int return_size, const Token& token);
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;

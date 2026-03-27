@@ -323,7 +323,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		assign_op.rhs = source_value;
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 
-		TempVar addr_var = emitAddressOf(source_value.typeEnum(), source_value.size_in_bits.value, IrValue(temp_var), token);
+		TempVar addr_var = emitAddressOf(source_value.category(), source_value.size_in_bits.value, IrValue(temp_var), token);
 		makeReferenceAddressValue(addr_var);
 	};
 
@@ -399,7 +399,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
-				argument_result.typeEnum(),
+				argument_result.category(),
 				argument_result.size_in_bits.value,
 				IrValue(arg_temp),
 				token);
@@ -660,7 +660,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// there is no need to re-query the annotation here since both paths would produce
 		// the same generateTypeConversion call (sema_target == common_type by construction).
 		if (true_result.typeEnum() != common_type)
-			true_result = generateTypeConversion(true_result, true_result.typeEnum(), common_type, ternaryNode.get_token());
+			true_result = generateTypeConversion(true_result, true_result.category(), typeToCategory(common_type), ternaryNode.get_token());
 
 		int result_size = get_type_size_bits(common_type);
 		if (result_size == 0) result_size = true_result.size_in_bits.value;
@@ -689,7 +689,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 		// Convert false result to common type if needed (same reasoning as true branch above).
 		if (false_result.typeEnum() != common_type)
-			false_result = generateTypeConversion(false_result, false_result.typeEnum(), common_type, ternaryNode.get_token());
+			false_result = generateTypeConversion(false_result, false_result.category(), typeToCategory(common_type), ternaryNode.get_token());
 
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
@@ -887,7 +887,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				else
 					throw InternalError("sema annotation source type does not match expr.type");
 			}
-			expr = generateTypeConversion(expr, from_t, to_t, binaryOperatorNode.get_token());
+			expr = generateTypeConversion(expr, typeToCategory(from_t), typeToCategory(to_t), binaryOperatorNode.get_token());
 			return true;
 		};
 
@@ -940,7 +940,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
 						if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsExprResult.typeEnum())) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())))
 							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
-						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.typeEnum(), gsi.bindingType(), binaryOperatorNode.get_token());
+						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.category(), typeToCategory(gsi.bindingType()), binaryOperatorNode.get_token());
 					}
 
 					// Materialize the final assigned value into a stack temp before GlobalStore.
@@ -1014,7 +1014,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())) && is_standard_arithmetic_type(typeToCategory(commonType)))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.bindingType())) + " -> " + std::string(getTypeName(commonType)) + ")");
-							lhs_operand = generateTypeConversion(lhs_operand, gsi.bindingType(), commonType, binaryOperatorNode.get_token());
+							lhs_operand = generateTypeConversion(lhs_operand, typeToCategory(gsi.bindingType()), typeToCategory(commonType), binaryOperatorNode.get_token());
 						}
 					}
 					// C++20 [expr.shift]: shift RHS undergoes independent integral promotion,
@@ -1029,14 +1029,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
 								if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())))
 								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
-								rhs_result = generateTypeConversion(rhs_result, rhs_result.typeEnum(), promoted_rhs, binaryOperatorNode.get_token());
+								rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), typeToCategory(promoted_rhs), binaryOperatorNode.get_token());
 							}
 						}
 					} else if (rhs_result.typeEnum() != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
 							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())) && is_standard_arithmetic_type(typeToCategory(commonType)))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(commonType)) + ")");
-							rhs_result = generateTypeConversion(rhs_result, rhs_result.typeEnum(), commonType, binaryOperatorNode.get_token());
+							rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), typeToCategory(commonType), binaryOperatorNode.get_token());
 						}
 					}
 
@@ -1080,7 +1080,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 							if (!back_conv.has_value())
 								throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 						}
-						op_result = generateTypeConversion(op_result, commonType, gsi.bindingType(), binaryOperatorNode.get_token());
+						op_result = generateTypeConversion(op_result, typeToCategory(commonType), typeToCategory(gsi.bindingType()), binaryOperatorNode.get_token());
 					}
 
 					// Materialize the conversion result into a stack-flushed temporary
@@ -1223,14 +1223,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			arg.size_in_bits = SizeInBits{64};
 
 			if (const auto* string = std::get_if<StringHandle>(&operand_result.value)) {
-				arg.value = emitAddressOf(operand_type, operand_size, IrValue(*string));
+				arg.value = emitAddressOf(typeToCategory(operand_type), operand_size, IrValue(*string));
 				return arg;
 			}
 
 			if (std::holds_alternative<TempVar>(operand_result.value)) {
 				TempVar temp_var = std::get<TempVar>(operand_result.value);
 				if (auto global_name = tryGetGlobalLValueName(operand_result); global_name.has_value()) {
-					arg.value = emitAddressOf(operand_type, operand_size, IrValue(*global_name));
+					arg.value = emitAddressOf(typeToCategory(operand_type), operand_size, IrValue(*global_name));
 					return arg;
 				}
 				bool is_already_address = false;
@@ -1249,7 +1249,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				arg.value = is_already_address
 					? IrValue(temp_var)
-					: emitAddressOf(operand_type, operand_size, IrValue(temp_var));
+					: emitAddressOf(typeToCategory(operand_type), operand_size, IrValue(temp_var));
 				return arg;
 			}
 
@@ -1273,7 +1273,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			assign_op.rhs = makeTypedValue(operand_type, SizeInBits{static_cast<int>(operand_size)}, rhs_value);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
-			arg.value = emitAddressOf(operand_type, operand_size, IrValue(temp_var));
+			arg.value = emitAddressOf(typeToCategory(operand_type), operand_size, IrValue(temp_var));
 			return arg;
 		};
 

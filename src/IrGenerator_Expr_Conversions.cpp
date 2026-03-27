@@ -3,17 +3,17 @@
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
 
-	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
+	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
 		// Resolve enum to its underlying integer type so downstream size/signedness
 		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
-		fromType = resolveEnumUnderlyingType(fromType, operands.type_index);
+		fromType = resolveEnumUnderlyingTypeCategory(fromType, operands.type_index);
 
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
 
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
-		if (is_struct_type(typeToCategory(toType))) {
+		if (is_struct_type(toType)) {
 			// Preserve the original size for struct types
 			toSize = fromSize;
 		} else {
@@ -22,11 +22,11 @@
 
 		if (fromType == toType && fromSize == toSize) {
 			// No conversion instruction needed.  However, the operands may still
-			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingType
+			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingTypeCategory
 			// mapped fromType to the underlying int).  Ensure the returned ExprResult
 			// reflects the requested target type so downstream consumers see the
 			// correct primitive type for signedness / domain queries.
-			if (operands.typeEnum() != toType) {
+			if (operands.category() != toType) {
 				return makeExprResult(
 					toType,
 					SizeInBits{toSize},
@@ -39,8 +39,8 @@
 		}
 
 		// Check for int-to-float or float-to-int conversions
-		bool from_is_float = is_floating_point_type(typeToCategory(fromType));
-		bool to_is_float = is_floating_point_type(typeToCategory(toType));
+		bool from_is_float = is_floating_point_type(fromType);
+		bool to_is_float = is_floating_point_type(toType);
 
 		// Check if the value is a compile-time constant (literal)
 		bool is_literal =
@@ -58,12 +58,12 @@
 					assert(std::holds_alternative<double>(operands.value) &&
 						"float literal must be stored as double in IrOperand");
 					const double src_val = std::get<double>(operands.value);
-					if (typeToCategory(toType) == TypeCategory::Bool) {
+					if (toType == TypeCategory::Bool) {
 						// C++20 [conv.bool]: zero → false, any other value → true.
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
-					if (is_unsigned_integer_type(typeToCategory(toType))) {
+					if (is_unsigned_integer_type(toType)) {
 						// Cast through long long first for safety: direct
 						// static_cast<unsigned long long>(negative_double) is UB per
 						// C++20 [conv.fpint].  In practice parser double literals are
@@ -82,7 +82,7 @@
 					TypeConversionOp conv_op{
 						.result = resultVar,
 						.from = toTypedValue(operands),
-						.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
+						.to_type_index = TypeIndex{0, toType},
 						.to_size_in_bits = SizeInBits{toSize
 					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
@@ -111,7 +111,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
+				.to_type_index = TypeIndex{0, toType},
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 
@@ -132,7 +132,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
+				.to_type_index = TypeIndex{0, toType},
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatToFloat, std::move(conv_op), source_token));
@@ -159,7 +159,7 @@
 			// Extension needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
+				.to_type_index = TypeIndex{0, toType},
 				.to_size = toSize,
 				.result = resultVar
 			};
@@ -187,14 +187,14 @@
 				// Otherwise, use the type's signedness
 				if (lit_value <= signed_max) {
 					// Value fits in signed range, use type's signedness
-					use_sign_extend = is_signed_integer_type(typeToCategory(fromType));
+					use_sign_extend = is_signed_integer_type(fromType);
 				} else {
 					// Value doesn't fit in signed range - zero extend
 					use_sign_extend = false;
 				}
 			} else {
 				// For non-literal values (variables, TempVars), use the type's signedness
-				use_sign_extend = is_signed_integer_type(typeToCategory(fromType));
+				use_sign_extend = is_signed_integer_type(fromType);
 			}
 
 			if (use_sign_extend) {
@@ -206,7 +206,7 @@
 			// Truncation needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type_index = TypeIndex::fromTypeAndIndex(toType, {}),
+				.to_type_index = TypeIndex{0, toType},
 				.to_size = toSize,
 				.result = resultVar
 			};
@@ -1046,7 +1046,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 
 				// Load current value through pointer
-				TempVar current_val = emitDereference(member->memberType(), 64, 1, ptr_temp, token);
+				TempVar current_val = emitDereference(typeToCategory(member->memberType()), 64, 1, ptr_temp, token);
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
@@ -1329,7 +1329,7 @@
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
 						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
 							from_t = operandIrOperands.typeEnum();
-						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
+						operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(from_t), typeToCategory(to_t), unaryOperatorNode.get_token());
 						operandType = to_t;
 						promoted = true;
 					}
@@ -1342,7 +1342,7 @@
 				(is_integer_type(typeToCategory(operandType)) && get_integer_rank(typeToCategory(operandType)) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
-				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
+				operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(operandType), TypeCategory::Int, unaryOperatorNode.get_token());
 				operandType = Type::Int;
 			}
 			// Unary plus is a no-op after promotion — return immediately without
@@ -2375,12 +2375,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, source_is_const);
+							src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
 								StringTable::getStringView(src_type_info.name()), " to bool");
 							if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-									Type::Bool, TypeIndex{}, 8, source_token))
+									TypeCategory::Bool, TypeIndex{}, 8, source_token))
 								return *result;
 						}
 					}
@@ -2401,12 +2401,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
 				const StructMemberFunction* conv_op = findConversionOperator(
-					src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
+					src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, false);
 				if (conv_op) {
 					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
 						StringTable::getStringView(src_type_info.name()), " to bool");
 					if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-							Type::Bool, TypeIndex{}, 8, source_token))
+							TypeCategory::Bool, TypeIndex{}, 8, source_token))
 						return *result;
 				}
 			}
@@ -2440,13 +2440,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), source_is_const);
+							src_type_info.getStructInfo(), typeToCategory(param_base_type), param_type.type_index(), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
 								StringTable::getStringView(src_type_info.name()), " to parameter type");
 							const int param_size = static_cast<int>(param_type.size_in_bits());
 							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
-									param_base_type, param_type.type_index(), param_size, source_token)) {
+									typeToCategory(param_base_type), param_type.type_index(), param_size, source_token)) {
 								arg_result = *result;
 								sema_applied = true;
 							}
@@ -2469,7 +2469,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					if (typeToCategory(ctor_from_t) == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
 						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
-						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
+						arg_result = generateTypeConversion(arg_result, typeToCategory(ctor_from_t), typeToCategory(ctor_first_param_type), source_token);
 					}
 					sema_applied = true;
 				} else if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
@@ -2477,7 +2477,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					// constants to their underlying type; use actual runtime type.
 					if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum())
 						from_t = arg_result.typeEnum();
-					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+					arg_result = generateTypeConversion(arg_result, typeToCategory(from_t), typeToCategory(to_t), source_token);
 					sema_applied = true;
 				}
 			}
@@ -2491,7 +2491,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(arg_result.typeEnum())) && is_standard_arithmetic_type(typeToCategory(param_base_type)))
 					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
-				arg_result = generateTypeConversion(arg_result, arg_result.typeEnum(), param_base_type, source_token);
+				arg_result = generateTypeConversion(arg_result, arg_result.category(), typeToCategory(param_base_type), source_token);
 			}
 		}
 
@@ -2542,7 +2542,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			assign_op.rhs = toTypedValue(value_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
-			TempVar addr_var = emitAddressOf(value_result.typeEnum(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			TempVar addr_var = emitAddressOf(value_result.category(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
 			return makeExprResult(value_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
@@ -2561,7 +2561,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					}
 
 					TempVar addr_var = emitAddressOf(
-						type_node.type(),
+						type_node.category(),
 						static_cast<int>(type_node.size_in_bits()),
 						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 						source_token);
@@ -2583,7 +2583,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				}
 
 				TempVar addr_var = emitAddressOf(
-					arg_result.typeEnum(),
+					arg_result.category(),
 					arg_result.size_in_bits.value,
 					IrValue(expr_var),
 					source_token);
@@ -2609,7 +2609,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) {
 				return std::nullopt;
 			}
-			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
+			arg_result = generateTypeConversion(arg_result, typeToCategory(from_t), typeToCategory(to_t), source_token);
 		}
 
 		return materializeTemporaryAndTakeAddress(arg_result);
@@ -2621,7 +2621,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const Token& source_token) {
 		const Type referred_type = ref_param_type.type();
 		// Convert the source value to the referred-to type.
-		ExprResult converted = generateTypeConversion(source_result, source_result.typeEnum(), referred_type, source_token);
+		ExprResult converted = generateTypeConversion(source_result, source_result.category(), typeToCategory(referred_type), source_token);
 		const int ref_type_bits = get_type_size_bits(referred_type);
 		// Materialize the converted value into a stack temporary.
 		TempVar conv_temp = var_counter.next();
@@ -2631,7 +2631,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		assign_op.rhs = toTypedValue(converted);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 		// Take the address of the temporary and return it as the reference argument.
-		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
+		TempVar addr_var = emitAddressOf(typeToCategory(referred_type), ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
 		result.type = referred_type;
 		result.ir_type = toIrType(referred_type);

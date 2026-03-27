@@ -204,7 +204,7 @@
 		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 
-		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
+		TempVar result_var = emitDereference(typeToCategory(member_type), member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(
 			member_type,
 			SizeInBits{static_cast<int>(member_size)},
@@ -361,7 +361,7 @@
 							const TypeSpecifierNode& orig_type = capture_type_it->second;
 
 							// Generate Dereference to load the value
-							TempVar result_temp = emitDereference(orig_type.type(), 64, 0, ptr_temp);
+							TempVar result_temp = emitDereference(orig_type.category(), 64, 0, ptr_temp);
 
 							// Mark as lvalue with Indirect metadata for unified assignment handler
 							// This represents dereferencing a pointer: *ptr
@@ -998,7 +998,7 @@
 				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+				TempVar result_temp = emitDereference(typeToCategory(pointee_type), 64, ptr_depth,
 					StringTable::getOrInternStringHandle(identifierNode.name()));
 
 				// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -1165,7 +1165,7 @@
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
 
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
+					TempVar result_temp = emitDereference(typeToCategory(pointee_type), 64, ptr_depth,
 						StringTable::getOrInternStringHandle(identifierNode.name()));
 
 					// Mark as lvalue with Indirect metadata for unified assignment handler

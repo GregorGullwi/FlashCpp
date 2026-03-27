@@ -1589,7 +1589,7 @@ const Token& token)
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-			member.memberType(),
+			typeToCategory(member.memberType()),
 			element_size_bits,
 			base_object,
 			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
@@ -1620,7 +1620,7 @@ const Token& token)
 		} else {
 			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-				member.memberType(),
+				typeToCategory(member.memberType()),
 				element_size_bits,
 				base_object,
 				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),

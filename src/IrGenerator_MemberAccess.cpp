@@ -3497,7 +3497,7 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 // Searches the struct and its base classes for "operator target_type()"
 const StructMemberFunction* AstToIr::findConversionOperator(
 	const StructTypeInfo* struct_info,
-	Type target_type,
+	TypeCategory target_type,
 	TypeIndex target_type_index,
 	bool source_is_const) const {
 
@@ -3639,7 +3639,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	const ExprResult& source,
 	const TypeInfo& source_type_info,
 	const StructMemberFunction& conv_op,
-	Type target_type,
+	TypeCategory target_type,
 	TypeIndex target_type_index,
 	int target_size_bits,
 	const Token& token) {
@@ -3717,7 +3717,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = TypeIndex::fromTypeAndIndex(target_type, target_type_index);
+	call_op.return_type_index = TypeIndex::fromTypeAndIndex(categoryToType(target_type), target_type_index);
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
@@ -3757,7 +3757,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
-		TempVar this_ptr = emitAddressOf(source.typeEnum(), source.size_in_bits.value,
+		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
 			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
