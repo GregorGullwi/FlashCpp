@@ -844,20 +844,22 @@
 		return true;
 	}
 
-	ExprResult AstToIr::makeMemberResult(TypeCategory type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
+	ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 		ExprResult result;
-		result.category_ = type;
-		result.ir_type = toIrType(type);
+		result.category_ = type_index.category();
+		result.ir_type = toIrType(type_index);
 		result.size_in_bits = size_bits;
 		result.value = result_var;
 		result.pointer_depth = pointer_depth;
 		result.storage = storage;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
-		TypeCategory cat = type;
+		TypeCategory cat = type_index.category();
 		if (cat == TypeCategory::Struct ||
 			(cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
 			result.type_index = TypeIndex{type_index};
+		} else {
+			result.type_index = TypeIndex::fromCategory(cat);
 		}
 		return result;
 	}
@@ -1257,7 +1259,7 @@
 
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
-			return makeMemberResult(static_member->type_index.category(), SizeInBits{sm_size_bits}, result_var, static_member->type_index,
+			return makeMemberResult(SizeInBits{sm_size_bits}, result_var, static_member->type_index,
 				PointerDepth{static_cast<int>(static_member->pointer_depth)}, ValueStorage::ContainsData);
 		}
 
@@ -1375,7 +1377,7 @@
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
 		if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
-			return makeMemberResult(member->type_index.category(), SizeInBits{member_size_bits}, result_var, member->type_index,
+			return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1392,7 +1394,7 @@
 				0            // No offset - the pointer points directly to the target
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type_index.category(), SizeInBits{member_size_bits}, result_var, member->type_index,
+			return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1416,7 +1418,7 @@
 			if (isIrStructType(toIrType(member->memberType())) && member->type_index.is_valid()) {
 				// Return the loaded pointer directly — the next level of member access will
 				// treat it as a pointer-to-struct base (is_pointer_dereference = true).
-				return makeMemberResult(member->type_index.category(), SizeInBits{pointee_size_bits}, result_var, member->type_index,
+				return makeMemberResult(SizeInBits{pointee_size_bits}, result_var, member->type_index,
 					PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 			}
 
@@ -1425,11 +1427,11 @@
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
 			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type_index.category(), SizeInBits{pointee_size_bits}, deref_var, member->type_index,
+			return makeMemberResult(SizeInBits{pointee_size_bits}, deref_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 		}
 
-		return makeMemberResult(member->type_index.category(), SizeInBits{member_size_bits}, result_var, member->type_index,
+		return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 			PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 

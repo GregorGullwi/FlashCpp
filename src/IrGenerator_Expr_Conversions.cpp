@@ -1027,7 +1027,7 @@
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			int increment_amount = (member->pointer_depth > 0) ?
-				getPointerElementSize(member->type_index.category(), member->type_index, member->pointer_depth) : 1;
+				getPointerElementSize(member->type_index, member->pointer_depth) : 1;
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -1842,7 +1842,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	int element_size = 1;
 	if (operand_pointer_depth > 0) {
 		is_pointer = true;
-		element_size = getPointerElementSize(operandType, operandIrResult.type_index, operand_pointer_depth);
+		element_size = getPointerElementSize(TypeIndex{operandIrResult.type_index.index(), operandType}, operand_pointer_depth);
 	}
 	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
 		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);
@@ -1857,7 +1857,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		}
@@ -1872,7 +1872,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.category(), type_node.type_index(), get_type_size_bits(type_node.category()));
+			element_size = getSizeInBytes(type_node.type_index(), get_type_size_bits(type_node.category()));
 			if (element_size == 0) {
 				element_size = 1;
 			}
@@ -1899,7 +1899,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
-			element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
+			element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 			return true;
 		};
 
@@ -1964,7 +1964,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type_index.category(), member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {

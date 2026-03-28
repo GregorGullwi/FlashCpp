@@ -994,7 +994,7 @@
 				// For enum references, lower the dereferenced value to its runtime
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
-				pointee_type = getRuntimeValueType(typeToCategory(semantic_pointee_type), type_node.type_index(), PointerDepth{});
+				pointee_type = getRuntimeValueType(TypeIndex::fromTypeAndIndex(semantic_pointee_type, type_node.type_index()), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
@@ -1024,10 +1024,7 @@
 			assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
 				"Pointer depth exceeds maximum int value for PointerDepth construction");
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
-			TypeCategory return_type = getRuntimeValueType(
-				type_node.category(),
-				type_node.type_index(),
-				identifier_pointer_depth);
+			TypeCategory return_type = getRuntimeValueType(type_node.type_index(), identifier_pointer_depth);
 			size_bits = getRuntimeValueSizeBits(
 				type_node.type(),
 				type_node.type_index(),

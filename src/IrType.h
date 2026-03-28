@@ -54,6 +54,9 @@ IrType toIrType(Type semantic_type);
 // Callers that need alias-resolved IR type should use toIrType(TypeInfo) below.
 inline IrType toIrType(TypeCategory cat) { return toIrType(categoryToType(cat)); }
 
+// TypeIndex overload — uses the cached category carried by the TypeIndex.
+inline IrType toIrType(TypeIndex type_index) { return toIrType(type_index.category()); }
+
 // TypeInfo overload — uses resolvedType() for correct alias resolution.
 // For primitive-aliased TypeInfo entries, this returns IrType::Integer instead
 // of IrType::Struct that a naive category() lookup would give.

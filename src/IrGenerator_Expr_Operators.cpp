@@ -2235,7 +2235,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				element_size = 8;  // Multi-level pointer: element is a pointer
 			} else {
 				// Single-level pointer: element size is sizeof(base_type)
-				element_size = getSizeInBytes(lhs_type_node->category(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+				element_size = getSizeInBytes(lhs_type_node->type_index(), lhs_type_node->size_in_bits());
 			}
 
 			// Step 3: Divide byte difference by element size to get element count
@@ -2266,7 +2266,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				element_size = 8;
 			} else if (lhs_type_node) {
 				// Single-level pointer: element size is sizeof(base_type)
-				element_size = getSizeInBytes(lhs_type_node->category(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+				element_size = getSizeInBytes(lhs_type_node->type_index(), lhs_type_node->size_in_bits());
 			} else {
 				// Fallback: derive element size from operand's base type
 				int base_size_bits = get_type_size_bits(lhsCat);
@@ -2337,7 +2337,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				element_size = 8;  // Multi-level pointer
 			} else {
 				// Single-level pointer: element size is sizeof(base_type)
-				element_size = getSizeInBytes(lhs_type_node->category(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+				element_size = getSizeInBytes(lhs_type_node->type_index(), lhs_type_node->size_in_bits());
 			}
 
 			// Scale the offset: offset_scaled = offset * element_size

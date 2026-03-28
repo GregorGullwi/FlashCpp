@@ -579,7 +579,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			categoryToType(type_cat), qualifier, type_size, type_keyword_token, cv_qualifier));
+			type_cat, qualifier, type_size, type_keyword_token, cv_qualifier));
 	}
 	else if (qualifier != TypeQualifier::None || long_count > 0) {
 		// Handle cases like "unsigned", "signed", "long" without explicit type (defaults to int)
@@ -589,7 +589,7 @@ ParseResult Parser::parse_type_specifier()
 		if (long_count == 1) {
 			// "long" or "const long" -> long int
 			type_cat = (qualifier == TypeQualifier::Unsigned) ? TypeCategory::UnsignedLong : TypeCategory::Long;
-			type_size = get_type_size_bits(categoryToType(type_cat));
+			type_size = get_type_size_bits(type_cat);
 		} else if (long_count == 2) {
 			// "long long" or "const long long" -> long long int
 			type_cat = (qualifier == TypeQualifier::Unsigned) ? TypeCategory::UnsignedLongLong : TypeCategory::LongLong;
@@ -601,7 +601,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			categoryToType(type_cat), qualifier, type_size, Token(), cv_qualifier));
+			type_cat, qualifier, type_size, Token(), cv_qualifier));
 	}
 	// If we only have CV-qualifiers (const/volatile) without unsigned/signed/long,
 	// continue parsing - could be "const Widget&", "const int*", etc.

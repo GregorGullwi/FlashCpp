@@ -280,7 +280,7 @@ private:
 		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
-	static ExprResult makeMemberResult(TypeCategory type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
+	static ExprResult makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
 	bool setupBaseFromIdentifier(
 		const IdentifierNode& identifier,
 		const Token& member_token,
@@ -709,9 +709,9 @@ private:
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-	size_t getSizeInBytes(TypeCategory type, TypeIndex type_index, int size_in_bits) const;
-	int getPointerElementSize(TypeCategory type, TypeIndex type_index, int pointer_depth) const;
-	TypeCategory getRuntimeValueType(TypeCategory semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const;
+	size_t getSizeInBytes(TypeIndex type_index, int size_in_bits) const;
+	int getPointerElementSize(TypeIndex type_index, int pointer_depth) const;
+	TypeCategory getRuntimeValueType(TypeIndex semantic_type_index, PointerDepth pointer_depth) const;
 	int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;

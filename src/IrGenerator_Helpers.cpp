@@ -351,7 +351,8 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-size_t AstToIr::getSizeInBytes(TypeCategory type, TypeIndex type_index, int size_in_bits) const {
+size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
+	const TypeCategory type = type_index.category();
 	// Use IrType to catch both TypeCategory::Struct and TypeCategory::UserDefined (which maps
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
@@ -371,24 +372,25 @@ size_t AstToIr::getSizeInBytes(TypeCategory type, TypeIndex type_index, int size
 	return static_cast<size_t>(getRuntimeValueSizeBits(categoryToType(type), type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
-int AstToIr::getPointerElementSize(TypeCategory type, TypeIndex type_index, int pointer_depth) const {
+int AstToIr::getPointerElementSize(TypeIndex type_index, int pointer_depth) const {
 	if (pointer_depth > 1) {
 		return 8;
 	}
-	int size = static_cast<int>(getSizeInBytes(type, type_index, get_type_size_bits(type)));
+	int size = static_cast<int>(getSizeInBytes(type_index, get_type_size_bits(type_index.category())));
 	return size != 0 ? size : 1;
 }
 
-TypeCategory AstToIr::getRuntimeValueType(TypeCategory semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
+TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, PointerDepth pointer_depth) const {
+	const TypeCategory semantic_type = semantic_type_index.category();
 	if (pointer_depth.is_pointer()) {
 		return semantic_type;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(categoryToType(semantic_type), type_index);
+	Type lowered_type = resolveRuntimeBaseType(categoryToType(semantic_type), semantic_type_index);
 	const TypeCategory lowered_cat = typeToCategory(lowered_type);
 
-	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
+	if (lowered_cat == TypeCategory::Enum && semantic_type_index.is_valid() && semantic_type_index.index() < getTypeInfoCount()) {
+		if (const EnumTypeInfo* enum_info = getTypeInfo(semantic_type_index).getEnumInfo()) {
 			return typeToCategory(enum_info->underlying_type);
 		}
 	}
