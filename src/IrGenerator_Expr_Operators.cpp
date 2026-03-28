@@ -3921,7 +3921,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// We just need to assign the address of the va_list structure to the user's va_list variable.
 
 			// Get address of the va_list structure
-			TempVar va_list_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+			TempVar va_list_struct_addr = emitAddressOf(TypeIndex{0, TypeCategory::Char}, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0ExprResult.value
@@ -3971,7 +3971,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// This enables proper overflow support when >5 variadic int args are passed
 
 				// Get address of va_list structure
-				TempVar va_struct_addr = emitAddressOf(Type::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+				TempVar va_struct_addr = emitAddressOf(TypeIndex{0, TypeCategory::Char}, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
 
 				// Assign to va_list variable
 				AssignmentOp assign_op;
