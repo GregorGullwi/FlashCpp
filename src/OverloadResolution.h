@@ -852,8 +852,8 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
-			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
-			bool is_same_struct_type = is_struct_type(typeToCategory(resolved_arg_type)) &&
+			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
 				continue;
@@ -1575,7 +1575,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
 		}
@@ -1822,7 +1822,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
 		}
@@ -1848,7 +1848,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& spec) {
 	FlashCpp::TypeIndexArg arg;
 	arg.type_index = spec.type_index();
-	arg.base_type = spec.type();  // Include base type for primitive types
+	arg.base_type = categoryToType(spec.type());  // Include base type for primitive types
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));

@@ -940,7 +940,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							StringHandle member_name_handle = member_name_token.handle();
 							anon_struct_info->members.push_back(StructMember{
 								member_name_handle,
-								member_type_spec.type(),
+								categoryToType(member_type_spec.type()),
 								member_type_spec.type_index(),
 								0,  // offset will be calculated below
 								member_size,
@@ -1270,7 +1270,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
-							anon_member_type_spec.type(),
+							categoryToType(anon_member_type_spec.type()),
 							anon_member_type_spec.type_index(),
 							member_size,
 							member_alignment,
@@ -1520,7 +1520,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
 			struct_info->addStaticMember(
 				static_member_name_handle,
-				type_spec.type(),
+				categoryToType(type_spec.type()),
 				type_spec.type_index(),
 				static_member_size,
 				static_member_alignment,
@@ -2726,7 +2726,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			type_spec.type(),
+			categoryToType(type_spec.type()),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,
@@ -3648,7 +3648,7 @@ ParseResult Parser::parse_enum_declaration()
 	int underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
 		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-		underlying_type = type_spec.type();
+		underlying_type = categoryToType(type_spec.type());
 		underlying_size = type_spec.size_in_bits();
 	}
 	enum_info->underlying_type = underlying_type;
@@ -4050,7 +4050,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		StringHandle member_name_handle = member_name_token.handle();
 		out_struct_info->members.push_back(StructMember{
 			member_name_handle,
-			member_type_spec.type(),
+			categoryToType(member_type_spec.type()),
 			member_type_spec.type_index(),
 			0,  // offset will be calculated later
 			member_size,

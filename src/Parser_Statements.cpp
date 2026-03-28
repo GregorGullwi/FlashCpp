@@ -1438,7 +1438,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				// The first member's type_index should point to the element type
 				if (first_member.type_index.is_valid() && first_member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& elem_info = getTypeInfo(first_member.type_index);
-					Type elem_type = elem_info.resolvedType();
+					TypeCategory elem_type = elem_info.resolvedType();
 					const TypeCategory elem_cat = elem_info.category();
 					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
 					

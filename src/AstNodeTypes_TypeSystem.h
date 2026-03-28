@@ -684,8 +684,8 @@ struct TypeIndex {
 	// Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
 	// a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
 	// is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
-	static constexpr TypeIndex fromTypeAndIndex(Type t, TypeIndex idx) noexcept {
-		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : typeToCategory(t);
+	static constexpr TypeIndex fromTypeAndIndex(TypeCategory t, TypeIndex idx) noexcept {
+		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : t;
 		return TypeIndex{idx.index(), cat};
 	}
 
@@ -922,6 +922,11 @@ constexpr bool is_signed_integer_type(TypeCategory cat) {
 
 constexpr bool is_standard_arithmetic_type(TypeCategory cat) {
 	return is_integer_type(cat) || is_floating_point_type(cat) || is_bool_type(cat);
+}
+
+// TypeCategory overload for isUnsignedIntegralType — mirrors the Type-based version above.
+inline bool isUnsignedIntegralType(TypeCategory cat) {
+	return is_unsigned_integer_type(cat);
 }
 
 // Helper to calculate alignment from size in bytes
@@ -1191,7 +1196,7 @@ struct FunctionSignature {
 	bool is_volatile = false;                  // For volatile member functions
 
 	// Accessor helpers
-	Type returnType() const { return categoryToType(return_type_index.category()); }
+	TypeCategory returnType() const { return return_type_index.category(); }
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation
@@ -1224,9 +1229,9 @@ struct StructMember {
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
-	Type memberType() const { return categoryToType(type_index.category()); }
+	TypeCategory memberType() const { return type_index.category(); }
 
-	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	StructMember(StringHandle n, TypeCategory t, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
 	            std::optional<ASTNode> init,
 	            ReferenceQualifier ref_qual,
@@ -1430,9 +1435,9 @@ struct StructStaticMember {
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
-	Type memberType() const { return categoryToType(type_index.category()); }
+	TypeCategory memberType() const { return type_index.category(); }
 
-	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	StructStaticMember(StringHandle n, TypeCategory t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
 		: name(n), type_index(TypeIndex::fromTypeAndIndex(t, tidx)), size(sz), alignment(align), access(acc),

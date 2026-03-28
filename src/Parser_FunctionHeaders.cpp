@@ -382,7 +382,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 							const ExpressionNode& expr = arg->as<ExpressionNode>();
 							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
 								// TODO: add NumericLiteralNode::category() to avoid this bridge call
-								deduced_type = typeToCategory(numeric_literal->type());
+								deduced_type = numeric_literal->type();
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));

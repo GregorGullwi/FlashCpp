@@ -425,7 +425,7 @@ struct TypedValue {
 		const TypeCategory category_from_index = type_index.category();
 		return (category_from_index != TypeCategory::Invalid) ? category_from_index : typeToCategory(type);
 	}
-	Type typeEnum() const { return categoryToType(category()); }
+	TypeCategory typeEnum() const { return category(); }
 
 	// Atomically update the semantic type, always stamping the new TypeCategory into
 	// type_index (overrides any pre-existing category so callers like setType(ULL) on

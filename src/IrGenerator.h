@@ -93,7 +93,7 @@ struct LambdaInfo {
 	TypeIndex return_type_index {};    // TypeCategory embedded; replaces Type return_type
 	int return_size;
 
-	Type returnType() const { return categoryToType(return_type_index.category()); }
+	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference = false;     // True if lambda returns a reference type (T& or T&&)
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
@@ -173,8 +173,17 @@ inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference
 	return is_struct_type(typeToCategory(type)) && pointer_depth == 0 && !is_reference;
 }
 
+inline bool returnsStructByValue(TypeCategory cat, int pointer_depth, bool is_reference) {
+	return is_struct_type(cat) && pointer_depth == 0 && !is_reference;
+}
+
 inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
 	return returnsStructByValue(type, pointer_depth, is_reference) &&
+	(size_in_bits > getStructReturnThreshold(is_llp64));
+}
+
+inline bool needsHiddenReturnParam(TypeCategory cat, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
+	return returnsStructByValue(cat, pointer_depth, is_reference) &&
 	(size_in_bits > getStructReturnThreshold(is_llp64));
 }
 

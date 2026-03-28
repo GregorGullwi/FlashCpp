@@ -1358,7 +1358,7 @@ ParseResult Parser::finalize_static_member_init(StructStaticMember* static_membe
 	}
 
 	// Empty brace init - create a zero literal matching the static member's type
-	Type member_type = static_member->memberType();
+	TypeCategory member_type = static_member->memberType();
 	unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
 	if (member_size_bits == 0) {
 		member_size_bits = 32;

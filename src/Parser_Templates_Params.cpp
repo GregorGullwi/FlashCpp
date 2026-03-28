@@ -618,7 +618,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
-				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
+				Type literal_type = categoryToType(lit.type());  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
 				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
@@ -945,7 +945,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Template parameters are stored as Type::UserDefined without struct_info_,
 								// so this check correctly excludes them while accepting concrete types.
 								if (underlying.struct_info_ != nullptr || 
-								    typeToCategory(underlying.resolvedType()) != TypeCategory::UserDefined) {
+								    underlying.resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
@@ -1083,14 +1083,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							auto alias_opt = gTemplateRegistry.lookup_alias_template(id.name());
 							if (alias_opt.has_value()) {
 								const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-								Type target_type = alias_node.target_type_node().type();
+								TypeCategory target_type = alias_node.target_type_node().type();
 								
 								// If the alias always resolves to a concrete type (like void_t -> void),
 								// use that concrete type instead of marking as dependent
-								if (!is_struct_type(typeToCategory(target_type))) {
+								if (!is_struct_type(target_type)) {
 									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
 									          "' resolves to concrete type ", static_cast<int>(target_type));
-									dependent_arg.setType(typeToCategory(target_type));
+									dependent_arg.setType(target_type);
 									dependent_arg.is_dependent = false;  // Not dependent - resolves to concrete type
 								}
 							}

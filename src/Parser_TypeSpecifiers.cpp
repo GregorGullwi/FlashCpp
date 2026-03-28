@@ -78,7 +78,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		auto type_it = getTypesByNameMap().find(type_handle);
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
-			cast_type = type_info->typeEnum();
+			cast_type = categoryToType(type_info->typeEnum());
 			type_size = type_info->type_size_;
 			if (type_info->isStruct()) {
 				cast_type = Type::Struct;
@@ -2332,7 +2332,7 @@ ParseResult Parser::parse_type_specifier()
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = type_info_ctx->typeEnum();
+				resolved_type = categoryToType(type_info_ctx->typeEnum());
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(

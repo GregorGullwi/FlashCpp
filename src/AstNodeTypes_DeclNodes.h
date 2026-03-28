@@ -76,7 +76,7 @@ struct StructTypeInfo {
 		return namespace_handle;
 	}
 
-	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
+	void addMember(StringHandle member_name, TypeCategory member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
 	               ReferenceQualifier reference_qualifier,
@@ -333,7 +333,7 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(StringHandle member_name, Type type, TypeIndex type_index, size_t size, size_t member_alignment,
+	void addStaticMember(StringHandle member_name, TypeCategory type, TypeIndex type_index, size_t size, size_t member_alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                     ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
 		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
@@ -784,8 +784,8 @@ struct TypeInfo
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
-		// Legacy Type accessor for code that still needs it
-		Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
+		// TypeCategory accessor (replaces legacy Type accessor)
+		TypeCategory typeEnum() const noexcept { return type_index.category(); }
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
@@ -852,8 +852,8 @@ struct TypeInfo
 	// struct-like because struct-info traversal must follow alias chains.
 	// resolvedType() returns the effective/resolved underlying type.
 	// typeEnum() returns the legacy Type enum for the category.
-	Type typeEnum()              const { return categoryToType(category_); }
-	Type resolvedType()          const { return categoryToType(category_); }
+	TypeCategory typeEnum()      const { return category_; }
+	TypeCategory resolvedType()  const { return category_; }
 	bool isStructLike()          const { return category() == TypeCategory::Struct
 	                                         || category() == TypeCategory::UserDefined
 	                                         || (isTypeAlias() && category_ == TypeCategory::UserDefined); }
@@ -916,7 +916,7 @@ struct CanonicalTypeAlias {
 		: type_cat(cat), type_index(idx) {}
 
 	// Returns the legacy Type value derived from the embedded TypeCategory.
-	Type typeEnum() const { return categoryToType(type_cat); }
+	TypeCategory typeEnum() const { return type_cat; }
 
 	// Returns TypeIndex with category merged from type_cat when type_index lacks it.
 	TypeIndex resolvedTypeIndex() const noexcept {
@@ -958,8 +958,17 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 	return {type, original_type_index};
 }
 
+// TypeCategory overload — avoids bridge through categoryToType().
+inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory cat, TypeIndex type_index) {
+	return canonicalize_type_alias(categoryToType(cat), type_index);
+}
+
+inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
+	return canonicalize_type_alias(cat, type_index).typeEnum();
+}
+
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return canonicalize_type_alias(type, type_index).typeEnum();
+	return categoryToType(resolve_type_alias(typeToCategory(type), type_index));
 }
 
 // TypeIndex-only overload: derives the legacy Type from the TypeIndex category.
@@ -986,7 +995,7 @@ void initialize_native_types();
 // (Step 4: replaces direct gTypeInfo.emplace_back() at external call sites)
 
 // For adding template parameter type placeholders (Type::Template or Type::UserDefined kind)
-TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits);
+TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
 
 // For adding a concrete instantiated type with known size (registers in gTypesByName too)
 TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits);
@@ -1039,6 +1048,11 @@ inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
 			// For other types, use the size as alignment (up to 8 bytes max on x64)
 			return std::min(type_size_bytes, size_t(8));
 	}
+}
+
+// TypeCategory overload — bridges through categoryToType().
+inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
+	return get_type_alignment(categoryToType(cat), type_size_bytes);
 }
 
 // Type utilities — TypeCategory overloads are in AstNodeTypes_TypeSystem.h
@@ -1109,7 +1123,7 @@ public:
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }
 	// Legacy accessor — returns Type enum for backward compat during migration.
-	Type type() const { return categoryToType(type_index_.category()); }
+	TypeCategory type() const { return type_index_.category(); }
 	auto size_in_bits() const { return size_; }
 	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
@@ -1291,6 +1305,11 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type,
 	return deduced_type;
 }
 
+// TypeCategory overload — avoids bridge through categoryToType().
+inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placeholder_cat, TypeSpecifierNode deduced_type) {
+	return finalizePlaceholderTypeDeduction(categoryToType(placeholder_cat), std::move(deduced_type));
+}
+
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
 // For Struct/UserDefined: authoritative lookup via StructTypeInfo::total_size * 8,
@@ -1303,7 +1322,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (type_spec.pointer_depth() > 0) {
 		return 64;
 	}
-	Type t = type_spec.type();
+	TypeCategory t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
 		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
@@ -1485,18 +1504,18 @@ using NumericLiteralValue = std::variant<unsigned long long, double>;
 
 class NumericLiteralNode {
 public:
-	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_(type), size_(size), qualifier_(qualifier), identifier_(identifier) {}
-	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_(categoryToType(cat)), size_(size), qualifier_(qualifier), identifier_(identifier) {}
+	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(typeToCategory(type)), size_(size), qualifier_(qualifier), identifier_(identifier) {}
+	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(cat), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
 	std::string_view token() const { return identifier_.value(); }
 	NumericLiteralValue value() const { return value_; }
-	Type type() const { return type_; }
+	TypeCategory type() const { return type_cat_; }
 	unsigned char sizeInBits() const { return size_; }
 	TypeQualifier qualifier() const { return qualifier_; }
 
 private:
 	NumericLiteralValue value_;
-	Type type_;
+	TypeCategory type_cat_;
 	unsigned char size_;	// Size in bits
 	TypeQualifier qualifier_;
 	Token identifier_;

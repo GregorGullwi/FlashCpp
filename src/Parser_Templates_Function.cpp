@@ -866,9 +866,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 		const auto& val = lit.value();
 		if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*ull_val), typeToCategory(lit.type())};
+			return ConstantValue{static_cast<int64_t>(*ull_val), lit.type()};
 		} else if (const auto* d_val = std::get_if<double>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*d_val), typeToCategory(lit.type())};
+			return ConstantValue{static_cast<int64_t>(*d_val), lit.type()};
 		}
 	}
 	

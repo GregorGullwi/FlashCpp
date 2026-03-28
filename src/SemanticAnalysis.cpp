@@ -132,7 +132,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+	desc.type_index = TypeIndex{member.type_index.index(), member.memberType()};
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.is_array) {
 		desc.array_dimensions = member.array_dimensions;
@@ -151,7 +151,7 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+	desc.type_index = TypeIndex{member.type_index.index(), member.memberType()};
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
 	for (int i = 0; i < member.pointer_depth; ++i) {
@@ -162,7 +162,7 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex::fromTypeAndIndex(arg.typeEnum(), arg.type_index);
+	desc.type_index = TypeIndex{arg.type_index.index(), arg.typeEnum()};
 	desc.base_cv = arg.cv_qualifier;
 	desc.ref_qualifier = arg.ref_qualifier;
 	for (size_t i = 0; i < arg.pointer_depth; ++i) {
@@ -1088,7 +1088,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
 			deduced_type.has_value()) {
-			lambda_info.return_type_index = TypeIndex::fromTypeAndIndex(deduced_type->type(), deduced_type->type_index());
+			lambda_info.return_type_index = TypeIndex{deduced_type->type_index().index(), deduced_type->type()};
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);
@@ -1281,7 +1281,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	}
 }
 
-std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type) {
+std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type) {
 	if (!body.has_value()) {
 		return std::nullopt;
 	}
@@ -1453,7 +1453,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		get_type_size_bits(TypeCategory::Void)));
 }
 
-TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
+TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const {
 	return finalizePlaceholderTypeDeduction(placeholder_type, deduced_type);
 }
 
@@ -2184,7 +2184,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex::fromCategory(typeToCategory(type.type()));
+	desc.type_index = TypeIndex::fromCategory(type.type());
 	desc.type_index = type.type_index();
 	desc.base_cv = type.cv_qualifier();
 	desc.ref_qualifier = type.reference_qualifier();
@@ -2298,7 +2298,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(typeToCategory(e.type()));
+				desc.type_index = TypeIndex::fromCategory(e.type());
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
@@ -2752,7 +2752,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	// Handle old-style nodes stored directly (not wrapped in ExpressionNode)
 	if (node.is<NumericLiteralNode>()) {
 		CanonicalTypeDesc desc;
-		desc.type_index = TypeIndex::fromCategory(typeToCategory(node.as<NumericLiteralNode>().type()));
+		desc.type_index = TypeIndex::fromCategory(node.as<NumericLiteralNode>().type());
 		return type_context_.intern(desc);
 	}
 	if (node.is<BoolLiteralNode>()) {
@@ -2923,11 +2923,11 @@ static bool structHasConversionOperatorTo(
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			const CanonicalTypeAlias canonical_return_type =
 				canonicalize_type_alias(type_spec.type(), type_spec.type_index());
-			Type resolved_type = canonical_return_type.typeEnum();
-			if (typeToCategory(resolved_type) == to_desc.category()) return true;
+			TypeCategory resolved_type = canonical_return_type.typeEnum();
+			if (resolved_type == to_desc.category()) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
-			if (typeToCategory(resolved_type) == TypeCategory::UserDefined) {
-				const int expected_size = get_type_size_bits(categoryToType(to_desc.category()));
+			if (resolved_type == TypeCategory::UserDefined) {
+				const int expected_size = get_type_size_bits(to_desc.category());
 				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
 					return true;
 			}

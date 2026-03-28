@@ -2393,7 +2393,7 @@ ParseResult Parser::parse_template_declaration() {
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMember(
 					member_name_handle,
-					type_spec.type(),
+					categoryToType(type_spec.type()),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -3799,7 +3799,7 @@ ParseResult Parser::parse_template_declaration() {
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
-					type_spec.type(),
+					categoryToType(type_spec.type()),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -4937,7 +4937,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
 							static_member_name_handle,
-							type_spec.type(),
+							categoryToType(type_spec.type()),
 							type_spec.type_index(),
 							static_member_size,
 							static_member_alignment,

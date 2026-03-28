@@ -323,7 +323,7 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
-		EvalResult result = is_unsigned_integer_type(typeToCategory(literal.type()))
+		EvalResult result = is_unsigned_integer_type(literal.type())
 			? EvalResult::from_uint(val)
 			: EvalResult::from_int(static_cast<long long>(val));
 		result.set_exact_type(literal_type);
@@ -2826,14 +2826,14 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 				
 				if (type_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-					Type base_type = type_spec.type();
+					TypeCategory base_type = type_spec.type();
 					bool is_reference = type_spec.is_reference();
 					size_t pointer_depth = type_spec.pointer_depth();
 					bool is_array = type_spec.is_array();
 					std::optional<size_t> array_size = type_spec.array_size();
 					
 					// Check for void - always incomplete
-					if (typeToCategory(base_type) == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
+					if (base_type == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 						return EvalResult::from_bool(false);
 					}
 					
@@ -2845,7 +2845,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 					// Check for incomplete class/struct types
 					// A type is incomplete if it's a struct/class with no StructTypeInfo
 					TypeIndex type_idx = type_spec.type_index();
-					if (type_idx.is_valid() && (is_struct_type(typeToCategory(base_type)))) {
+					if (type_idx.is_valid() && (is_struct_type(base_type))) {
 						const TypeInfo& type_info = getTypeInfo(type_idx);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						

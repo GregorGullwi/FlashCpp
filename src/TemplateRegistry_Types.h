@@ -121,8 +121,8 @@ struct TemplateArgumentValue {
 	TypeIndex type_index {};   // TypeCategory is embedded in the index (replaces raw Type field)
 	int64_t value = 0;
 
-	// Returns the legacy Type enum derived from the embedded TypeCategory.
-	Type typeEnum() const { return categoryToType(type_index.category()); }
+	// Returns the TypeCategory derived from the embedded TypeCategory.
+	TypeCategory typeEnum() const { return type_index.category(); }
 
 	// Factory methods
 	static TemplateArgumentValue makeType(Type t, TypeIndex idx) {
@@ -186,8 +186,8 @@ struct TemplateTypeArg {
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.
 	TypeCategory category() const noexcept { return type_index.category(); }
-	// Returns the legacy Type enum value for APIs that still require it.
-	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
+	// Returns the TypeCategory — replaces legacy Type accessor.
+	TypeCategory typeEnum() const noexcept { return type_index.category(); }
 	// Set the type (updates type_index category without changing the index slot).
 	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
 	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
@@ -202,6 +202,10 @@ struct TemplateTypeArg {
 	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
 	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
 		return TypeIndex::fromTypeAndIndex(t, idx);
+	}
+	// TypeCategory overload — builds a TypeIndex with category directly.
+	static TypeIndex makeTypeIndex(TypeCategory cat, TypeIndex idx) noexcept {
+		return TypeIndex{idx.index(), cat};
 	}
 
 	TemplateTypeArg()
@@ -588,7 +592,7 @@ namespace FlashCpp {
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
 	result.type_index = arg.type_index;
-	result.base_type = arg.typeEnum();  // TypeIndexArg still uses legacy Type
+	result.base_type = categoryToType(arg.typeEnum());  // TypeIndexArg still uses legacy Type
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));

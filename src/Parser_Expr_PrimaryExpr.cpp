@@ -2686,7 +2686,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								arg_type = Type::Bool;
 								// Boolean literals are rvalues
 							} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-								arg_type = inner.type();
+								arg_type = categoryToType(inner.type());
 								// Literals are rvalues
 							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 								arg_type = Type::Char;  // const char*
@@ -2700,7 +2700,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
 											const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
 											arg_type_node_opt = type_spec;
-											arg_type = type_spec.type();
+											arg_type = categoryToType(type_spec.type());
 											// Named variables are lvalues
 											is_lvalue = true;
 										}
@@ -3419,7 +3419,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if constexpr (std::is_same_v<T, BoolLiteralNode>) {
 										arg_type = Type::Bool;
 									} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-										arg_type = inner.type();
+										arg_type = categoryToType(inner.type());
 									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 										arg_type = Type::Char;  // const char*
 									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -3428,7 +3428,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										if (id_type.has_value()) {
 											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 												if (decl->type_node().template is<TypeSpecifierNode>()) {
-													arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
+													arg_type = categoryToType(decl->type_node().template as<TypeSpecifierNode>().type());
 												}
 											}
 										}

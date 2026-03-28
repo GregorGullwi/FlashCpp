@@ -103,7 +103,7 @@ struct ExprResult {
 	// type_index carries identity info (struct/enum gTypeInfo slot) which may be the element type for pointers.
 	// So category() and typeEnum() delegate to the semantic type field directly.
 	TypeCategory category() const { return category_; }
-	Type typeEnum() const { return categoryToType(category_); }
+	TypeCategory typeEnum() const { return category_; }
 };
 
 inline ExprResult makeExprResultImpl(
@@ -234,11 +234,11 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
-	tv.type = result.typeEnum();
+	tv.type = categoryToType(result.typeEnum());
 	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
-	tv.type_index = TypeIndex::fromTypeAndIndex(result.typeEnum(), result.type_index);
+	tv.type_index = TypeIndex{result.type_index.index(), result.typeEnum()};
 	tv.pointer_depth = result.pointer_depth;
 	tv.storage = result.storage;
 	return tv;

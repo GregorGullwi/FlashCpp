@@ -632,7 +632,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
-					member_type_spec.type(),
+					categoryToType(member_type_spec.type()),
 					member_type_spec.type_index(),
 					member_size_in_bits,
 					member_alignment,
@@ -1872,7 +1872,7 @@ ParseResult Parser::parse_typedef_declaration()
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
-				member_type_spec.type(),
+				categoryToType(member_type_spec.type()),
 				member_type_spec.type_index(),
 				member_size,
 				member_alignment,

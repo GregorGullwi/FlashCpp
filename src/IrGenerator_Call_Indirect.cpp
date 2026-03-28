@@ -235,7 +235,7 @@
 				});
 
 				// Capture return type info before moving call_op (use-after-move is UB)
-				Type lambda_return_type = call_op.returnType();
+				TypeCategory lambda_return_type = call_op.returnType();
 				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
@@ -404,7 +404,7 @@
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
-				if (resolved_member && typeToCategory(resolved_member->memberType()) == TypeCategory::FunctionPointer) {
+				if (resolved_member && resolved_member->memberType() == TypeCategory::FunctionPointer) {
 					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
 					std::variant<StringHandle, TempVar> function_pointer;
 					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
@@ -432,8 +432,8 @@
 					if (!resolved_member->function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					Type ret_type = resolved_member->function_signature->returnType();
-					int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+					TypeCategory ret_type = resolved_member->function_signature->returnType();
+					int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
@@ -493,8 +493,8 @@
 									if (!member.function_signature) {
 										throw InternalError("Function pointer member missing function_signature for indirect call return type");
 									}
-									Type ret_type = member.function_signature->returnType();
-									int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+									TypeCategory ret_type = member.function_signature->returnType();
+									int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
@@ -773,7 +773,7 @@
 				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
 					auto fp_member = struct_info->findMemberRecursive(func_name_handle);
-					if (fp_member.has_value() && typeToCategory(fp_member->memberType()) == TypeCategory::FunctionPointer) {
+					if (fp_member.has_value() && fp_member->memberType() == TypeCategory::FunctionPointer) {
 						const auto& member = *fp_member;
 						// This is a call through a function pointer member!
 						// Generate an indirect call instead of a member function call
@@ -833,8 +833,8 @@
 						if (!member.function_signature) {
 							throw InternalError("Function pointer member missing function_signature for indirect call return type");
 						}
-						Type ret_type = member.function_signature->returnType();
-						int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+						TypeCategory ret_type = member.function_signature->returnType();
+						int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 						return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
