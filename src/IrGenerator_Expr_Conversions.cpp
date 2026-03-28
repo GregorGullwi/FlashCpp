@@ -2294,16 +2294,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	return false;
 }
 
-	Type AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
-		if (!sema_ || !node.is<ExpressionNode>()) return Type::Invalid;
+	TypeCategory AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
+		if (!sema_ || !node.is<ExpressionNode>()) return TypeCategory::Invalid;
 		const void* key = &node.as<ExpressionNode>();
 		const auto slot = sema_->getSlot(key);
-		if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
+		if (!slot.has_value() || !slot->has_cast()) return TypeCategory::Invalid;
 		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-		const Type from_t = categoryToType(sema_->typeContext().get(ci.source_type_id).category());
-		const Type to_t = categoryToType(sema_->typeContext().get(ci.target_type_id).category());
-		if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return Type::Invalid;
-		return to_t;
+		const TypeCategory from_cat = sema_->typeContext().get(ci.source_type_id).category();
+		const TypeCategory to_cat = sema_->typeContext().get(ci.target_type_id).category();
+		if (from_cat == TypeCategory::Struct || to_cat == TypeCategory::Struct) return TypeCategory::Invalid;
+		return to_cat;
 	}
 
 	ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {

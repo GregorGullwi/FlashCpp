@@ -372,8 +372,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
-		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+		TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
+		TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
 		const TypeCategory from_resolved_category = from_resolved_index.category();
 		const TypeCategory to_resolved_category = to_resolved_index.category();
 
@@ -485,8 +485,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
+				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
 				const TypeCategory from_base_category = from_base_index.category();
 				const TypeCategory to_base_category = to_base_index.category();
 				if (from_is_rvalue == to_is_rvalue && from_base_category == to_base_category) {
@@ -541,8 +541,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
+				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
 				const TypeCategory from_base_category = from_base_index.category();
 				const TypeCategory to_base_category = to_base_index.category();
 				bool types_match = (from_base_category == to_base_category);
@@ -592,8 +592,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
-			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+			TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
+			TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
 			const TypeCategory from_resolved_category = from_resolved_index.category();
 			const TypeCategory to_resolved_category = to_resolved_index.category();
 			
@@ -652,8 +652,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_canonical.typeEnum(), from_canonical.type_index);
-	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_canonical.typeEnum(), to_canonical.type_index);
+	TypeIndex from_type_index = from_canonical.resolvedTypeIndex();
+	TypeIndex to_type_index = to_canonical.resolvedTypeIndex();
 	const TypeCategory from_type_category = from_type_index.category();
 	const TypeCategory to_type_category = to_type_index.category();
 	
@@ -1329,8 +1329,8 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, Type
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
 		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (typeToCategory(type_info.resolvedType()) != TypeCategory::Invalid && !type_info.isVoid()) {
-				effective_type = typeToCategory(type_info.resolvedType());
+			if (type_info.category() != TypeCategory::Invalid && !type_info.isVoid()) {
+				effective_type = type_info.category();
 			} else if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void) {
 				effective_type = TypeCategory::Struct;
 			}

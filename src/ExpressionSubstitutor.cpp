@@ -264,7 +264,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						substituted_template_args.emplace_back(value, lit.type());
 					} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&substituted_expr)) {
 						const BoolLiteralNode& lit = *bool_literal;
-						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+						substituted_template_args.emplace_back(lit.value() ? 1 : 0, TypeCategory::Bool);
 					} else {
 						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
 						failed_value_extraction = true;
@@ -657,14 +657,14 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			FLASH_LOG(Templates, Debug, "  Non-type template parameter, creating literal with value: ", arg.value);
 			
 			// Determine the type based on the template argument's base_type
-			Type literal_type = arg.typeEnum();
-			if (typeToCategory(literal_type) == TypeCategory::Template || typeToCategory(literal_type) == TypeCategory::UserDefined) {
+			TypeCategory literal_cat = arg.category();
+			if (literal_cat == TypeCategory::Template || literal_cat == TypeCategory::UserDefined) {
 				// For template parameters, default to int
-				literal_type = Type::Int;
+				literal_cat = TypeCategory::Int;
 			}
 			
 			// Handle bool types specially with BoolLiteralNode
-			if (typeToCategory(literal_type) == TypeCategory::Bool) {
+			if (literal_cat == TypeCategory::Bool) {
 				std::string_view bool_str = (arg.value != 0) ? "true" : "false";
 				Token bool_token(Token::Type::Keyword, bool_str, 0, 0, 0);
 				BoolLiteralNode& bool_literal = gChunkedAnyStorage.emplace_back<BoolLiteralNode>(
@@ -682,7 +682,7 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			NumericLiteralNode& literal = gChunkedAnyStorage.emplace_back<NumericLiteralNode>(
 				num_token, 
 				static_cast<unsigned long long>(arg.value), 
-				literal_type, 
+				literal_cat, 
 				TypeQualifier::None, 
 				64
 			);

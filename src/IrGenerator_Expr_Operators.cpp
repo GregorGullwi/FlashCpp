@@ -631,8 +631,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Check sema annotations: if either branch has a conversion annotation, that
 		// tells us the target (common) type.
 		if (sema_) {
-			TypeCategory true_cat = typeToCategory(getSemaAnnotatedTargetType(ternaryNode.true_expr()));
-			TypeCategory false_cat = typeToCategory(getSemaAnnotatedTargetType(ternaryNode.false_expr()));
+			TypeCategory true_cat = getSemaAnnotatedTargetType(ternaryNode.true_expr());
+			TypeCategory false_cat = getSemaAnnotatedTargetType(ternaryNode.false_expr());
 			if (true_cat != TypeCategory::Invalid)
 				common_cat = true_cat;
 			else if (false_cat != TypeCategory::Invalid)

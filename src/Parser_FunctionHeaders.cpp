@@ -377,17 +377,18 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 					} else {
 						// Fallback: try to deduce from the expression
 						// Use current_token_ for error location since we've just parsed the expression
-						Type deduced_type = Type::Int;
+						TypeCategory deduced_type = TypeCategory::Int;
 						if (arg->is<ExpressionNode>()) {
 							const ExpressionNode& expr = arg->as<ExpressionNode>();
 							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
-								deduced_type = numeric_literal->type();
+								// TODO: add NumericLiteralNode::category() to avoid this bridge call
+								deduced_type = typeToCategory(numeric_literal->type());
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
 								if (symbol.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-										deduced_type = decl->type_node().as<TypeSpecifierNode>().type();
+										deduced_type = decl->type_node().as<TypeSpecifierNode>().category();
 									}
 								}
 							}

@@ -234,8 +234,8 @@ private:
 		const TypeSpecifierNode& ref_param_type,
 		const Token& source_token);
 	// Read the sema-annotated conversion target type for an expression node.
-	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
-	Type getSemaAnnotatedTargetType(const ASTNode& node) const;
+	// Returns TypeCategory::Invalid if no annotation exists or if either endpoint is a struct.
+	TypeCategory getSemaAnnotatedTargetType(const ASTNode& node) const;
 	ExprResult generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(

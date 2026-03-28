@@ -2998,8 +2998,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
-	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(categoryToType(from_desc.category()), from_desc.type_index);
-	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(categoryToType(to_desc.category()), to_desc.type_index);
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.type_index);
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(from_canonical.type_cat, to_canonical.type_cat);
 	if (!plan.is_valid) return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
@@ -3232,8 +3232,8 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
 	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
 	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
-	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(categoryToType(src_desc.category()), src_desc.type_index);
-	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(categoryToType(tgt_desc.category()), tgt_desc.type_index);
+	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(src_desc.type_index);
+	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(tgt_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(src_canonical.type_cat, tgt_canonical.type_cat);
 	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
 

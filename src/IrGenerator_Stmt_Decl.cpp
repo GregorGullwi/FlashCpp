@@ -2813,7 +2813,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// Try to find get<N>() functions for tuple-like decomposition
 				bool all_get_found = true;
-				std::vector<std::pair<StringHandle, Type>> binding_info;  // (mangled_name, return_type) for each get<N>
+				std::vector<std::pair<StringHandle, TypeCategory>> binding_info;  // (mangled_name, return_type) for each get<N>
 
 				// First, look up std::tuple_element<N, E>::type and get<N>() for each binding
 				for (size_t i = 0; i < tuple_size_value && all_get_found; ++i) {
@@ -2838,13 +2838,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						type_alias_it = getTypesByNameMap().find(std_type_alias_handle);
 					}
 
-					Type element_type = Type::Int;  // Default
+					TypeCategory element_type = TypeCategory::Int;  // Default
 					int element_size = 32;
 					TypeIndex element_type_index {};
 
 					if (type_alias_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
-						element_type = type_alias_info->typeEnum();
+						element_type = type_alias_info->category();
 						element_type_index = type_alias_info->type_index_;
 						element_size = type_alias_info->type_size_;
 						if (element_size == 0) {
@@ -2901,8 +2901,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 							// Check if this overload's return type matches our element type
 							// or if it's the i-th function declaration (by order)
-							bool type_matches = (return_type.type() == element_type);
-							if (typeToCategory(element_type) == TypeCategory::Struct) {
+							bool type_matches = (return_type.category() == element_type);
+							if (element_type == TypeCategory::Struct) {
 								type_matches = type_matches && (return_type.type_index() == element_type_index);
 							}
 
@@ -2955,7 +2955,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						CallOp call_op;
 						call_op.result = result_temp;
-						call_op.return_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
+						call_op.return_type_index = TypeIndex::fromCategory(element_type);
 						call_op.return_size_in_bits = SizeInBits{element_size};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
@@ -2976,10 +2976,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Create the binding variable
 						VariableDeclOp binding_var_decl;
 						binding_var_decl.var_name = binding_id;
-						binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+						binding_var_decl.type_index = TypeIndex::fromCategory(element_type);
 						binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						TypedValue init_val3;
-						init_val3.type = element_type;
+						init_val3.type = categoryToType(element_type);  // TODO: remove when TypedValue::type is migrated to TypeCategory
 						init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						init_val3.value = result_temp;
 						init_val3.type_index = TypeIndex{element_type_index};

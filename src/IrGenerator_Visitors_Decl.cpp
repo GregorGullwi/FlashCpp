@@ -2400,7 +2400,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Get element type (default to int for now)
 	int element_size_bits = 32;  // Default: int
-	Type element_type = Type::Int;
+	TypeCategory element_type = TypeCategory::Int;
 
 	// Infer element type from first element if available
 	std::vector<ExprResult> element_operands;
@@ -2410,7 +2410,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			ExprResult operands = visitExpressionNode(elem.as<ExpressionNode>());
 			element_operands.push_back(operands);
 			if (i == 0) {
-				element_type = operands.typeEnum();
+				element_type = operands.category();
 				element_size_bits = operands.size_in_bits.value;
 			}
 		}
@@ -2428,10 +2428,10 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
-	array_decl.type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+	array_decl.type_index = TypeIndex::fromCategory(element_type);
 	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
-	array_decl.array_element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+	array_decl.array_element_type_index = TypeIndex::fromCategory(element_type);
 	array_decl.array_element_size = element_size_bits;
 	array_decl.array_count = array_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
@@ -2439,7 +2439,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
-		store_op.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+		store_op.element_type_index = TypeIndex::fromCategory(element_type);
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
 		store_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
@@ -2486,7 +2486,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_ptr.offset = static_cast<int>(ptr_member.offset);
 		// Create TypedValue for pointer to array - need to set pointer_depth explicitly
 		TypedValue ptr_value;
-		ptr_value.type = element_type;
+		ptr_value.type = categoryToType(element_type);  // TODO: remove when TypedValue::type is migrated to TypeCategory
 		ptr_value.size_in_bits = SizeInBits{64};  // pointer size
 		ptr_value.value = array_name;
 		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array

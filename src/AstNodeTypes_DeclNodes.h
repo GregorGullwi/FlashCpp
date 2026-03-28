@@ -911,8 +911,19 @@ struct CanonicalTypeAlias {
 	CanonicalTypeAlias(Type t, TypeIndex idx)
 		: type_cat(typeToCategory(t)), type_index(idx) {}
 
+	// TypeCategory-based constructor (preferred, avoids bridge functions)
+	CanonicalTypeAlias(TypeCategory cat, TypeIndex idx)
+		: type_cat(cat), type_index(idx) {}
+
 	// Returns the legacy Type value derived from the embedded TypeCategory.
 	Type typeEnum() const { return categoryToType(type_cat); }
+
+	// Returns TypeIndex with category merged from type_cat when type_index lacks it.
+	TypeIndex resolvedTypeIndex() const noexcept {
+		if (type_index.category() != TypeCategory::Invalid)
+			return type_index;
+		return TypeIndex{type_index.index(), type_cat};
+	}
 };
 
 // Canonicalize chained typedef / using aliases represented as Type::UserDefined.
@@ -933,10 +944,10 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
 		// resolvedType() returns the effective underlying type stored in type_.
 		// Stop when we reach a concrete non-void non-UserDefined type.
-		if (!type_info.isVoid() && typeToCategory(type_info.resolvedType()) != TypeCategory::UserDefined) {
-			return {type_info.resolvedType(), type_info.type_index_};
+		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
+			return {type_info.category(), type_info.type_index_};
 		}
-		if (typeToCategory(type_info.resolvedType()) != TypeCategory::UserDefined ||
+		if (type_info.category() != TypeCategory::UserDefined ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -949,6 +960,16 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	return canonicalize_type_alias(type, type_index).typeEnum();
+}
+
+// TypeIndex-only overload: derives the legacy Type from the TypeIndex category.
+// The bridge via categoryToType is required while canonicalize_type_alias(Type, TypeIndex)
+// still exists; once that overload is removed this wrapper can be inlined directly.
+// TODO: Once canonicalize_type_alias(Type, TypeIndex) is removed, rewrite this to
+// work with TypeCategory throughout without the bridge call.
+inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
+	Type type = categoryToType(type_index.category());
+	return canonicalize_type_alias(type, type_index);
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
