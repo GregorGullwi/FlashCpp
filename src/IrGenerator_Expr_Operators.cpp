@@ -1474,7 +1474,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return false;
 			}
 			Type semantic_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
-			if (carriesSemanticTypeIndex(semantic_type)) {
+			if (carriesSemanticTypeIndex(typeToCategory(semantic_type))) {
 				return true;
 			}
 			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
@@ -1483,7 +1483,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return true;
 				}
 				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_spec.type_index());
-				if (carriesSemanticTypeIndex(indexed_type)) {
+				if (carriesSemanticTypeIndex(typeToCategory(indexed_type))) {
 					return true;
 				}
 			}
@@ -1573,14 +1573,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				const TypeInfo& type_info = getTypeInfo(type_index);
 				Type semantic_type = resolve_type_alias(categoryToType(lowered_type), type_index);
-				if (carriesSemanticTypeIndex(semantic_type)) {
+				if (carriesSemanticTypeIndex(typeToCategory(semantic_type))) {
 					return true;
 				}
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
 				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_index);
-				return carriesSemanticTypeIndex(indexed_type);
+				return carriesSemanticTypeIndex(typeToCategory(indexed_type));
 			};
 
 			lhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(lhsCat, lhs_type_index);

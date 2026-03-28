@@ -298,7 +298,7 @@
 			if (type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).typeEnum(), type_node.type_index());
 			}
-			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
+			const bool carries_type_index = carriesSemanticTypeIndex(typeToCategory(semantic_type));
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,
@@ -314,7 +314,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
-			return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
+			return carriesSemanticTypeIndex(typeToCategory(type)) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -1038,7 +1038,7 @@
 			// - Otherwise return 0
 			// Guard with is_valid() so primitive typedefs (Type::UserDefined but
 			// no struct/enum info) don't propagate a stale type_index.
-			TypeIndex type_index = (carriesSemanticTypeIndex(type_node.type()) && type_node.type_index().is_valid())
+			TypeIndex type_index = (carriesSemanticTypeIndex(typeToCategory(type_node.type())) && type_node.type_index().is_valid())
 				? type_node.type_index()
 				: TypeIndex{};
 			// Enums are scalar (carry pointer_depth like integers), while structs
@@ -1193,7 +1193,7 @@
 					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					carriesSemanticTypeIndex(result_type)
+					carriesSemanticTypeIndex(typeToCategory(result_type))
 						? result_type_index
 						: TypeIndex{},
 					PointerDepth{isIrStructType(toIrType(result_type))

@@ -38,29 +38,28 @@ enum class IrType : int_fast16_t {
 };
 
 // ============================================================================
-// toIrType — Convert a semantic Type to its runtime IrType representation.
+// toIrType — Convert a TypeCategory to its runtime IrType representation.
 //
 // This is a pure mapping function.  It does NOT erase enum identity globally;
 // it only answers "what runtime representation should IR operations use?"
 //
-// Precondition: the input Type must be a concrete type that is valid in IR.
-//   Types like Auto, Template, Function, and Invalid must be resolved before
-//   this function is called.  Hitting those cases is a compiler bug.
+// Precondition: the input TypeCategory must be a concrete type that is valid
+//   in IR.  Categories like Auto, Template, Function, and Invalid must be
+//   resolved before this function is called.  Hitting those cases is a
+//   compiler bug.
 // ============================================================================
-IrType toIrType(Type semantic_type);
+IrType toIrType(TypeCategory cat);
 
-// TypeCategory overload — delegates via categoryToType().
-// For TypeCategory::TypeAlias, this returns IrType::Struct (Type::UserDefined).
-// Callers that need alias-resolved IR type should use toIrType(TypeInfo) below.
-inline IrType toIrType(TypeCategory cat) { return toIrType(categoryToType(cat)); }
+// Legacy Type overload — backward-compatibility bridge that converts to
+// TypeCategory and delegates.  New code should prefer the TypeCategory overload.
+inline IrType toIrType(Type semantic_type) { return toIrType(typeToCategory(semantic_type)); }
 
 // TypeIndex overload — uses the cached category carried by the TypeIndex.
 inline IrType toIrType(TypeIndex type_index) { return toIrType(type_index.category()); }
 
-// TypeInfo overload — uses resolvedType() for correct alias resolution.
-// For primitive-aliased TypeInfo entries, this returns IrType::Integer instead
-// of IrType::Struct that a naive category() lookup would give.
-inline IrType toIrType(const TypeInfo& ti) { return toIrType(ti.resolvedType()); }
+// TypeInfo overload — delegates to category() which prefers the authoritative
+// TypeCategory embedded in type_index_ over the raw category_ field.
+inline IrType toIrType(const TypeInfo& ti) { return toIrType(ti.category()); }
 
 // ============================================================================
 // IrType classification helpers
@@ -94,12 +93,10 @@ inline bool isIrPointerLikeType(IrType t) { return t == IrType::FunctionPointer 
 // ============================================================================
 
 /// True for types that carry a meaningful type_index in IR metadata: Struct,
-/// Enum, and UserDefined.  Use this when deciding whether to propagate
-/// type_index through ExprResult / TypedValue rather than hard-coding the
-/// three-way disjunction at each call site.
-inline bool carriesSemanticTypeIndex(Type t) { return needs_type_index(t); }
-/// TypeCategory overload — delegates to the Type version via categoryToType.
-inline bool carriesSemanticTypeIndex(TypeCategory cat) { return carriesSemanticTypeIndex(categoryToType(cat)); }
+/// Enum, UserDefined, and TypeAlias.  Use this when deciding whether to
+/// propagate type_index through ExprResult / TypedValue rather than
+/// hard-coding the multi-way disjunction at each call site.
+inline bool carriesSemanticTypeIndex(TypeCategory cat) { return needs_type_index(cat); }
 
 // ============================================================================
 // Formatting support for IrType (for FLASH_LOG_FORMAT and std::format)

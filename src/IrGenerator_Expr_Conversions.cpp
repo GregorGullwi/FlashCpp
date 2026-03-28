@@ -1795,7 +1795,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typeToCategory(typed_value.type)) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
