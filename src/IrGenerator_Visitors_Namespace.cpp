@@ -89,10 +89,10 @@
 				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
 
 				// Get struct type information
-				Type return_type = current_function_return_type_;
+				TypeIndex return_type_index = current_function_return_type_index_;
 				int return_size = current_function_return_size_;
 
-				if (return_type != Type::Struct) {
+				if (!return_type_index.isStruct()) {
 					FLASH_LOG(Codegen, Error, "InitializerListNode in return statement for non-struct type");
 					return;
 				}
@@ -165,7 +165,7 @@
 				emitDestructorsForNonLocalExit(0);
 
 				// Now return the temporary variable
-				emitReturn(temp_var, return_type, return_size, node.return_token());
+				emitReturn(temp_var, return_type_index, return_size, node.return_token());
 				return;
 			}
 
@@ -191,7 +191,7 @@
 								emitAndClearFullExpressionTempDestructors();
 								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								current_function_return_type_, current_function_return_size_,
+								current_function_return_type_index_, current_function_return_size_,
 								node.return_token());
 								return;
 							}
@@ -212,7 +212,7 @@
 
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			{
-				Type expr_type = operands.type;
+				Type expr_type = categoryToType(operands.type_index.category());
 
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
@@ -232,7 +232,7 @@
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
-				Type expr_type = operands.type;
+				Type expr_type = categoryToType(operands.type_index.category());
 				int expr_size = operands.size_in_bits.value;
 
 				// Get the current function's return type
@@ -252,7 +252,7 @@
 				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 						operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
 					operands = *materialized;
-					expr_type = operands.type;
+					expr_type = categoryToType(operands.type_index.category());
 					expr_size = operands.size_in_bits.value;
 					sema_applied_conversion = true;
 				}
@@ -290,8 +290,8 @@
 							Type from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != operands.type)
-								from_type = operands.type;
+							if (from_type == Type::Enum && from_type != categoryToType(operands.type_index.category()))
+								from_type = categoryToType(operands.type_index.category());
 							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;
 						}
@@ -406,7 +406,7 @@
 				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
-			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
+			emitReturn(return_value, current_function_return_type_index_, current_function_return_size_,
 			node.return_token());
 		}
 		else {

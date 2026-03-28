@@ -358,7 +358,7 @@
 		emitAndClearFullExpressionTempDestructors();
 
 		// Get the condition type and value
-		Type condition_type = condition_result.type;
+		TypeIndex condition_type = condition_result.type_index;
 		int condition_size = condition_result.size_in_bits.value;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
@@ -405,7 +405,7 @@
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
 				.lhs = makeTypedValue(condition_type, SizeInBits{static_cast<int>(condition_size)}, toIrValue(condition_result.value)),
-				.rhs = makeTypedValue(case_value_result.type, case_value_result.size_in_bits, toIrValue(case_value_result.value)),
+				.rhs = makeTypedValue(case_value_result.type_index, case_value_result.size_in_bits, toIrValue(case_value_result.value)),
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
@@ -421,7 +421,7 @@
 			CondBranchOp cond_branch;
 			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fall through to unconditional branch when TRUE
 			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
-			cond_branch.condition = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_result);
+			cond_branch.condition = makeTypedValue(TypeIndex{0, TypeCategory::Bool}, SizeInBits{1}, cmp_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 			// Unconditional branch to case label (when condition is true, we fall through here)
@@ -565,9 +565,6 @@
 				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
 					resolved_member) {
 					inferred_range_type.emplace(
-						isIrStructType(toIrType(resolved_member->type))
-							? Type::Struct
-							: resolved_member->type,
 						resolved_member->type_index,
 						static_cast<int>(resolved_member->size * 8),
 						Token()

@@ -860,7 +860,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-						emitReturn(this_deref, TypeIndex{struct_info->type_index_, TypeCategory::Struct}, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
+						emitReturn(this_deref, struct_type_info->type_index_, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
 					}
 				}
 			}
@@ -1922,7 +1922,7 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
+								if (member.type_index.isStruct() && member.type_index.index() < getTypeInfoCount()) {
 									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
@@ -1946,15 +1946,10 @@
 									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
 									// Zero-initialize based on type
-									if (member.type == Type::Int || member.type == Type::Long ||
-									member.type == Type::Short || member.type == Type::Char) {
-										member_value = 0ULL;  // Zero for integer types
-									} else if (member.type == Type::Float || member.type == Type::Double) {
+									if (isFloatingPointType(member.type_index.category())) {
 										member_value = 0.0;  // Zero for floating-point types
-									} else if (member.type == Type::Bool) {
-										member_value = 0ULL;  // False for bool (0)
 									} else {
-										member_value = 0ULL;  // Default to zero
+										member_value = 0ULL;  // Zero for integer/bool/other types
 									}
 								}
 							}
@@ -2032,7 +2027,7 @@
 										const size_t declared_count = member.array_dimensions[0];
 										const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
 										const auto& init_elements = init_list.initializers();
-										const bool elem_is_fp = isFloatingPointType(member.type);
+										const bool elem_is_fp = isFloatingPointType(member.type_index.category());
 
 										for (size_t i = 0; i < declared_count; ++i) {
 											IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
@@ -2065,8 +2060,8 @@
 									}
 									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
-										member_value = isFloatingPointType(member.type) ? IrValue{0.0} : IrValue{0ULL};
-									} else if ((is_struct_type(member.type)) &&
+										member_value = isFloatingPointType(member.type_index.category()) ? IrValue{0.0} : IrValue{0ULL};
+									} else if ((is_struct_type(member.type_index.category())) &&
 										member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 										if (const StructTypeInfo* nested_info = getTypeInfo(member.type_index).getStructInfo()) {
@@ -2075,7 +2070,7 @@
 											const auto& nested_members = nested_info->members;
 											for (size_t i = 0; i < nested_members.size(); ++i) {
 												const StructMember& nm = nested_members[i];
-												IrValue nm_val = isFloatingPointType(nm.type) ? IrValue{0.0} : IrValue{0ULL};
+												IrValue nm_val = isFloatingPointType(nm.type_index.category()) ? IrValue{0.0} : IrValue{0ULL};
 												if (i < agg_elements.size() && agg_elements[i].is<ExpressionNode>()) {
 													ExprResult nm_op = visitExpressionNode(agg_elements[i].as<ExpressionNode>());
 													if (const auto* tmp = std::get_if<TempVar>(&nm_op.value)) {
@@ -2129,7 +2124,7 @@
 									if (member.is_array && !member.array_dimensions.empty()) {
 										const size_t arr_count = member.array_dimensions[0];
 										const size_t arr_elem_size = arr_count > 0 ? member.size / arr_count : member.size;
-										const bool arr_is_fp = isFloatingPointType(member.type);
+										const bool arr_is_fp = isFloatingPointType(member.type_index.category());
 										for (size_t i = 0; i < arr_count; ++i) {
 											IrValue arr_elem_val = (i == 0) ? member_value
 												: (arr_is_fp ? IrValue{0.0} : IrValue{0ULL});
@@ -2169,13 +2164,8 @@
 								}
 							} else {
 								// Default initializer exists but isn't an expression, zero-initialize
-								if (member.type == Type::Int || member.type == Type::Long ||
-								member.type == Type::Short || member.type == Type::Char) {
-									member_value = 0ULL;
-								} else if (member.type == Type::Float || member.type == Type::Double) {
+								if (isFloatingPointType(member.type_index.category())) {
 									member_value = 0.0;
-								} else if (member.type == Type::Bool) {
-									member_value = 0ULL;  // False for bool (0)
 								} else {
 									member_value = 0ULL;
 								}
@@ -2183,7 +2173,7 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type == Type::Struct && member.type_index.index() < getTypeInfoCount()) {
+							if (member.type_index.isStruct() && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
@@ -2207,15 +2197,10 @@
 								continue;  // Skip the MemberStore since constructor handles initialization
 							} else {
 								// Zero-initialize based on type
-								if (member.type == Type::Int || member.type == Type::Long ||
-								member.type == Type::Short || member.type == Type::Char) {
-									member_value = 0ULL;  // Zero for integer types
-								} else if (member.type == Type::Float || member.type == Type::Double) {
+								if (isFloatingPointType(member.type_index.category())) {
 									member_value = 0.0;  // Zero for floating-point types
-								} else if (member.type == Type::Bool) {
-									member_value = 0ULL;  // False for bool (0)
 								} else {
-									member_value = 0ULL;  // Default to zero
+									member_value = 0ULL;  // Zero for integer/bool/other types
 								}
 							}
 						}
@@ -2408,7 +2393,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Get element type (default to int for now)
 	int element_size_bits = 32;  // Default: int
-	Type element_type = Type::Int;
+	TypeIndex element_type = TypeIndex{0, TypeCategory::Int};
 
 	// Infer element type from first element if available
 	std::vector<ExprResult> element_operands;
@@ -2418,7 +2403,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 			ExprResult operands = visitExpressionNode(elem.as<ExpressionNode>());
 			element_operands.push_back(operands);
 			if (i == 0) {
-				element_type = operands.type;
+				element_type = operands.type_index;
 				element_size_bits = operands.size_in_bits.value;
 			}
 		}
@@ -2436,10 +2421,10 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
-	array_decl.type = element_type;
+	array_decl.type_index = element_type;
 	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
-	array_decl.array_element_type = element_type;
+	array_decl.array_element_type_index = element_type;
 	array_decl.array_element_size = element_size_bits;
 	array_decl.array_count = array_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
@@ -2447,10 +2432,10 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
-		store_op.element_type = element_type;
+		store_op.element_type_index = element_type;
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
-		store_op.index = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
+		store_op.index = makeTypedValue(TypeIndex{0, TypeCategory::UnsignedLongLong}, SizeInBits{64}, static_cast<unsigned long long>(i));
 		store_op.value = toTypedValue(element_operands[i]);
 		store_op.member_offset = 0;  // Not a member array - direct local array
 		store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
@@ -2481,7 +2466,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp init_list_decl;
 	init_list_decl.var_name = init_list_name;
-	init_list_decl.type = Type::Struct;
+	init_list_decl.type_index = TypeIndex{0, TypeCategory::Struct};
 	init_list_decl.size_in_bits = SizeInBits{static_cast<int>(init_list_size_bits)};
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
 
@@ -2494,7 +2479,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_ptr.offset = static_cast<int>(ptr_member.offset);
 		// Create TypedValue for pointer to array - need to set pointer_depth explicitly
 		TypedValue ptr_value;
-		ptr_value.type_index = TypeIndex{0, typeToCategory(element_type)}; ptr_value.ir_type = toIrType(element_type);
+		ptr_value.type_index = TypeIndex{0, element_type.category()}; ptr_value.ir_type = toIrType(element_type);
 		ptr_value.size_in_bits = SizeInBits{64};  // pointer size
 		ptr_value.value = array_name;
 		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array
@@ -2511,7 +2496,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_size.object = init_list_name;  // Use StringHandle
 		store_size.member_name = size_member.getName();
 		store_size.offset = static_cast<int>(size_member.offset);
-		store_size.value = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(array_size));
+		store_size.value = makeTypedValue(TypeIndex{0, TypeCategory::UnsignedLongLong}, SizeInBits{64}, static_cast<unsigned long long>(array_size));
 		store_size.struct_type_info = nullptr;
 		store_size.ref_qualifier = CVReferenceQualifier::None;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
@@ -2520,11 +2505,10 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
 	return makeExprResult(
-		Type::Struct,
+		init_list_type_index,
 		SizeInBits{static_cast<int>(init_list_size_bits)},
 		IrOperand{init_list_name},
-		TypeIndex{init_list_type_index}
-	, PointerDepth{}, ValueStorage::ContainsData);
+		PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -2541,13 +2525,13 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
-	if (!is_struct_type(type_spec.type()) && type_spec.type() != Type::UserDefined) {
-		const int type_size_bits = get_type_size_bits(type_spec.type());
+	if (!is_struct_type(type_spec.type_index().category()) && type_spec.type_index().category() != TypeCategory::UserDefined) {
+		const int type_size_bits = static_cast<int>(get_type_size_bits(type_spec.type_index()));
 		if (num_args == 0) {
-			if (is_floating_point_type(type_spec.type())) {
-				return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0.0}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+			if (isFloatingPointType(type_spec.type_index().category())) {
+				return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0ULL}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		if (num_args == 1) {
 			ASTNode first_arg;
@@ -2560,7 +2544,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				throw InternalError("Primitive constructor call argument must be an expression");
 			}
 			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
-			return generateTypeConversion(arg_result, arg_result.type, type_spec.type(), constructorCallNode.called_from());
+			return generateTypeConversion(arg_result, categoryToType(arg_result.type_index.category()), type_spec.type(), constructorCallNode.called_from());
 		}
 		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
 	}
@@ -2568,7 +2552,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// For constructor calls, we need to generate a constructor call instruction
 	// In C++, constructors are named after the class
 	StringHandle constructor_name;
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.type_index().category())) {
 		// If type_index is set, use it
 		if (type_spec.type_index().is_valid()) {
 			constructor_name = getTypeInfo(type_spec.type_index()).name();
@@ -2673,12 +2657,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// InitializerListNode, not ExpressionNode, and must be handled
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
-					member.type == Type::Struct &&
+					member.type_index.isStruct() &&
 					member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
-						TypeSpecifierNode nested_spec(member.type, member.type_index, nested_bits);
+						TypeSpecifierNode nested_spec(member.type_index, nested_bits);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {
 							MemberStoreOp store_op;
@@ -2715,11 +2699,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 			TypeIndex result_type_index = type_spec.type_index();
 			return makeExprResult(
-				type_spec.type(),
+				result_type_index,
 				SizeInBits{actual_size_bits},
 				IrOperand{ret_var},
-				TypeIndex{result_type_index}
-			, PointerDepth{}, ValueStorage::ContainsData);
+				PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 
@@ -2827,9 +2810,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Return the result variable with the constructed type, including type_index for struct types
 	TypeIndex result_type_index = type_spec.type_index();
 	return makeExprResult(
-		type_spec.type(),
+		result_type_index,
 		SizeInBits{actual_size_bits},
 		IrOperand{ret_var},
-		TypeIndex{result_type_index}
-	, PointerDepth{}, ValueStorage::ContainsData);
+		PointerDepth{}, ValueStorage::ContainsData);
 }
