@@ -1051,42 +1051,40 @@ struct PointerLevel {
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
-	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, typeToCategory(type)}) {}
 
-	// TypeCategory-first constructor — preferred for new code.
-	// Converts cat to the legacy Type via categoryToType() and stores it; the TypeIndex
-	// category_ field is also set so that category() returns cat without a lookup.
+	// TypeIndex-first constructor — preferred for new code.
+	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
+
+	// TypeCategory constructor — for primitive types without a gTypeInfo index.
 	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
-	// Constructor for struct types — always stamps TypeCategory from t into type_index_ so
-	// type_index() is authoritative and callers don't need fromTypeAndIndex().
+	// Constructor for struct types with TypeIndex
+	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
+		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
+
+	// Legacy constructors — kept temporarily for compilation; will be removed.
+	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, typeToCategory(type)}) {}
+
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex::fromTypeAndIndex(type, type_index)), reference_qualifier_(reference_qualifier) {}
+		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index.category() != TypeCategory::Invalid ? type_index : TypeIndex{type_index.index(), typeToCategory(type)}), reference_qualifier_(reference_qualifier) {}
 
 	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
-	// Ensures the category embedded in type_index_ is always taken from cat, even if the
-	// incoming type_index was constructed with the legacy 1-arg (index-only) constructor.
-	// Constructor 4: category-first form.  `type_index` provides the gTypeInfo slot;
-	// its embedded category is *overridden* by `cat` so the caller need not pre-stamp
-	// the category into the TypeIndex before passing it here.
 	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
 		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
-		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
+		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
 
-	auto type() const { return type_; }
 	// Returns the TypeCategory for this type specifier.
-	// Prefers category embedded in type_index_ (set correctly by add* functions);
-	// falls back to typeToCategory(type_) for legacy TypeSpecifierNode values built
-	// with the Type-only constructor.
-	TypeCategory category() const {
-		TypeCategory cat = type_index_.category();
-		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
-	}
+	TypeCategory category() const { return type_index_.category(); }
+	// Legacy accessor — returns Type enum for backward compat during migration.
+	Type type() const { return categoryToType(type_index_.category()); }
 	auto size_in_bits() const { return size_; }
 	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
@@ -1121,9 +1119,9 @@ public:
 	}
 
 	// Function pointer support
-	bool is_function_pointer() const { return category() == TypeCategory::FunctionPointer; }
-	bool is_member_function_pointer() const { return category() == TypeCategory::MemberFunctionPointer; }
-	bool is_member_object_pointer() const { return category() == TypeCategory::MemberObjectPointer; }
+	bool is_function_pointer() const { return type_index_.category() == TypeCategory::FunctionPointer; }
+	bool is_member_function_pointer() const { return type_index_.category() == TypeCategory::MemberFunctionPointer; }
+	bool is_member_object_pointer() const { return type_index_.category() == TypeCategory::MemberObjectPointer; }
 	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }
@@ -1167,8 +1165,8 @@ public:
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
-	void set_type(Type t) { type_ = t; }
-	void set_category(TypeCategory cat) { type_ = categoryToType(cat); type_index_.setCategory(cat); }
+	void set_type(Type t) { type_index_ = TypeIndex{type_index_.index(), typeToCategory(t)}; }
+	void set_category(TypeCategory cat) { type_index_ = TypeIndex{type_index_.index(), cat}; }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;
@@ -1186,18 +1184,18 @@ public:
 	// Returns true if they represent the same type signature
 	bool matches_signature(const TypeSpecifierNode& other) const {
 		// Check basic type
-		if (type_ != other.type_) {
+		if (type_index_.category() != other.type_index_.category()) {
 			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
 			// types such as enum vs int just because they share a runtime size.
-			Type resolved_type = resolve_type_alias(type_, type_index_);
-			Type other_resolved_type = resolve_type_alias(other.type_, other.type_index_);
+			Type resolved_type = resolve_type_alias(categoryToType(type_index_.category()), type_index_);
+			Type other_resolved_type = resolve_type_alias(categoryToType(other.type_index_.category()), other.type_index_);
 			if (resolved_type != other_resolved_type) {
 				return false;
 			}
 		}
 		
 		// Check type index for user-defined types
-		if (is_struct_type(typeToCategory(type_))) {
+		if (is_struct_type(type_index_.category())) {
 			if (type_index_ != other.type_index_) {
 				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
 				if (token_.value() != other.token_.value()) {
@@ -1230,12 +1228,11 @@ public:
 	}
 
 private:
-	Type type_ = Type::Invalid;  // Default to Invalid (zero) so default-constructed nodes are detectable
 	int size_ = 0;  // Size in bits - changed from unsigned char to int to support large structs
 	TypeQualifier qualifier_ = TypeQualifier::None;
 	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
 	Token token_;
-	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
+	TypeIndex type_index_;      // Authoritative type identity (category + gTypeInfo index)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
