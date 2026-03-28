@@ -467,7 +467,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
 									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
-										if (member.type == Type::FunctionPointer) {
+										if (member.type_index.category() == TypeCategory::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
 										break;
@@ -970,11 +970,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* type_info = type_it->second;
-					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->type_, 
+					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->category_, 
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->type_ == Type::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
+					if (type_info->category_ == TypeCategory::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {

@@ -913,13 +913,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								advance(); // consume '('
 								
 								// Parse parameter list (can be empty or have parameters)
-								std::vector<Type> param_types;
+								std::vector<TypeIndex> param_types;
 								while (!peek().is_eof() && peek() != ")"_tok) {
 									// Skip parameter - can be complex types
 									auto param_type_result = parse_type_specifier();
 									if (!param_type_result.is_error() && param_type_result.node().has_value()) {
 										const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-										param_types.push_back(param_type.type());
+										param_types.push_back(param_type.type_index());
 									}
 									
 									// Check for comma
@@ -935,8 +935,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 									
 									// Successfully parsed function reference/pointer type!
 									FunctionSignature func_sig;
-									func_sig.return_type = type_spec.type();
-									func_sig.parameter_types = std::move(param_types);
+									func_sig.return_type_index = type_spec.type_index();
+									func_sig.parameter_type_indices = std::move(param_types);
 									
 									if (is_function_ptr) {
 										type_spec.add_pointer_level(CVQualifier::None);
@@ -1281,7 +1281,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (existing_type_it != getTypesByNameMap().end()) {
 				// Found existing type - create alias pointing to it
 				const TypeInfo* source_type = existing_type_it->second;
-				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->type_, source_type->type_index_, source_type->type_size_);
+				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->category_, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
 				
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it

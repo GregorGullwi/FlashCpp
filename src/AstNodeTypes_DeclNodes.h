@@ -883,18 +883,15 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	Type type = Type::Invalid;
+	TypeCategory type = TypeCategory::Invalid;
 	TypeIndex type_index {};
 };
 
-// Canonicalize chained typedef / using aliases represented as Type::UserDefined.
-// Follows UserDefined -> UserDefined -> concrete type chains, but preserves the
-// original unresolved state when the chain does not bottom out in a concrete type
-// (placeholder / parse-time fallback cases).
-inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+// Canonicalize chained typedef / using aliases represented as TypeCategory::UserDefined.
+inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if (type != Type::UserDefined || !type_index.is_valid()) {
-		return {type, type_index};
+	if (type_cat != TypeCategory::UserDefined || !type_index.is_valid()) {
+		return {type_cat, type_index};
 	}
 
 	const TypeIndex original_type_index = type_index;
@@ -903,10 +900,10 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 	while (current_type_index.is_valid() &&
 		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
-		if (type_info.type_ != Type::Void && type_info.type_ != Type::UserDefined) {
-			return {type_info.type_, type_info.type_index_};
+		if (type_info.category_ != TypeCategory::Void && type_info.category_ != TypeCategory::UserDefined) {
+			return {type_info.category_, type_info.type_index_};
 		}
-		if (type_info.type_ != Type::UserDefined ||
+		if (type_info.category_ != TypeCategory::UserDefined ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -914,11 +911,16 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 		current_type_index = type_info.type_index_;
 	}
 
-	return {type, original_type_index};
+	return {type_cat, original_type_index};
+}
+
+// Legacy bridge: accepts Type; converts to TypeCategory internally.
+inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+	return canonicalize_type_alias(typeToCategory(type), type_index);
 }
 
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return canonicalize_type_alias(type, type_index).type;
+	return categoryToType(canonicalize_type_alias(type, type_index).type);
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
@@ -942,6 +944,9 @@ TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits
 
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
+inline TypeInfo& add_type_alias_copy(StringHandle name, TypeCategory cat, TypeIndex source_type_index, uint32_t size_bits) {
+	return add_type_alias_copy(name, categoryToType(cat), source_type_index, size_bits);
+}
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();
@@ -1004,6 +1009,8 @@ inline bool is_standard_arithmetic_type(Type type) {
 }
 int get_integer_rank(Type type);
 int get_floating_point_rank(Type type);
+inline int get_integer_rank(TypeCategory cat) { return get_integer_rank(categoryToType(cat)); }
+inline int get_floating_point_rank(TypeCategory cat) { return get_floating_point_rank(categoryToType(cat)); }
 
 // Get the size of 'long' in bits based on the target data model
 inline int get_long_size_bits() {

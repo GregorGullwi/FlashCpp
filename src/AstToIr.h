@@ -410,7 +410,7 @@ private:
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 				value = *ull_val;
 			}
-			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, TypeCategory::UnsignedLongLong}, SizeInBits{64}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed
@@ -459,7 +459,7 @@ private:
 				size_t abs_offset = base_offset + member.offset;
 				const ASTNode& member_init = init_list.initializers()[i];
 				if (member_init.is<InitializerListNode>() &&
-					isIrStructType(toIrType(member.type)) &&
+					isIrStructType(toIrType(member.type_index)) &&
 					member.type_index.is_valid() &&
 					member.type_index.index() < getTypeInfoCount()) {
 					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
@@ -469,7 +469,7 @@ private:
 					break;
 				}
 
-				unsigned long long value = eval_to_value(member_init, member.type);
+				unsigned long long value = eval_to_value(member_init, member.type_index);
 				if (member.bitfield_width.has_value()) {
 					size_t width = *member.bitfield_width;
 					size_t bit_offset = member.bitfield_bit_offset;

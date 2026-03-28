@@ -639,12 +639,12 @@ std::string TypeSpecifierNode::getReadableString() const {
     }
 
     // Add base type name
-    std::string_view name = getTypeName(type_);
+    std::string_view name = getTypeName(type());
     if (!name.empty()) {
         oss << name;
     } else {
         // getTypeName returns "" for non-primitive types; provide fallback names
-        switch (type_) {
+        switch (type()) {
             case Type::UserDefined: oss << "user_defined"; break;
             case Type::Auto: oss << "auto"; break;
             case Type::DeclTypeAuto: oss << "decltype(auto)"; break;

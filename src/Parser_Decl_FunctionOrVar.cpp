@@ -1358,14 +1358,14 @@ ParseResult Parser::finalize_static_member_init(StructStaticMember* static_membe
 	}
 
 	// Empty brace init - create a zero literal matching the static member's type
-	Type member_type = static_member->type;
+	TypeCategory member_type = static_member->type_index.category();
 	unsigned char member_size_bits = static_cast<unsigned char>(static_member->size * 8);
 	if (member_size_bits == 0) {
 		member_size_bits = 32;
 	}
 	NumericLiteralValue zero_value;
 	std::string_view zero_str;
-	if (member_type == Type::Float || member_type == Type::Double || member_type == Type::LongDouble) {
+	if (member_type == TypeCategory::Float || member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
 		zero_value = 0.0;
 		zero_str = "0.0"sv;
 	} else {

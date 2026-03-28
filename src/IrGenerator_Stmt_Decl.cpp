@@ -445,7 +445,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			};
 
 			// Helper to evaluate a constexpr and get the raw value
-			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+			auto evalToValue = [&](const ASTNode& expr, TypeIndex target_type_index) -> unsigned long long {
 				auto ctx = makeStaticStorageEvalContext();
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 
@@ -461,12 +461,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					return 0;
 				}
 
-				if (target_type == Type::Float) {
+				const TypeCategory target_type = target_type_index.category();
+				if (target_type == TypeCategory::Float) {
 					float f = static_cast<float>(eval_result.as_double());
 					uint32_t f_bits;
 					std::memcpy(&f_bits, &f, sizeof(float));
 					return f_bits;
-				} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+				} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
 					double d = eval_result.as_double();
 					unsigned long long bits;
 					std::memcpy(&bits, &d, sizeof(double));
@@ -539,7 +540,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Fallback: array-like behavior
 							op.element_count = initializers.size();
 							for (const auto& elem_init : initializers) {
-								unsigned long long value = evalToValue(elem_init, type_node.type());
+								unsigned long long value = evalToValue(elem_init, type_node.type_index());
 								appendValueAsBytes(op.init_data, value, element_size);
 							}
 						}
@@ -563,7 +564,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											evalToValue,
 											elem_i * elem_struct->total_size);
 									} else {
-										unsigned long long value = evalToValue(elem_init, type_node.type());
+										unsigned long long value = evalToValue(elem_init, type_node.type_index());
 										size_t byte_off = elem_i * elem_struct->total_size;
 										size_t write_bytes = (elem_struct->total_size < sizeof(unsigned long long)) ? elem_struct->total_size : sizeof(unsigned long long);
 										for (size_t b = 0; b < write_bytes && (byte_off + b) < op.init_data.size(); ++b)
@@ -575,7 +576,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						}
 						if (!handled_as_struct_array) {
 							for (const auto& elem_init : initializers) {
-								unsigned long long value = evalToValue(elem_init, type_node.type());
+								unsigned long long value = evalToValue(elem_init, type_node.type_index());
 								appendValueAsBytes(op.init_data, value, element_size);
 							}
 						}

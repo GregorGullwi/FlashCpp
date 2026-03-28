@@ -1438,26 +1438,25 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				// The first member's type_index should point to the element type
 				if (first_member.type_index.is_valid() && first_member.type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& elem_info = getTypeInfo(first_member.type_index);
-					Type elem_type = elem_info.type_;
-					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
+					TypeCategory elem_cat = elem_info.category_;
+					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(categoryToType(elem_cat));
 					
 					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
-						elem_type, 
+						first_member.type_index,
 						TypeQualifier::None,
 						static_cast<unsigned char>(elem_size),
 						brace_token
 					);
 					// If it's a struct type, preserve the type_index
-					if (elem_type == Type::Struct) {
+					if (elem_cat == TypeCategory::Struct) {
 						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
 					}
 					element_type_node = elem_type_spec;
 				} else {
 					// Fall back to using the member's type directly (for primitive types)
-					int elem_size = get_type_size_bits(first_member.type);
+					int elem_size = get_type_size_bits(categoryToType(first_member.type_index.category()));
 					element_type_node = emplace_node<TypeSpecifierNode>(
-						first_member.type,
-						TypeQualifier::None,
+						first_member.type_index,
 						static_cast<unsigned char>(elem_size),
 						brace_token
 					);
@@ -1750,28 +1749,24 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			if (target_member.type_index.is_valid() && target_member.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& member_type_info = getTypeInfo(target_member.type_index);
-				if (is_struct_type(target_member.type)) {
+				if (is_struct_type(target_member.type_index.category())) {
 					member_type_spec = TypeSpecifierNode(
-						member_type_info.type_,
 						target_member.type_index,
 						member_type_info.type_size_ * 8,
 						Token()
 					);
 				} else {
 					member_type_spec = TypeSpecifierNode(
-						target_member.type,
-						TypeQualifier::None,
+						target_member.type_index,
 						member_type_info.type_size_ * 8,
 						Token()
 					);
-					member_type_spec.set_type_index(target_member.type_index);
 				}
 				have_member_type_spec = true;
-			} else if (target_member.type != Type::Invalid) {
+			} else if (target_member.type_index.category() != TypeCategory::Invalid) {
 				member_type_spec = TypeSpecifierNode(
-					target_member.type,
-					TypeQualifier::None,
-					get_type_size_bits(target_member.type),
+					target_member.type_index,
+					get_type_size_bits(categoryToType(target_member.type_index.category())),
 					Token()
 				);
 				have_member_type_spec = true;

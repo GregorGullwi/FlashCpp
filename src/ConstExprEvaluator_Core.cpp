@@ -1395,8 +1395,8 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 	if (lhs.has_function_signature()) {
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
-		if (lhs_sig.return_type != rhs_sig.return_type ||
-			lhs_sig.parameter_types != rhs_sig.parameter_types ||
+		if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||
 			lhs_sig.is_const != rhs_sig.is_const ||
@@ -1834,7 +1834,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			// Preserve the older generic array materialization for declarations whose
 			// array element type is not represented as a TypeSpecifierNode (for example,
 			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(Type::Auto, TypeIndex{}, init_list, context);
+			return materialize_array_value(TypeIndex{}, init_list, context);
 		}
 	}
 
@@ -3520,7 +3520,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							return EvalResult::error("Statement executed (not a return)");
 						}
 
-						auto array_result = materialize_array_value(Type::Auto, TypeIndex{}, init_list, context, &bindings);
+						auto array_result = materialize_array_value(TypeIndex{}, init_list, context, &bindings);
 						if (!array_result.success()) {
 							return array_result;
 						}

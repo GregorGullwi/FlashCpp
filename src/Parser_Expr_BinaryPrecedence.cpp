@@ -369,11 +369,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
 						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
-						Type resolved_type = getTypeInfo(type_idx).type_;
-						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
-							resolved_type = Type::Struct;
+						TypeCategory resolved_cat = getTypeInfo(type_idx).category_;
+						if (resolved_cat == TypeCategory::Invalid || resolved_cat == TypeCategory::Void) {
+							resolved_cat = TypeCategory::Struct;
 						}
-						type_spec->set_type(resolved_type);
+						type_spec->set_type(categoryToType(resolved_cat));
 					};
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
@@ -563,12 +563,12 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
 		// Branchless type selection
-		// If is_float: Type::Float, else if is_long_double: Type::LongDouble, else Type::Double
-		typeInfo.type = static_cast<Type>(
-			static_cast<int>(Type::Float) * is_float +
-			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +
-			static_cast<int>(Type::Double) * (!is_float) * (!is_long_double)
-		);
+		// If is_float: TypeCategory::Float, else if is_long_double: TypeCategory::LongDouble, else TypeCategory::Double
+		typeInfo.type_index = TypeIndex{0, static_cast<TypeCategory>(
+			static_cast<int>(TypeCategory::Float) * is_float +
+			static_cast<int>(TypeCategory::LongDouble) * is_long_double * (!is_float) +
+			static_cast<int>(TypeCategory::Double) * (!is_float) * (!is_long_double)
+		)};
 
 		// Branchless size selection: float=32, double=64, long double=80
 		typeInfo.sizeInBits = static_cast<unsigned char>(
@@ -604,17 +604,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	// Constexpr lookup table stores the resolved type directly to avoid redundant counting.
 	struct IntSuffixInfo {
 		std::string_view text;
-		Type signed_type;
-		Type unsigned_type;
+		TypeCategory signed_type;
+		TypeCategory unsigned_type;
 	};
 	static constexpr IntSuffixInfo int_suffix_table[] = {
-		{"u",   Type::UnsignedInt,      Type::UnsignedInt},
-		{"l",   Type::Long,             Type::UnsignedLong},
-		{"ul",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"lu",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"ll",  Type::LongLong,         Type::UnsignedLongLong},
-		{"ull", Type::UnsignedLongLong, Type::UnsignedLongLong},
-		{"llu", Type::UnsignedLongLong, Type::UnsignedLongLong},
+		{"u",   TypeCategory::UnsignedInt,      TypeCategory::UnsignedInt},
+		{"l",   TypeCategory::Long,             TypeCategory::UnsignedLong},
+		{"ul",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"lu",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"ll",  TypeCategory::LongLong,         TypeCategory::UnsignedLongLong},
+		{"ull", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
+		{"llu", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
 	};
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
@@ -623,7 +623,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	if (suffix_it != std::end(int_suffix_table)) {
 		bool hasUnsigned = suffix.find('u') != std::string_view::npos;
 		typeInfo.typeQualifier = hasUnsigned ? TypeQualifier::Unsigned : TypeQualifier::Signed;
-		typeInfo.type = hasUnsigned ? suffix_it->unsigned_type : suffix_it->signed_type;
+		typeInfo.type_index = TypeIndex{0, hasUnsigned ? suffix_it->unsigned_type : suffix_it->signed_type};
 	} else if (!suffix.empty() &&
 		suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
 		// All chars are u/l but not a valid combination (e.g., "lul", "lll", "uu")
@@ -651,17 +651,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			// Decimal unsuffixed: int → long → long long (signed only).
 			// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
 			if (int_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
-				typeInfo.type = Type::Int;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::Int};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 64 && abs_val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::Long;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::Long};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
-				typeInfo.type = Type::Int;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::Int};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::LongLong};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			}
 		} else {
@@ -672,22 +672,22 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			unsigned long long long_max_unsigned  = (long_bits == 64) ? 0xFFFFFFFFFFFFFFFFULL : (1ULL << long_bits) - 1;
 
 			if (val <= int_max_signed) {
-				typeInfo.type = Type::Int;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::Int};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= int_max_unsigned) {
-				typeInfo.type = Type::UnsignedInt;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::UnsignedInt};
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= long_max_signed) {
-				typeInfo.type = Type::Long;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::Long};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= long_max_unsigned) {
-				typeInfo.type = Type::UnsignedLong;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::UnsignedLong};
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::LongLong};
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::UnsignedLongLong;
+				typeInfo.type_index = TypeIndex{0, TypeCategory::UnsignedLongLong};
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			}
 		}
@@ -696,7 +696,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	// Always set sizeInBits from the resolved type so it matches the C++ standard,
 	// rather than relying on the digit-based estimate which can be wrong
 	// (e.g. suffix chars counted as digits for hex/binary/octal literals).
-	typeInfo.sizeInBits = static_cast<unsigned char>(get_type_size_bits(typeInfo.type));
+	typeInfo.sizeInBits = static_cast<unsigned char>(get_type_size_bits(categoryToType(typeInfo.type_index.category())));
 
 	return typeInfo;
 }
@@ -1489,7 +1489,6 @@ ParseResult Parser::parse_static_member_block(
 		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
 			type_it->second->getStructInfo()->addStaticMember(
 				static_member_name_handle,
-				type_spec.type(),
 				type_spec.type_index(),
 				member_size,
 				member_alignment,
@@ -1504,7 +1503,6 @@ ParseResult Parser::parse_static_member_block(
 		// Normal case - use provided struct_info directly
 		struct_info->addStaticMember(
 			static_member_name_handle,
-			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,

@@ -53,8 +53,8 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 		return original_var_decl.declaration_node();
 	}
 
-	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.type(), deduced_type);
-	if (placeholder_type.type() == Type::Auto) {
+	TypeSpecifierNode resolved_type = finalizePlaceholderTypeDeduction(placeholder_type.category(), deduced_type);
+	if (placeholder_type.category() == TypeCategory::Auto) {
 		resolved_type.set_reference_qualifier(placeholder_type.reference_qualifier());
 		if (placeholder_type.cv_qualifier() != CVQualifier::None) {
 			resolved_type.set_cv_qualifier(placeholder_type.cv_qualifier());
@@ -132,7 +132,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.type;
+	desc.base_type = categoryToType(member.type_index.category());
 	desc.type_index = member.type_index;
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.is_array) {
@@ -152,7 +152,7 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.type;
+	desc.base_type = categoryToType(member.type_index.category());
 	desc.type_index = member.type_index;
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
@@ -235,8 +235,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (function_signature.has_value()) {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
-		if (a.return_type != b.return_type) return false;
-		if (a.parameter_types != b.parameter_types) return false;
+		if (a.return_type_index != b.return_type_index) return false;
+		if (a.parameter_type_indices != b.parameter_type_indices) return false;
 		if (a.linkage != b.linkage) return false;
 		if (a.is_const != b.is_const) return false;
 		if (a.is_volatile != b.is_volatile) return false;
@@ -1084,10 +1084,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		}
 	}
 
-	if (isPlaceholderAutoType(lambda_info.return_type)) {
-		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.return_type);
+	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
+		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.return_type_index.category());
 			deduced_type.has_value()) {
-			lambda_info.return_type = deduced_type->type();
 			lambda_info.return_type_index = deduced_type->type_index();
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
@@ -1097,9 +1096,8 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	}
 
 	SemanticContext lambda_ctx;
-	if (!isPlaceholderAutoType(lambda_info.return_type)) {
+	if (!isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		TypeSpecifierNode lambda_return_type(
-			lambda_info.return_type,
 			lambda_info.return_type_index,
 			lambda_info.return_size,
 			lambda_info.lambda_token);
@@ -1248,7 +1246,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 						addLocalType(name, tid);
 					}
 				}
-				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
+				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.category());
 					deduced_type.has_value()) {
 					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
 					parser_.compute_and_set_mangled_name(func, true);
@@ -1281,7 +1279,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	}
 }
 
-std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, Type placeholder_type) {
+std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_cat) {
 	if (!body.has_value()) {
 		return std::nullopt;
 	}
@@ -1315,7 +1313,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 				if (!expr_type.has_value()) {
 					return false;
 				}
-				current_type = finalizePlaceholderDeduction(placeholder_type, *expr_type);
+				current_type = finalizePlaceholderDeduction(placeholder_cat, *expr_type);
 			}
 
 			if (!deduced_type.has_value()) {
@@ -1453,8 +1451,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 		get_type_size_bits(Type::Void)));
 }
 
-TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(Type placeholder_type, const TypeSpecifierNode& deduced_type) const {
-	return finalizePlaceholderTypeDeduction(placeholder_type, deduced_type);
+TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory placeholder_cat, const TypeSpecifierNode& deduced_type) const {
+	return finalizePlaceholderTypeDeduction(placeholder_cat, deduced_type);
 }
 
 // --- Top-level dispatch ---
@@ -2922,11 +2920,11 @@ static bool structHasConversionOperatorTo(
 			if (!return_type_node.is<TypeSpecifierNode>()) continue;
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			const CanonicalTypeAlias canonical_return_type =
-				canonicalize_type_alias(type_spec.type(), type_spec.type_index());
-			Type resolved_type = canonical_return_type.type;
-			if (resolved_type == to_desc.base_type) return true;
+				canonicalize_type_alias(type_spec.category(), type_spec.type_index());
+			TypeCategory resolved_type = canonical_return_type.type;
+			if (resolved_type == typeToCategory(to_desc.base_type)) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
-			if (resolved_type == Type::UserDefined) {
+			if (resolved_type == TypeCategory::UserDefined) {
 				const int expected_size = get_type_size_bits(to_desc.base_type);
 				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
 					return true;

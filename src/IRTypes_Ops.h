@@ -274,9 +274,9 @@ inline bool isTempVarReference(const TempVar& temp) {
 }
 
 // Get the value type of a reference TempVar (returns Invalid if not a reference)
-inline Type getTempVarValueType(const TempVar& temp) {
+inline TypeIndex getTempVarValueTypeIndex(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.value_type;
+	return meta.value_type_index;
 }
 
 // Check if a TempVar holds an address-only value (from AddressOf/AddressOfMember)
@@ -477,10 +477,9 @@ struct CallOp {
 	StringHandle function_name;  // Pure StringHandle
 	std::vector<TypedValue> args;         // 24 bytes (using TypedValue instead of CallArg)
 	TempVar result;                       // 4 bytes
-	Type return_type;                     // 4 bytes
 	SizeInBits return_size_in_bits;              // 4 bytes
 	SizeInBits referenced_value_size_in_bits {}; // Referenced object size for T&/T&& returns
-	TypeIndex return_type_index {};      // Type index for struct/class return types
+	TypeIndex return_type_index {};      // Type index for return type (authoritative)
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
@@ -558,14 +557,14 @@ struct BranchOp {
 // Return statement
 struct ReturnOp {
 	std::optional<IrValue> return_value;    // ~40 bytes
-	std::optional<Type> return_type;        // ~8 bytes
+	std::optional<TypeIndex> return_type_index;  // ~8 bytes
 	int return_size = 0;                    // 4 bytes
 };
 
 // Array access (load element from array)
 struct ArrayAccessOp {
 	TempVar result;									// Result temp var
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -575,7 +574,7 @@ struct ArrayAccessOp {
 
 // Array store (store value to array element)
 struct ArrayStoreOp {
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -587,7 +586,7 @@ struct ArrayStoreOp {
 // Array element address (get address without loading)
 struct ArrayElementAddressOp {
 	TempVar result;									// Result temp var (pointer to element)
-	Type element_type = Type::Invalid;				// Element type
+	TypeIndex element_type_index {};				// Element type
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -605,7 +604,7 @@ struct AddressOfMemberOp {
 	TempVar result;									// Result temp var (pointer to member)
 	StringHandle base_object;						// Base object (variable name)
 	int member_offset = 0;							// Byte offset of member in struct
-	Type member_type;								// Type of the member
+	TypeIndex member_type_index {};					// Type of the member
 	int member_size_in_bits = 0;					// Size of member
 };
 
@@ -620,7 +619,7 @@ struct ComputeAddressOp {
 	struct ArrayIndex {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
 		SizeInBits element_size_bits;                // Size of array element
-		Type index_type;                             // Type of the index (for proper sign extension)
+		TypeIndex index_type_index {};               // Type of the index (for proper sign extension)
 		SizeInBits index_size_bits;                  // Size of the index in bits
 	};
 	std::vector<ArrayIndex> array_indices;
@@ -628,7 +627,7 @@ struct ComputeAddressOp {
 	// Member offset accumulation (for chained member access)
 	int total_member_offset = 0;                     // Sum of all member offsets
 	
-	Type result_type = Type::Invalid;                // Type of final address
+	TypeIndex result_type_index {};                  // Type of final address
 	SizeInBits result_size_bits;                            // Size in bits
 };
 
@@ -667,7 +666,7 @@ struct DestructorCallOp {
 // Virtual function call through vtable
 struct VirtualCallOp {
 	TypedValue result;                               // Return value (type, size, and result temp var)
-	Type object_type;                                // Type of the object
+	TypeIndex object_type_index {};                  // Type of the object
 	int object_size;                                 // Size of object in bits
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this')
 	int vtable_index;                                // Index into vtable
@@ -687,7 +686,7 @@ struct StringLiteralOp {
 // Stack allocation
 struct StackAllocOp {
 	std::variant<StringHandle, TempVar> result;  // Result variable
-	Type type = Type::Invalid;                        // Type being allocated
+	TypeIndex type_index {};                          // Type being allocated
 	SizeInBits size_in_bits = SizeInBits{0};                             // Size in bits
 };
 
@@ -779,7 +778,7 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 	
 	// Type and size
-	if (const TypeInfo* type_info = findNativeType(typeToCategory(op.value.type))) {
+	if (const TypeInfo* type_info = findNativeType(op.value.type_index.category())) {
 		oss << type_info->name();
 	}
 	oss << op.value.size_in_bits << " ";
@@ -799,7 +798,7 @@ inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 // Type conversion operations (SignExtend, ZeroExtend, Truncate)
 struct ConversionOp {
 	TypedValue from;     // 40 bytes (source type, size, and value)
-	Type to_type = Type::Invalid;  // 4 bytes
+	TypeIndex to_type_index {};  // target type
 	int to_size = 0;     // 4 bytes
 	TempVar result;      // 4 bytes
 };
@@ -946,8 +945,7 @@ struct IndirectCallOp {
 // Catch block begin marker
 struct CatchBeginOp {
 	TempVar exception_temp;       // Temporary holding the exception object
-	TypeIndex type_index;         // Type index for user-defined types
-	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
+	TypeIndex type_index;         // Authoritative type identity
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
@@ -982,8 +980,7 @@ struct ElfCatchNoMatchOp {};
 
 // Throw exception operation
 struct ThrowOp {
-	TypeIndex type_index;         // Type of exception being thrown
-	Type exception_type;          // Actual Type enum for built-in types
+	TypeIndex type_index;         // Authoritative type identity
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
@@ -1049,7 +1046,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 	
 	// From type and size
-	if (const TypeInfo* from_type_info = findNativeType(typeToCategory(op.from.type))) {
+	if (const TypeInfo* from_type_info = findNativeType(op.from.type_index.category())) {
 		oss << from_type_info->name();
 	}
 	oss << op.from.size_in_bits << " ";
@@ -1066,7 +1063,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 	oss << " to ";
 	
 	// To type and size
-	if (const TypeInfo* to_type_info = findNativeType(typeToCategory(op.to_type))) {
+	if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 		oss << to_type_info->name();
 	}
 	oss << op.to_size;
@@ -1088,7 +1085,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	oss << " = " << op_name << " ";
 	
 	// Type and size (from LHS, but both sides should be same after type promotion)
-	if (const TypeInfo* type_info = findNativeType(typeToCategory(op.lhs.type))) {
+	if (const TypeInfo* type_info = findNativeType(op.lhs.type_index.category())) {
 		oss << type_info->name();
 	}
 	oss << op.lhs.size_in_bits << " ";

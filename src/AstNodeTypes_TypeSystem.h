@@ -598,6 +598,10 @@ constexpr Type categoryToType(TypeCategory cat) noexcept {
 // Helpers needed by TypeIndex itself are declared first so that TypeIndex
 // methods can delegate to them instead of duplicating the switch logic.
 
+inline bool isPlaceholderAutoType(TypeCategory cat) {
+	return cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto;
+}
+
 // True for primitive scalar types (no gTypeInfo lookup needed for identity).
 constexpr bool is_primitive_type(TypeCategory cat) {
 	switch (cat) {
@@ -833,6 +837,8 @@ constexpr bool isFloatingPointType(TypeCategory cat) {
 		|| cat == TypeCategory::Double
 		|| cat == TypeCategory::LongDouble;
 }
+
+inline bool isUnsignedIntegralType(TypeCategory cat) { return isUnsignedIntegralType(categoryToType(cat)); }
 
 // Identity record that travels with every deferred/lazy template member.
 // Slice 1 populates the source-side fields; Slice 2 fills instantiated_lookup_name.

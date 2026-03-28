@@ -989,7 +989,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         advance(); // consume '('
 
         // Parse parameter list
-        std::vector<Type> param_types;
+        std::vector<TypeIndex> param_types;
 
         if (peek() != ")"_tok) {
             while (true) {
@@ -1007,7 +1007,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
                 // Example: void* or const int* const* or int&
                 consume_pointer_ref_modifiers(param_type);
                 
-                param_types.push_back(param_type.type());
+                param_types.push_back(param_type.type_index());
 
                 // Check for pack expansion '...' after the type (e.g., Args...)
                 // This handles function pointer parameters like void (*)(Args...)
@@ -1054,15 +1054,15 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         // The base_type is the return type
         // We need to create a function pointer type
 
-        Type return_type = base_type.type();
+        TypeIndex return_type = base_type.type_index();
 
         // Create a new TypeSpecifierNode for the function pointer
         // Function pointers are 64 bits (8 bytes) on x64
         TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
 
         FunctionSignature sig;
-        sig.return_type = return_type;
-        sig.parameter_types = param_types;
+        sig.return_type_index = return_type;
+        sig.parameter_type_indices = param_types;
         sig.linkage = linkage;
         fp_type.set_function_signature(sig);
 

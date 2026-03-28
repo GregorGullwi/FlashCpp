@@ -184,9 +184,9 @@ public:
 			const auto& op = getTypedPayload<ReturnOp>();
 			oss << "ret ";
 
-			if (op.return_value.has_value() && op.return_type.has_value()) {
+			if (op.return_value.has_value() && op.return_type_index.has_value()) {
 				// Return with value
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.return_type.value()))) {
+				if (const TypeInfo* type_info = findNativeType(op.return_type_index.value().category())) {
 					oss << type_info->name();
 				}
 				oss << op.return_size << " ";
@@ -219,7 +219,7 @@ public:
 			}
 
 			// Return type
-			if (const TypeInfo* ret_type_info = findNativeType(typeToCategory(op.return_type))) {
+			if (const TypeInfo* ret_type_info = findNativeType(op.return_type_index.category())) {
 				oss << ret_type_info->name();
 			}
 			for (int i = 0; i < op.return_pointer_depth.value; ++i) {
@@ -253,7 +253,7 @@ public:
 				const auto& param = op.parameters[i];
 
 				// Type
-				if (const TypeInfo* param_type_info = findNativeType(typeToCategory(param.type))) {
+				if (const TypeInfo* param_type_info = findNativeType(param.type_index.category())) {
 					oss << param_type_info->name();
 				}
 				// Print pointer levels, but exclude the extra level added for lvalue references
@@ -315,7 +315,7 @@ public:
 				const auto& arg = op.args[i];
 
 				// Type and size
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(arg.type))) {
+				if (const TypeInfo* type_info = findNativeType(arg.type_index.category())) {
 					oss << type_info->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -338,7 +338,7 @@ public:
 			else
 				oss << std::get<TempVar>(op.result).var_number;
 			oss << " = alloca ";
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 				oss << type_info->name();
 			oss << op.size_in_bits;
 		}
@@ -433,14 +433,14 @@ public:
 			assert (hasTypedPayload() && "expected ArrayAccess to have typed payload");
 			const ArrayAccessOp& op = std::any_cast<const ArrayAccessOp&>(getTypedPayload());
 			oss << '%' << op.result.var_number << " = array_access ";
-			oss << "[" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
+			oss << "[" << static_cast<int>(op.element_type_index.category()) << "][" << op.element_size_in_bits << "] ";
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
-			oss << ", [" << static_cast<int>(op.index.type) << "][" << op.index.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.index.type_index.category()) << "][" << op.index.size_in_bits << "] ";
 
 			if (const auto* ull_val = std::get_if<unsigned long long>(&op.index.value))
 				oss << *ull_val;
@@ -455,18 +455,18 @@ public:
 		{
 			assert (hasTypedPayload() && "expected ArrayStore to have typed payload");
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(getTypedPayload());
-			oss << "array_store [" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
+			oss << "array_store [" << static_cast<int>(op.element_type_index.category()) << "][" << op.element_size_in_bits << "] ";
 
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
 				oss << '%' << StringTable::getStringView(*string);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 
-			oss << ", [" << static_cast<int>(op.index.type) << "][" << op.index.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.index.type_index.category()) << "][" << op.index.size_in_bits << "] ";
 
 			printTypedValue(oss, op.index);
 
-			oss << ", [" << static_cast<int>(op.value.type) << "][" << op.value.size_in_bits << "] ";
+			oss << ", [" << static_cast<int>(op.value.type_index.category()) << "][" << op.value.size_in_bits << "] ";
 
 			printTypedValue(oss, op.value);
 			break;
@@ -478,7 +478,7 @@ public:
 			assert(hasTypedPayload() && "ArrayElementAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ArrayElementAddressOp>();
 			oss << '%' << op.result.var_number << " = array_element_address ";
-			oss << "[" << static_cast<int>(op.element_type) << "]" << op.element_size_in_bits << " ";
+			oss << "[" << static_cast<int>(op.element_type_index.category()) << "]" << op.element_size_in_bits << " ";
 
 			// Array
 			if (const auto* string = std::get_if<StringHandle>(&op.array))
@@ -499,7 +499,7 @@ public:
 			oss << '%' << op.result.var_number << " = addressof ";
 
 			// Print type and size from TypedValue
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.operand.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.operand.type_index.category())) {
 				oss << type_info->name();
 			}
 			oss << op.operand.size_in_bits;
@@ -523,7 +523,7 @@ public:
 			assert(hasTypedPayload() && "AddressOfMember instruction must use typed payload");
 			const auto& op = getTypedPayload<AddressOfMemberOp>();
 			oss << '%' << op.result.var_number << " = addressof_member ";
-			oss << "[" << static_cast<int>(op.member_type) << "]" << op.member_size_in_bits << " ";
+			oss << "[" << static_cast<int>(op.member_type_index.category()) << "]" << op.member_size_in_bits << " ";
 			oss << '%' << StringTable::getStringView(op.base_object);
 			oss << " (offset: " << op.member_offset << ")";
 		}
@@ -534,7 +534,7 @@ public:
 			assert(hasTypedPayload() && "ComputeAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ComputeAddressOp>();
 			oss << '%' << op.result.var_number << " = compute_address ";
-			oss << "[" << static_cast<int>(op.result_type) << "]" << op.result_size_bits << " ";
+			oss << "[" << static_cast<int>(op.result_type_index.category()) << "]" << op.result_size_bits << " ";
 
 			// Print base
 			if (const auto* string = std::get_if<StringHandle>(&op.base)) {
@@ -554,7 +554,7 @@ public:
 				} else {
 					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
 				}
-				oss << " [" << static_cast<int>(arr_idx.index_type) << "]" << arr_idx.index_size_bits;
+				oss << " [" << static_cast<int>(arr_idx.index_type_index.category()) << "]" << arr_idx.index_size_bits;
 				oss << " (elem_size: " << arr_idx.element_size_bits << " bits)";
 			}
 
@@ -574,7 +574,7 @@ public:
 			// Print type and size from TypedValue
 			// If pointer_depth > 1, result is still a pointer (64 bits)
 			// If pointer_depth == 1, result is the pointee type
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.pointer.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.pointer.type_index.category())) {
 				oss << type_info->name();
 			}
 
@@ -602,7 +602,7 @@ public:
 			oss << "store_through_ptr ";
 
 			// Print pointer type and size
-			if (const TypeInfo* ptr_type_info = findNativeType(typeToCategory(op.pointer.type))) {
+			if (const TypeInfo* ptr_type_info = findNativeType(op.pointer.type_index.category())) {
 				oss << ptr_type_info->name();
 			}
 			oss << op.pointer.size_in_bits;
@@ -648,7 +648,7 @@ public:
 			oss << " = member_access ";
 
 			// Type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.result.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.result.type_index.category())) {
 				oss << type_info->name();
 			}
 			oss << op.result.size_in_bits << " ";
@@ -679,7 +679,7 @@ public:
 			oss << "member_store ";
 
 			// Type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.value.type))) {
+			if (const TypeInfo* type_info = findNativeType(op.value.type_index.category())) {
 				oss << type_info->name();
 			}
 			oss << op.value.size_in_bits << " ";
@@ -720,7 +720,7 @@ public:
 			// Add constructor arguments
 			for (const auto& arg : op.arguments) {
 				oss << " ";
-				const TypeCategory arg_cat = typeToCategory(arg.type);
+				const TypeCategory arg_cat = arg.type_index.category();
 				if (const TypeInfo* type_info = findNativeType(arg_cat)) {
 					oss << type_info->name();
 				} else if (needs_type_index(arg_cat)) {
@@ -767,7 +767,7 @@ public:
 			oss << '%' << std::get<TempVar>(op.result.value).var_number << " = virtual_call ";
 
 			// Object type and size
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.object_type))) {
+			if (const TypeInfo* type_info = findNativeType(op.object_type_index.category())) {
 				oss << type_info->name();
 			}
 			oss << op.object_size << " %";
@@ -790,7 +790,7 @@ public:
 					const auto& arg = op.arguments[i];
 
 					// Type and size
-					if (const TypeInfo* arg_type_info = findNativeType(typeToCategory(arg.type))) {
+					if (const TypeInfo* arg_type_info = findNativeType(arg.type_index.category())) {
 						oss << arg_type_info->name();
 					}
 					oss << arg.size_in_bits << " ";
@@ -828,7 +828,7 @@ public:
 			// %result = heap_alloc [Type][Size][PointerDepth]
 			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc ["
-				<< static_cast<int>(op.type) << "]["
+				<< static_cast<int>(op.type_index.category()) << "]["
 				<< op.size_in_bytes << "][" << op.pointer_depth.value << "]";
 		}
 		break;
@@ -838,7 +838,7 @@ public:
 			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
 			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc_array ["
-				<< static_cast<int>(op.type) << "]["
+				<< static_cast<int>(op.type_index.category()) << "]["
 				<< op.size_in_bytes << "][" << op.pointer_depth.value << "] ";
 
 			if (const auto* temp_var = std::get_if<TempVar>(&op.count))
@@ -885,7 +885,7 @@ public:
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.address));
 			else if (std::holds_alternative<unsigned long long>(op.address))
 				oss << std::get<unsigned long long>(op.address);
-			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
+			oss << " [" << static_cast<int>(op.type_index.category()) << "][" << op.size_in_bytes << "]";
 		}
 		break;
 
@@ -1025,12 +1025,12 @@ public:
 
 			if (op.is_array && op.array_count.has_value()) {
 				// For arrays, print element type and count: int32[5]
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+				if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 					oss << type_info->name();
 				oss << op.size_in_bits << "[" << op.array_count.value() << "]";
 			} else {
 				// For scalars, print type and size: int32
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+				if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 					oss << type_info->name();
 				oss << op.size_in_bits;
 			}
@@ -1062,7 +1062,7 @@ public:
 		std::string_view var_name = StringTable::getStringView(var_name_handle);  // Use helper for backward compatibility
 
 			oss << "global_var ";
-			if (const TypeInfo* type_info = findNativeType(typeToCategory(op.type)))
+			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 				oss << type_info->name();
 			oss << op.size_in_bits << " @" << std::string(var_name);
 			if (op.element_count > 1) {
@@ -1123,7 +1123,7 @@ public:
 			// Arguments with type information
 			for (const auto& arg : op.arguments) {
 				oss << ", ";
-				if (const TypeInfo* type_info = findNativeType(typeToCategory(arg.type))) {
+				if (const TypeInfo* type_info = findNativeType(arg.type_index.category())) {
 					oss << type_info->name();
 				}
 				oss << arg.size_in_bits << " ";
@@ -1154,7 +1154,7 @@ public:
 				default: break;
 			}
 			// Format: from_type from_size from_value to to_type to_size
-			if (const TypeInfo* from_type_info = findNativeType(typeToCategory(op.from.type))) {
+			if (const TypeInfo* from_type_info = findNativeType(op.from.type_index.category())) {
 				oss << from_type_info->name();
 			}
 			oss << op.from.size_in_bits << " ";
@@ -1168,7 +1168,7 @@ public:
 				oss << *d_val;
 			}
 			oss << " to ";
-			if (const TypeInfo* to_type_info = findNativeType(typeToCategory(op.to_type))) {
+			if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 				oss << to_type_info->name();
 			}
 			oss << op.to_size_in_bits;

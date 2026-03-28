@@ -19,7 +19,7 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 
 	if (value.object_type_index.is_valid() && value.object_type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(value.object_type_index);
-		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);
+		return TypeSpecifierNode(value.object_type_index, type_info.type_size_);
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {
@@ -2852,7 +2852,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					if (input.type_index.is_valid() && input.type_index.index() < getTypeInfoCount()) {
 						input.type_info = &getTypeInfo(input.type_index);
-						input.base_type = input.type_info->type_;
+						input.base_type = categoryToType(input.type_info->category_);
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
 						input.struct_info = input.type_info->getStructInfo();
@@ -2964,7 +2964,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 					
 					// If not constexpr or no initializer, return default value based on type
-					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->type));
+					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->type_index.category()));
 					return evaluate_static_member_initializer_or_default(*static_member, context);
 				}
 			}
@@ -3587,7 +3587,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			const bool needs_intermediate_materialization =
 				!intermediate_result.object_type_index.is_valid() &&
 				intermediate_result.object_member_bindings.empty() &&
-				(is_struct_type(intermediate_member_info->type)) &&
+				(is_struct_type(intermediate_member_info->type_index.category())) &&
 				intermediate_member_info->type_index.is_valid() &&
 				intermediate_member_info->type_index.index() < getTypeInfoCount();
 			if (needs_intermediate_materialization) {
@@ -3683,7 +3683,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 
 	const StructMember* intermediate_member_info = intermediate_member_source.member_info;
-	if (!is_struct_type(intermediate_member_info->type)) {
+	if (!is_struct_type(intermediate_member_info->type_index.category())) {
 		return EvalResult::error("Intermediate member is not a struct type");
 	}
 
@@ -4038,7 +4038,7 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 		return evaluate(static_member.initializer.value(), context);
 	}
 
-	if (static_member.type == Type::Bool) {
+	if (static_member.type_index.category() == TypeCategory::Bool) {
 		return EvalResult::from_bool(false);
 	}
 	return EvalResult::from_int(0);
@@ -4463,7 +4463,6 @@ EvalResult Evaluator::materialize_constructor_object_value(
 }
 
 EvalResult Evaluator::materialize_array_value(
-	Type element_type,
 	TypeIndex element_type_index,
 	const InitializerListNode& init_list,
 	EvaluationContext& context,
@@ -4476,7 +4475,7 @@ EvalResult Evaluator::materialize_array_value(
 	for (const auto& element : init_list.initializers()) {
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
-			(is_struct_type(element_type)) &&
+			(is_struct_type(element_type_index.category())) &&
 			element_type_index.is_valid() && element_type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* element_struct_info = getTypeInfo(element_type_index).getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
@@ -4491,7 +4490,7 @@ EvalResult Evaluator::materialize_array_value(
 		} else if (element.is<InitializerListNode>()) {
 			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
 			element_result = materialize_array_value(
-				element_type, element_type_index,
+				element_type_index,
 				element.as<InitializerListNode>(),
 				context, bindings);
 		} else if (bindings) {
@@ -4558,7 +4557,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.
-		auto base_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
+		auto base_result = materialize_array_value(type_spec.type_index(), init_list, context, bindings);
 		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
@@ -4697,10 +4696,10 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(member_info.type, member_info.type_index, init_list, context);
+			return Evaluator::materialize_array_value(member_info.type_index, init_list, context);
 		}
 
-		if ((is_struct_type(member_info.type)) &&
+		if ((is_struct_type(member_info.type_index.category())) &&
 			member_info.type_index.is_valid() && member_info.type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info.type_index).getStructInfo()) {
 				return Evaluator::materialize_aggregate_object_value(
@@ -4742,14 +4741,13 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			const bool is_struct_brace_init =
 				!member_info->is_array &&
 				initializer.is<InitializerListNode>() &&
-				(is_struct_type(member_info->type)) &&
+				(is_struct_type(member_info->type_index.category())) &&
 				member_info->type_index.is_valid() &&
 				member_info->type_index.index() < getTypeInfoCount();
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				val = Evaluator::materialize_array_value(
-					member_info->type,
 					member_info->type_index,
 					member_init_list,
 					context,
@@ -4810,11 +4808,12 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 
 	// Returns a type-correct zero EvalResult for a given element type.
 	// Floating-point types get 0.0, unsigned types get 0u, signed/bool get 0.
-	auto make_zero_element = [](Type element_type) -> EvalResult {
-		if (isFloatingPointType(element_type)) {
+	auto make_zero_element = [](TypeIndex element_type_index) -> EvalResult {
+		const TypeCategory cat = element_type_index.category();
+		if (isFloatingPointType(cat)) {
 			return EvalResult::from_double(0.0);
 		}
-		if (isUnsignedIntegralType(element_type)) {
+		if (isUnsignedIntegralType(cat)) {
 			return EvalResult::from_uint(0ULL);
 		}
 		return EvalResult::from_int(0LL);
@@ -4833,22 +4832,22 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			EvalResult member_result;
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
-					member_info->type, member_info->type_index, init_list, context, &ctor_param_bindings);
+					member_info->type_index, init_list, context, &ctor_param_bindings);
 				// C++ aggregate init: zero-fill remaining elements up to the declared array size
 				// using a type-correct zero for each native type.
 				if (member_result.success() && !member_info->array_dimensions.empty()) {
 					size_t declared_size = member_info->array_dimensions[0];
 					while (member_result.array_elements.size() < declared_size) {
-						member_result.array_elements.push_back(make_zero_element(member_info->type));
+						member_result.array_elements.push_back(make_zero_element(member_info->type_index));
 					}
 					// Only extend array_values (legacy int64_t fallback) for integer types.
-					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->type)) {
+					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->type_index.category())) {
 						while (member_result.array_values.size() < declared_size) {
 							member_result.array_values.push_back(0);
 						}
 					}
 				}
-			} else if ((is_struct_type(member_info->type)) &&
+			} else if ((is_struct_type(member_info->type_index.category())) &&
 				member_info->type_index.is_valid() && member_info->type_index.index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* member_struct_info = getTypeInfo(member_info->type_index).getStructInfo()) {
 					member_result = materialize_aggregate_object_value(
@@ -4858,7 +4857,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 				}
 			} else if (init_list.size() == 0) {
 				// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
-				member_result = make_zero_element(member_info->type);
+				member_result = make_zero_element(member_info->type_index);
 			} else {
 				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
 					std::string(mem_init.member_name) + "' in constexpr constructor");
@@ -4885,12 +4884,12 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 					array_r.is_array = true;
 					array_r.array_elements.push_back(std::move(member_result));
 					for (size_t i = 1; i < array_size; ++i) {
-						array_r.array_elements.push_back(make_zero_element(member_info->type));
+						array_r.array_elements.push_back(make_zero_element(member_info->type_index));
 					}
 					// Do not populate array_values for floating-point elements since array_values
 					// is int64_t and cannot represent doubles without truncation. array_elements
 					// is the authoritative source and is always checked first during subscript.
-					if (!isFloatingPointType(member_info->type)) {
+					if (!isFloatingPointType(member_info->type_index.category())) {
 						for (size_t i = 0; i < array_size; ++i) {
 							array_r.array_values.push_back(
 								i == 0 ? array_r.array_elements[0].as_int() : 0LL);
@@ -5338,7 +5337,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
-			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context);
 		}
 		return evaluate(elem, context);
 	};
@@ -5406,10 +5405,10 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (elem.is<InitializerListNode>()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				return materialize_array_value(type_spec.type(), type_spec.type_index(),
+				return materialize_array_value(type_spec.type_index(),
 				                               elem.as<InitializerListNode>(), context);
 			}
-			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context);
 		}
 		
 		return evaluate(elem, context);
@@ -5419,12 +5418,12 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 }
 
 // Helper functions for type checking
-bool Evaluator::isArithmeticType(Type type) {
-	return ::isArithmeticType(type);
+bool Evaluator::isArithmeticType(TypeCategory cat) {
+	return ::isArithmeticType(cat);
 }
 
-bool Evaluator::isFundamentalType(Type type) {
-	return ::isFundamentalType(type);
+bool Evaluator::isFundamentalType(TypeCategory cat) {
+	return ::isFundamentalType(cat);
 }
 
 // Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
@@ -5447,7 +5446,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	Type type = type_spec.type();
+	TypeCategory type = type_spec.category();
 	bool is_reference = type_spec.is_reference();
 	bool is_rvalue_reference = type_spec.is_rvalue_reference();
 	size_t pointer_depth = type_spec.pointer_depth();
@@ -5457,20 +5456,20 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	// Evaluate the type trait based on its kind
 	switch (trait_expr.kind()) {
 		case TypeTraitKind::IsVoid:
-			result = (type == Type::Void && !is_reference && pointer_depth == 0);
+			result = (type == TypeCategory::Void && !is_reference && pointer_depth == 0);
 			break;
 
 		case TypeTraitKind::IsIntegral:
-			result = (type == Type::Bool ||
-			         type == Type::Char ||
-			         type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-			         type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-			         type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+			result = (type == TypeCategory::Bool ||
+			         type == TypeCategory::Char ||
+			         type == TypeCategory::Short || type == TypeCategory::Int || type == TypeCategory::Long || type == TypeCategory::LongLong ||
+			         type == TypeCategory::UnsignedChar || type == TypeCategory::UnsignedShort || type == TypeCategory::UnsignedInt ||
+			         type == TypeCategory::UnsignedLong || type == TypeCategory::UnsignedLongLong)
 			         && !is_reference && pointer_depth == 0;
 			break;
 
 		case TypeTraitKind::IsFloatingPoint:
-			result = (type == Type::Float || type == Type::Double || type == Type::LongDouble)
+			result = (type == TypeCategory::Float || type == TypeCategory::Double || type == TypeCategory::LongDouble)
 			         && !is_reference && pointer_depth == 0;
 			break;
 
@@ -5503,13 +5502,13 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsObject:
-			result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
+			result = (type != TypeCategory::Function) & (type != TypeCategory::Void) & !is_reference & !is_rvalue_reference;
 			break;
 
 		case TypeTraitKind::IsScalar:
 			result = (isArithmeticType(type) ||
-			          type == Type::Enum || type == Type::Nullptr ||
-			          type == Type::MemberObjectPointer || type == Type::MemberFunctionPointer ||
+			          type == TypeCategory::Enum || type == TypeCategory::Nullptr ||
+			          type == TypeCategory::MemberObjectPointer || type == TypeCategory::MemberFunctionPointer ||
 			          pointer_depth > 0)
 			          && !is_reference;
 			break;
@@ -5527,14 +5526,14 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			break;
 
 		case TypeTraitKind::IsSigned:
-			result = ((type == Type::Char || type == Type::Short || type == Type::Int ||
-			          type == Type::Long || type == Type::LongLong)
+			result = ((type == TypeCategory::Char || type == TypeCategory::Short || type == TypeCategory::Int ||
+			          type == TypeCategory::Long || type == TypeCategory::LongLong)
 			          && !is_reference && pointer_depth == 0);
 			break;
 
 		case TypeTraitKind::IsUnsigned:
-			result = ((type == Type::Bool || type == Type::UnsignedChar || type == Type::UnsignedShort ||
-			          type == Type::UnsignedInt || type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+			result = ((type == TypeCategory::Bool || type == TypeCategory::UnsignedChar || type == TypeCategory::UnsignedShort ||
+			          type == TypeCategory::UnsignedInt || type == TypeCategory::UnsignedLong || type == TypeCategory::UnsignedLongLong)
 			          && !is_reference && pointer_depth == 0);
 			break;
 
@@ -5559,7 +5558,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
 			
 			// Check for void - always incomplete
-			if (type == Type::Void && pointer_depth == 0 && !is_reference) {
+			if (type == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 				return EvalResult::from_bool(false);
 			}
 			
