@@ -2016,7 +2016,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				struct_info->addStaticMember(
 					static_member.name,
-					substituted_type,
 					substituted_type_index,
 					substituted_size,
 					static_member.alignment,
@@ -2256,7 +2255,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			: std::nullopt;
 		instantiated_struct_ref.add_static_member(
 			static_member.name,
-			categoryToType(substituted_type_index.category()),
 			substituted_type_index,
 				substituted_size,
 				static_member.alignment,
@@ -4558,7 +4556,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 			struct_info->addStaticMember(
 				static_member.name,
-				static_member.type,
 				static_member.type_index,
 				static_member.size,
 				static_member.alignment,
@@ -4740,7 +4737,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
-						categoryToType(substituted_type_index.category()),
 						substituted_type_index,
 						substituted_size,
 						static_member.alignment,

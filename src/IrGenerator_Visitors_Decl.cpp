@@ -126,7 +126,7 @@
 		FunctionDeclOp func_decl_op;
 
 		// Return type information
-		func_decl_op.return_type = ret_type.type();
+		func_decl_op.return_type_index = ret_type.type_index();
 
 		int actual_return_size = getTypeSpecSizeBits(ret_type);
 
@@ -143,8 +143,8 @@
 
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
-		bool returns_struct_by_value = returnsStructByValue(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference());
-		bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
+		bool returns_struct_by_value = returnsStructByValue(ret_type.type_index().category(), ret_type.pointer_depth(), ret_type.is_reference());
+		bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type_index().category(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track return type index and hidden parameter flag for current function context
@@ -288,7 +288,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam param_info;
-			param_info.type = param_type.type();
+			param_info.type_index = param_type.type_index();
 			param_info.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 
 			// Lvalue references (&) are treated like pointers in the IR (address at the ABI level)
@@ -417,7 +417,7 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+						if (member.type_index.isStruct() && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 
@@ -469,7 +469,7 @@
 								CallOp call_op;
 								call_op.function_name = member_spaceship_mangled;
 								call_op.is_member_function = true;
-								call_op.return_type = Type::Int;
+								call_op.return_type_index = TypeIndex{0, TypeCategory::Int};
 								call_op.return_size_in_bits = SizeInBits{32};
 								call_op.result = call_result;
 
@@ -494,23 +494,25 @@
 								// Check if result != 0 (members not equal)
 								TempVar ne_result = var_counter.next();
 								BinaryOp ne_op{
-									.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
-									.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+									.lhs = makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, IrValue{call_result}),
+									.rhs = makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, IrValue{0ULL}),
 									.result = IrValue{ne_result}
 								};
+								ne_op.lhs.is_signed = true;
+								ne_op.rhs.is_signed = true;
 								ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
 								// Branch: if not equal, return the result directly
 								CondBranchOp ne_branch;
 								ne_branch.label_true = diff_label;
 								ne_branch.label_false = next_label;
-								ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
+								ne_branch.condition = makeTypedValue(TypeIndex{0, TypeCategory::Bool}, SizeInBits{8}, IrValue{ne_result});
 								ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 								// Label: diff - return the inner <=> result
 								ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = diff_label}, func_decl.identifier_token()));
 								{
-									emitReturn(IrValue{call_result}, Type::Int, 32, func_decl.identifier_token());
+									emitReturn(IrValue{call_result}, TypeIndex{0, TypeCategory::Int}, 32, func_decl.identifier_token());
 								}
 
 								// Label: next - continue to next member
@@ -547,18 +549,21 @@
 
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
+						const Type member_type = categoryToType(member.type_index.category());
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.lhs = makeTypedValue(member.type_index, SizeInBits{static_cast<int>(member_bits)}, IrValue{lhs_val}),
+							.rhs = makeTypedValue(member.type_index, SizeInBits{static_cast<int>(member_bits)}, IrValue{rhs_val}),
 							.result = IrValue{ne_result}
 						};
+						ne_op.lhs.is_signed = isSignedType(member_type);
+						ne_op.rhs.is_signed = isSignedType(member_type);
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
 
 						// Branch: if not equal, go to diff handling
 						CondBranchOp ne_branch;
 						ne_branch.label_true = diff_label;
 						ne_branch.label_false = next_label;
-						ne_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{ne_result});
+						ne_branch.condition = makeTypedValue(TypeIndex{0, TypeCategory::Bool}, SizeInBits{8}, IrValue{ne_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(ne_branch), func_decl.identifier_token()));
 
 						// Label: diff - members are not equal
@@ -567,29 +572,31 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
-							.rhs = TypedValue{.type = member.type, .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.type), .ir_type = toIrType(member.type)},
+							.lhs = makeTypedValue(member.type_index, SizeInBits{static_cast<int>(member_bits)}, IrValue{lhs_val}),
+							.rhs = makeTypedValue(member.type_index, SizeInBits{static_cast<int>(member_bits)}, IrValue{rhs_val}),
 							.result = IrValue{lt_result}
 						};
+						lt_op.lhs.is_signed = isSignedType(member_type);
+						lt_op.rhs.is_signed = isSignedType(member_type);
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
 
 						// Branch: if lhs < rhs, return -1, else return 1
 						CondBranchOp lt_branch;
 						lt_branch.label_true = lt_label;
 						lt_branch.label_false = gt_label;
-						lt_branch.condition = makeTypedValue(Type::Bool, SizeInBits{8}, IrValue{lt_result});
+						lt_branch.condition = makeTypedValue(TypeIndex{0, TypeCategory::Bool}, SizeInBits{8}, IrValue{lt_result});
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(lt_branch), func_decl.identifier_token()));
 
 						// Label: lt - return -1 (two's complement: 0xFFFFFFFF in 32-bit)
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = lt_label}, func_decl.identifier_token()));
 						{
-							emitReturn(IrValue{0xFFFFFFFFULL}, Type::Int, 32, func_decl.identifier_token());
+							emitReturn(IrValue{0xFFFFFFFFULL}, TypeIndex{0, TypeCategory::Int}, 32, func_decl.identifier_token());
 						}
 
 						// Label: gt - return 1
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = gt_label}, func_decl.identifier_token()));
 						{
-							emitReturn(IrValue{1ULL}, Type::Int, 32, func_decl.identifier_token());
+							emitReturn(IrValue{1ULL}, TypeIndex{0, TypeCategory::Int}, 32, func_decl.identifier_token());
 						}
 
 						// Label: next - continue to next member
@@ -599,7 +606,7 @@
 			}
 
 			// All members equal - return 0
-			emitReturn(IrValue{0ULL}, Type::Int, 32, func_decl.identifier_token());
+			emitReturn(IrValue{0ULL}, TypeIndex{0, TypeCategory::Int}, 32, func_decl.identifier_token());
 			symbol_table.exit_scope();
 			return;
 		}
@@ -668,7 +675,7 @@
 				CallOp call_op;
 				call_op.function_name = spaceship_mangled;
 				call_op.is_member_function = true;
-				call_op.return_type = Type::Int;
+				call_op.return_type_index = TypeIndex{0, TypeCategory::Int};
 				call_op.return_size_in_bits = SizeInBits{32};
 				call_op.result = call_result;
 
@@ -706,17 +713,19 @@
 				// Compare result with 0 using the pre-determined comparison opcode
 				TempVar cmp_result = var_counter.next();
 				BinaryOp cmp_op{
-					.lhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{call_result}, .is_signed = true, .ir_type = toIrType(Type::Int)},
-					.rhs = TypedValue{.type = Type::Int, .size_in_bits = SizeInBits{32}, .value = IrValue{0ULL}, .is_signed = true, .ir_type = toIrType(Type::Int)},
+					.lhs = makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, IrValue{call_result}),
+					.rhs = makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, IrValue{0ULL}),
 					.result = IrValue{cmp_result}
 				};
+				cmp_op.lhs.is_signed = true;
+				cmp_op.rhs.is_signed = true;
 				ir_.addInstruction(IrInstruction(*synthesized_cmp_opcode, std::move(cmp_op), func_decl.identifier_token()));
 
 				// Return the boolean result
-				emitReturn(IrValue{cmp_result}, Type::Bool, 8, func_decl.identifier_token());
+				emitReturn(IrValue{cmp_result}, TypeIndex{0, TypeCategory::Bool}, 8, func_decl.identifier_token());
 			} else {
 				// Fallback: operator<=> not found, return false for all synthesized operators
-				emitReturn(IrValue{0ULL}, Type::Bool, 8, func_decl.identifier_token());
+				emitReturn(IrValue{0ULL}, TypeIndex{0, TypeCategory::Bool}, 8, func_decl.identifier_token());
 			}
 
 			symbol_table.exit_scope();
@@ -851,7 +860,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-						emitReturn(this_deref, Type::Struct, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
+						emitReturn(this_deref, TypeIndex{struct_info->type_index_, TypeCategory::Struct}, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
 					}
 				}
 			}
@@ -893,7 +902,7 @@
 			}
 			// Special case: main() implicitly returns 0 if no return statement
 			else if (func_decl.identifier_token().value() == "main") {
-				emitReturn(0ULL, Type::Int, 32, func_decl.identifier_token());
+				emitReturn(0ULL, TypeIndex{0, TypeCategory::Int}, 32, func_decl.identifier_token());
 			}
 			// For other non-void functions, this is a warning (missing return statement)
 			// A full implementation would require control flow analysis to check all paths,
@@ -1297,7 +1306,7 @@
 
 		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
-		ctor_decl_op.return_type = Type::Void;  // Constructors don't have a return type
+		ctor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 		ctor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
@@ -1340,7 +1349,7 @@
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
 			FunctionParam func_param;
-			func_param.type = param_type.type();
+			func_param.type_index = param_type.type_index();
 			func_param.size_in_bits = SizeInBits{getTypeSpecSizeBits(param_type)};
 			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
@@ -1605,7 +1614,7 @@
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
-							other_arg.type = Type::Struct;  // Parameter type (struct reference)
+							other_arg.type_index = base.type_index;  // Parameter type (struct reference)
 							other_arg.ir_type = IrType::Struct;
 							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8)};
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
@@ -1623,7 +1632,7 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type == Type::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+							if (member.type_index.isStruct() && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
@@ -1898,12 +1907,13 @@
 									}
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
-									if (member.type == Type::Int || member.type == Type::Long ||
-									member.type == Type::Short || member.type == Type::Char) {
+									const Type member_type = categoryToType(member.type_index.category());
+									if (member_type == Type::Int || member_type == Type::Long ||
+									member_type == Type::Short || member_type == Type::Char) {
 										member_value = 0ULL;  // Zero for integer types
-									} else if (member.type == Type::Float || member.type == Type::Double) {
+									} else if (member_type == Type::Float || member_type == Type::Double) {
 										member_value = 0.0;  // Zero for floating-point types
-									} else if (member.type == Type::Bool) {
+									} else if (member_type == Type::Bool) {
 										member_value = 0ULL;  // False for bool (0)
 									} else {
 										member_value = 0ULL;  // Default to zero
@@ -2270,7 +2280,7 @@
 	FunctionDeclOp dtor_decl_op;
 	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
 	dtor_decl_op.struct_name = node.struct_name();
-	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
+		dtor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors

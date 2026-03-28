@@ -1144,7 +1144,7 @@
 				FunctionDeclOp ctor_decl_op;
 				ctor_decl_op.function_name = type_info->name();
 				ctor_decl_op.struct_name = type_info->name();
-				ctor_decl_op.return_type = Type::Void;
+				ctor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};
 				ctor_decl_op.return_size_in_bits = SizeInBits{0};
 				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
@@ -1477,7 +1477,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
-		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
+		bool is_nested_struct = sub_member.type_index.isStruct()
 			&& sub_member.type_index.index() < getTypeInfoCount()
 			&& getTypeInfo(sub_member.type_index).struct_info_
 			&& (sub_member.size * 8) > 64;
@@ -1593,7 +1593,7 @@ const Token& token)
 			member.type_index,
 			element_size_bits,
 			base_object,
-			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+			makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1604,7 +1604,7 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
-	const bool is_struct_element = isIrStructType(toIrType(member.type))
+	const bool is_struct_element = member.type_index.isStruct()
 		&& member.type_index.index() < getTypeInfoCount()
 		&& getTypeInfo(member.type_index).struct_info_
 		&& element_size_bits > 64;
@@ -1619,12 +1619,12 @@ const Token& token)
 			emitRecursiveZeroFill(*getTypeInfo(member.type_index).struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
+			auto zero_value = makeTypedValue(member.type_index, SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
 				member.type_index,
 				element_size_bits,
 				base_object,
-				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				makeTypedValue(TypeIndex{0, TypeCategory::Int}, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,
@@ -1796,7 +1796,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	func_decl_op.return_type = return_type.type();
+	func_decl_op.return_type_index = return_type.type_index();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 
@@ -1824,13 +1824,13 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
 				Type concrete_type = inst_info.template_args[i];
-				func_param.type = concrete_type;
+				func_param.type_index = TypeIndex{0, typeToCategory(concrete_type)};
 				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_type)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				func_param.type = param_type.type();
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}

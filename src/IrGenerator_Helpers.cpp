@@ -341,7 +341,7 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		// Prefer the canonical type stored in gTypeInfo when available. This keeps
 		// typedef / alias lowering consistent with the resolved type table entry.
-		canonical_type = getTypeInfo(type_index).type_;
+		canonical_type = categoryToType(getTypeInfo(type_index).category());
 	}
 	return resolve_type_alias(canonical_type, type_index);
 }
@@ -387,7 +387,7 @@ Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, Poin
 
 	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
-			return enum_info->underlying_type;
+			return categoryToType(enum_info->underlying_type);
 		}
 	}
 
@@ -511,7 +511,7 @@ TempVar AstToIr::emitDereference(TypeIndex pointee_type, int pointer_size_bits, 
 void AstToIr::emitReturn(IrValue return_value, TypeIndex return_type, int return_size, const Token& token) {
 	ReturnOp ret_op;
 	ret_op.return_value = return_value;
-	ret_op.return_type = return_type;
+	ret_op.return_type_index = return_type;
 	ret_op.return_size = return_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 }

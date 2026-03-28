@@ -127,7 +127,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
 				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
@@ -268,7 +268,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
 				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
@@ -539,7 +539,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		std::vector<TemplateTypeArg> converted_template_args;
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
+				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
 				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
 			}
@@ -1101,8 +1101,6 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Substitute template parameters using parent's template args
 		TypeIndex substituted_type_index = substitute_template_parameter(
 			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
-		Type substituted_type = categoryToType(substituted_type_index.category());
-		
 		// Get size for the member
 		size_t member_size = 0;
 		if (substituted_type_index.index() < getTypeInfoCount()) {
