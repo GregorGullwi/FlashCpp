@@ -58,7 +58,7 @@
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
 				op.result = result_var;
-				op.type = type;
+				op.type_index = TypeIndex{0, typeToCategory(type)};
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
@@ -94,8 +94,8 @@
 
 									// Generate: element_ptr = result_var + (i * element_size)
 									BinaryOp offset_op{
-										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+										.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -148,8 +148,8 @@
 
 								// Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
-									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+									.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -167,7 +167,7 @@
 				// Create HeapAllocArrayOp
 				HeapAllocArrayOp op;
 				op.result = result_var;
-				op.type = type;
+				op.type_index = TypeIndex{0, typeToCategory(type)};
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
@@ -215,8 +215,8 @@
 
 									TempVar element_ptr = var_counter.next();
 									BinaryOp offset_op{
-										.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-										.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+										.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, result_var),
+										.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 										.result = element_ptr,
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -253,8 +253,8 @@
 							if (init.is<ExpressionNode>()) {
 								TempVar element_ptr = var_counter.next();
 								BinaryOp offset_op{
-									.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-									.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
+									.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, result_var),
+									.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
 									.result = element_ptr,
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
@@ -278,8 +278,8 @@
 					TempVar i_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 						.result = i_var,
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
+						.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, 0ULL),
 					}, Token()));
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -287,15 +287,15 @@
 					// cmp = (i_var < count)
 					TempVar cmp_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_value),
+						.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, count_value),
 						.result = cmp_var,
 					}, Token()));
 
 					CondBranchOp cond;
 					cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
 					cond.label_false = loop_end;
-					cond.condition = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
+					cond.condition = makeTypedValue(TypeIndex{0, typeToCategory(Type::Bool)}, SizeInBits{1}, cmp_var);
 					// We use a body label right after the branch
 					auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
 					cond.label_true = loop_body;
@@ -306,16 +306,16 @@
 					// offset_var = i_var * elem_sz
 					TempVar offset_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
+						.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 						.result = offset_var,
 					}, Token()));
 
 					// elem_ptr = result_var + offset_var
 					TempVar elem_ptr = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, result_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
+						.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, result_var),
+						.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, offset_var),
 						.result = elem_ptr,
 					}, Token()));
 
@@ -328,8 +328,8 @@
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-						.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-						.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
+						.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+						.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, 1ULL),
 						.result = i_var,
 					}, Token()));
 
@@ -345,7 +345,7 @@
 			// Create PlacementNewOp
 			PlacementNewOp op;
 			op.result = result_var;
-			op.type = type;
+			op.type_index = TypeIndex{0, typeToCategory(type)};
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
@@ -391,7 +391,7 @@
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
 			op.result = result_var;
-			op.type = type;
+			op.type_index = TypeIndex{0, typeToCategory(type)};
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 
@@ -435,7 +435,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(type, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, typeToCategory(type)}, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -491,8 +491,8 @@
 						// Read count from cookie: raw_ptr = ptr - 8
 						TempVar raw_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 8ULL),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, 8ULL),
 							.result = raw_ptr,
 						}, Token()));
 
@@ -500,7 +500,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{}, PointerDepth{1}),
+							.pointer = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, raw_ptr, PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -515,8 +515,8 @@
 						TempVar i_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 							.result = i_var,
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, count_var),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, count_var),
 						}, Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
@@ -524,36 +524,36 @@
 						// if i_var == 0 goto loop_end
 						TempVar cmp_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 0ULL),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, 0ULL),
 							.result = cmp_var,
 						}, Token()));
 						CondBranchOp cond;
 						cond.label_true  = loop_body;
 						cond.label_false = loop_end;
-						cond.condition   = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_var);
+						cond.condition   = makeTypedValue(TypeIndex{0, typeToCategory(Type::Bool)}, SizeInBits{1}, cmp_var);
 						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
 						// i_var = i_var - 1  (decrement first, so index runs count-1..0)
 						ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, 1ULL),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, 1ULL),
 							.result = i_var,
 						}, Token()));
 
 						// elem_ptr = ptr + i_var * elem_sz
 						TempVar offset_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, i_var),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, i_var),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, static_cast<unsigned long long>(elem_sz)),
 							.result = offset_var,
 						}, Token()));
 						TempVar elem_ptr = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
-							.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, ptr_value),
-							.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, offset_var),
+							.lhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, ptr_value),
+							.rhs = makeTypedValue(TypeIndex{0, typeToCategory(Type::UnsignedLongLong)}, SizeInBits{64}, offset_var),
 							.result = elem_ptr,
 						}, Token()));
 
@@ -656,8 +656,8 @@
 			const TempVar& source_var = std::get<TempVar>(base);
 			AssignmentOp assign_op;
 			assign_op.result = result_var;
-			assign_op.lhs = makeTypedValue(target_type, SizeInBits{64}, result_var);  // 64-bit pointer dest
-			assign_op.rhs = makeTypedValue(target_type, SizeInBits{64}, source_var);  // 64-bit pointer source
+			assign_op.lhs = makeTypedValue(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{64}, result_var);  // 64-bit pointer dest
+			assign_op.rhs = makeTypedValue(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{64}, source_var);  // 64-bit pointer source
 			assign_op.is_pointer_store = false;
 			assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
@@ -691,7 +691,7 @@
 		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
 		// source TypeIndex in that case.
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.is_valid() ? result_type_index : TypeIndex{0, typeToCategory(target_type)}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
@@ -719,7 +719,7 @@
 		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
 		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.is_valid() ? result_type_index : TypeIndex{0, typeToCategory(target_type)}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -776,7 +776,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{64}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -786,7 +786,7 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
-				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			return expr_operands;
 		}
@@ -797,7 +797,7 @@
 		(source_type == Type::Enum && target_type == Type::UnsignedInt) ||
 		(source_type == Type::UnsignedInt && target_type == Type::Enum)) {
 			// Return the value with the new type
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -819,12 +819,12 @@
 
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.from = makeTypedValue(TypeIndex{0, typeToCategory(source_type)}, SizeInBits{static_cast<int>(source_size)}, from_value),
+				.to_type_index = TypeIndex{0, typeToCategory(target_type)},
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -843,12 +843,12 @@
 
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.from = makeTypedValue(TypeIndex{0, typeToCategory(source_type)}, SizeInBits{static_cast<int>(source_size)}, from_value),
+				.to_type_index = TypeIndex{0, typeToCategory(target_type)},
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -867,12 +867,12 @@
 
 			TypeConversionOp op{
 				.result = result_temp,
-				.from = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, from_value),
-				.to_type = target_type,
+				.from = makeTypedValue(TypeIndex{0, typeToCategory(source_type)}, SizeInBits{static_cast<int>(source_size)}, from_value),
+				.to_type_index = TypeIndex{0, typeToCategory(target_type)},
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -881,11 +881,11 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, 0ULL),
+				.rhs = makeTypedValue(TypeIndex{0, typeToCategory(source_type)}, SizeInBits{static_cast<int>(source_size)}, 0ULL),
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(Type::Bool)}, SizeInBits{8}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -893,16 +893,16 @@
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
-				.rhs = makeTypedValue(source_type, SizeInBits{static_cast<int>(source_size)}, 0.0),
+				.rhs = makeTypedValue(TypeIndex{0, typeToCategory(source_type)}, SizeInBits{static_cast<int>(source_size)}, 0.0),
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{0, typeToCategory(Type::Bool)}, SizeInBits{8}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -962,7 +962,7 @@
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return makeExprResult(Type::Void, SizeInBits{64}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, typeToCategory(Type::Void)}, SizeInBits{64}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
@@ -1009,8 +1009,8 @@
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
-			load_op.lhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, source_ptr);
-			load_op.rhs = makeTypedValue(expr_operands.type, expr_operands.size_in_bits, var_name_handle);
+			load_op.lhs = makeTypedValue(TypeIndex{0, typeToCategory(expr_operands.type)}, expr_operands.size_in_bits, source_ptr);
+			load_op.rhs = makeTypedValue(TypeIndex{0, typeToCategory(expr_operands.type)}, expr_operands.size_in_bits, var_name_handle);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
@@ -1044,7 +1044,7 @@
 
 		// Return the casted pointer/reference
 		ValueStorage result_storage = is_reference_cast ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
-		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, result_storage);
+		return makeExprResult(TypeIndex{0, typeToCategory(result_type)}, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, PointerDepth{}, result_storage);
 	}
 
 	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
@@ -1072,7 +1072,7 @@
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1102,5 +1102,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(result_size)}, expr_operands.value, TypeIndex{}, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, typeToCategory(target_type)}, SizeInBits{static_cast<int>(result_size)}, expr_operands.value, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
 	}
