@@ -343,7 +343,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 
 	// Keep canonical, known-good path for int.
 	if (type_name == "int") {
-		return get_or_create_builtin_throwinfo(Type::Int);
+		return get_or_create_builtin_throwinfo(TypeCategory::Int);
 	}
 
 	auto cached_it = throw_info_symbols_.find(type_name);

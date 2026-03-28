@@ -443,7 +443,7 @@
 		ExprResult ptr_operands = visitExpressionNode(deleteExpr.expr().as<ExpressionNode>());
 
 		// Get the pointer type
-		Type ptr_type = ptr_operands.type;
+		Type ptr_type = categoryToType(ptr_operands.type_index.category());
 
 		// Convert IrOperand to IrValue
 		IrValue ptr_value = toIrValue(ptr_operands.value);
@@ -627,10 +627,10 @@
 
 		if (is_rvalue_ref) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
-			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, TypeIndex{0, typeToCategory(target_type)}, target_size));
 		} else {
 			FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference: marking as lvalue", cast_name);
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeIndex{0, typeToCategory(target_type)}, target_size));
 		}
 	}
 
@@ -679,7 +679,7 @@
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
-		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type_index.is_valid() ? target_type_index : TypeIndex{0, typeToCategory(target_type)}, target_size));
 
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
@@ -709,7 +709,7 @@
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference", cast_name);
-		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type_index.is_valid() ? target_type_index : TypeIndex{0, typeToCategory(target_type)}, target_size));
 
 		// Generate AddressOf operation if needed
 		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
@@ -740,7 +740,7 @@
 		ExprResult expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
-		Type source_type = expr_operands.type;
+		Type source_type = categoryToType(expr_operands.type_index.category());
 		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
@@ -749,7 +749,7 @@
 			}
 			Type semantic_type = resolve_type_alias(source_type, source_type_index);
 			if (!carriesSemanticTypeIndex(semantic_type)) {
-				semantic_type = resolve_type_alias(getTypeInfo(source_type_index).type_, source_type_index);
+				semantic_type = resolve_type_alias(categoryToType(getTypeInfo(source_type_index).category()), source_type_index);
 			}
 			return carriesSemanticTypeIndex(semantic_type);
 		};
@@ -1009,8 +1009,8 @@
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
-			load_op.lhs = makeTypedValue(TypeIndex{0, typeToCategory(expr_operands.type)}, expr_operands.size_in_bits, source_ptr);
-			load_op.rhs = makeTypedValue(TypeIndex{0, typeToCategory(expr_operands.type)}, expr_operands.size_in_bits, var_name_handle);
+			load_op.lhs = makeTypedValue(TypeIndex{0, expr_operands.type_index.category()}, expr_operands.size_in_bits, source_ptr);
+			load_op.rhs = makeTypedValue(TypeIndex{0, expr_operands.type_index.category()}, expr_operands.size_in_bits, var_name_handle);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
