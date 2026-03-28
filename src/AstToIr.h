@@ -56,7 +56,6 @@ private:
 		std::variant<StringHandle, TempVar> base;           // Base variable or temp
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
-		Type final_type = Type::Void;                       // Type of final result
 		TypeIndex final_type_index {};                      // Type identity of final result (TypeCategory embedded)
 		SizeInBits final_size_bits;                         // Size in bits
 		PointerDepth pointer_depth;                         // Pointer depth of final result

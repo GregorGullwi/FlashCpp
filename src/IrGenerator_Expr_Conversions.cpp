@@ -253,7 +253,6 @@
 					AddressComponents result;
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
-					result.final_type = binding_info.bindingType();
 					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
 					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
 					result.final_type_index = TypeIndex::fromTypeAndIndex(binding_info.bindingType(), {});
@@ -274,10 +273,9 @@
 			AddressComponents result;
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
-			result.final_type = type_node->type();
 			result.final_type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
-			if (typeToCategory(result.final_type) == TypeCategory::Struct && !result.final_size_bits.is_set() &&
+			if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
@@ -329,7 +327,6 @@
 			}
 
 			// Update type to member type
-			base_components->final_type = result.member->memberType();
 			base_components->final_type_index = TypeIndex::fromTypeAndIndex(result.member->memberType(), result.member->type_index);
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
@@ -429,7 +426,6 @@
 			}
 
 			base_components->array_indices.push_back(arr_idx);
-			base_components->final_type = categoryToType(element_category);
 			base_components->final_type_index = element_type_index;
 			base_components->final_size_bits = SizeInBits{element_size_bits};
 			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
@@ -663,7 +659,7 @@
 
 				// Return pointer to result (64-bit pointer)
 				return makeExprResult(
-					addr_components->final_type,
+					categoryToType(addr_components->final_type_index.category()),
 					SizeInBits{64},
 					result_var,
 					TypeIndex{},
