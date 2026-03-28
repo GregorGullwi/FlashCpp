@@ -78,7 +78,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		}
 
 		const auto& ts = decl_ptr->type_node().as<TypeSpecifierNode>();
-		info.type = ts.type();
+		info.type_index = ts.type_index();
 		info.size_in_bits = SizeInBits{ts.size_in_bits()};
 	};
 
@@ -104,7 +104,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 
 		info.is_global_or_static = true;
 		info.store_name = it->second.mangled_name;
-		info.type = it->second.type;
+		info.type_index = it->second.type_index;
 		info.size_in_bits = it->second.size_in_bits;
 		return info;
 	}
@@ -139,7 +139,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
 		if (static_member) {
-			info.type = categoryToType(static_member->type_index.category());
+			info.type_index = static_member->type_index;
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
 		}
 		return info;
@@ -156,7 +156,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 	if (static_local_it != static_local_names_.end()) {
 		info.is_global_or_static = true;
 		info.store_name = static_local_it->second.mangled_name;
-		info.type = static_local_it->second.type;
+		info.type_index = static_local_it->second.type_index;
 		info.size_in_bits = static_local_it->second.size_in_bits;
 		return info;
 	}

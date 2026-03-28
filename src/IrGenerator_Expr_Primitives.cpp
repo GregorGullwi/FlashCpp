@@ -1021,6 +1021,7 @@
 			assert(type_node.pointer_depth() <= static_cast<size_t>(std::numeric_limits<int>::max()) &&
 				"Pointer depth exceeds maximum int value for PointerDepth construction");
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
+			Type return_type = getRuntimeValueType(
 				type_node.type(),
 				type_node.type_index(),
 				identifier_pointer_depth);
