@@ -1038,12 +1038,12 @@
 			// - Otherwise return 0
 			// Guard with is_valid() so primitive typedefs (Type::UserDefined but
 			// no struct/enum info) don't propagate a stale type_index.
-			TypeIndex type_index = (carriesSemanticTypeIndex(type_node.type()) && type_node.type_index().is_valid())
+			TypeIndex type_index = (carriesSemanticTypeIndex(return_type) && type_node.type_index().is_valid())
 				? type_node.type_index()
 				: TypeIndex{};
 			// Enums are scalar (carry pointer_depth like integers), while structs
 			// use type_index for layout and zero pointer_depth here.
-			PointerDepth pointer_depth{isIrStructType(toIrType(type_node.type()))
+			PointerDepth pointer_depth{isIrStructType(toIrType(return_type))
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
