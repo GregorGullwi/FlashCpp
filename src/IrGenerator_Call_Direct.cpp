@@ -1193,7 +1193,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					param_ref_qualifier == CVReferenceQualifier::None &&
 					param_type->pointer_depth() == 0 &&
 					arg_type != param_base_type) {
-					TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
+					TypeConversionResult standard_conversion = can_convert_type(typeToCategory(arg_type), typeToCategory(param_base_type));
 					if (standard_conversion.is_valid &&
 						standard_conversion.rank != ConversionRank::UserDefined) {
 						if (sema_normalized_current_function_ &&
@@ -1357,7 +1357,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = emitAddressOf(type_node.type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						TempVar addr_var = emitAddressOf(type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1366,7 +1366,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-					TempVar deref_var = emitDereference(type_node.type(), 64, 1,
+					TempVar deref_var = emitDereference(type_node.type_index(), 64, 1,
 						StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
@@ -1450,7 +1450,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							}
 
 							// Fallback heuristic: 64-bit struct type likely holds an address
-							if (!is_already_address && expr_size == 64 && expr_type.category() == Type::Struct) {
+							if (!is_already_address && expr_size == 64 && expr_type.category() == TypeCategory::Struct) {
 								is_already_address = true;
 							}
 
