@@ -1102,7 +1102,8 @@ public:
 
 	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
 	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
-		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None,
+		ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
 		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
 
 	// Returns the TypeCategory for this type specifier.

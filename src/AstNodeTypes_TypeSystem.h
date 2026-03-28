@@ -1008,10 +1008,30 @@ inline std::string_view getTypeName(Type t) {
 	}
 }
 
-/// TypeCategory overload — delegates via categoryToType so callers migrated to
-/// TypeCategory can use the same helper without a round-trip to Type.
+/// TypeCategory overload — direct switch so no round-trip through categoryToType.
 inline std::string_view getTypeName(TypeCategory cat) {
-	return getTypeName(categoryToType(cat));
+	switch (cat) {
+		case TypeCategory::Int: return "int";
+		case TypeCategory::UnsignedInt: return "unsigned int";
+		case TypeCategory::Long: return "long";
+		case TypeCategory::UnsignedLong: return "unsigned long";
+		case TypeCategory::LongLong: return "long long";
+		case TypeCategory::UnsignedLongLong: return "unsigned long long";
+		case TypeCategory::Short: return "short";
+		case TypeCategory::UnsignedShort: return "unsigned short";
+		case TypeCategory::Char: return "char";
+		case TypeCategory::UnsignedChar: return "unsigned char";
+		case TypeCategory::WChar: return "wchar_t";
+		case TypeCategory::Char8: return "char8_t";
+		case TypeCategory::Char16: return "char16_t";
+		case TypeCategory::Char32: return "char32_t";
+		case TypeCategory::Bool: return "bool";
+		case TypeCategory::Float: return "float";
+		case TypeCategory::Double: return "double";
+		case TypeCategory::LongDouble: return "long double";
+		case TypeCategory::Void: return "void";
+		default: return "";
+	}
 }
 
 /// Helper function to determine if a Type is signed (for MOVSX vs MOVZX)
@@ -1058,7 +1078,23 @@ inline bool isSignedType(Type t) {
 	}
 }
 
-// Linkage specification for functions (C vs C++)
+/// TypeCategory overload for isSignedType — avoids round-trip through categoryToType.
+inline bool isSignedType(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Char:
+		case TypeCategory::Short:
+		case TypeCategory::Int:
+		case TypeCategory::Long:
+		case TypeCategory::LongLong:
+			return true;
+		case TypeCategory::WChar:
+			return g_target_data_model != TargetDataModel::LLP64;
+		default:
+			return false;
+	}
+}
+
+
 enum class Linkage : uint8_t {
 	None,           // Default C++ linkage (with name mangling)
 	C,              // C linkage (no name mangling)
