@@ -858,14 +858,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 														if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
 															bool val = bool_literal->value();
-															TemplateTypeArg arg(val ? 1LL : 0LL, Type::Bool);
+															TemplateTypeArg arg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool});
 															filled_args_for_pattern_match.push_back(arg);
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 															const auto& val = lit.value();
 															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-																TemplateTypeArg arg(static_cast<int64_t>(*ull_val));
+																TemplateTypeArg arg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int});
 																filled_args_for_pattern_match.push_back(arg);
 															}
 														}
@@ -886,7 +886,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					} else if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&expr)) {
 						const BoolLiteralNode& lit = *bool_literal_ptr;
-						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
 						// Handle sizeof(T) as a default value
 						const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
@@ -1499,7 +1499,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
-				member_type,
 				member_type_index,
 				member_size,
 				member_alignment,
@@ -1956,7 +1955,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 					struct_info->addStaticMember(
 						static_member_name_handle,
-						static_member.type,
 						static_member.type_index,
 						static_member.size,
 						static_member.alignment,
@@ -2804,7 +2802,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 					// Handle boolean literals
 					const BoolLiteralNode& lit = *bool_literal;
-					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 					// Handle dependent expressions like is_arithmetic<T>::value
 					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
@@ -3127,7 +3125,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
 				} else {
 					const TypeInfo& concrete_type = getTypeInfo(concrete_arg.type_index);
-					if (concrete_type.type_ != Type::Struct) {
+					if (concrete_type.category() != TypeCategory::Struct) {
 						FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
 					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
 						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
@@ -3150,7 +3148,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
 						if (pack_arg.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& concrete_type = getTypeInfo(pack_arg.type_index);
-							if (concrete_type.type_ == Type::Struct &&
+							if (concrete_type.category() == TypeCategory::Struct &&
 							    !(concrete_type.struct_info_ && concrete_type.struct_info_->is_final)) {
 								struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), pack_arg.type_index, base.access, base.is_virtual);
 								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type.name_), "'");
@@ -3490,7 +3488,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														// Try to evaluate the return expression as a constant
 														if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
 															FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
-															TemplateTypeArg val_arg(ret_value->value, ret_value->type);
+															TemplateTypeArg val_arg(ret_value->value, ret_value->type_index);
 															val_arg.is_pack = arg_info.is_pack;
 															resolved_args.push_back(val_arg);
 															continue;
@@ -4039,7 +4037,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type,
 			member_type_index,
 			member_size,
 			member_alignment,

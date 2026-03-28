@@ -885,7 +885,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		
-		Type member_type = type_spec.type();
 		TypeIndex member_type_index = type_spec.type_index();
 		size_t ptr_depth = type_spec.pointer_depth();
 		
@@ -893,22 +892,21 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_size = 8;
 		} else {
-			member_size = get_type_size_bits(member_type) / 8;
+			member_size = get_type_size_bits(categoryToType(member_type_index.category())) / 8;
 		}
-		size_t member_alignment = get_type_alignment(member_type, member_size);
+		size_t member_alignment = get_type_alignment(categoryToType(member_type_index.category()), member_size);
 		
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type,
 			member_type_index,
 			member_size,
 			member_alignment,
 			member_decl.access,
 			member_decl.default_initializer,
 			type_spec.reference_qualifier(),
-			type_spec.reference_qualifier() != ReferenceQualifier::None ? get_type_size_bits(member_type) : 0,
+			type_spec.reference_qualifier() != ReferenceQualifier::None ? get_type_size_bits(categoryToType(member_type_index.category())) : 0,
 			false,
 			{},
 			static_cast<int>(type_spec.pointer_depth()),

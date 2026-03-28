@@ -467,6 +467,11 @@ int get_type_size_bits(TypeCategory cat) {
 }
 
 int get_type_size_bits(TypeIndex type_index) {
+	if (type_index.index() > 0 && type_index.index() < getTypeInfoCount()) {
+		const TypeInfo& ti = getTypeInfo(type_index);
+		if (ti.type_size_ > 0)
+			return ti.type_size_;
+	}
 	return get_type_size_bits(type_index.category());
 }
 

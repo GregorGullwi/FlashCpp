@@ -191,6 +191,16 @@ inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
 	return base_type;
 }
 
+// TypeIndex-primary overload: resolves enum underlying type from a TypeIndex.
+// Returns the resolved TypeIndex (with the underlying type's category).
+inline TypeIndex resolveEnumUnderlyingType(TypeIndex type_index) {
+	if (type_index.category() == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
+			return TypeIndex{0, ei->underlying_type};
+	}
+	return type_index;
+}
+
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.

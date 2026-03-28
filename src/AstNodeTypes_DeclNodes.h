@@ -914,11 +914,22 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeInd
 	return { .type_index = TypeIndex{original_type_index.index(), type_cat}};
 }
 
+// Canonicalize: 1-arg overload — uses type_index's own category.
+inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
+	return canonicalize_type_alias(type_index.category(), type_index);
+}
+
 // Legacy bridge: accepts Type; converts to TypeCategory internally.
 inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
 	return canonicalize_type_alias(typeToCategory(type), type_index);
 }
 
+// Resolve typedef/using alias chains. Returns the resolved TypeIndex.
+inline TypeIndex resolve_type_alias(TypeIndex type_index) {
+	return canonicalize_type_alias(type_index).type_index;
+}
+
+// Legacy bridge — kept for callers still using Type.
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	return categoryToType(canonicalize_type_alias(type, type_index).type_index.category());
 }
@@ -961,42 +972,46 @@ inline void forEachTypeInfo(Fn&& fn) {
 
 // Get the natural alignment for a type (in bytes)
 // This follows the x64 Windows ABI alignment rules
-inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
-	switch (type) {
-		case Type::Void:
+inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
+	switch (cat) {
+		case TypeCategory::Void:
 			return 1;
-		case Type::Bool:
-		case Type::Char:
-		case Type::UnsignedChar:
+		case TypeCategory::Bool:
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
 			return 1;
-		case Type::Short:
-		case Type::UnsignedShort:
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::Char16:
 			return 2;
-		case Type::Int:
-		case Type::UnsignedInt:
-		case Type::Long:
-		case Type::UnsignedLong:
-		case Type::Float:
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::Float:
+		case TypeCategory::Char32:
 			return 4;
-		case Type::LongLong:
-		case Type::UnsignedLongLong:
-		case Type::Double:
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+		case TypeCategory::Double:
 			return 8;
-		case Type::LongDouble:
-			// On x64 Windows, long double is 8 bytes (same as double)
+		case TypeCategory::LongDouble:
 			return 8;
-		case Type::Struct:
-			// For structs, alignment is determined by the struct's alignment field
-			// This should be passed separately
+		case TypeCategory::Struct:
 			return type_size_bytes;
 		default:
-			// For other types, use the size as alignment (up to 8 bytes max on x64)
 			return std::min(type_size_bytes, size_t(8));
 	}
 }
 
+// Legacy bridge — kept for callers still using Type.
+inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
+	return get_type_alignment(typeToCategory(type), type_size_bytes);
+}
+
 inline size_t get_type_alignment(TypeIndex type_index, size_t type_size_bytes) {
-	return get_type_alignment(categoryToType(type_index.category()), type_size_bytes);
+	return get_type_alignment(type_index.category(), type_size_bytes);
 }
 
 // Type utilities
