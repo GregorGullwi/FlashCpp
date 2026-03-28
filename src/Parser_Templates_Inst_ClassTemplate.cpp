@@ -316,7 +316,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
 			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
 				TypeInfo& type_info = add_empty_type_entry();
-				type_info.type_ = Type::UserDefined;
+				type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 				type_info.type_size_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
@@ -635,21 +635,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const TypeInfo* resolved_type_info = resolved_type_it->second;
 		
 		// Get the resolved type, following aliases if needed
-		Type resolved_base_type = resolved_type_info->type_;
+		TypeCategory resolved_base_type = resolved_type_info->category();
 		TypeIndex resolved_type_index = resolved_type_info->type_index_;
 		
 		// Check if this is an alias to a concrete type
-		if (resolved_type_info->type_ == Type::UserDefined && 
+		if (resolved_type_info->category() == TypeCategory::UserDefined && 
 		    resolved_type_index != resolved_type_info->type_index_ && 
 		    resolved_type_index.index() < getTypeInfoCount()) {
 			// Follow the alias
 			const TypeInfo& aliased_type = getTypeInfo(resolved_type_index);
-			resolved_base_type = aliased_type.type_;
+			resolved_base_type = aliased_type.category();
 			resolved_type_index = aliased_type.type_index_;
 		}
 		
 		TemplateTypeArg resolved_arg;
-		resolved_arg.type_index = TypeIndex::fromTypeAndIndex(resolved_base_type, resolved_type_index);
+		resolved_arg.type_index = TypeIndex{resolved_type_index.index(), resolved_base_type};
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
 		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
@@ -882,7 +882,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const NumericLiteralNode& lit = *numeric_literal;
 						const auto& val = lit.value();
 						if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 						}
 					} else if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&expr)) {
 						const BoolLiteralNode& lit = *bool_literal_ptr;
@@ -943,7 +943,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													}
 
 													if (size_in_bytes > 0) {
-														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes), TypeIndex{0, TypeCategory::Int}));
 														FLASH_LOG(Templates, Debug, "Filled in sizeof(", type_name, ") default: ", size_in_bytes, " bytes");
 														found_substitution = true;
 														break;
@@ -958,7 +958,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									// Direct type (not a template parameter)
 									int size_in_bits = type_spec.size_in_bits();
 									int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to bytes
-									filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+									filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes), TypeIndex{0, TypeCategory::Int}));
 									FLASH_LOG(Templates, Debug, "Filled in sizeof default: ", size_in_bytes, " bytes");
 								}
 							}
@@ -1366,7 +1366,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.type_index = TypeIndex::fromTypeAndIndex(type_it->second->type_, type_it->second->type_index_);
+									a.type_index = type_it->second->type_index_;
 									resolved_args.push_back(a);
 									resolved = true;
 								}
@@ -2771,13 +2771,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 													const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 													if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
 														bool val = bool_literal->value();
-														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 														FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 														const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
 														const auto& val = lit.value();
 														if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to numeric value");
 														}
 													}
@@ -2855,13 +2855,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 														if (const auto* inner_bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
 															bool val = inner_bool_literal->value();
-															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
 														} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 															const NumericLiteralNode& lit = *numeric_literal;
 															const auto& val = lit.value();
 															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 															}
 														}
 													}
@@ -2942,7 +2942,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														break;
 												}
 												if (size_in_bytes > 0) {
-													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes), TypeIndex{0, TypeCategory::Int}));
 													FLASH_LOG(Templates, Debug, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");
 													found_substitution = true;
 													break;
@@ -2957,7 +2957,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								// Direct type (not a template parameter)
 								int size_in_bits = type_spec.size_in_bits();
 								int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to bytes
-								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes), TypeIndex{0, TypeCategory::Int}));
 								FLASH_LOG(Templates, Debug, "Filled in sizeof default for instantiation: ", size_in_bytes, " bytes");
 							}
 						}
@@ -2991,7 +2991,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
 				          " of '", template_name, "', using placeholder");
 			} else {
-				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(0), TypeIndex{0, TypeCategory::Int}));
 				FLASH_LOG(Templates, Warning, "Could not evaluate default for param ", i,
 				          " of '", template_name, "', using 0");
 			}
@@ -3761,7 +3761,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_type_index = inst_type_it->second->type_index_;
 					// Update member_type to match the instantiated type's actual type
 					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
-					member_type = inst_type_it->second->type_;
+					member_type = inst_type_it->second->category();
 				}
 			}
 		}

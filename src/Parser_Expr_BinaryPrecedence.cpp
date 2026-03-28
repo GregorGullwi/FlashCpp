@@ -1143,7 +1143,7 @@ void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& tar
 // Parses types separated by commas, handling pack expansion (...), C-style varargs,
 // and pointer/reference modifiers. Stops before ')' — caller must consume it.
 // Returns true if at least one type was parsed or the list is empty (valid).
-bool Parser::parse_function_type_parameter_list(std::vector<Type>& out_param_types) {
+bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types) {
 	while (peek() != ")"_tok && !peek().is_eof()) {
 		// Handle C-style varargs: just '...' (without type before it)
 		if (peek() == "..."_tok) {
@@ -1162,7 +1162,7 @@ bool Parser::parse_function_type_parameter_list(std::vector<Type>& out_param_typ
 			
 			// Apply pointer/reference modifiers to the parameter type
 			consume_pointer_ref_modifiers(param_type);
-			out_param_types.push_back(param_type.type());
+			out_param_types.push_back(param_type.type_index());
 		} else {
 			return false; // Parsing failed
 		}

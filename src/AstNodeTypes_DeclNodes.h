@@ -920,7 +920,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 }
 
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return categoryToType(canonicalize_type_alias(type, type_index).type);
+	return categoryToType(canonicalize_type_alias(type, type_index).type_index.category());
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});

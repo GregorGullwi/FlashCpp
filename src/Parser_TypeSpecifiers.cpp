@@ -304,7 +304,7 @@ ParseResult Parser::parse_type_specifier()
 				const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
 				if (enum_type_info.enum_info_) {
 					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
-					Type underlying = enum_info->underlying_type;
+					TypeCategory underlying = enum_info->underlying_type;
 					int underlying_size = enum_info->underlying_size;
 					FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -318,7 +318,7 @@ ParseResult Parser::parse_type_specifier()
 			const TypeInfo& type_info = getTypeInfo(arg_type.type_index());
 			if (type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
-				Type underlying = enum_info->underlying_type;
+				TypeCategory underlying = enum_info->underlying_type;
 				int underlying_size = enum_info->underlying_size;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1281,7 +1281,7 @@ ParseResult Parser::parse_type_specifier()
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 								TypeInfo& placeholder_type = add_empty_type_entry();
-								placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+								placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
@@ -1342,7 +1342,7 @@ ParseResult Parser::parse_type_specifier()
 						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
 							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+							placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
@@ -1380,7 +1380,7 @@ ParseResult Parser::parse_type_specifier()
 
 						// Create a new dependent placeholder with template instantiation metadata
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 						type_info.type_size_ = 0;
 						type_info.name_ = type_handle;
 						getTypesByNameMap()[type_handle] = &type_info;
@@ -1522,12 +1522,12 @@ ParseResult Parser::parse_type_specifier()
 																	const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																	if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																		bool val = bool_literal_ptr->value();
-																		filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																		filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 																	} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																		const NumericLiteralNode& lit = *numeric_literal;
 																		const auto& val = lit.value();
 																		if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
-																			filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
+																			filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr), TypeIndex{0, TypeCategory::Int}));
 																		}
 																	}
 																}
@@ -1543,13 +1543,13 @@ ParseResult Parser::parse_type_specifier()
 									const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 									const auto& val = lit.value();
 									if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 									} else if (const auto* d_val = std::get_if<double>(&val)) {
-										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val), TypeIndex{0, TypeCategory::Int}));
 									}
 								} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 									const BoolLiteralNode& lit = *bool_literal;
-									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 								}
 							}
 						}
@@ -1766,7 +1766,7 @@ ParseResult Parser::parse_type_specifier()
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							TypeInfo& type_info = add_empty_type_entry();
-							type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+							type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
@@ -2037,7 +2037,7 @@ ParseResult Parser::parse_type_specifier()
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
-					type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+					type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
@@ -2127,12 +2127,12 @@ ParseResult Parser::parse_type_specifier()
 																const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																	bool val = bool_literal_ptr->value();
-																	filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																	filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 																} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																	const NumericLiteralNode& lit = *numeric_literal;
 																	const auto& val = lit.value();
 																	if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
-																		filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
+																		filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr), TypeIndex{0, TypeCategory::Int}));
 																	}
 																}
 															}
@@ -2148,13 +2148,13 @@ ParseResult Parser::parse_type_specifier()
 								const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 								const auto& val = lit.value();
 								if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 								} else if (const auto* d_val = std::get_if<double>(&val)) {
-									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val), TypeIndex{0, TypeCategory::Int}));
 								}
 							} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 								const BoolLiteralNode& lit = *bool_literal;
-								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 							}
 						}
 					}
@@ -2206,7 +2206,7 @@ ParseResult Parser::parse_type_specifier()
 							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
 							type_name);
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
+						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;

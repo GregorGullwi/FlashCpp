@@ -611,7 +611,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
 				for (TypeIndex ti {}; ti.index() < getTypeInfoCount(); ++ti) {
-					if (getTypeInfo(ti).type_ == Type::UserDefined || getTypeInfo(ti).type_ == Type::Template) {
+					if (getTypeInfo(ti).category() == TypeCategory::UserDefined || getTypeInfo(ti).category() == TypeCategory::Template) {
 						if (StringTable::getStringView(getTypeInfo(ti).name()) == param_name) {
 							param_type_index = TypeIndex{ti};
 							found_param = true;

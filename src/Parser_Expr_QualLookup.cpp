@@ -1668,7 +1668,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
-					TypeSpecifierNode member_type(member_result.member->type, TypeQualifier::None, member_result.member->size * 8);
+					TypeSpecifierNode member_type(member_result.member->type_index, static_cast<unsigned char>(member_result.member->size * 8));
 					member_type.set_type_index(member_result.member->type_index);
 					if (member_result.member->pointer_depth > 0) {
 						member_type.add_pointer_levels(member_result.member->pointer_depth);
@@ -1866,7 +1866,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 				if (expr_type_opt.has_value()) {
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
-						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
+						finalizePlaceholderTypeDeduction(return_type.category(), *expr_type_opt);
 					all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
 					
 					// Set deduced type from first return

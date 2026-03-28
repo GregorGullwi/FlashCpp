@@ -618,14 +618,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
-				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
+				TypeIndex literal_type_index = lit.type_index();  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
 				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type_index);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else if (const auto* d_val = std::get_if<double>(&val)) {
-					num_arg = TemplateTypeArg(static_cast<int64_t>(*d_val), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(*d_val), literal_type_index);
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else {
@@ -690,7 +690,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
-					TemplateTypeArg const_arg(const_value->value, const_value->type);
+					TemplateTypeArg const_arg(const_value->value, const_value->type_index);
 					
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {
@@ -853,7 +853,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				
 				if (evaluated_static_member && static_member_value.has_value()) {
 					// Successfully evaluated static member - create template argument
-					TemplateTypeArg const_arg(static_member_value->value, static_member_value->type);
+					TemplateTypeArg const_arg(static_member_value->value, static_member_value->type_index);
 					
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {
@@ -945,7 +945,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Template parameters are stored as Type::UserDefined without struct_info_,
 								// so this check correctly excludes them while accepting concrete types.
 								if (underlying.struct_info_ != nullptr || 
-								    underlying.type_ != Type::UserDefined) {
+								    underlying.category() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
@@ -1279,7 +1279,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					advance(); // consume '('
 					
 					// Parse parameter list using shared helper
-					std::vector<Type> param_types;
+					std::vector<TypeIndex> param_types;
 					bool param_parse_ok = parse_function_type_parameter_list(param_types);
 					
 					if (!param_parse_ok) {
@@ -1317,8 +1317,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						
 						// Successfully parsed function reference/pointer type!
 						FunctionSignature func_sig;
-						func_sig.return_type = type_node.type();
-						func_sig.parameter_types = std::move(param_types);
+						func_sig.return_type_index = type_node.type_index();
+						func_sig.parameter_type_indices = std::move(param_types);
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
 						
@@ -1356,7 +1356,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Save position within the parens
 				SaveHandle func_type_saved_pos = save_token_position();
 				bool is_bare_func_type = false;
-				std::vector<Type> func_param_types;
+				std::vector<TypeIndex> func_param_types;
 				
 				// Try to parse as function parameter list using shared helper
 				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
@@ -1367,8 +1367,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					
 					// Successfully parsed bare function type
 					FunctionSignature func_sig;
-					func_sig.return_type = type_node.type();
-					func_sig.parameter_types = std::move(func_param_types);
+					func_sig.return_type_index = type_node.type_index();
+					func_sig.parameter_type_indices = std::move(func_param_types);
 					type_node.set_function_signature(func_sig);
 					
 					// Consume trailing noexcept or noexcept(expr) if present

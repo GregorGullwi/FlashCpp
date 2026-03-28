@@ -186,7 +186,7 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
 	if (base_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
-			return ei->underlying_type;
+			return categoryToType(ei->underlying_type);
 	}
 	return base_type;
 }
@@ -364,8 +364,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
 		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.category(), from.type_index());
 		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.category(), to.type_index());
-		TypeCategory from_resolved = from_canonical.type;
-		TypeCategory to_resolved = to_canonical.type;
+		TypeCategory from_resolved = from_canonical.type_index.category();
+		TypeCategory to_resolved = to_canonical.type_index.category();
 		TypeIndex from_resolved_index = from_canonical.type_index;
 		TypeIndex to_resolved_index = to_canonical.type_index;
 
@@ -477,8 +477,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.category(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.category(), to.type_index());
-				TypeCategory from_base = from_canonical.type;
-				TypeCategory to_base = to_canonical.type;
+				TypeCategory from_base = from_canonical.type_index.category();
+				TypeCategory to_base = to_canonical.type_index.category();
 				TypeIndex from_base_index = from_canonical.type_index;
 				TypeIndex to_base_index = to_canonical.type_index;
 				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
@@ -533,8 +533,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
 				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.category(), from.type_index());
 				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.category(), to.type_index());
-				TypeCategory from_base = from_canonical.type;
-				TypeCategory to_base = to_canonical.type;
+				TypeCategory from_base = from_canonical.type_index.category();
+				TypeCategory to_base = to_canonical.type_index.category();
 				TypeIndex from_base_index = from_canonical.type_index;
 				TypeIndex to_base_index = to_canonical.type_index;
 				bool types_match = (from_base == to_base);
@@ -584,8 +584,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
 			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.category(), from.type_index());
 			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.category(), to.type_index());
-			TypeCategory from_resolved = from_canonical.type;
-			TypeCategory to_resolved = to_canonical.type;
+			TypeCategory from_resolved = from_canonical.type_index.category();
+			TypeCategory to_resolved = to_canonical.type_index.category();
 			TypeIndex from_resolved_index = from_canonical.type_index;
 			TypeIndex to_resolved_index = to_canonical.type_index;
 			
@@ -644,8 +644,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// UserDefined and integral types as they're likely type aliases for integral types.
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.category(), from.type_index());
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.category(), to.type_index());
-	TypeCategory from_type = from_canonical.type;
-	TypeCategory to_type = to_canonical.type;
+	TypeCategory from_type = from_canonical.type_index.category();
+	TypeCategory to_type = to_canonical.type_index.category();
 	TypeIndex from_type_index = from_canonical.type_index;
 	TypeIndex to_type_index = to_canonical.type_index;
 	const TypeCategory from_type_category = from_type;
@@ -846,7 +846,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
-			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			TypeCategory resolved_arg_type = typeToCategory(resolve_type_alias(arg_type.type(), arg_type.type_index()));
 			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
@@ -1565,7 +1565,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
 	Type effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type);
+		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type_index.category());
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}
@@ -1812,7 +1812,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 {
 	Type effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type);
+		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type_index.category());
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}

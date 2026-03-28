@@ -113,7 +113,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (trailing_ts.type_index().index() < getTypeInfoCount()) {
 			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
 			          StringTable::getStringView(getTypeInfo(trailing_ts.type_index()).name()), 
-			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).type_));
+			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).category()));
 		}
 		
 		// Replace the auto type with the trailing return type
@@ -858,7 +858,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// Handle boolean literals directly
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		const BoolLiteralNode& lit = *bool_literal;
-		return ConstantValue{lit.value() ? 1 : 0, Type::Bool};
+		return ConstantValue{lit.value() ? 1 : 0, TypeIndex{0, TypeCategory::Bool}};
 	}
 	
 	// Handle numeric literals directly
@@ -866,9 +866,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 		const auto& val = lit.value();
 		if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*ull_val), lit.type()};
+			return ConstantValue{static_cast<int64_t>(*ull_val), lit.type_index()};
 		} else if (const auto* d_val = std::get_if<double>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*d_val), lit.type()};
+			return ConstantValue{static_cast<int64_t>(*d_val), lit.type_index()};
 		}
 	}
 	
@@ -1053,7 +1053,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			// No-argument traits like __is_constant_evaluated
 			if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
 				// We're evaluating in a constant context, so return true
-				return ConstantValue{1, Type::Bool};
+				return ConstantValue{1, TypeIndex{0, TypeCategory::Bool}};
 			}
 			return std::nullopt;
 		}
@@ -1079,7 +1079,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
-		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
+		return ConstantValue{eval_result.value ? 1 : 0, TypeIndex{0, TypeCategory::Bool}};
 	}
 	
 	// Helper: create a constexpr evaluation context with struct context and parser.
@@ -1104,7 +1104,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), Type::Int};
+			return ConstantValue{eval_result.as_int(), TypeIndex{0, TypeCategory::Int}};
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate ternary operator");
 		return std::nullopt;
@@ -1117,7 +1117,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), Type::Int};
+			return ConstantValue{eval_result.as_int(), TypeIndex{0, TypeCategory::Int}};
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
 		return std::nullopt;
@@ -1130,7 +1130,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Unary op evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), Type::Int};
+			return ConstantValue{eval_result.as_int(), TypeIndex{0, TypeCategory::Int}};
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate unary operator");
 		return std::nullopt;

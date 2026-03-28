@@ -264,8 +264,8 @@ struct TemplateTypeArg {
 		return TemplateTypeArg(ts);  // delegate to existing constructor
 	}
 	
-	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
-		return TemplateTypeArg(v, type);
+	static TemplateTypeArg makeValue(int64_t v, TypeIndex type_index = TypeIndex{0, TypeCategory::Int}) {
+		return TemplateTypeArg(v, type_index);
 	}
 	
 	static TemplateTypeArg makeTemplate(StringHandle name) {

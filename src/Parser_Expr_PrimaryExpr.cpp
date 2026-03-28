@@ -1471,12 +1471,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																		if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																			bool val = bool_literal_ptr->value();
-																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 																		} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																			const NumericLiteralNode& lit = *numeric_literal;
 																			const auto& val = lit.value();
 																			if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
-																				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
+																				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr), TypeIndex{0, TypeCategory::Int}));
 																			}
 																		}
 																	}
@@ -1492,13 +1492,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr_default);
 										const auto& val = lit.value();
 										if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 										} else if (const auto* d_val = std::get_if<double>(&val)) {
-											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
+											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val), TypeIndex{0, TypeCategory::Int}));
 										}
 									} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr_default)) {
 										const BoolLiteralNode& lit = *bool_literal;
-										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 									}
 								}
 							}
@@ -3717,12 +3717,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																				if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																					bool val = bool_literal_ptr->value();
-																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 																				} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																					const NumericLiteralNode& lit = *numeric_literal;
 																					const auto& val = lit.value();
 																					if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&val)) {
-																						filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr)));
+																						filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val_ptr), TypeIndex{0, TypeCategory::Int}));
 																					}
 																				}
 																			}
@@ -3738,13 +3738,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr_default);
 												const auto& val = lit.value();
 												if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val), TypeIndex{0, TypeCategory::Int}));
 												} else if (const auto* d_val = std::get_if<double>(&val)) {
-													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val)));
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*d_val), TypeIndex{0, TypeCategory::Int}));
 												}
 											} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr_default)) {
 												const BoolLiteralNode& lit = *bool_literal;
-												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeIndex{0, TypeCategory::Bool}));
 											}
 										}
 									}

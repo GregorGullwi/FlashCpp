@@ -597,14 +597,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 						if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 							const TypeInfo* resolved_info = qualified_type_it->second;
-							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(categoryToType(resolved_info->category()));
 							TypeSpecifierNode resolved_spec(
-								resolved_info->type_,
-								resolved_info->type_index_,
-								resolved_size_bits,
-								ts.token(),
-								ts.cv_qualifier(),
-								ts.reference_qualifier());
+										resolved_info->type_index_,
+										resolved_size_bits,
+										ts.token(),
+										ts.cv_qualifier(),
+										ts.reference_qualifier());
 							resolved_spec.copy_indirection_from(ts);
 							resolved_spec.set_reference_qualifier(ts.reference_qualifier());
 							type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
@@ -671,11 +670,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
 				TypeSpecifierNode resolved_spec(
-					resolved_info->type_,
+					resolved_info->type_index_,
 					TypeQualifier::None,
-					get_type_size_bits(resolved_info->type_),
+					get_type_size_bits(categoryToType(resolved_info->category())),
 					Token());
-				resolved_spec.set_type_index(resolved_info->type_index_);
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
@@ -1088,7 +1086,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// placeholder), because dependent non-type params are stored as
 							// is_value==false in the placeholder even though they carry an integer value
 							// at instantiation time.
-							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
+							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.type_index);
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
@@ -1637,14 +1635,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
-						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(categoryToType(resolved_info->category()));
 						TypeSpecifierNode resolved_spec(
-							resolved_info->type_,
-							resolved_info->type_index_,
-							resolved_size_bits,
-							ts.token(),
-							ts.cv_qualifier(),
-							ts.reference_qualifier());
+										resolved_info->type_index_,
+										resolved_size_bits,
+										ts.token(),
+										ts.cv_qualifier(),
+										ts.reference_qualifier());
 						resolved_spec.copy_indirection_from(ts);
 						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
 						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
@@ -1735,14 +1732,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else {
 			const TypeInfo* resolved_info = type_it->second;
 			TypeSpecifierNode resolved_spec(
-				resolved_info->type_,
+				resolved_info->type_index_,
 				TypeQualifier::None,
-				get_type_size_bits(resolved_info->type_),
+				get_type_size_bits(categoryToType(resolved_info->category())),
 				Token()
 			);
-			resolved_spec.set_type_index(resolved_info->type_index_);
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->type_),
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->category()),
 			          ", index=", resolved_info->type_index_);
 		}
 	};
