@@ -78,7 +78,7 @@ public:
 	constexpr uint16_t id()        const { return id_; }
 
 	constexpr bool operator==(TokenKind o) const {
-		return category_ == o.category_ && id_ == o.id_;
+		return category_ == o.category() && id_ == o.id_;
 	}
 	constexpr bool operator!=(TokenKind o) const { return !(*this == o); }
 

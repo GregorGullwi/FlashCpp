@@ -1282,7 +1282,7 @@ inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
 inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
 	TypeCategory cat = spec.category();
 	if ((cat == TypeCategory::Invalid || cat == TypeCategory::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
-		cat = getTypeInfo(spec.type_index()).category_;
+		cat = getTypeInfo(spec.type_index()).category();
 	}
 	if ((cat == TypeCategory::Invalid || cat == TypeCategory::Void) && spec.type_index().is_valid()) {
 		return Type::Struct;
@@ -1319,8 +1319,8 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex ty
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
 		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (type_info.category_ != TypeCategory::Invalid && type_info.category_ != TypeCategory::Void) {
-				effective_type = categoryToType(type_info.category_);
+			if (type_info.category() != TypeCategory::Invalid && type_info.category() != TypeCategory::Void) {
+				effective_type = categoryToType(type_info.category());
 			} else if (effective_type == Type::Invalid || effective_type == Type::Void) {
 				effective_type = Type::Struct;
 			}
@@ -1565,7 +1565,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
 	Type effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category_, right_type_index).type);
+		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}
@@ -1812,7 +1812,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 {
 	Type effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category_, right_type_index).type);
+		Type indexed_right_type = categoryToType(canonicalize_type_alias(getTypeInfo(right_type_index).category(), right_type_index).type);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = Type::Invalid;
 		}

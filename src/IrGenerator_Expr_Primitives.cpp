@@ -273,13 +273,12 @@
 	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	ExpressionContext context) {
 		auto makeIdentifierResult = [](
-			Type type,
 			int size_bits,
 			IrOperand value,
 			TypeIndex type_index = TypeIndex{},
 			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
-			return makeExprResult(type, SizeInBits{static_cast<int>(size_bits)}, std::move(value), type_index, pointer_depth, ValueStorage::ContainsData);
+			return makeExprResult(type_index, SizeInBits{static_cast<int>(size_bits)}, std::move(value), pointer_depth, ValueStorage::ContainsData);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {

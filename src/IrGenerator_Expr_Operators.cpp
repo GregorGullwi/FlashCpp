@@ -382,13 +382,13 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			addr_member_op.result = address_temp;
 			addr_member_op.base_object = std::get<StringHandle>(lvalue_info->base);
 			addr_member_op.member_offset = lvalue_info->offset;
-			addr_member_op.member_type = argument_result.type;
+			addr_member_op.member_type_index = argument_result.type_index;
 			addr_member_op.member_size_in_bits = argument_result.size_in_bits.value;
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), token));
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
-				argument_result.type,
+				argument_result.type_index,
 				argument_result.size_in_bits,
 				category);
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
@@ -399,7 +399,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
-				argument_result.type,
+				argument_result.type_index,
 				argument_result.size_in_bits.value,
 				IrValue(arg_temp),
 				token);
@@ -1729,7 +1729,6 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.result = result_var;
 				call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 				call_op.is_member_function = false;
-				call_op.return_type = return_type.type();
 				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (actual_return_size == 0 && return_type.type() == Type::Struct && return_type.type_index().is_valid()) {
@@ -1770,11 +1769,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 				return makeExprResult(
-					return_type.type(),
+					return_type.type_index(),
 					SizeInBits{actual_return_size},
 					IrOperand{result_var},
-					return_type.type_index()
-				, PointerDepth{}, ValueStorage::ContainsData);
+					PointerDepth{},
+					ValueStorage::ContainsData);
 			}
 
 			else if (overload_result.has_match) {
@@ -4349,7 +4348,7 @@ const Token& token) {
 
 			// Emit the store using helper
 			emitArrayStore(
-				lhs_operands.type,                 // element_type
+				lhs_operands.type_index,                 // element_type
 				lhs_operands.size_in_bits.value,         // element_size_bits
 				lv_info.base,                      // array
 				index_tv,                          // index
@@ -4635,7 +4634,7 @@ std::string_view op) {
 
 		// Emit the store using helper
 		emitArrayStore(
-			lhs_operands.type,                 // element_type
+			lhs_operands.type_index,                 // element_type
 			lhs_operands.size_in_bits.value,         // element_size_bits
 			lv_info.base,                      // array
 			index_tv,                          // index

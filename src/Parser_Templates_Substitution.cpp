@@ -892,11 +892,12 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.type() == Type::UserDefined) {
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,
 				template_args);
-			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
+			if (substituted_type_index != type_spec.type_index()) {
+				Type substituted_type = categoryToType(substituted_type_index.category());
 				int substituted_size_bits = get_type_size_bits(substituted_type);
 				if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
@@ -923,7 +924,6 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 				TypeSpecifierNode substituted_spec(
-					substituted_type,
 					substituted_type_index,
 					substituted_size_bits,
 					substituted_token,

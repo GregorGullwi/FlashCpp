@@ -727,22 +727,22 @@ ParseResult Parser::validate_and_add_base_class(
 	const TypeInfo* base_type_info = base_type_it->second;
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: initial base_type_info for '{}': type={}, type_index={}", 
-	                 base_class_name, static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 base_class_name, static_cast<int>(base_type_info->category()), base_type_info->type_index_);
 	
 	// Resolve type aliases: if base_type_info points to another type (type alias),
 	// follow the chain to find the actual struct type
 	size_t max_alias_depth = 10;  // Prevent infinite loops
-	while (base_type_info->type_ != Type::Struct && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
+	while (base_type_info->category() != TypeCategory::Struct && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
 		const TypeInfo& underlying = getTypeInfo(base_type_info->type_index_);
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
 		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}, underlying type={}", 
-		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.type_));
+		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.category()));
 		base_type_info = &underlying;
 	}
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: final base_type_info: type={}, type_index={}", 
-	                 static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 static_cast<int>(base_type_info->category()), base_type_info->type_index_);
 	
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);
@@ -753,13 +753,13 @@ ParseResult Parser::validate_and_add_base_class(
 	// In template bodies, a UserDefined type alias (e.g., _Tp_alloc_type) may resolve to a struct
 	// at instantiation time. Treat it as a deferred base class.
 	bool is_dependent_type_alias = false;
-	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ == Type::UserDefined &&
+	if (!is_template_param && !is_dependent_placeholder && base_type_info->category() == TypeCategory::UserDefined &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_dependent_type_alias = true;
 	}
 	
 	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders OR dependent type aliases
-	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && base_type_info->type_ != Type::Struct) {
+	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && base_type_info->category() != TypeCategory::Struct) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
 	}
 
@@ -781,16 +781,15 @@ ParseResult Parser::validate_and_add_base_class(
 
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
+TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
-	Type result_type = original_type.type();
 	TypeIndex result_type_index = original_type.type_index();
 
 	// Only substitute UserDefined types (which might be template parameters)
-	if (result_type == Type::UserDefined) {
+	if (result_type_index.category() == TypeCategory::UserDefined) {
 		// First try to get the type name from the token (useful for type aliases parsed inside templates
 		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
 		std::string_view type_name;
@@ -804,7 +803,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			type_name = StringTable::getStringView(type_info.name());
 			
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index, 
-				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.type_), 
+				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.category()), 
 				", underlying_type_index=", type_info.type_index_);
 		} else if (!type_name.empty()) {
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
@@ -829,7 +828,6 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						// 1. The original type (e.g., const T& has const and reference)
 						// 2. The template argument (e.g., T=int* has pointer_depth=1)
 						
-						result_type = arg.typeEnum();
 						result_type_index = arg.type_index;
 						
 						// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
@@ -894,7 +892,6 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					
 					if (type_it != getTypesByNameMap().end()) {
 						const TypeInfo* resolved_info = type_it->second;
-						result_type = resolved_info->type_;
 						result_type_index = resolved_info->type_index_;
 						found_match = true;
 					}
@@ -933,7 +930,6 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_info = type_it->second;
-							result_type = resolved_info->type_;
 							result_type_index = resolved_info->type_index_;
 							found_match = true;
 						}
@@ -968,7 +964,6 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* resolved_info = type_it->second;
-								result_type = resolved_info->type_;
 								result_type_index = resolved_info->type_index_;
 								found_match = true;
 								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
@@ -984,7 +979,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// This requires a valid type_index to look up the alias info
 			if (!found_match && result_type_index.is_valid() && result_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(result_type_index);
-				if (type_info.type_ == Type::UserDefined && type_info.type_index_ != result_type_index) {
+				if (type_info.category() == TypeCategory::UserDefined && type_info.type_index_ != result_type_index) {
 					// This is a type alias - recursively check what it resolves to
 					if (type_info.type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& alias_target_info = getTypeInfo(type_info.type_index_);
@@ -997,10 +992,9 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								if (tparam.name() == alias_target_name) {
 									// The type alias resolves to a template parameter - substitute!
 									const TemplateTypeArg& arg = template_args[i];
-									result_type = arg.typeEnum();
 									result_type_index = arg.type_index;
 									FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name, 
-										"' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type));
+										"' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type_index.category()));
 									found_match = true;
 									break;
 								}
@@ -1071,7 +1065,6 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::string_view inst_name = get_instantiated_class_name(concrete_tpl_name, concrete_args);
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
-									result_type = inst_it->second->type_;
 									result_type_index = inst_it->second->type_index_;
 									found_match = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",
@@ -1086,7 +1079,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		}
 	}
 
-	return {result_type, result_type_index};
+	return result_type_index;
 }
 
 
@@ -1206,17 +1199,17 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 
 	FunctionSignature sig;
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
-		sig.return_type = deduced_return->type();
+		sig.return_type_index = deduced_return->type_index();
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
-		sig.return_type = Type::Void;
+		sig.return_type_index = TypeIndex{0, TypeCategory::Void};
 	}
 
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
 			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			sig.parameter_types.push_back(param_type.type());
+			sig.parameter_type_indices.push_back(param_type.type_index());
 		}
 	}
 
@@ -1232,9 +1225,9 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 	}
 
 	FunctionSignature sig;
-	sig.return_type = sig_opt->return_type.type();
+	sig.return_type_index = sig_opt->return_type.type_index();
 	for (const auto& param_type : sig_opt->param_types) {
-		sig.parameter_types.push_back(param_type.type());
+		sig.parameter_type_indices.push_back(param_type.type_index());
 	}
 
 	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
@@ -1782,8 +1775,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
 						// Found the static member - return its type
-						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
-						member_type.set_type_index(static_member->type_index);
+						TypeSpecifierNode member_type(static_member->type_index, TypeQualifier::None, static_member->size * 8);
 						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
 						}

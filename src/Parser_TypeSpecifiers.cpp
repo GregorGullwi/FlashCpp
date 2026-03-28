@@ -78,7 +78,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		auto type_it = getTypesByNameMap().find(type_handle);
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
-			cast_type = categoryToType(type_info->category_);
+			cast_type = categoryToType(type_info->category());
 			type_size = type_info->type_size_;
 			if (type_info->isStruct()) {
 				cast_type = Type::Struct;
@@ -782,7 +782,7 @@ ParseResult Parser::parse_type_specifier()
 			} else {
 				// Use the type's own Type value (Enum, UserDefined, etc.)
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					type_info->category_, user_type_index, type_size_bits, type_name_token, cv_qualifier));
+					type_info->category(), user_type_index, type_size_bits, type_name_token, cv_qualifier));
 			}
 		}
 
@@ -847,7 +847,7 @@ ParseResult Parser::parse_type_specifier()
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
 					TypeInfo& placeholder_type = add_empty_type_entry();
-					placeholder_type.category_ = TypeCategory::UserDefined;
+					placeholder_type.type_index_ = {0, TypeCategory::UserDefined};
 					placeholder_type.type_size_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
@@ -1136,7 +1136,7 @@ ParseResult Parser::parse_type_specifier()
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 											TypeInfo& placeholder_type = add_empty_type_entry();
-											placeholder_type.category_ = TypeCategory::UserDefined;
+											placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined};
 											placeholder_type.type_size_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
@@ -1281,7 +1281,7 @@ ParseResult Parser::parse_type_specifier()
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 								TypeInfo& placeholder_type = add_empty_type_entry();
-								placeholder_type.category_ = TypeCategory::UserDefined;
+								placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 								placeholder_type.type_size_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
@@ -1342,7 +1342,7 @@ ParseResult Parser::parse_type_specifier()
 						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
 							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.category_ = TypeCategory::UserDefined;
+							placeholder_type.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 							placeholder_type.type_size_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
@@ -1380,7 +1380,7 @@ ParseResult Parser::parse_type_specifier()
 
 						// Create a new dependent placeholder with template instantiation metadata
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.category_ = TypeCategory::UserDefined;
+						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 						type_info.type_size_ = 0;
 						type_info.name_ = type_handle;
 						getTypesByNameMap()[type_handle] = &type_info;
@@ -1766,7 +1766,7 @@ ParseResult Parser::parse_type_specifier()
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							TypeInfo& type_info = add_empty_type_entry();
-							type_info.category_ = TypeCategory::UserDefined;
+							type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 							type_info.type_size_ = 0;  // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
@@ -1798,7 +1798,7 @@ ParseResult Parser::parse_type_specifier()
 							// This is a type alias - return the aliased type
 							type_size = static_cast<unsigned char>(type_info->type_size_);
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->category_, type_info->type_index_, type_size, type_name_token, cv_qualifier));
+								type_info->category(), type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
 					}
 					
@@ -2037,7 +2037,7 @@ ParseResult Parser::parse_type_specifier()
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
-					type_info.category_ = TypeCategory::UserDefined;
+					type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
@@ -2206,7 +2206,7 @@ ParseResult Parser::parse_type_specifier()
 							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
 							type_name);
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.category_ = TypeCategory::UserDefined;
+						type_info.type_index_ = TypeIndex{0, TypeCategory::UserDefined}
 						type_info.type_size_ = 0;  // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
@@ -2332,7 +2332,7 @@ ParseResult Parser::parse_type_specifier()
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = categoryToType(type_info_ctx->category_);
+				resolved_type = categoryToType(type_info_ctx->category());
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(

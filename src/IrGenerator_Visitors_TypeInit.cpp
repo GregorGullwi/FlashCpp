@@ -584,7 +584,7 @@
 					emitted_static_members_.insert(name_handle);
 
 					GlobalVariableDeclOp op;
-					op.type = static_member.type;
+					op.type_index = static_member.type_index;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.index() < getTypeInfoCount()) {
@@ -608,12 +608,12 @@
 							zero_initialize();
 						} else if (op.is_initialized) {
 							if (static_member.initializer->is<InitializerListNode>()) {
-								if (static_member.type == Type::Struct &&
+								if (static_member.type_index.category() == TypeCategory::Struct &&
 									static_member.type_index.is_valid() &&
 									static_member.type_index.index() < getTypeInfoCount()) {
 									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
 										op.init_data.resize(static_struct_info->total_size, 0);
-										auto eval_aggregate_leaf = [[&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long](const ASTNode& leaf_expr, TypeIndex target_type_index) -> unsigned long long {
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeIndex target_type_index) -> unsigned long long {
 											unsigned long long leaf_value = 0;
 											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
 												const TypeCategory target_type = target_type_index.category();
@@ -1039,7 +1039,7 @@
 							"' for ", type_name, " from base ", base_name_str);
 
 							GlobalVariableDeclOp alias_op;
-							alias_op.type = static_member_ptr->type;
+							alias_op.type_index = static_member_ptr->type_index;
 							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
@@ -1590,7 +1590,7 @@ const Token& token)
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-			member.type,
+			member.type_index,
 			element_size_bits,
 			base_object,
 			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
@@ -1621,7 +1621,7 @@ const Token& token)
 		} else {
 			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-				member.type,
+				member.type_index,
 				element_size_bits,
 				base_object,
 				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),

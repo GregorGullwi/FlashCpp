@@ -254,13 +254,13 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 // These can be used by both the unified handler and special-case code
 
 // Emit ArrayStore instruction
-void AstToIr::emitArrayStore(Type element_type, int element_size_bits,
-std::variant<StringHandle, TempVar> array,
-const TypedValue& index, const TypedValue& value,
-int64_t member_offset, bool is_pointer_to_array,
-const Token& token) {
+void AstToIr::emitArrayStore(TypeIndex element_type, int element_size_bits,
+	std::variant<StringHandle, TempVar> array,
+	const TypedValue& index, const TypedValue& value,
+	int64_t member_offset, bool is_pointer_to_array,
+	const Token& token) {
 	ArrayStoreOp payload;
-	payload.element_type = element_type;
+	payload.element_type_index = element_type;
 	payload.element_size_in_bits = element_size_bits;
 	payload.array = array;
 	payload.index = index;
@@ -445,9 +445,9 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 	}
 
 	return makeExprResult(
-		enum_info.underlying_type,
+		TypeIndex{0, enum_info.underlying_type},
 		SizeInBits{static_cast<int>(enum_info.underlying_size)},
-		static_cast<unsigned long long>(enumerator->value), TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -475,11 +475,12 @@ std::optional<ASTNode> AstToIr::lookupSymbol(std::string_view name) const {
 
 
 /// Emit an AddressOf IR instruction and return the result TempVar holding the address.
-TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Token token) {
+TempVar AstToIr::emitAddressOf(TypeIndex type_index, int size_in_bits, IrValue source, Token token) {
 	TempVar addr_var = var_counter.next();
 	AddressOfOp addr_op;
 	addr_op.result = addr_var;
-	addr_op.operand.type_index = TypeIndex{0, typeToCategory(type)}; addr_op.operand.ir_type = toIrType(type);
+	addr_op.operand.type_index = type_index;
+	addr_op.operand.ir_type = toIrType(type_index);
 	addr_op.operand.size_in_bits = SizeInBits{size_in_bits};
 	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
@@ -489,11 +490,12 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 
 
 /// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
-TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
+TempVar AstToIr::emitDereference(TypeIndex pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
 	TempVar result_var = var_counter.next();
 	DereferenceOp deref_op;
 	deref_op.result = result_var;
-	deref_op.pointer.type_index = TypeIndex{0, typeToCategory(pointee_type)}; deref_op.pointer.ir_type = toIrType(pointee_type);
+	deref_op.pointer.type_index = pointee_type;
+	deref_op.pointer.ir_type = toIrType(pointee_type);
 	deref_op.pointer.size_in_bits = SizeInBits{static_cast<int>(pointer_size_bits)};
 	deref_op.pointer.pointer_depth = PointerDepth{pointer_depth};
 	deref_op.pointer.value = pointer_value;
@@ -506,7 +508,7 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 // ============================================================================
 // Return IR helper
 // ============================================================================
-void AstToIr::emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
+void AstToIr::emitReturn(IrValue return_value, TypeIndex return_type, int return_size, const Token& token) {
 	ReturnOp ret_op;
 	ret_op.return_value = return_value;
 	ret_op.return_type = return_type;

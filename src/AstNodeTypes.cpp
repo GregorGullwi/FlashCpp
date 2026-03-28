@@ -466,6 +466,10 @@ int get_type_size_bits(TypeCategory cat) {
     return get_type_size_bits(categoryToType(cat));
 }
 
+int get_type_size_bits(TypeIndex type_index) {
+	return get_type_size_bits(type_index.category());
+}
+
 Type promote_integer_type(Type type) {
     // C++ integer promotion rules: bool, char, and short promote to int
     switch (type) {

@@ -649,11 +649,11 @@ struct Enumerator {
 struct EnumTypeInfo {
 	StringHandle name;
 	bool is_scoped;                  // true for enum class, false for enum
-	Type underlying_type;            // Underlying type (default: int)
+	TypeCategory underlying_type;    // Underlying type (default: int)
 	unsigned char underlying_size;   // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
-	EnumTypeInfo(StringHandle n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
+	EnumTypeInfo(StringHandle n, bool scoped = false, TypeCategory underlying = TypeCategory::Int, unsigned char size = 32)
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 	
 	StringHandle getName() const {
@@ -728,13 +728,12 @@ struct QualifiedIdentifier {
 
 struct TypeInfo
 {
-	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, TypeCategory cat, TypeIndex idx, int type_size) : name_(name), category_(cat), type_index_(idx), type_size_(type_size) {
+	TypeInfo() : type_index_{ 0, TypeCategory::Void } {}
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
-	TypeCategory category_;
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -795,6 +794,8 @@ struct TypeInfo
 	StringHandle name() const { 
 		return name_;
 	};
+
+	TypeCategory category() const { return type_index_.category(); }
 	
 	// Namespace this type was declared in
 	NamespaceHandle namespaceHandle() const { return namespace_handle_; }
@@ -812,7 +813,7 @@ struct TypeInfo
 	}
 
 	// Helper methods for struct types
-	bool isStruct() const { return category_ == TypeCategory::Struct; }
+	bool isStruct() const { return category() == TypeCategory::Struct; }
 	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
@@ -824,7 +825,7 @@ struct TypeInfo
 	}
 
 	// Helper methods for enum types
-	bool isEnum() const { return category_ == TypeCategory::Enum; }
+	bool isEnum() const { return category() == TypeCategory::Enum; }
 	const EnumTypeInfo* getEnumInfo() const { return enum_info_.get(); }
 	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
 
@@ -836,10 +837,10 @@ struct TypeInfo
 	}
 
 	// Classification helpers that read from category_ — no gTypeInfo lookup needed.
-	bool isStructLike()          const { return category_ == TypeCategory::Struct || category_ == TypeCategory::UserDefined; }
-	bool isPrimitive()           const { return is_primitive_type(category_); }
-	bool needsTypeIndex()        const { return needs_type_index(category_); }
-	bool isTemplatePlaceholder() const { return category_ == TypeCategory::Template; }
+	bool isStructLike()          const { return category() == TypeCategory::Struct || category() == TypeCategory::UserDefined; }
+	bool isPrimitive()           const { return is_primitive_type(category()); }
+	bool needsTypeIndex()        const { return needs_type_index(category()); }
+	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
@@ -883,7 +884,6 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	TypeCategory type = TypeCategory::Invalid;
 	TypeIndex type_index {};
 };
 
@@ -891,7 +891,7 @@ struct CanonicalTypeAlias {
 inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
 	if (type_cat != TypeCategory::UserDefined || !type_index.is_valid()) {
-		return {type_cat, type_index};
+		return { .type_index = TypeIndex{ type_index.index(), type_cat }};
 	}
 
 	const TypeIndex original_type_index = type_index;
@@ -900,10 +900,10 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeInd
 	while (current_type_index.is_valid() &&
 		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
-		if (type_info.category_ != TypeCategory::Void && type_info.category_ != TypeCategory::UserDefined) {
-			return {type_info.category_, type_info.type_index_};
+		if (type_info.category() != TypeCategory::Void && type_info.category() != TypeCategory::UserDefined) {
+			return { .type_index = type_info.type_index_};
 		}
-		if (type_info.category_ != TypeCategory::UserDefined ||
+		if (type_info.category() != TypeCategory::UserDefined ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -911,7 +911,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeInd
 		current_type_index = type_info.type_index_;
 	}
 
-	return {type_cat, original_type_index};
+	return { .type_index = TypeIndex{original_type_index.index(), type_cat}};
 }
 
 // Legacy bridge: accepts Type; converts to TypeCategory internally.
@@ -995,6 +995,10 @@ inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
 	}
 }
 
+inline size_t get_type_alignment(TypeIndex type_index, size_t type_size_bytes) {
+	return get_type_alignment(categoryToType(type_index.category()), type_size_bytes);
+}
+
 // Type utilities
 bool is_integer_type(Type type);
 bool is_signed_integer_type(Type type);
@@ -1024,6 +1028,7 @@ inline int get_wchar_size_bits() {
 
 int get_type_size_bits(Type type);
 int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
+int get_type_size_bits(TypeIndex type_index);
 Type promote_integer_type(Type type);
 Type promote_floating_point_type(Type type);
 Type get_common_type(Type left, Type right);

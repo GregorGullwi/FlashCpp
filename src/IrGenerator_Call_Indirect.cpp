@@ -1498,11 +1498,11 @@
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
 								// Use 64-bit pointer size since references are passed as pointers
-								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+								call_op.args.push_back(makeTypedValue(type_node.type_index(), SizeInBits{64},
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1536,11 +1536,11 @@
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
 								// Use 64-bit pointer size since references are passed as pointers
-								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
+								call_op.args.push_back(makeTypedValue(type_node.type_index(), SizeInBits{64},
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1597,7 +1597,7 @@
 
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
-							Type literal_type = argument_result.type;
+							TypeIndex literal_type = argument_result.type_index;
 							int literal_size = argument_result.size_in_bits.value;
 
 							// Create a temporary variable to hold the literal value
@@ -1630,7 +1630,7 @@
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
-								Type expr_type = argument_result.type;
+								TypeIndex expr_type = argument_result.type_index;
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 

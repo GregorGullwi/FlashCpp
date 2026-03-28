@@ -970,11 +970,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* type_info = type_it->second;
-					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->category_, 
+					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->category(), 
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->category_ == TypeCategory::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
+					if (type_info->category() == TypeCategory::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {

@@ -369,7 +369,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
 						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
-						TypeCategory resolved_cat = getTypeInfo(type_idx).category_;
+						TypeCategory resolved_cat = getTypeInfo(type_idx).category();
 						if (resolved_cat == TypeCategory::Invalid || resolved_cat == TypeCategory::Void) {
 							resolved_cat = TypeCategory::Struct;
 						}

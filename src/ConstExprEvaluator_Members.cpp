@@ -2852,7 +2852,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					if (input.type_index.is_valid() && input.type_index.index() < getTypeInfoCount()) {
 						input.type_info = &getTypeInfo(input.type_index);
-						input.base_type = categoryToType(input.type_info->category_);
+						input.base_type = categoryToType(input.type_info->category());
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
 						input.struct_info = input.type_info->getStructInfo();

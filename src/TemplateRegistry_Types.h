@@ -235,27 +235,10 @@ struct TemplateTypeArg {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
 	}
-
-	// Constructor for non-type template parameters (default int type)
-	explicit TemplateTypeArg(int64_t val)
-		: type_index(TypeIndex{0, TypeCategory::Int})
-		, ref_qualifier(ReferenceQualifier::None)
-		, pointer_depth(0)
-		, pointer_cv_qualifiers()
-		, cv_qualifier(CVQualifier::None)
-		, is_array(false)
-		, array_size(std::nullopt)
-		, member_pointer_kind(MemberPointerKind::None)
-		, is_value(true)
-		, value(val)
-		, is_pack(false)
-		, is_dependent(false)
-		, is_template_template_arg(false)
-		, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
-	TemplateTypeArg(int64_t val, Type type)
-		: type_index(TypeIndex{0, typeToCategory(type)})
+	TemplateTypeArg(int64_t val, TypeIndex type_index)
+		: type_index(type_index)
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()

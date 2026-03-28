@@ -2533,8 +2533,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			assign_op.rhs = toTypedValue(value_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
-			TempVar addr_var = emitAddressOf(value_result.type, value_result.size_in_bits.value, IrValue(temp_var), source_token);
-			return makeExprResult(value_result.type, SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+			TempVar addr_var = emitAddressOf(value_result.type_index, value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			return makeExprResult(value_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		if (binding_info->binds_directly()) {
@@ -2545,18 +2545,18 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						return makeExprResult(
-							type_node.type(),
+							type_node.type_index(),
 							SizeInBits{64},
 							IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
-							type_node.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+							PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					TempVar addr_var = emitAddressOf(
-						type_node.type(),
+						type_node.type_index(),
 						static_cast<int>(type_node.size_in_bits()),
 						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 						source_token);
-					return makeExprResult(type_node.type(), SizeInBits{64}, IrOperand{addr_var}, type_node.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -2574,11 +2574,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				}
 
 				TempVar addr_var = emitAddressOf(
-					arg_result.type,
+					arg_result.type_index,
 					arg_result.size_in_bits.value,
 					IrValue(expr_var),
 					source_token);
-				return makeExprResult(arg_result.type, SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(arg_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			return std::nullopt;
@@ -2610,10 +2610,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		ExprResult source_result,
 		const TypeSpecifierNode& ref_param_type,
 		const Token& source_token) {
-		const Type referred_type = ref_param_type.type();
+		const TypeIndex referred_type = ref_param_type.type_index();
 		// Convert the source value to the referred-to type.
 		ExprResult converted = generateTypeConversion(source_result, source_result.type, referred_type, source_token);
-		const int ref_type_bits = get_type_size_bits(referred_type);
+		const int ref_type_bits = get_type_size_bits(referred_type.category());
 		// Materialize the converted value into a stack temporary.
 		TempVar conv_temp = var_counter.next();
 		AssignmentOp assign_op;

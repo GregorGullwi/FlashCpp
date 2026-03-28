@@ -1247,7 +1247,7 @@ public:  // Public methods for template instantiation
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-        std::pair<Type, TypeIndex> substitute_template_parameter(
+        TypeIndex substitute_template_parameter(
             const TypeSpecifierNode& original_type,
             const InlineVector<ASTNode, 4>& template_params,
             const InlineVector<TemplateTypeArg, 4>& template_args

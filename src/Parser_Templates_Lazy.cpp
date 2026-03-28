@@ -91,18 +91,17 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				}
 				if (handled_as_pack) continue;
 
-				auto [param_type, param_type_index] = substitute_template_parameter(
-					param_type_spec, lazy_info.template_params, lazy_info.template_args
-				);
+			TypeIndex param_type_index = substitute_template_parameter(
+				param_type_spec, lazy_info.template_params, lazy_info.template_args
+			);
 
-				TypeSpecifierNode substituted_param_type(
-					param_type,
-					param_type_spec.qualifier(),
-					get_type_size_bits(param_type),
-					param_decl.identifier_token(),
-					param_type_spec.cv_qualifier()
-				);
-				substituted_param_type.set_type_index(param_type_index);
+			TypeSpecifierNode substituted_param_type(
+				param_type_index,
+				param_type_spec.qualifier(),
+				get_type_size_bits(param_type_index.category()),
+				param_decl.identifier_token(),
+				param_type_spec.cv_qualifier()
+			);
 				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
@@ -303,7 +302,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Perform template parameter substitution (same as eager path)
 	// Substitute return type
 	const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-	auto [return_type, return_type_index] = substitute_template_parameter(
+	TypeIndex return_type_index = substitute_template_parameter(
 		return_type_spec, lazy_info.template_params, lazy_info.template_args
 	);
 
@@ -311,8 +310,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
-	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
-		if (type == Type::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	auto resolve_self_type = [&lazy_info](TypeIndex& type_index) {
+		if (type_index.category() == TypeCategory::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 			if (getTypeInfo(type_index).name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
 				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
@@ -323,16 +322,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 	};
 
-	resolve_self_type(return_type, return_type_index);
+	resolve_self_type(return_type_index);
 
 	// Create substituted return type node (use the return type's token, not the function identifier)
 	TypeSpecifierNode substituted_return_type(
-		return_type,
+		return_type_index,
 		return_type_spec.qualifier(),
-		get_type_size_bits(return_type),
+		get_type_size_bits(return_type_index.category()),
 		return_type_spec.token()
 	);
-	substituted_return_type.set_type_index(return_type_index);
 
 	// Copy pointer levels and reference qualifiers from original
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
@@ -418,22 +416,21 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (handled_as_pack) continue;
 
 			// Substitute parameter type
-			auto [param_type, param_type_index] = substitute_template_parameter(
+			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, lazy_info.template_params, lazy_info.template_args
 			);
 
 			// Resolve self-referential class types (same as return type)
-			resolve_self_type(param_type, param_type_index);
+			resolve_self_type(param_type_index);
 
 			// Create substituted parameter type
 			TypeSpecifierNode substituted_param_type(
-				param_type,
+				param_type_index,
 				param_type_spec.qualifier(),
-				get_type_size_bits(param_type),
+				get_type_size_bits(param_type_index.category()),
 				param_decl.identifier_token(),
 				param_type_spec.cv_qualifier()
 			);
-			substituted_param_type.set_type_index(param_type_index);
 
 			// Copy pointer levels and reference qualifiers
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
@@ -871,10 +868,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	TypeSpecifierNode original_type_spec(lazy_info.type, TypeQualifier::None, lazy_info.size * 8);
 	original_type_spec.set_type_index(lazy_info.type_index);
 	
-	auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+	TypeIndex substituted_type_index = substitute_template_parameter(
 		original_type_spec, lazy_info.template_params, lazy_info.template_args);
 	
-	size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+	size_t substituted_size = get_type_size_bits(substituted_type_index.category()) / 8;
 	
 	// Update the existing static member with the computed initializer
 	// (The member was already added during template instantiation with std::nullopt initializer)
@@ -882,7 +879,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
 		struct_info->addStaticMember(
 			lazy_info.member_name,
-			substituted_type,
 			substituted_type_index,
 			substituted_size,
 			lazy_info.alignment,
@@ -1025,8 +1021,9 @@ std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	const TypeSpecifierNode& target_type = lazy_info->unevaluated_target.as<TypeSpecifierNode>();
 	
 	// Perform template parameter substitution
-	auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+	TypeIndex substituted_type_index = substitute_template_parameter(
 		target_type, lazy_info->template_params, lazy_info->template_args);
+	Type substituted_type = categoryToType(substituted_type_index.category());
 	
 	// Cache the result
 	registry.markEvaluated(instantiated_class_name, member_name, substituted_type, substituted_type_index);
@@ -1102,8 +1099,9 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		
 		// Substitute template parameters using parent's template args
-		auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+		TypeIndex substituted_type_index = substitute_template_parameter(
 			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
+		Type substituted_type = categoryToType(substituted_type_index.category());
 		
 		// Get size for the member
 		size_t member_size = 0;
@@ -1112,10 +1110,10 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			if (member_type_info.getStructInfo()) {
 				member_size = member_type_info.getStructInfo()->total_size;
 			} else {
-				member_size = get_type_size_bits(substituted_type) / 8;
+				member_size = get_type_size_bits(substituted_type_index.category()) / 8;
 			}
 		} else {
-			member_size = get_type_size_bits(substituted_type) / 8;
+			member_size = get_type_size_bits(substituted_type_index.category()) / 8;
 		}
 		
 		// Get alignment for the member
@@ -1133,7 +1131,6 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Add member to nested struct info
 		nested_struct_info->addMember(
 			member_name_handle,
-			substituted_type,
 			substituted_type_index,
 			member_size,
 			member_alignment,

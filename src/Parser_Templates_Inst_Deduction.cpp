@@ -682,14 +682,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Substitute template parameters in the return type
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-	auto [substituted_return_type, substituted_return_type_index] = substitute_template_parameter(
+	TypeIndex substituted_return_type_index = substitute_template_parameter(
 		orig_return_type, template_params, explicit_types);
 	
 	// Create return type with substituted type, preserving qualifiers
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		substituted_return_type,
 		substituted_return_type_index,
-		get_type_size_bits(substituted_return_type),
+		get_type_size_bits(substituted_return_type_index.category()),
 		orig_return_type.token(),
 		orig_return_type.cv_qualifier()
 	);
@@ -714,14 +713,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 			
 			// Substitute template parameters in the type
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				orig_param_type, template_params, explicit_types);
 			
 			// Create new type specifier with substituted type
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				substituted_type,
 				substituted_type_index,
-				get_type_size_bits(substituted_type),
+				get_type_size_bits(substituted_type_index.category()),
 				orig_param_type.token(),
 				orig_param_type.cv_qualifier()
 			);
@@ -1592,25 +1590,23 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 	} else {
 		// Fallback: Use simple substitution (old behavior)
-		auto [return_type_enum, return_type_index] = substitute_template_parameter(
+		TypeIndex return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args
 		);
 		
-		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		if (return_type_index.is_valid() && return_type_index.index() < getTypeInfoCount()) {
 			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(getTypeInfo(return_type_index).name()), "'");
 		}
 		
 		TypeSpecifierNode new_return_type(
-			return_type_enum,
-			TypeQualifier::None,
-			get_type_size_bits(return_type_enum),
+			return_type_index,
+			get_type_size_bits(return_type_index.category()),
 			Token(),
 			orig_return_type.cv_qualifier()  // Preserve const/volatile qualifiers (CVQualifier)
 		);
-		new_return_type.set_type_index(return_type_index);
 		
-		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
@@ -1917,48 +1913,45 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						}
 					}
 				} else {
-					auto [subst_type, subst_type_index] = substitute_template_parameter(
-						orig_param_type, template_params, template_args
-					);
-					// substitute_template_parameter only resolves UserDefined types by name
-					// matching against template parameter names. When the original parameter
-					// type is a UserDefined dependent-placeholder (e.g., the TypeInfo entry
-					// for Array$xxxx created when parsing `Array<T,N>& arr` inside the
-					// template with T and N still dependent), the full mangled name doesn't
-					// match any template param name, so the substitution returns unchanged.
-					// The call-site argument already holds the fully-resolved concrete type
-					// (e.g., Array<Point,3>). Use it when:
-					//   - substitution left a UserDefined type (dependent placeholder)
-					//   - the type_index was unchanged (no substitution happened)
-					//   - the TypeInfo at that index is a template instantiation (placeholder)
-					//   - we have a concrete call-site argument of type Struct
-					//
-					// NOTE: We use 'i' (the function parameter index) to index arg_types,
-					// matching the pre-deduction pass (line ~821) which also assumes 1:1
-					// correspondence between func_params[i] and arg_types[i]. Using
-					// arg_type_index here would be incorrect after a variadic pack
-					// expansion, since arg_type_index advances through multiple arg slots
-					// for a single function parameter, breaking the correspondence.
-					if (subst_type == Type::UserDefined &&
-					    subst_type_index == orig_param_type.type_index() &&
-					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
-					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
-					    i < arg_types.size() &&
-					    arg_types[i].type() == Type::Struct) {
-						subst_type = Type::Struct;
-						subst_type_index = arg_types[i].type_index();
-						FLASH_LOG_FORMAT(Templates, Debug,
-							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
-							recursion_depth, subst_type_index);
-					}
-					param_type = emplace_node<TypeSpecifierNode>(
-						subst_type,
-						TypeQualifier::None,
-						get_type_size_bits(subst_type),
-						Token(),
-						orig_param_type.cv_qualifier()
-					);
-					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
+				TypeIndex subst_type_index = substitute_template_parameter(
+					orig_param_type, template_params, template_args
+				);
+				// substitute_template_parameter only resolves UserDefined types by name
+				// matching against template parameter names. When the original parameter
+				// type is a UserDefined dependent-placeholder (e.g., the TypeInfo entry
+				// for Array$xxxx created when parsing `Array<T,N>& arr` inside the
+				// template with T and N still dependent), the full mangled name doesn't
+				// match any template param name, so the substitution returns unchanged.
+				// The call-site argument already holds the fully-resolved concrete type
+				// (e.g., Array<Point,3>). Use it when:
+				//   - substitution left a UserDefined type (dependent placeholder)
+				//   - the type_index was unchanged (no substitution happened)
+				//   - the TypeInfo at that index is a template instantiation (placeholder)
+				//   - we have a concrete call-site argument of type Struct
+				//
+				// NOTE: We use 'i' (the function parameter index) to index arg_types,
+				// matching the pre-deduction pass (line ~821) which also assumes 1:1
+				// correspondence between func_params[i] and arg_types[i]. Using
+				// arg_type_index here would be incorrect after a variadic pack
+				// expansion, since arg_type_index advances through multiple arg slots
+				// for a single function parameter, breaking the correspondence.
+				if (subst_type_index.category() == TypeCategory::UserDefined &&
+				    subst_type_index == orig_param_type.type_index() &&
+				    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
+				    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
+				    i < arg_types.size() &&
+				    arg_types[i].type() == Type::Struct) {
+					subst_type_index = arg_types[i].type_index();
+					FLASH_LOG_FORMAT(Templates, Debug,
+						"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
+						recursion_depth, subst_type_index);
+				}
+				param_type = emplace_node<TypeSpecifierNode>(
+					subst_type_index,
+					get_type_size_bits(subst_type_index.category()),
+					Token(),
+					orig_param_type.cv_qualifier()
+				);
 
 					// Preserve pointer levels from the original declaration
 					for (const auto& ptr_level : orig_param_type.pointer_levels()) {

@@ -1185,7 +1185,6 @@ ParseResult Parser::parse_lambda_expression() {
                 StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
-                    Type::Void,         // Base type (will be treated as pointer)
                     TypeIndex{},        // No type index
                     8,                  // Pointer size on x64
                     8,                  // Alignment
@@ -1212,7 +1211,6 @@ ParseResult Parser::parse_lambda_expression() {
                             StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
                                 copy_this_member_handle,            // Special member name for copied this
-                                Type::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
                                 enclosing_struct->alignment,        // Alignment from enclosing struct

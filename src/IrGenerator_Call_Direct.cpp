@@ -1340,7 +1340,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// For arrays, we need to pass the address of the first element
 					// Create a temporary for the address
 					// Generate AddressOf IR instruction to get the address of the array
-					TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+					TempVar addr_var = emitAddressOf(type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -1358,7 +1358,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						TempVar addr_var = emitAddressOf(type_node.type_node.type_index(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1395,7 +1395,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
-						Type literal_type = argumentIrOperands.type;
+						TypeIndex literal_type = argumentIrOperands.type_index;
 						int literal_size = argumentIrOperands.size_in_bits.value;
 
 						// Create a temporary variable to hold the literal value
@@ -1429,7 +1429,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-							Type expr_type = argumentIrOperands.type;
+							TypeIndex expr_type = argumentIrOperands.type_index;
 							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 
@@ -1451,7 +1451,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							}
 
 							// Fallback heuristic: 64-bit struct type likely holds an address
-							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+							if (!is_already_address && expr_size == 64 && expr_type.category() == Type::Struct) {
 								is_already_address = true;
 							}
 
