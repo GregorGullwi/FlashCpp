@@ -2943,7 +2943,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Set identifierType to prevent "Missing identifier" error
 							identifierType = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(
-									static_member->type,
 									static_member->type_index,
 									static_cast<unsigned char>(static_member->size * 8),
 									identifier_token
@@ -5467,7 +5466,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!literal_type) {
 			return ParseResult::error("Expected numeric literal", current_token_);
 		}
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits));
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_, literal_type->value, literal_type->type_index.category(), literal_type->typeQualifier, literal_type->sizeInBits));
 		advance();
 	}
 	else if (current_token_.type() == Token::Type::StringLiteral) {

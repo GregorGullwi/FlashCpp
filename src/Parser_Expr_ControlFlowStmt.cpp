@@ -1285,7 +1285,6 @@ ParseResult Parser::parse_lambda_expression() {
             // Determine size and alignment based on capture kind
             size_t member_size;
             size_t member_alignment;
-            Type member_type;
             TypeIndex type_index {};
 
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
@@ -1293,18 +1292,12 @@ ParseResult Parser::parse_lambda_expression() {
 				// We store the base type (e.g., Int) but the member will be accessed as a pointer
 				member_size = 8;
 				member_alignment = 8;
-				member_type = var_type.type();
-				if (var_type.category() == TypeCategory::Struct) {
-					type_index = var_type.type_index();
-				}
+				type_index = var_type.type_index();
 			} else {
                 // By-value capture: store the actual value
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
-                member_type = var_type.type();
-                if (var_type.category() == TypeCategory::Struct) {
-                    type_index = var_type.type_index();
-                }
+                type_index = var_type.type_index();
             }
 
 			size_t referenced_size_bits = member_size * 8;
@@ -1328,7 +1321,6 @@ ParseResult Parser::parse_lambda_expression() {
 
 			closure_struct_info->addMember(
 				var_name,
-				member_type,
 				type_index,
 				member_size,
 				member_alignment,
