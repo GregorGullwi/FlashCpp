@@ -1055,8 +1055,8 @@ inline int get_wchar_size_bits() {
 	return (g_target_data_model == TargetDataModel::LLP64) ? 16 : 32;
 }
 
-int get_type_size_bits(Type type);
-int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
+int get_type_size_bits(Type type);      // delegates to get_type_size_bits(typeToCategory(type))
+int get_type_size_bits(TypeCategory cat);  // primary implementation — full switch on TypeCategory
 TypeCategory promote_integer_type(TypeCategory type);
 TypeCategory get_common_type(TypeCategory left, TypeCategory right);
 

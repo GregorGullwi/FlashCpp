@@ -639,8 +639,8 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_negative = !lowerText.empty() && lowerText[0] == '-';
 		unsigned long long abs_val = is_negative ? (0ULL - val) : val;
 
-		int int_bits = get_type_size_bits(Type::Int);
-		int long_bits = get_type_size_bits(Type::Long);
+		int int_bits = get_type_size_bits(TypeCategory::Int);
+		int long_bits = get_type_size_bits(TypeCategory::Long);
 		// long long is always 64 bits per C++ standard.
 
 		if (is_decimal) {

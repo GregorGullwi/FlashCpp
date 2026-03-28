@@ -33,7 +33,7 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 	// Handle "long" specially since its size depends on target data model
 	// Windows (LLP64): long = 32 bits, Linux/Unix (LP64): long = 64 bits
 	if (type_name == "long") {
-		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(Type::Long)));
+		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(TypeCategory::Long)));
 	}
 
 	// Handle "wchar_t" specially since its size depends on target
@@ -448,7 +448,7 @@ ParseResult Parser::parse_type_specifier()
 		// Handle "long" specially due to target-dependent size
 		if (k == "long"_tok) {
 			type_cat = TypeCategory::Long;
-			type_size = get_type_size_bits(Type::Long);
+			type_size = get_type_size_bits(TypeCategory::Long);
 			has_explicit_type = true;
 		// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
 		} else if (k == "wchar_t"_tok) {
@@ -486,7 +486,7 @@ ParseResult Parser::parse_type_specifier()
 					break;
 				case TypeCategory::Long:
 					type_cat = TypeCategory::UnsignedLong;
-					type_size = get_type_size_bits(Type::UnsignedLong);
+					type_size = get_type_size_bits(TypeCategory::UnsignedLong);
 					break;
 				default:
 					break;
@@ -504,7 +504,7 @@ ParseResult Parser::parse_type_specifier()
 					type_size = 32;
 					break;
 				case TypeCategory::Long:
-					type_size = get_type_size_bits(Type::Long);
+					type_size = get_type_size_bits(TypeCategory::Long);
 					break;
 				default:
 					break;
@@ -518,12 +518,12 @@ ParseResult Parser::parse_type_specifier()
 			else if (type_cat == TypeCategory::Int) {
 				// "long int" -> long
 				type_cat = TypeCategory::Long;
-				type_size = get_type_size_bits(Type::Long);
+				type_size = get_type_size_bits(TypeCategory::Long);
 			}
 			else if (type_cat == TypeCategory::UnsignedInt) {
 				// "long unsigned int" or "unsigned long int" -> unsigned long
 				type_cat = TypeCategory::UnsignedLong;
-				type_size = get_type_size_bits(Type::UnsignedLong);
+				type_size = get_type_size_bits(TypeCategory::UnsignedLong);
 			}
 			else if (type_cat == TypeCategory::Long) {
 				// "long long" -> long long
