@@ -971,7 +971,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// Create context with correct result type
 		ArithmeticOperationContext ctx = {
-			.result_value = makeTypedValue(result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result),
+			.result_value = makeTypedValue(TypeIndex{0, typeToCategory(result_type)}, SizeInBits{static_cast<int>(result_size)}, bin_op.result),
 			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX,
 			.operand_type = operand_type,
@@ -1757,7 +1757,7 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 		TempVar temp_var)  {
 
 		IndirectStorageInfo info{
-			.value_type = value_type,
+			.value_type_index = TypeIndex{0, typeToCategory(value_type)},
 			.ir_type = toIrType(value_type),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
@@ -1776,10 +1776,10 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 			reference_temp_var_numbers_.push_back(temp_var.var_number);
 			if (holds_address_only) {
 				ValueCategory cat = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, SizeInBits{value_size_bits}, cat));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(TypeIndex{0, typeToCategory(value_type)}, SizeInBits{value_size_bits}, cat));
 			} else {
 				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, SizeInBits{value_size_bits}, category));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(TypeIndex{0, typeToCategory(value_type)}, SizeInBits{value_size_bits}, category));
 			}
 		}
 	}
@@ -1915,9 +1915,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 
 			// Check TempVar metadata next
 			if (isTempVarReference(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeIndex vt = getTempVarValueTypeIndex(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = vt,
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -1925,9 +1925,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 				};
 			}
 			if (isTempVarAddressOnly(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeIndex vt = getTempVarValueTypeIndex(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = vt,
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -2147,7 +2147,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 										if (catch_op->type_index.is_valid() && catch_op->type_index.index() < getTypeInfoCount()) {
 											catch_size_bits = getTypeInfo(catch_op->type_index).type_size_;
 										} else {
-											catch_size_bits = get_type_size_bits(catch_op->exception_type);
+											catch_size_bits = get_type_size_bits(catch_op->type_index);
 										}
 										if (catch_size_bits > 0) {
 											if (current_function_reserved_catch_obj_padding_size_ == 0) {
@@ -3994,7 +3994,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Determine effective return size; fall back to type size if not provided
 			int return_size_bits = call_op.return_size_in_bits.value;
 			if (return_size_bits == 0) {
-				int computed_size = get_type_size_bits(call_op.return_type);
+				int computed_size = get_type_size_bits(call_op.return_type_index);
 				if (computed_size > 0) {
 					return_size_bits = computed_size;
 				} else {
@@ -4377,7 +4377,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Both sizes are explicit for clarity
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(categoryToType(arg.type_index.category()))}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4404,7 +4404,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(categoryToType(arg.type_index.category()))}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4792,7 +4792,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
-				? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
+				? TypeSpecifierNode(categoryToType(arg.type_index.category()), arg.type_index, arg.size_in_bits.value)
 				: TypeSpecifierNode(categoryToType(arg.type_index.category()), TypeQualifier::None, arg.size_in_bits.value);
 			if (arg.pointer_depth.is_pointer()) {
 				for (int i = 0; i < arg.pointer_depth.value; ++i) {

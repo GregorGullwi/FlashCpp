@@ -148,25 +148,25 @@ void ElfFileWriter::add_typeinfo(std::string_view typeinfo_symbol, const void* t
  * We only need to generate references to these external symbols - the actual type_info
  * structures are defined in the runtime.
  */
-std::string ElfFileWriter::get_or_create_builtin_typeinfo(Type type) {
+std::string ElfFileWriter::get_or_create_builtin_typeinfo(TypeCategory type) {
 	// Map types to Itanium C++ ABI mangled type codes
 	std::string_view type_code;
 	switch (type) {
-		case Type::Void: type_code = "v"; break;
-		case Type::Bool: type_code = "b"; break;
-		case Type::Char: type_code = "c"; break;
-		case Type::UnsignedChar: type_code = "h"; break;
-		case Type::Short: type_code = "s"; break;
-		case Type::UnsignedShort: type_code = "t"; break;
-		case Type::Int: type_code = "i"; break;
-		case Type::UnsignedInt: type_code = "j"; break;
-		case Type::Long: type_code = "l"; break;
-		case Type::UnsignedLong: type_code = "m"; break;
-		case Type::LongLong: type_code = "x"; break;
-		case Type::UnsignedLongLong: type_code = "y"; break;
-		case Type::Float: type_code = "f"; break;
-		case Type::Double: type_code = "d"; break;
-		case Type::LongDouble: type_code = "e"; break;
+		case TypeCategory::Void: type_code = "v"; break;
+		case TypeCategory::Bool: type_code = "b"; break;
+		case TypeCategory::Char: type_code = "c"; break;
+		case TypeCategory::UnsignedChar: type_code = "h"; break;
+		case TypeCategory::Short: type_code = "s"; break;
+		case TypeCategory::UnsignedShort: type_code = "t"; break;
+		case TypeCategory::Int: type_code = "i"; break;
+		case TypeCategory::UnsignedInt: type_code = "j"; break;
+		case TypeCategory::Long: type_code = "l"; break;
+		case TypeCategory::UnsignedLong: type_code = "m"; break;
+		case TypeCategory::LongLong: type_code = "x"; break;
+		case TypeCategory::UnsignedLongLong: type_code = "y"; break;
+		case TypeCategory::Float: type_code = "f"; break;
+		case TypeCategory::Double: type_code = "d"; break;
+		case TypeCategory::LongDouble: type_code = "e"; break;
 		default:
 			// For non-builtin types, return empty string
 			return "";
