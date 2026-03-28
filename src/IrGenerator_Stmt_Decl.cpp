@@ -868,7 +868,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							for (const auto& member : struct_info->members) {
 								if (member.default_initializer.has_value()) {
 									// Evaluate the default initializer
-									unsigned long long value = evalToValue(*member.default_initializer, categoryToType(member.type_index.category()));
+									unsigned long long value = evalToValue(*member.default_initializer, member.type_index);
 
 									if (member.bitfield_width.has_value()) {
 										// Bitfield: use bit-level OR to pack value into the storage unit
@@ -1621,8 +1621,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									if (from_t != Type::Struct && to_t != Type::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
-										if (from_t == Type::Enum && from_t != init_operands.type)
-											from_t = init_operands.type;
+										if (from_t == Type::Enum && from_t != categoryToType(init_operands.type_index.category()))
+											from_t = categoryToType(init_operands.type_index.category());
 										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
 										sema_applied = true;
 									}
@@ -1737,7 +1737,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(addr_temp,
-						TempVarMetadata::makeAddressOnly(categoryToType(elem_type.category()), SizeInBits{elem_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(elem_type, SizeInBits{elem_size}, ValueCategory::LValue));
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
@@ -2677,7 +2677,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark element_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(element_addr,
-						TempVarMetadata::makeAddressOnly(categoryToType(array_element_type.category()), SizeInBits{array_element_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(array_element_type, SizeInBits{array_element_size}, ValueCategory::LValue));
 
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
@@ -2854,7 +2854,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Now look for the get<N>() function
 					// First, try template registry with exact index
 					TemplateTypeArg index_arg;
-					index_arg.setType(TypeCategory::UnsignedLong);
+					index_arg.setCategory(TypeCategory::UnsignedLong);
 					index_arg.is_value = true;
 					index_arg.value = static_cast<int64_t>(i);
 					std::vector<TemplateTypeArg> get_template_args = { index_arg };
@@ -3089,14 +3089,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				addr_op.result = member_addr;
 				addr_op.base = hidden_var_handle;
 				addr_op.total_member_offset = static_cast<int>(member.offset);
-				addr_op.result_type = categoryToType(member.type_index.category());
+				addr_op.result_type_index = member.type_index;
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
 
 				// Mark member_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 				setTempVarMetadata(member_addr,
-					TempVarMetadata::makeAddressOnly(categoryToType(member.type_index.category()), SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
+					TempVarMetadata::makeAddressOnly(member.type_index, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
 
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
