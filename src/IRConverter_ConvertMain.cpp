@@ -1764,15 +1764,15 @@ void IrToObjConverter<TWriterClass>::groupInstructionsByFunction(const Ir& ir)  
 
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset,
-		Type value_type,
+		TypeIndex value_type_index,
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
 		TempVar temp_var)  {
 
 		IndirectStorageInfo info{
-			.value_type = value_type,
-			.ir_type = toIrType(value_type),
+			.value_type_index = value_type_index,
+			.ir_type = toIrType(value_type_index.category()),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
@@ -1790,10 +1790,10 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 			reference_temp_var_numbers_.push_back(temp_var.var_number);
 			if (holds_address_only) {
 				ValueCategory cat = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, SizeInBits{value_size_bits}, cat));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type_index, SizeInBits{value_size_bits}, cat));
 			} else {
 				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, SizeInBits{value_size_bits}, category));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type_index, SizeInBits{value_size_bits}, category));
 			}
 		}
 	}
@@ -1810,24 +1810,24 @@ void IrToObjConverter<TWriterClass>::clearFunctionTempVarMetadata()  {
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var)  {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
+void IrToObjConverter<TWriterClass>::setReferenceInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, bool is_rvalue_ref, TempVar temp_var)  {
+		setIndirectStorageInfo(stack_offset, value_type_index, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var)  {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, temp_var);
+void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, TempVar temp_var)  {
+		setIndirectStorageInfo(stack_offset, value_type_index, value_size_bits, false, true, temp_var);
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
-		if (!returns_reference || typeToCategory(value_type) == TypeCategory::Function) {
+void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, TypeIndex value_type_index, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
+		if (!returns_reference || value_type_index.category() == TypeCategory::Function) {
 			return;
 		}
 
 		setReferenceInfo(
 			stack_offset,
-			value_type,
+			value_type_index,
 			referenced_value_size_in_bits.value,
 			returns_rvalue_reference,
 			TempVar{0});
@@ -1931,7 +1931,7 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 			if (isTempVarReference(temp_var)) {
 				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = TypeIndex{0, typeToCategory(vt)},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -1941,7 +1941,7 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 			if (isTempVarAddressOnly(temp_var)) {
 				Type vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = TypeIndex{0, typeToCategory(vt)},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -4553,8 +4553,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// not be registered as implicitly-dereferenced object references.
 			if (call_op.returns_reference && call_op.return_type_index.category() != TypeCategory::Function) {
 				registerObjectReferenceCallResult(
-					result_offset,
-					call_op.returnType(),
+				result_offset,
+				TypeIndex{0, typeToCategory(call_op.returnType())},
 					call_op.referenced_value_size_in_bits,
 					call_op.returns_reference,
 					call_op.returns_rvalue_reference);
@@ -5541,8 +5541,8 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		}
 
 		registerObjectReferenceCallResult(
-			result_offset,
-			op.result.typeEnum(),
+				result_offset,
+				TypeIndex{0, typeToCategory(op.result.typeEnum())},
 			op.referenced_value_size_in_bits,
 			op.returns_reference,
 			op.returns_rvalue_reference);
@@ -6285,7 +6285,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 			}
 
-			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference, TempVar{0});
+			setReferenceInfo(var_it->second.offset, TypeIndex{0, typeToCategory(var_type)}, value_size_bits, is_rvalue_reference, TempVar{0});
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -7588,7 +7588,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, TypeIndex{0, TypeCategory::Struct}, 64, TempVar{0});
 			}
 
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -7670,7 +7670,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				bool is_passed_by_reference = is_reference ||
 				                              (!is_two_reg_struct && typeToCategory(param_type) == TypeCategory::Struct && param_size > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param_type, param_size,
+					setReferenceInfo(offset, TypeIndex{0, typeToCategory(param_type)}, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 				}
 
@@ -7740,7 +7740,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, TypeIndex{0, TypeCategory::Struct}, 64, TempVar{0});
 			}
 
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
@@ -7817,7 +7817,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				bool is_passed_by_reference = param.is_reference() ||
 				                              (!is_two_reg_struct && isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.paramType(), param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
+					setReferenceInfo(offset, TypeIndex{0, typeToCategory(param.paramType())}, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 				}
 
 				// Add parameter to debug information
@@ -11220,7 +11220,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			Type value_type;
 			int value_size_bits;
 			if (lhs_ref_info.has_value()) {
-				value_type = lhs_ref_info->value_type;
+				value_type = lhs_ref_info->valueType();
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
@@ -11884,7 +11884,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
 		// This allows subsequent operations to properly handle the address
 		if (optimize_lea) {
-			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, typeToCategory(element_type)}, element_size_bits, false, result_var);
 		}
 
 		// Release the base register
@@ -12540,7 +12540,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			regAlloc.release(addr_reg);
 
 			// Mark this temp var as containing a pointer/address
-			setReferenceInfo(result_offset, op.result.typeEnum(), op.result.size_in_bits.value, false, result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, typeToCategory(op.result.typeEnum())}, op.result.size_in_bits.value, false, result_var);
 			return;
 		}
 
@@ -12688,7 +12688,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		if (op.is_reference()) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
-			setReferenceInfo(result_offset, op.result.typeEnum(), op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, typeToCategory(op.result.typeEnum())}, op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
 			return;
 		}
 
@@ -13260,7 +13260,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			// However, we mark it in indirect_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			setAddressOnlyInfo(result_offset, op.operand.typeEnum(), op.operand.size_in_bits.value, op.result);
+			setAddressOnlyInfo(result_offset, TypeIndex{0, typeToCategory(op.operand.typeEnum())}, op.operand.size_in_bits.value, op.result);
 
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -13368,7 +13368,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 		// Record that the stack slot already holds an address so later consumers
 		// (notably by-address constructor-call lowering) load it with MOV instead
 		// of taking the address of the spill slot with LEA.
-		setAddressOnlyInfo(result_offset, op.memberType(), op.member_size_in_bits, op.result);
+		setAddressOnlyInfo(result_offset, TypeIndex{0, typeToCategory(op.memberType())}, op.member_size_in_bits, op.result);
 
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
@@ -14081,7 +14081,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exceptionType(),
+				setReferenceInfo(stack_offset, TypeIndex{0, typeToCategory(catch_op.exceptionType())},
 				                 64,
 				                 catch_op.is_rvalue_reference(),
 				                 catch_op.exception_temp);
@@ -14116,7 +14116,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exceptionType(),
+				setReferenceInfo(stack_offset, TypeIndex{0, typeToCategory(catch_op.exceptionType())},
 				                 type_size_bits > 0 ? type_size_bits : 64,
 				                 false,
 				                 catch_op.exception_temp);
@@ -14393,7 +14393,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// the address of the slot itself.
 			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-				setReferenceInfo(stack_offset, catch_op.exceptionType(), 64, false, catch_op.exception_temp);
+				setReferenceInfo(stack_offset, TypeIndex{0, typeToCategory(catch_op.exceptionType())}, 64, false, catch_op.exception_temp);
 			}
 
 			if (current_catch_handler_) {

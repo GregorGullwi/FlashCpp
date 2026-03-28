@@ -388,7 +388,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
-				argument_result.typeEnum(),
+				TypeIndex{0, typeToCategory(argument_result.typeEnum())},
 				argument_result.size_in_bits,
 				category);
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
@@ -873,8 +873,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			const auto slot = sema_->getSlot(key);
 			if (!slot.has_value() || !slot->has_cast()) return false;
 			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-			const Type to_t   = sema_->typeContext().get(ci.target_type_id).base_type;
+			Type from_t = categoryToType(sema_->typeContext().get(ci.source_type_id).category());
+			const Type to_t   = categoryToType(sema_->typeContext().get(ci.target_type_id).category());
 			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return false;
 			if (expected_cat != TypeCategory::Invalid && typeToCategory(to_t) != expected_cat) return false;
 			// Defensive: sema source type should match the expression's runtime type.
@@ -901,7 +901,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
 
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-				LValueInfo(LValueInfo::Kind::Global, binding.store_name),
+				LValueInfo(LValueInfo::Kind::Global, binding.store_name, 0),
 				binding.type_index.category(), binding.size_in_bits.value));
 
 		return makeExprResult(binding.bindingType(), binding.size_in_bits, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -1428,7 +1428,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				Type resolved_ir_type = resolve_type_alias(categoryToType(ir_type), ir_type_index);
 				if (ir_type_index.index() < getTypeInfoCount()) {
-					resolved_ir_type = resolve_type_alias(getTypeInfo(ir_type_index).type_, ir_type_index);
+					resolved_ir_type = resolve_type_alias(getTypeInfo(ir_type_index).typeEnum(), ir_type_index);
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
 					return;
@@ -1457,7 +1457,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
 						if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
 							const TypeInfo& alias_type_info = *alias_it->second;
-							TypeSpecifierNode resolved(alias_type_info.type_, TypeQualifier::None, alias_type_info.type_size_, type_spec.token(), type_spec.cv_qualifier());
+							TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, alias_type_info.type_size_, type_spec.token(), type_spec.cv_qualifier());
 							resolved.set_type_index(alias_type_info.type_index_);
 							resolved.copy_indirection_from(type_spec);
 							resolved.set_reference_qualifier(type_spec.reference_qualifier());
@@ -1482,7 +1482,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(type_info.type_, type_spec.type_index());
+				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_spec.type_index());
 				if (carriesSemanticTypeIndex(indexed_type)) {
 					return true;
 				}
@@ -1579,7 +1579,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(type_info.type_, type_index);
+				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_index);
 				return carriesSemanticTypeIndex(indexed_type);
 			};
 
@@ -4237,7 +4237,7 @@ const Token& token) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	TypeCategory lvalue_cat = (typeToCategory(lhs_meta.value_type) != TypeCategory::Invalid) ? typeToCategory(lhs_meta.value_type) : lhs_operands.category();
+	TypeCategory lvalue_cat = (lhs_meta.valueCategory() != TypeCategory::Invalid) ? lhs_meta.valueCategory() : lhs_operands.category();
 	Type lvalue_type = categoryToType(lvalue_cat);
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
@@ -4481,7 +4481,7 @@ std::string_view op) {
 	}
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
-	TypeCategory lvalue_cat = (typeToCategory(lhs_meta.value_type) != TypeCategory::Invalid) ? typeToCategory(lhs_meta.value_type) : lhs_operands.category();
+	TypeCategory lvalue_cat = (lhs_meta.valueCategory() != TypeCategory::Invalid) ? lhs_meta.valueCategory() : lhs_operands.category();
 	Type lvalue_type = categoryToType(lvalue_cat);
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;

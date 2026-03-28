@@ -1386,13 +1386,19 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 	if (lhs.has_function_signature()) {
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
-		if (lhs_sig.return_type != rhs_sig.return_type ||
-			lhs_sig.parameter_types != rhs_sig.parameter_types ||
+		if (lhs_sig.returnType() != rhs_sig.returnType() ||
+			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||
 			lhs_sig.is_const != rhs_sig.is_const ||
 			lhs_sig.is_volatile != rhs_sig.is_volatile) {
 			return false;
+		}
+		for (size_t i = 0; i < lhs_sig.parameter_type_indices.size(); ++i) {
+			if (lhs_sig.parameter_type_indices[i].category() != rhs_sig.parameter_type_indices[i].category() ||
+			    lhs_sig.parameter_type_indices[i] != rhs_sig.parameter_type_indices[i]) {
+				return false;
+			}
 		}
 	}
 

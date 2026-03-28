@@ -104,7 +104,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 }
 
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
-	TypeSpecifierNode type_node(desc.base_type, desc.type_index, 0);
+	TypeSpecifierNode type_node(categoryToType(desc.category()), desc.type_index, 0);
 	type_node.set_cv_qualifier(desc.base_cv);
 	type_node.set_reference_qualifier(desc.ref_qualifier);
 	for (const auto& pointer_level : desc.pointer_levels) {
@@ -132,8 +132,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.memberType();
-	desc.type_index = member.type_index;
+	desc.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.is_array) {
 		desc.array_dimensions = member.array_dimensions;
@@ -152,8 +151,7 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
-	desc.base_type = member.memberType();
-	desc.type_index = member.type_index;
+	desc.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
 	for (int i = 0; i < member.pointer_depth; ++i) {
@@ -164,8 +162,7 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
 	CanonicalTypeDesc desc;
-	desc.base_type = arg.typeEnum();
-	desc.type_index = arg.type_index;
+	desc.type_index = TypeIndex::fromTypeAndIndex(arg.typeEnum(), arg.type_index);
 	desc.base_cv = arg.cv_qualifier;
 	desc.ref_qualifier = arg.ref_qualifier;
 	for (size_t i = 0; i < arg.pointer_depth; ++i) {
@@ -221,7 +218,7 @@ const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
 // --- CanonicalTypeDesc::operator== ---
 
 bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
-	if (base_type != other.base_type) return false;
+	if (type_index.category() != other.type_index.category()) return false;
 	if (type_index != other.type_index) return false;
 	if (base_cv != other.base_cv) return false;
 	if (ref_qualifier != other.ref_qualifier) return false;
@@ -235,8 +232,12 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (function_signature.has_value()) {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
-		if (a.return_type != b.return_type) return false;
-		if (a.parameter_types != b.parameter_types) return false;
+		if (a.returnType() != b.returnType()) return false;
+		if (a.parameter_type_indices.size() != b.parameter_type_indices.size()) return false;
+		for (size_t i = 0; i < a.parameter_type_indices.size(); ++i) {
+			if (a.parameter_type_indices[i].category() != b.parameter_type_indices[i].category() ||
+			    a.parameter_type_indices[i] != b.parameter_type_indices[i]) return false;
+		}
 		if (a.linkage != b.linkage) return false;
 		if (a.is_const != b.is_const) return false;
 		if (a.is_volatile != b.is_volatile) return false;
@@ -804,7 +805,7 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
 	// repeated interning on every call.
 	CanonicalTypeDesc bool_desc;
-	bool_desc.base_type = Type::Bool;
+	bool_desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 	bool_type_id_ = type_context_.intern(bool_desc);
 }
 
@@ -1956,14 +1957,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
 							// Skip non-primitive types
 						} else {
-							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
+							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
 							const TypeCategory promoted_cat = promote_integer_type(lhs_cat);
 							if (promoted_cat != lhs_cat) {
 								CanonicalTypeDesc promoted_desc;
-								promoted_desc.base_type = categoryToType(promoted_cat);
+								promoted_desc.type_index = TypeIndex::fromCategory(promoted_cat);
 								const CanonicalTypeId promoted_id = type_context_.intern(promoted_desc);
 								CanonicalTypeDesc lhs_base_desc;
-								lhs_base_desc.base_type = categoryToType(lhs_cat);
+								lhs_base_desc.type_index = TypeIndex::fromCategory(lhs_cat);
 								const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 								storeCompoundAssignBackConvSlot(e, promoted_id, lhs_base_id);
 							}
@@ -2183,7 +2184,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type) {
 	CanonicalTypeDesc desc;
-	desc.base_type = type.type();
+	desc.type_index = TypeIndex::fromCategory(typeToCategory(type.type()));
 	desc.type_index = type.type_index();
 	desc.base_cv = type.cv_qualifier();
 	desc.ref_qualifier = type.reference_qualifier();
@@ -2297,12 +2298,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
-				desc.base_type = e.type();
+				desc.type_index = TypeIndex::fromCategory(typeToCategory(e.type()));
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Bool;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -2471,23 +2472,23 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!operand_id) return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
 					// Resolve enum to underlying type
-					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(operand_desc.base_type), operand_desc.type_index);
+					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.category(), operand_desc.type_index);
 					const bool is_small_int =
 						(isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool)
 						&& get_integer_rank(operand_cat) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
-						promoted.base_type = Type::Int;
+						promoted.type_index = TypeIndex::fromCategory(TypeCategory::Int);
 						return type_context_.intern(promoted);
 					}
 					CanonicalTypeDesc result_desc;
-					result_desc.base_type = categoryToType(operand_cat);
+					result_desc.type_index = TypeIndex::fromCategory(operand_cat);
 					return type_context_.intern(result_desc);
 				}
 				// Logical NOT always returns bool
 				if (op == "!") {
 					CanonicalTypeDesc desc;
-					desc.base_type = Type::Bool;
+					desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 					return type_context_.intern(desc);
 				}
 				// Prefix/postfix ++ and -- return the operand type
@@ -2503,7 +2504,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					op == "<=" || op == ">=" || op == "&&" || op == "||")
 				{
 					CanonicalTypeDesc desc;
-					desc.base_type = Type::Bool;
+					desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 					return type_context_.intern(desc);
 				}
 				// Comma: result is the RHS type
@@ -2523,10 +2524,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (l.category() == TypeCategory::Invalid || r.category() == TypeCategory::Invalid) return {};
 					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category())) return {};
 					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
-					const TypeCategory common_cat = get_common_type(typeToCategory(l.base_type), typeToCategory(r.base_type));
+					const TypeCategory common_cat = get_common_type(l.category(), r.category());
 					if (common_cat == TypeCategory::Invalid) return {};
 					CanonicalTypeDesc desc;
-					desc.base_type = categoryToType(common_cat);
+					desc.type_index = TypeIndex::fromCategory(common_cat);
 					return type_context_.intern(desc);
 				}
 			}
@@ -2540,10 +2541,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
 				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct) return {};
 				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
-				const TypeCategory common_cat = get_common_type(typeToCategory(t_desc.base_type), typeToCategory(f_desc.base_type));
+				const TypeCategory common_cat = get_common_type(t_desc.category(), f_desc.category());
 				if (common_cat == TypeCategory::Invalid) return {};
 				CanonicalTypeDesc ternary_desc;
-				ternary_desc.base_type = categoryToType(common_cat);
+				ternary_desc.type_index = TypeIndex::fromCategory(common_cat);
 				return type_context_.intern(ternary_desc);
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
@@ -2613,13 +2614,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			                   std::is_same_v<T, AlignofExprNode>) {
 				// sizeof, sizeof... and alignof always return size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::UnsignedLongLong;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, TypeidNode>) {
 				// The current backend models typeid as producing a const void* handle.
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Void;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
@@ -2640,7 +2641,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 				// String literal has type "const char*" (array of const char).
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Char;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
@@ -2669,7 +2670,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							}
 						} else if (owner_it->second->isEnum()) {
 							CanonicalTypeDesc desc;
-							desc.base_type = Type::Enum;
+							desc.type_index = TypeIndex::fromCategory(TypeCategory::Enum);
 							desc.type_index = owner_it->second->type_index_;
 							return type_context_.intern(desc);
 						}
@@ -2686,19 +2687,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
 				// offsetof returns size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::UnsignedLongLong;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				// noexcept(expr) returns bool.
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Bool;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
 				// Type trait intrinsics return bool (e.g., __is_integral(T)).
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Bool;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
@@ -2717,12 +2718,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				// C++20 [expr.delete]: delete-expression is a void expression.
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Void;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Void;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
@@ -2732,7 +2733,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				auto it = getTypesByNameMap().find(lambda_name);
 				if (it != getTypesByNameMap().end() && it->second) {
 					CanonicalTypeDesc desc;
-					desc.base_type = Type::Struct;
+					desc.type_index = TypeIndex::fromCategory(TypeCategory::Struct);
 					desc.type_index = it->second->type_index_;
 					return type_context_.intern(desc);
 				}
@@ -2741,7 +2742,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				// C++20 [expr.throw]: a throw-expression is of type void.
 				CanonicalTypeDesc desc;
-				desc.base_type = Type::Void;
+				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			return {};
@@ -2751,12 +2752,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	// Handle old-style nodes stored directly (not wrapped in ExpressionNode)
 	if (node.is<NumericLiteralNode>()) {
 		CanonicalTypeDesc desc;
-		desc.base_type = node.as<NumericLiteralNode>().type();
+		desc.type_index = TypeIndex::fromCategory(typeToCategory(node.as<NumericLiteralNode>().type()));
 		return type_context_.intern(desc);
 	}
 	if (node.is<BoolLiteralNode>()) {
 		CanonicalTypeDesc desc;
-		desc.base_type = Type::Bool;
+		desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
 		return type_context_.intern(desc);
 	}
 
@@ -2806,7 +2807,7 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 					target_name = StringTable::getStringView(target_ei->name);
 			}
 			if (target_name.empty())
-				target_name = getTypeName(to_desc.base_type);
+				target_name = getTypeName(categoryToType(to_desc.category()));
 			throw CompileError("cannot implicitly convert from scoped enum '" +
 				std::string(StringTable::getStringView(ei->name)) +
 				"' to '" + target_name +
@@ -2852,7 +2853,7 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 
 	// Same scoped enum type: relational and equality comparisons are valid.
 	if (lhs_scoped && rhs_scoped &&
-		lhs_desc.base_type == rhs_desc.base_type &&
+		categoryToType(lhs_desc.category()) == categoryToType(rhs_desc.category()) &&
 		lhs_desc.type_index == rhs_desc.type_index) {
 		const bool is_comparison =
 			op == "==" || op == "!=" || op == "<" || op == ">" ||
@@ -2895,7 +2896,7 @@ static bool structHasConversionOperatorTo(
 			return false;
 		target_name = StringTable::getStringView(getTypeInfo(to_desc.type_index).name());
 	} else {
-		target_name = getTypeName(to_desc.base_type);
+		target_name = getTypeName(categoryToType(to_desc.category()));
 		if (target_name.empty()) return false;
 	}
 
@@ -2926,7 +2927,7 @@ static bool structHasConversionOperatorTo(
 			if (typeToCategory(resolved_type) == to_desc.category()) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
 			if (typeToCategory(resolved_type) == TypeCategory::UserDefined) {
-				const int expected_size = get_type_size_bits(to_desc.base_type);
+				const int expected_size = get_type_size_bits(categoryToType(to_desc.category()));
 				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
 					return true;
 			}
@@ -2937,7 +2938,7 @@ static bool structHasConversionOperatorTo(
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred) continue;
 		CanonicalTypeDesc base_from_desc;
-		base_from_desc.base_type = categoryToType(TypeCategory::Struct);
+		base_from_desc.type_index = TypeIndex::fromCategory(TypeCategory::Struct);
 		base_from_desc.type_index = base.type_index;
 		if (structHasConversionOperatorTo(base_from_desc, to_desc, depth + 1))
 			return true;
@@ -2962,7 +2963,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
-	if (from_desc.base_type == to_desc.base_type) return false;
+	if (categoryToType(from_desc.category()) == categoryToType(to_desc.category())) return false;
 
 	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
 	// Enum source types are allowed: C++20 permits implicit enum→primitive conversions
@@ -2997,8 +2998,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
 
-	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.base_type, from_desc.type_index);
-	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.base_type, to_desc.type_index);
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(categoryToType(from_desc.category()), from_desc.type_index);
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(categoryToType(to_desc.category()), to_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(from_canonical.type_cat, to_canonical.type_cat);
 	if (!plan.is_valid) return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
@@ -3037,8 +3038,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated conversion ",
-		static_cast<int>(from_desc.base_type), " → ",
-		static_cast<int>(to_desc.base_type),
+		static_cast<int>(from_desc.category()), " → ",
+		static_cast<int>(to_desc.category()),
 		" (kind=", static_cast<int>(plan.kind), ")");
 	return true;
 }
@@ -3199,19 +3200,19 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
 	if (common_cat == TypeCategory::Invalid) return;
 
 	// Intern the common type
 	CanonicalTypeDesc common_desc;
-	common_desc.base_type = categoryToType(common_cat);
+	common_desc.type_index = TypeIndex::fromCategory(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id, lhs_type_id);
@@ -3231,8 +3232,8 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
 	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
 	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
-	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(src_desc.base_type, src_desc.type_index);
-	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(tgt_desc.base_type, tgt_desc.type_index);
+	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(categoryToType(src_desc.category()), src_desc.type_index);
+	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(categoryToType(tgt_desc.category()), tgt_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(src_canonical.type_cat, tgt_canonical.type_cat);
 	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
 
@@ -3253,7 +3254,7 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
-		static_cast<int>(src_desc.base_type), " → ", static_cast<int>(tgt_desc.base_type),
+		static_cast<int>(src_desc.category()), " → ", static_cast<int>(tgt_desc.category()),
 		" (kind=", static_cast<int>(plan.kind), ")");
 }
 
@@ -3271,10 +3272,10 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
 
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
 	if (common_cat == TypeCategory::Invalid) return;
@@ -3282,11 +3283,11 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 
 	// Build the back-conversion: common → lhs_base
 	CanonicalTypeDesc common_desc;
-	common_desc.base_type = categoryToType(common_cat);
+	common_desc.type_index = TypeIndex::fromCategory(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	CanonicalTypeDesc lhs_base_desc;
-	lhs_base_desc.base_type = categoryToType(lhs_cat);
+	lhs_base_desc.type_index = TypeIndex::fromCategory(lhs_cat);
 	const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 
 	storeCompoundAssignBackConvSlot(bin_op, common_type_id, lhs_base_id);
@@ -3312,12 +3313,12 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.base_type) || isPlaceholderAutoType(rhs_desc.base_type)) return;
+	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(lhs_desc.base_type), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(rhs_desc.base_type), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
 
 	// Shift is only defined for integral operands
 	if (isFloatingPointType(lhs_cat) || isFloatingPointType(rhs_cat)) return;
@@ -3328,12 +3329,12 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 	if (promoted_lhs != lhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = categoryToType(promoted_lhs);
+		promoted_desc.type_index = TypeIndex::fromCategory(promoted_lhs);
 		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc), lhs_type_id);
 	}
 	if (promoted_rhs != rhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = categoryToType(promoted_rhs);
+		promoted_desc.type_index = TypeIndex::fromCategory(promoted_rhs);
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc), rhs_type_id);
 	}
 }
@@ -3353,10 +3354,10 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (!operand_desc.pointer_levels.empty()) return;
 	if (!operand_desc.array_dimensions.empty()) return;
 	if (operand_desc.category() == TypeCategory::Struct || operand_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(operand_desc.base_type)) return;
+	if (isPlaceholderAutoType(categoryToType(operand_desc.category()))) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
-	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(typeToCategory(operand_desc.base_type), operand_desc.type_index);
+	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.category(), operand_desc.type_index);
 
 	// Unary +, -, ~ are only defined for arithmetic types
 	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
@@ -3368,7 +3369,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	const TypeCategory promoted_cat = promote_integer_type(operand_cat);
 	if (promoted_cat != operand_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.base_type = categoryToType(promoted_cat);
+		promoted_desc.type_index = TypeIndex::fromCategory(promoted_cat);
 		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
 	}
 }
@@ -4005,9 +4006,9 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// its type is void. The result type is the other branch's type — no conversion needed.
 	if (true_desc.category() == TypeCategory::Void || false_desc.category() == TypeCategory::Void) return;
 
-	Type common = categoryToType(get_common_type(typeToCategory(true_desc.base_type), typeToCategory(false_desc.base_type)));
+	Type common = categoryToType(get_common_type(true_desc.category(), false_desc.category()));
 	CanonicalTypeDesc common_desc;
-	common_desc.base_type = common;
+	common_desc.type_index = TypeIndex::fromCategory(typeToCategory(common));
 	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	// Annotate each branch if it needs conversion to the common type.

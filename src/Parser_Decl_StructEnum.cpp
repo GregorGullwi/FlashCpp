@@ -664,7 +664,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}", 
 					                 StringTable::getStringView(resolved_type->name()), 
 					                 resolved_type->type_index_, 
-					                 static_cast<int>(underlying.type_));
+					                 static_cast<int>(underlying.category()));
 					
 					resolved_type = &underlying;
 					// If we've reached a concrete struct type, we're done

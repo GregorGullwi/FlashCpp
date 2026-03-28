@@ -1279,7 +1279,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					advance(); // consume '('
 					
 					// Parse parameter list using shared helper
-					std::vector<Type> param_types;
+					std::vector<TypeIndex> param_types;
 					bool param_parse_ok = parse_function_type_parameter_list(param_types);
 					
 					if (!param_parse_ok) {
@@ -1317,8 +1317,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						
 						// Successfully parsed function reference/pointer type!
 						FunctionSignature func_sig;
-						func_sig.return_type = type_node.type();
-						func_sig.parameter_types = std::move(param_types);
+						func_sig.return_type_index = type_node.type_index();
+						func_sig.parameter_type_indices = std::move(param_types);
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
 						
@@ -1356,7 +1356,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Save position within the parens
 				SaveHandle func_type_saved_pos = save_token_position();
 				bool is_bare_func_type = false;
-				std::vector<Type> func_param_types;
+				std::vector<TypeIndex> func_param_types;
 				
 				// Try to parse as function parameter list using shared helper
 				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
@@ -1367,8 +1367,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					
 					// Successfully parsed bare function type
 					FunctionSignature func_sig;
-					func_sig.return_type = type_node.type();
-					func_sig.parameter_types = std::move(func_param_types);
+					func_sig.return_type_index = type_node.type_index();
+					func_sig.parameter_type_indices = std::move(func_param_types);
 					type_node.set_function_signature(func_sig);
 					
 					// Consume trailing noexcept or noexcept(expr) if present

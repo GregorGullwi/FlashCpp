@@ -342,7 +342,7 @@ Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		// Prefer the canonical type stored in gTypeInfo when available. This keeps
 		// typedef / alias lowering consistent with the resolved type table entry.
-		canonical_type = getTypeInfo(type_index).type_;
+		canonical_type = getTypeInfo(type_index).resolvedType();
 	}
 	return resolve_type_alias(canonical_type, type_index);
 }

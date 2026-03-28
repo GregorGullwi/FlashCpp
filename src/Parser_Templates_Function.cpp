@@ -113,7 +113,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (trailing_ts.type_index().index() < getTypeInfoCount()) {
 			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
 			          StringTable::getStringView(getTypeInfo(trailing_ts.type_index()).name()), 
-			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).type_));
+			          "', underlying_type=", static_cast<int>(getTypeInfo(trailing_ts.type_index()).category()));
 		}
 		
 		// Replace the auto type with the trailing return type

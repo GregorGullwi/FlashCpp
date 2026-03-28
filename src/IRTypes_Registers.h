@@ -268,33 +268,37 @@ struct TempVarMetadata {
 	
 	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
-	Type value_type = Type::Invalid;
+	TypeIndex value_type_index {};
 	IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field for TempVar metadata
 	SizeInBits value_size_bits;
 	bool is_rvalue_reference = false;
+
+	// Accessors for the value type
+	Type valueType() const { return categoryToType(value_type_index.category()); }
+	TypeCategory valueCategory() const { return value_type_index.category(); }
 	
 	// Constructor
 	TempVarMetadata() = default;
 	
 	// Helper to create lvalue metadata
-	static TempVarMetadata makeLValue(LValueInfo lv_info, TypeCategory cat = TypeCategory::Invalid, int size_bits = 0) {
+	static TempVarMetadata makeLValue(LValueInfo lv_info, TypeCategory cat, int size_bits) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
-		meta.value_type = categoryToType(cat);
-		meta.ir_type = toIrType(categoryToType(cat));
+		meta.value_type_index = TypeIndex{0, cat};
+		meta.ir_type = toIrType(cat);
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
 	
 	// Helper to create xvalue metadata
-	static TempVarMetadata makeXValue(LValueInfo lv_info, TypeCategory cat = TypeCategory::Invalid, int size_bits = 0) {
+	static TempVarMetadata makeXValue(LValueInfo lv_info, TypeCategory cat, int size_bits) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::XValue;
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
-		meta.value_type = categoryToType(cat);
-		meta.ir_type = toIrType(categoryToType(cat));
+		meta.value_type_index = TypeIndex{0, cat};
+		meta.ir_type = toIrType(cat);
 		meta.value_size_bits = SizeInBits{size_bits};
 		return meta;
 	}
@@ -324,30 +328,30 @@ struct TempVarMetadata {
 	}
 	
 	// Helper to create reference metadata (for compatibility with IndirectStorageInfo)
-	static TempVarMetadata makeReference(Type type, SizeInBits size_bits, ValueCategory category) {
+	static TempVarMetadata makeReference(TypeIndex value_type_index_param, SizeInBits size_bits, ValueCategory value_category) {
 		TempVarMetadata meta;
-		meta.category = category;
+		meta.category = value_category;
 		meta.is_address = true;  // References hold addresses
 		meta.holds_address_only = false;
-		meta.value_type = type;
-		meta.ir_type = toIrType(type);
+		meta.value_type_index = value_type_index_param;
+		meta.ir_type = toIrType(value_type_index_param.category());
 		meta.value_size_bits = size_bits;
-		meta.is_rvalue_reference = (category == ValueCategory::XValue);
+		meta.is_rvalue_reference = (value_category == ValueCategory::XValue);
 		return meta;
 	}
 	
 	// Helper to create address-only metadata (for AddressOf/AddressOfMember results)
 	// Address-only values should NOT be implicitly dereferenced.
 	// Pass ValueCategory::XValue for rvalue-reference address-only values (e.g. function returning T&&)
-	static TempVarMetadata makeAddressOnly(Type type, SizeInBits size_bits, ValueCategory category) {
+	static TempVarMetadata makeAddressOnly(TypeIndex value_type_index_param, SizeInBits size_bits, ValueCategory value_category) {
 		TempVarMetadata meta;
-		meta.category = category;
+		meta.category = value_category;
 		meta.is_address = true;  // It's an address/pointer
 		meta.holds_address_only = true;  // But not a true reference
-		meta.value_type = type;
-		meta.ir_type = toIrType(type);
+		meta.value_type_index = value_type_index_param;
+		meta.ir_type = toIrType(value_type_index_param.category());
 		meta.value_size_bits = size_bits;
-		meta.is_rvalue_reference = (category == ValueCategory::XValue);
+		meta.is_rvalue_reference = (value_category == ValueCategory::XValue);
 		return meta;
 	}
 };

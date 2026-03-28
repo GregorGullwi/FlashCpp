@@ -1147,12 +1147,15 @@ struct DeferredTemplateBaseClassSpecifier {
 
 // Function signature for function pointers
 struct FunctionSignature {
-	Type return_type;
-	std::vector<Type> parameter_types;
+	TypeIndex return_type_index {};
+	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;           // C vs C++ linkage
 	std::optional<std::string> class_name;     // For member function pointers
 	bool is_const = false;                     // For const member functions
 	bool is_volatile = false;                  // For volatile member functions
+
+	// Accessor helpers
+	Type returnType() const { return categoryToType(return_type_index.category()); }
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation

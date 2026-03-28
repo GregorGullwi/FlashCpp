@@ -728,13 +728,15 @@ struct QualifiedIdentifier {
 
 struct TypeInfo
 {
-	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), type_(type), type_index_(idx), type_size_(type_size) {
+	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
+	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), category_(typeToCategory(type)), type_index_(idx), type_size_(type_size) {
+	}
+	TypeInfo(StringHandle name, TypeCategory cat, TypeIndex idx, int type_size) : name_(name), category_(cat), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
-	Type type_;
+	TypeCategory category_;
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -814,10 +816,10 @@ struct TypeInfo
 	// Returns the TypeCategory embedded in type_index_. For types registered via
 	// add_struct_type / add_enum_type / register_type_alias / etc. this is always
 	// correct. For legacy TypeInfo entries built before Milestone 7 (TypeCategory
-	// embedding), category() falls back to typeToCategory(type_).
+	// embedding), category() falls back to category_.
 	TypeCategory category() const {
 		TypeCategory cat = type_index_.category();
-		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
+		return (cat != TypeCategory::Invalid) ? cat : category_;
 	}
 
 	// Helper methods for struct types
@@ -848,15 +850,16 @@ struct TypeInfo
 	// isStructLike: checks category() for the declared kind.  TypeAlias entries
 	// whose resolved (effective) type is a struct/UserDefined are treated as
 	// struct-like because struct-info traversal must follow alias chains.
-	// resolvedType() returns type_, the effective/resolved underlying type, which
-	// is what alias-traversal loops should read rather than type_ directly.
-	Type resolvedType()          const { return type_; }
+	// resolvedType() returns the effective/resolved underlying type.
+	// typeEnum() returns the legacy Type enum for the category.
+	Type typeEnum()              const { return categoryToType(category_); }
+	Type resolvedType()          const { return categoryToType(category_); }
 	bool isStructLike()          const { return category() == TypeCategory::Struct
 	                                         || category() == TypeCategory::UserDefined
-	                                         || (isTypeAlias() && typeToCategory(type_) == TypeCategory::UserDefined); }
-	bool isVoid()                const { return typeToCategory(type_) == TypeCategory::Void; }
-	bool isPrimitive()           const { return is_primitive_type(type_); }
-	bool needsTypeIndex()        const { return needs_type_index(type_); }
+	                                         || (isTypeAlias() && category_ == TypeCategory::UserDefined); }
+	bool isVoid()                const { return category_ == TypeCategory::Void; }
+	bool isPrimitive()           const { return is_primitive_type(category_); }
+	bool needsTypeIndex()        const { return needs_type_index(category_); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias()           const { return is_type_alias_; }
 };

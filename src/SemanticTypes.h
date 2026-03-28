@@ -105,7 +105,6 @@ inline bool hasFlag(CanonicalTypeFlags flags, CanonicalTypeFlags flag) {
 }
 
 struct CanonicalTypeDesc {
-	Type base_type = Type::Invalid;
 	TypeIndex type_index{};
 	CVQualifier base_cv = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
@@ -117,8 +116,7 @@ struct CanonicalTypeDesc {
 	bool operator==(const CanonicalTypeDesc& other) const;
 
 	TypeCategory category() const {
-		TypeCategory cat = type_index.category();
-		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(base_type);
+		return type_index.category();
 	}
 };
 
@@ -133,7 +131,7 @@ struct hash<CanonicalTypeDesc> {
 			return h * 31u + v;
 		};
 		size_t h = 0;
-		h = combine(h, static_cast<size_t>(d.base_type));
+		h = combine(h, static_cast<size_t>(d.type_index.category()));
 		h = combine(h, d.type_index.index());
 		h = combine(h, static_cast<size_t>(d.base_cv));
 		h = combine(h, static_cast<size_t>(d.ref_qualifier));
@@ -146,10 +144,10 @@ struct hash<CanonicalTypeDesc> {
 		h = combine(h, static_cast<size_t>(d.flags));
 		if (d.function_signature) {
 			const auto& fs = *d.function_signature;
-			h = combine(h, static_cast<size_t>(fs.return_type));
-			h = combine(h, fs.parameter_types.size());
-			for (Type pt : fs.parameter_types)
-				h = combine(h, static_cast<size_t>(pt));
+			h = combine(h, static_cast<size_t>(fs.return_type_index.category()));
+			h = combine(h, fs.parameter_type_indices.size());
+			for (const TypeIndex& pt : fs.parameter_type_indices)
+				h = combine(h, static_cast<size_t>(pt.category()));
 			h = combine(h, static_cast<size_t>(fs.linkage));
 			h = combine(h, fs.is_const ? 1u : 0u);
 			h = combine(h, fs.is_volatile ? 1u : 0u);

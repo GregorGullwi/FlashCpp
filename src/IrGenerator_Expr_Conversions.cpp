@@ -591,7 +591,7 @@
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), unaryOperatorNode.get_token()));
 
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
+						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name, 0),
 						type_node->category(), size_bits));
 
 					out = makeExprResult(
@@ -1319,8 +1319,8 @@
 				const auto slot = sema_->getSlot(key);
 				if (slot.has_value() && slot->has_cast()) {
 					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-					Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
+					Type from_t = categoryToType(sema_->typeContext().get(ci.source_type_id).category());
+					const Type to_t = categoryToType(sema_->typeContext().get(ci.target_type_id).category());
 					if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
 						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
@@ -1533,7 +1533,7 @@
 					base,
 					0  // offset is 0 for simple dereference
 				);
-				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
+				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
@@ -1625,7 +1625,7 @@
 				base,
 				0  // offset is 0 for simple dereference
 			);
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
@@ -2300,8 +2300,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const auto slot = sema_->getSlot(key);
 		if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
 		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-		const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-		const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
+		const Type from_t = categoryToType(sema_->typeContext().get(ci.source_type_id).category());
+		const Type to_t = categoryToType(sema_->typeContext().get(ci.target_type_id).category());
 		if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) return Type::Invalid;
 		return to_t;
 	}
@@ -2347,7 +2347,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 				// Float/double → bool: emit FloatNotEqual(cond, 0.0).
-				if (from_desc.pointer_levels.empty() && is_floating_point_type(typeToCategory(from_desc.base_type))) {
+				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.category())) {
 					return emitFloatNonZeroTest(condition);
 				}
 				// Enum/pointer → bool (Phase 9): backend TEST already implements
@@ -2360,7 +2360,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				// Phase 23: Struct → bool via user-defined operator bool().
 				// Sema annotates as UserDefined; call emitConversionOperatorCall.
 				if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-					typeToCategory(from_desc.base_type) == TypeCategory::Struct) {
+					from_desc.category() == TypeCategory::Struct) {
 					// Sema already verified the operator exists via structHasConversionOperatorTo;
 					// set flag immediately so the fallback doesn't duplicate this lookup.
 					sema_applied_bool_conv = true;
@@ -2425,10 +2425,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
 				const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
-				Type from_t = from_desc.base_type;
-				const Type to_t = to_desc.base_type;
+				Type from_t = categoryToType(from_desc.category());
+				const Type to_t = categoryToType(to_desc.category());
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
-					typeToCategory(from_desc.base_type) == TypeCategory::Struct) {
+					from_desc.category() == TypeCategory::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
 					if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
@@ -2460,7 +2460,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					if (!ptn.is<TypeSpecifierNode>())
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
 					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
-					Type ctor_from_t = from_desc.base_type;
+					Type ctor_from_t = categoryToType(from_desc.category());
 					if (typeToCategory(ctor_from_t) == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
 						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
@@ -2596,8 +2596,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
 			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
-			Type from_t = from_desc.base_type;
-			const Type to_t = to_desc.base_type;
+			Type from_t = categoryToType(from_desc.category());
+			const Type to_t = categoryToType(to_desc.category());
 			if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
 				from_t = arg_result.typeEnum();
 			}

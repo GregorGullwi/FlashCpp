@@ -432,7 +432,7 @@
 					if (!resolved_member->function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					Type ret_type = resolved_member->function_signature->return_type;
+					Type ret_type = resolved_member->function_signature->returnType();
 					int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
@@ -493,7 +493,7 @@
 									if (!member.function_signature) {
 										throw InternalError("Function pointer member missing function_signature for indirect call return type");
 									}
-									Type ret_type = member.function_signature->return_type;
+									Type ret_type = member.function_signature->returnType();
 									int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 								}
@@ -833,7 +833,7 @@
 						if (!member.function_signature) {
 							throw InternalError("Function pointer member missing function_signature for indirect call return type");
 						}
-						Type ret_type = member.function_signature->return_type;
+						Type ret_type = member.function_signature->returnType();
 						int ret_size = (typeToCategory(ret_type) == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 						return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}

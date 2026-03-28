@@ -334,7 +334,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
 			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
 				TypeInfo& type_info = add_empty_type_entry();
-				type_info.type_ = Type::UserDefined;
+				type_info.category_ = TypeCategory::UserDefined;
 				type_info.type_size_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
@@ -1364,7 +1364,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.type_index = TypeIndex::fromTypeAndIndex(type_it->second->type_, type_it->second->type_index_);
+									a.type_index = TypeIndex::fromTypeAndIndex(type_it->second->typeEnum(), type_it->second->type_index_);
 									resolved_args.push_back(a);
 									resolved = true;
 								}
@@ -3725,7 +3725,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_type_index = inst_type_it->second->type_index_;
 					// Update member_type to match the instantiated type's actual type
 					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
-					member_type = inst_type_it->second->type_;
+					member_type = inst_type_it->second->typeEnum();
 				}
 			}
 		}
@@ -3736,7 +3736,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			if (member_type_info.getStructInfo() && typeToCategory(member_type) == TypeCategory::UserDefined) {
 				// Fix Type::UserDefined to Type::Struct for instantiated templates
-				member_type = member_type_info.type_;
+				member_type = member_type_info.typeEnum();
 			}
 		}
 
@@ -4859,7 +4859,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto resolved_it = getTypesByNameMap().find(resolved_handle);
 						if (resolved_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_type = resolved_it->second;
-							member.type_index = TypeIndex::fromTypeAndIndex(resolved_type->type_, resolved_type->type_index_);
+							member.type_index = TypeIndex::fromTypeAndIndex(resolved_type->typeEnum(), resolved_type->type_index_);
 							if (resolved_type->getStructInfo()) {
 								member.size = resolved_type->getStructInfo()->total_size;
 								member.alignment = resolved_type->getStructInfo()->alignment;

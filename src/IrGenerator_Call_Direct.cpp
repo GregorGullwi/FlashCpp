@@ -267,7 +267,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
+					return makeExprResult(sig.returnType(), SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
 					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -1145,8 +1145,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						Type from_type = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
+						const Type to_type   = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 							typeToCategory(from_type) == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
@@ -1518,7 +1518,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
 				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
 				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-					this_type = parent_it->second->type_;
+					this_type = parent_it->second->typeEnum();
 					this_type_index = parent_it->second->type_index_;
 				}
 			}

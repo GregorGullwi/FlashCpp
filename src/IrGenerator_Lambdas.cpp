@@ -1035,7 +1035,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	);
 	lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 	lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
-	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info));
+	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 	return copy_this_temp;
 }

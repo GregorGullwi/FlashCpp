@@ -597,9 +597,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 						if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 							const TypeInfo* resolved_info = qualified_type_it->second;
-							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 							TypeSpecifierNode resolved_spec(
-								resolved_info->type_,
+								resolved_info->typeEnum(),
 								resolved_info->type_index_,
 								resolved_size_bits,
 								ts.token(),
@@ -671,9 +671,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
 				TypeSpecifierNode resolved_spec(
-					resolved_info->type_,
+					resolved_info->typeEnum(),
 					TypeQualifier::None,
-					get_type_size_bits(resolved_info->type_),
+					get_type_size_bits(resolved_info->typeEnum()),
 					Token());
 				resolved_spec.set_type_index(resolved_info->type_index_);
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
@@ -1641,9 +1641,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
-						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 						TypeSpecifierNode resolved_spec(
-							resolved_info->type_,
+							resolved_info->typeEnum(),
 							resolved_info->type_index_,
 							resolved_size_bits,
 							ts.token(),
@@ -1739,14 +1739,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else {
 			const TypeInfo* resolved_info = type_it->second;
 			TypeSpecifierNode resolved_spec(
-				resolved_info->type_,
+				resolved_info->typeEnum(),
 				TypeQualifier::None,
-				get_type_size_bits(resolved_info->type_),
+				get_type_size_bits(resolved_info->typeEnum()),
 				Token()
 			);
 			resolved_spec.set_type_index(resolved_info->type_index_);
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->type_),
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
 			          ", index=", resolved_info->type_index_);
 		}
 	};

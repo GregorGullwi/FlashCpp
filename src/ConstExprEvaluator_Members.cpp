@@ -19,7 +19,7 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 
 	if (value.object_type_index.is_valid() && value.object_type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(value.object_type_index);
-		return TypeSpecifierNode(type_info.type_, value.object_type_index, type_info.type_size_);
+		return TypeSpecifierNode(type_info.typeEnum(), value.object_type_index, type_info.type_size_);
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {

@@ -118,18 +118,22 @@ private:
 	};
 
 	struct IndirectStorageInfo {
-		Type value_type = Type::Invalid;
+		TypeIndex value_type_index {};
 		IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field, will replace value_type
 		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
 		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
 		// not a reference that should be implicitly dereferenced.
 		bool holds_address_only = false;
+
+		// Accessor helpers
+		Type valueType() const { return categoryToType(value_type_index.category()); }
+		TypeCategory category() const { return value_type_index.category(); }
 	};
 
 	void setIndirectStorageInfo(
 		int32_t stack_offset,
-		Type value_type,
+		TypeIndex value_type_index,
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
@@ -143,11 +147,11 @@ private:
 
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var);
+	void setReferenceInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, bool is_rvalue_ref, TempVar temp_var);
 
-	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var);
+	void setAddressOnlyInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, TempVar temp_var);
 
-	void registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference);
+	void registerObjectReferenceCallResult(int32_t stack_offset, TypeIndex value_type_index, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference);
 
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const;
 

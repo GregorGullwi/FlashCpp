@@ -1619,8 +1619,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
-									Type from_t = sema_->typeContext().get(cast_info.source_type_id).base_type;
-									const Type to_t   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+									Type from_t = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
+									const Type to_t = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
 									if (typeToCategory(from_t) != TypeCategory::Struct && typeToCategory(to_t) != TypeCategory::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
@@ -1738,7 +1738,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(addr_temp,
-						TempVarMetadata::makeAddressOnly(elem_type, SizeInBits{elem_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, typeToCategory(elem_type)}, SizeInBits{elem_size}, ValueCategory::LValue));
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
@@ -2087,11 +2087,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											cast_info.selected_constructor) {
 											const CanonicalTypeDesc& target_desc =
 												sema_->typeContext().get(cast_info.target_type_id);
-											if (typeToCategory(target_desc.base_type) == TypeCategory::Struct &&
+											if (target_desc.category() == TypeCategory::Struct &&
 												target_desc.type_index == type_node.type_index()) {
 												const CanonicalTypeDesc& source_desc =
 													sema_->typeContext().get(cast_info.source_type_id);
-												if (typeToCategory(source_desc.base_type) != TypeCategory::Invalid) {
+												if (source_desc.category() != TypeCategory::Invalid) {
 													sema_selected_converting_ctor = cast_info.selected_constructor;
 													const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 													if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
@@ -2679,7 +2679,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark element_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(element_addr,
-						TempVarMetadata::makeAddressOnly(array_element_type, SizeInBits{array_element_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, typeToCategory(array_element_type)}, SizeInBits{array_element_size}, ValueCategory::LValue));
 
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
@@ -2844,7 +2844,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					if (type_alias_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
-						element_type = type_alias_info->type_;
+						element_type = type_alias_info->typeEnum();
 						element_type_index = type_alias_info->type_index_;
 						element_size = type_alias_info->type_size_;
 						if (element_size == 0) {
@@ -3100,7 +3100,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// Mark member_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 				setTempVarMetadata(member_addr,
-					TempVarMetadata::makeAddressOnly(member.memberType(), SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
+					TempVarMetadata::makeAddressOnly(TypeIndex{0, member.type_index.category()}, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
 
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;

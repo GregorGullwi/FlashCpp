@@ -823,6 +823,9 @@ private:
 	Type currentFunctionReturnType() const {
 		return categoryToType(current_function_return_type_index_.category());
 	}
+	TypeIndex currentFunctionReturnTypeIndex() const {
+		return current_function_return_type_index_;
+	}
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO

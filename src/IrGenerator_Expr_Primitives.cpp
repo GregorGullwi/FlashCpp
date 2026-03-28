@@ -296,7 +296,7 @@
 			}
 			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
 			if (type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
-				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).type_, type_node.type_index());
+				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).typeEnum(), type_node.type_index());
 			}
 			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
@@ -370,7 +370,7 @@
 								ptr_temp,  // The pointer temp var
 								0  // offset is 0 for dereference
 							);
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 							TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : TypeIndex{};
 							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
@@ -404,7 +404,7 @@
 							);
 							lvalue_info.member_name = member->getName();
 							lvalue_info.is_pointer_to_member = true;  // 'this' is a pointer, need to dereference
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						}
 
 						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
@@ -438,7 +438,7 @@
 						static_cast<int>(result.adjusted_offset)
 					);
 					lvalue_info.member_name = member->getName();
-					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 					return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
@@ -470,7 +470,7 @@
 			op.global_name = info.mangled_name;  // Use mangled name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-				LValueInfo(LValueInfo::Kind::Global, info.mangled_name),
+				LValueInfo(LValueInfo::Kind::Global, info.mangled_name, 0),
 				info.type_index.category(),
 				info.size_in_bits.value));
 
@@ -519,7 +519,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						if (!is_array_type) {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-								LValueInfo(LValueInfo::Kind::Global, saved_name),
+								LValueInfo(LValueInfo::Kind::Global, saved_name, 0),
 								type_n.category(), size_bits));
 						}
 						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
@@ -545,7 +545,7 @@
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 						if (!is_array_type) {
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-								LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+								LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 								type_n.category(), size_bits));
 						}
 						return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
@@ -583,10 +583,10 @@
 						);
 						lvalue_info.member_name = member->getName();
 						lvalue_info.is_pointer_to_member = true;
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 						}
 						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
@@ -618,10 +618,10 @@
 						);
 						lvalue_info.member_name = member->getName();
 						lvalue_info.is_pointer_to_member = true;
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
 							LValueInfo reference_lvalue_info(LValueInfo::Kind::Indirect, result_temp, 0);
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 						}
 						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
 						return makeIdentifierResult(member->memberType(), static_cast<int>(member->size * 8), result_temp, type_index);
@@ -790,14 +790,14 @@
 						);
 						lvalue_info.member_name = member->getName();
 						lvalue_info.is_pointer_to_member = true;
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 						if (context == ExpressionContext::LValueAddress && member->is_reference()) {
 							LValueInfo reference_lvalue_info(
 								LValueInfo::Kind::Indirect,
 								result_temp,
 								0
 							);
-							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info));
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(reference_lvalue_info, TypeCategory::Invalid, 0));
 						}
 
 						TypeIndex type_index = (is_struct_type(member->type_index.category())) ? member->type_index : TypeIndex{};
@@ -914,7 +914,7 @@
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 					if (!is_array_type) {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+							LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 							type_node.category(), size_bits));
 					}
 
@@ -976,7 +976,7 @@
 						lvalue_temp,  // Use the temp var holding the address, not the parameter name
 						0  // offset is 0 for simple dereference
 					);
-					setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
+					setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Set metadata on TempVar {}", lvalue_temp.var_number);
 
 					// Return with TempVar that has lvalue metadata
@@ -1008,7 +1008,7 @@
 					StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
 					0  // offset is 0 for simple dereference
 				);
-				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
 				return makeIdentifierResult(categoryToType(pointee_type), pointee_size, result_temp, type_index);
@@ -1097,7 +1097,7 @@
 				// Register Global lvalue metadata so compound assignments (+=, -=, etc.) can write back
 				if (!is_array_type) {
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+						LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 						type_node.category(), size_bits));
 				}
 
@@ -1150,7 +1150,7 @@
 							addr_temp,  // The temp holding the pointer address
 							0  // offset is 0 for dereference
 						);
-						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
+						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 						TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 						return makeExprResult(pointee_type, SizeInBits{pointee_size}, IrOperand{addr_temp}, type_index, PointerDepth{}, ValueStorage::ContainsAddress);
@@ -1172,7 +1172,7 @@
 						StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
 						0  // offset is 0 for simple dereference
 					);
-					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
 					return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
@@ -1591,7 +1591,7 @@
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 					if (!is_array_type) {
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-							LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+							LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 							type_node.category(), size_bits));
 					}
 
@@ -1630,7 +1630,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 				if (!is_array_type) {
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-						LValueInfo(LValueInfo::Kind::Global, saved_global_name),
+						LValueInfo(LValueInfo::Kind::Global, saved_global_name, 0),
 						type_node.category(), size_bits));
 				}
 

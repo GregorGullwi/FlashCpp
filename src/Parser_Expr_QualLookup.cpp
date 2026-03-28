@@ -727,7 +727,7 @@ ParseResult Parser::validate_and_add_base_class(
 	const TypeInfo* base_type_info = base_type_it->second;
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: initial base_type_info for '{}': type={}, type_index={}", 
-	                 base_class_name, static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 base_class_name, static_cast<int>(base_type_info->typeEnum()), base_type_info->type_index_);
 	
 	// Resolve type aliases: if base_type_info points to another type (type alias),
 	// follow the chain to find the actual struct type
@@ -737,12 +737,12 @@ ParseResult Parser::validate_and_add_base_class(
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
 		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}, underlying type={}", 
-		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.type_));
+		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.typeEnum()));
 		base_type_info = &underlying;
 	}
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: final base_type_info: type={}, type_index={}", 
-	                 static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 static_cast<int>(base_type_info->typeEnum()), base_type_info->type_index_);
 	
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);
@@ -804,7 +804,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			type_name = StringTable::getStringView(type_info.name());
 			
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index, 
-				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.type_), 
+				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.typeEnum()), 
 				", underlying_type_index=", type_info.type_index_);
 		} else if (!type_name.empty()) {
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
@@ -894,7 +894,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					
 					if (type_it != getTypesByNameMap().end()) {
 						const TypeInfo* resolved_info = type_it->second;
-						result_type = resolved_info->type_;
+						result_type = resolved_info->typeEnum();
 						result_type_index = resolved_info->type_index_;
 						found_match = true;
 					}
@@ -933,7 +933,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_info = type_it->second;
-							result_type = resolved_info->type_;
+							result_type = resolved_info->typeEnum();
 							result_type_index = resolved_info->type_index_;
 							found_match = true;
 						}
@@ -968,7 +968,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* resolved_info = type_it->second;
-								result_type = resolved_info->type_;
+								result_type = resolved_info->typeEnum();
 								result_type_index = resolved_info->type_index_;
 								found_match = true;
 								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
@@ -1071,7 +1071,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::string_view inst_name = get_instantiated_class_name(concrete_tpl_name, concrete_args);
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
-									result_type = inst_it->second->type_;
+									result_type = inst_it->second->typeEnum();
 									result_type_index = inst_it->second->type_index_;
 									found_match = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",
@@ -1206,17 +1206,17 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 
 	FunctionSignature sig;
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
-		sig.return_type = deduced_return->type();
+		sig.return_type_index = deduced_return->type_index();
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
-		sig.return_type = Type::Void;
+		sig.return_type_index = TypeIndex::fromCategory(TypeCategory::Void);
 	}
 
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
 			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			sig.parameter_types.push_back(param_type.type());
+			sig.parameter_type_indices.push_back(param_type.type_index());
 		}
 	}
 
@@ -1232,9 +1232,9 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 	}
 
 	FunctionSignature sig;
-	sig.return_type = sig_opt->return_type.type();
+	sig.return_type_index = sig_opt->return_type.type_index();
 	for (const auto& param_type : sig_opt->param_types) {
-		sig.parameter_types.push_back(param_type.type());
+		sig.parameter_type_indices.push_back(param_type.type_index());
 	}
 
 	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);

@@ -266,8 +266,8 @@
 					if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						const Type annotated_source_type = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
+						const Type to_type   = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 							typeToCategory(annotated_source_type) == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
@@ -369,7 +369,7 @@
 						addr_member_op.member_type_index = current_function_return_type_index_;
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnType(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands.value = address_temp;

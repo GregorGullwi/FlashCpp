@@ -1537,7 +1537,7 @@ public:  // Public methods for template instantiation
         // Parses types separated by commas, handling pack expansion (...), C-style varargs,
         // and pointer/reference modifiers. Used for bare function types and function pointer types.
         // Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
-        bool parse_function_type_parameter_list(std::vector<Type>& out_param_types);
+        bool parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types);
         
         // Helper to update angle bracket depth for template parsing
         // Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates

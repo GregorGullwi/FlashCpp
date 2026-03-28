@@ -200,12 +200,12 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
+				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0);
 				appendTypeCode(output, ret_spec);
-				if (sig.parameter_types.empty()) {
+				if (sig.parameter_type_indices.empty()) {
 					output += 'X';  // void parameter list
 				} else {
-					for (Type pt : sig.parameter_types) {
+					for (const TypeIndex& pt : sig.parameter_type_indices) {
 						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
 						appendTypeCode(output, param_spec);
 					}
@@ -370,13 +370,13 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type, TypeQualifier::None, 0);
+				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0);
 				appendItaniumTypeCode(output, ret_spec);
 				// Encode parameter types
-				if (sig.parameter_types.empty()) {
+				if (sig.parameter_type_indices.empty()) {
 					output += 'v';  // void parameter list
 				} else {
-					for (Type pt : sig.parameter_types) {
+					for (const TypeIndex& pt : sig.parameter_type_indices) {
 						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
 						appendItaniumTypeCode(output, param_spec);
 					}

@@ -276,7 +276,7 @@ inline bool isTempVarReference(const TempVar& temp) {
 // Get the value type of a reference TempVar (returns Invalid if not a reference)
 inline Type getTempVarValueType(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
-	return meta.value_type;
+	return meta.valueType();
 }
 
 // Check if a TempVar holds an address-only value (from AddressOf/AddressOfMember)
@@ -322,13 +322,13 @@ inline bool isTempVarRValueReference(const TempVar& temp) {
 
 // Helper to create a TempVar with lvalue metadata
 inline TempVar makeLValueTempVar(TempVar temp, LValueInfo lv_info) {
-	setTempVarMetadata(temp, TempVarMetadata::makeLValue(std::move(lv_info)));
+	setTempVarMetadata(temp, TempVarMetadata::makeLValue(std::move(lv_info), TypeCategory::Invalid, 0));
 	return temp;
 }
 
 // Helper to create a TempVar with xvalue metadata
 inline TempVar makeXValueTempVar(TempVar temp, LValueInfo lv_info) {
-	setTempVarMetadata(temp, TempVarMetadata::makeXValue(std::move(lv_info)));
+	setTempVarMetadata(temp, TempVarMetadata::makeXValue(std::move(lv_info), TypeCategory::Invalid, 0));
 	return temp;
 }
 

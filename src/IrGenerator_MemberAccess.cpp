@@ -240,7 +240,7 @@
 				);
 				lvalue_info.array_index = IrValue{flat_index};
 				lvalue_info.is_pointer_to_array = false;
-				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				ArrayAccessOp payload;
 				payload.result = result_var;
@@ -375,7 +375,7 @@
 					);
 					lvalue_info.array_index = IrValue{flat_index};
 					lvalue_info.is_pointer_to_array = false;  // This is a real array, not a pointer
-					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
@@ -463,7 +463,7 @@
 									// Store index information for unified assignment handler
 									lvalue_info.array_index = toIrValue(index_result.value);
 									lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 									// Create typed payload for ArrayAccess with qualified member name
 									ArrayAccessOp payload;
@@ -699,7 +699,7 @@
 		lvalue_info.array_index = toIrValue(index_result.value);
 		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
 		lvalue_info.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
-		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
@@ -1107,7 +1107,7 @@
 							);
 							lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							lvalue_info.is_pointer_to_member = true;
-							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info));
+							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 							base_object = copy_this_ref;
 							base_type = TypeCategory::Struct;
@@ -1393,7 +1393,7 @@
 				result_var,  // The TempVar holding the loaded pointer
 				0            // No offset - the pointer points directly to the target
 			);
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
 			return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
@@ -1426,7 +1426,7 @@
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
-			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info));
+			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
 			return makeMemberResult(SizeInBits{pointee_size_bits}, deref_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 		}
