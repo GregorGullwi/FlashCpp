@@ -362,10 +362,10 @@
 						addr_member_op.result = address_temp;
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
-						addr_member_op.member_type = current_function_return_type_;
+						addr_member_op.member_type_index = TypeIndex{0, typeToCategory(current_function_return_type_)};
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(TypeIndex{0, typeToCategory(current_function_return_type_)}, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands.value = address_temp;

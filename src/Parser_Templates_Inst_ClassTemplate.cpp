@@ -1982,7 +1982,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Substitute type if it's a template parameter
 				// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.type_index, TypeQualifier::None, static_cast<int>(static_member.size * 8));
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				// Use substitute_template_parameter for consistent template parameter matching
@@ -2245,7 +2245,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 		}
 		for (const auto& static_member : pattern_struct.static_members()) {
-			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			TypeSpecifierNode original_type_spec(static_member.type_index, TypeQualifier::None, static_cast<int>(static_member.size * 8));
 			original_type_spec.set_type_index(static_member.type_index);
 		TypeIndex substituted_type_index = substitute_template_parameter(
 			original_type_spec, template_params, template_args_for_pattern);
@@ -2794,10 +2794,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const auto& val = lit.value();
 					if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 						int64_t int_val = static_cast<int64_t>(*ull_val);
-						filled_template_args.push_back(TemplateTypeArg(int_val));
+						filled_template_args.push_back(TemplateTypeArg(int_val, TypeIndex{0, TypeCategory::Int}));
 					} else if (const auto* d_val = std::get_if<double>(&val)) {
 						int64_t int_val = static_cast<int64_t>(*d_val);
-						filled_template_args.push_back(TemplateTypeArg(int_val));
+						filled_template_args.push_back(TemplateTypeArg(int_val, TypeIndex{0, TypeCategory::Int}));
 					}
 				} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 					// Handle boolean literals
@@ -2969,7 +2969,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 					if (eval_result.success()) {
-						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
+						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int(), TypeIndex{0, TypeCategory::Int}));
 						FLASH_LOG(Templates, Debug, "Evaluated non-type default via ConstExprEvaluator: ", eval_result.as_int());
 					}
 				}
@@ -3504,7 +3504,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						
 						// Fallback: try to evaluate the expression directly
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-							TemplateTypeArg val_arg(value->value, value->type);
+							TemplateTypeArg val_arg(value->value, value->type_index);
 							val_arg.is_pack = arg_info.is_pack;
 							resolved_args.push_back(val_arg);
 							continue;
@@ -3521,7 +3521,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Now try to evaluate the substituted expression
 						if (auto value = try_evaluate_constant_expression(substituted_node)) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
-							TemplateTypeArg val_arg(value->value, value->type);
+							TemplateTypeArg val_arg(value->value, value->type_index);
 							val_arg.is_pack = arg_info.is_pack;
 							resolved_args.push_back(val_arg);
 							continue;
@@ -3540,7 +3540,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Now try to evaluate the substituted expression
 						if (auto value = try_evaluate_constant_expression(substituted_node)) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
-							TemplateTypeArg val_arg(value->value, value->type);
+							TemplateTypeArg val_arg(value->value, value->type_index);
 							val_arg.is_pack = arg_info.is_pack;
 							resolved_args.push_back(val_arg);
 							continue;
@@ -3550,7 +3550,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else {
 						// Try to evaluate non-type template argument after substitution
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-							TemplateTypeArg val_arg(value->value, value->type);
+							TemplateTypeArg val_arg(value->value, value->type_index);
 							val_arg.is_pack = arg_info.is_pack;
 							resolved_args.push_back(val_arg);
 							continue;
@@ -3759,7 +3759,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_type_index = inst_type_it->second->type_index_;
 					// Update member_type to match the instantiated type's actual type
 					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
-					member_type = inst_type_it->second->category();
+					member_type = categoryToType(inst_type_it->second->category());
 				}
 			}
 		}
@@ -3770,7 +3770,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			if (member_type_info.getStructInfo() && member_type == Type::UserDefined) {
 				// Fix Type::UserDefined to Type::Struct for instantiated templates
-				member_type = member_type_info.type_;
+				member_type = categoryToType(member_type_info.category());
 			}
 		}
 
@@ -4126,7 +4126,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
 				lazy_info.instantiated_class_name = instantiated_name;
 				lazy_info.member_name = static_member.getName();
-				lazy_info.type = static_member.type;
+				lazy_info.type_index = static_member.type_index;
 				lazy_info.type_index = static_member.type_index;
 				lazy_info.size = static_member.size;
 				lazy_info.alignment = static_member.alignment;
@@ -4143,7 +4143,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
-				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.type_index, TypeQualifier::None, static_cast<int>(static_member.size * 8));
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				TypeIndex substituted_type_index = substitute_template_parameter(
@@ -6283,7 +6283,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else {
 				struct_info_ptr->addStaticMember(
 					static_member_name_handle,
-					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,

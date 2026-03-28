@@ -139,7 +139,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
 		if (static_member) {
-			info.type = static_member->type;
+			info.type = categoryToType(static_member->type_index.category());
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};
 		}
 		return info;

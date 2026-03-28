@@ -812,7 +812,7 @@
 									addr_member_op.result = result_var;
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
-									addr_member_op.member_type = member_result.member->type;
+									addr_member_op.member_type_index = member_result.member->type_index;
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));

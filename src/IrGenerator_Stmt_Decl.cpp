@@ -88,7 +88,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return std::nullopt;
 			}
 
-			TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
+			TypeSpecifierNode member_type(member->type_index, static_cast<int>(member->size * 8));
 			member_type.set_type_index(member->type_index);
 			if (member->pointer_depth > 0) {
 				member_type.add_pointer_levels(member->pointer_depth);

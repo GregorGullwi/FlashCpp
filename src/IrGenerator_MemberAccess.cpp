@@ -1512,8 +1512,8 @@
 					if (static_member) {
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
-							size_t ref_size = get_type_size_bits(static_member->type) / 8;
-							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
+							size_t ref_size = get_type_size_bits(static_member->type_index) / 8;
+							if (ref_size == 0 && static_member->type_index.isStruct() && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(static_member->type_index).getStructInfo();
 								if (si) ref_size = si->total_size;
 							}

@@ -1269,7 +1269,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
-							anon_member_type_spec.type(),
 							anon_member_type_spec.type_index(),
 							member_size,
 							member_alignment,
@@ -2631,7 +2630,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Manually add member to struct_info at the aligned offset
 				struct_info->members.emplace_back(
 					union_member.member_name,
-					union_member.member_type,
 					union_member.type_index,
 					aligned_union_start,  // Same offset for all union members
 					union_member.member_size,

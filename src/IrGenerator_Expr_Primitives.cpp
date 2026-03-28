@@ -823,13 +823,13 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type_index = static_member->type_index;
-						op.result.ir_type = toIrType(static_member->type);
+						op.result.ir_type = toIrType(categoryToType(static_member->type_index.category()));
 						op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 						op.result.value = result_temp;
 						op.global_name = qualified_name;
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
+						TypeIndex type_index = (static_member->type_index.isStruct()) ? static_member->type_index : TypeIndex{};
 						return makeIdentifierResult(static_member->type, member_size_bits, result_temp, type_index);
 					}
 				}
@@ -1496,7 +1496,7 @@
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type_index = static_member->type_index;
-						op.result.ir_type = toIrType(static_member->type);
+						op.result.ir_type = toIrType(categoryToType(static_member->type_index.category()));
 						op.result.size_in_bits = SizeInBits{static_cast<int>(qsm_size_bits)};
 						op.result.value = result_temp;
 						// Use qualified name as the global symbol name: StructName::static_member
@@ -1509,16 +1509,16 @@
 							DereferenceOp deref_op;
 							deref_op.result = deref_temp;
 							deref_op.pointer.type_index = static_member->type_index;
-							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->type)};
+							deref_op.pointer.size_in_bits = SizeInBits{get_type_size_bits(static_member->type_index)};
 							deref_op.pointer.pointer_depth = PointerDepth{1};
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
-							TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
-							return makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type)}, IrOperand{deref_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
+							TypeIndex type_index = (static_member->type_index.isStruct()) ? static_member->type_index : TypeIndex{};
+							return makeExprResult(static_member->type, SizeInBits{get_type_size_bits(static_member->type_index)}, IrOperand{deref_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 						}
 
 						// Return the temp variable that will hold the loaded value
-						TypeIndex type_index = (static_member->type == Type::Struct) ? static_member->type_index : TypeIndex{};
+						TypeIndex type_index = (static_member->type_index.isStruct()) ? static_member->type_index : TypeIndex{};
 						return makeExprResult(static_member->type, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, type_index, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}

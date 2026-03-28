@@ -1151,7 +1151,7 @@
 							emitted_static_members_.insert(name_handle);
 
 							GlobalVariableDeclOp op;
-							op.type = static_member.type;
+							op.type_index = static_member.type_index;
 							op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 							op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
@@ -1632,7 +1632,7 @@
 									addr_member_op.result = member_source_addr;
 									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
 									addr_member_op.member_offset = static_cast<int>(member.offset);
-									addr_member_op.member_type = member.type;
+									addr_member_op.member_type_index = member.type_index;
 									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
