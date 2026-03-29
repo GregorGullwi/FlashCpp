@@ -113,7 +113,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
-			irOperands.emplace_back(result.typeEnum());
+			irOperands.emplace_back(categoryToType(result.typeEnum()));
 			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
@@ -1089,7 +1089,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
 						// load the address stored in the reference variable
-						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(categoryToType(type_node.type()));
 						irOperands.emplace_back(64);  // References are stored as 64-bit pointers
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 						arg_index++;
@@ -1345,7 +1345,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
 					// TODO: Add proper pointer type support to the Type enum
-					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
+					irOperands.emplace_back(categoryToType(type_node.type()));  // Element type (e.g., Char for char[])
 					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
 					irOperands.emplace_back(addr_var);
 				} else if (param_ref_qualifier != CVReferenceQualifier::None) {
@@ -1420,10 +1420,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 						// Now take the address of the temporary
-						TempVar addr_var = emitAddressOf(typeToCategory(literal_type), literal_size, IrValue(temp_var));
+						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 						// Pass the address
-						irOperands.emplace_back(literal_type);
+						irOperands.emplace_back(categoryToType(literal_type));
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					} else {
@@ -1451,7 +1451,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							}
 
 							// Fallback heuristic: 64-bit struct type likely holds an address
-							if (!is_already_address && expr_size == 64 && typeToCategory(expr_type) == TypeCategory::Struct) {
+							if (!is_already_address && expr_size == 64 && expr_type == TypeCategory::Struct) {
 								is_already_address = true;
 							}
 
@@ -1460,9 +1460,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								appendArgumentIrResult(argumentIrOperands);
 							} else {
 								// Need to take address of the value
-								TempVar addr_var = emitAddressOf(typeToCategory(expr_type), expr_size, IrValue(expr_var));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-								irOperands.emplace_back(expr_type);
+								irOperands.emplace_back(categoryToType(expr_type));
 								irOperands.emplace_back(64);  // Pointer size
 								irOperands.emplace_back(addr_var);
 							}

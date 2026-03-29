@@ -1017,12 +1017,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		std::vector<IrOperand> operands;
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
 			operands.reserve(operands.size() + 4);
-			operands.emplace_back(result.typeEnum());
+			operands.emplace_back(categoryToType(result.typeEnum()));
 			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
 			operands.emplace_back(static_cast<int>(result.storage));
 		};
-		operands.emplace_back(type_node.type());
+		operands.emplace_back(categoryToType(type_node.type()));
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 		operands.emplace_back(size_in_bits);
@@ -1058,7 +1058,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 
 				// Add element type, size, and count as operands
-				operands.emplace_back(type_node.type());  // element type
+				operands.emplace_back(categoryToType(type_node.type()));  // element type
 				operands.emplace_back(size_in_bits);      // element size
 				operands.emplace_back(static_cast<unsigned long long>(array_count));
 			} else if (decl.is_unsized_array() && node.initializer().has_value()) {
@@ -1068,7 +1068,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 					array_count = init_list.initializers().size();
 					// Add the inferred size as an operand
-					operands.emplace_back(type_node.type());  // element type
+					operands.emplace_back(categoryToType(type_node.type()));  // element type
 					operands.emplace_back(size_in_bits);      // element size
 					operands.emplace_back(static_cast<unsigned long long>(array_count));
 				}
