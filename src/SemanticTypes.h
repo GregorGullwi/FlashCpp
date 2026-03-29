@@ -145,9 +145,12 @@ struct hash<CanonicalTypeDesc> {
 		if (d.function_signature) {
 			const auto& fs = *d.function_signature;
 			h = combine(h, static_cast<size_t>(fs.return_type_index.category()));
+			h = combine(h, fs.return_type_index.index());
 			h = combine(h, fs.parameter_type_indices.size());
-			for (const TypeIndex& pt : fs.parameter_type_indices)
+			for (const TypeIndex& pt : fs.parameter_type_indices) {
 				h = combine(h, static_cast<size_t>(pt.category()));
+				h = combine(h, pt.index());
+			}
 			h = combine(h, static_cast<size_t>(fs.linkage));
 			h = combine(h, fs.is_const ? 1u : 0u);
 			h = combine(h, fs.is_volatile ? 1u : 0u);
