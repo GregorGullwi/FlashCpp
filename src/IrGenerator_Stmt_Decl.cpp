@@ -1021,7 +1021,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			operands.emplace_back(result.value);
 			operands.emplace_back(static_cast<int>(result.storage));
 		};
-		operands.emplace_back(type_node.type_index());
+		operands.emplace_back(categoryToType(type_node.type_index().category()));
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 		operands.emplace_back(size_in_bits);
@@ -1690,7 +1690,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
-			decl_op.array_element_type_index = std::get<TypeIndex>(operands[7]);
+			decl_op.array_element_type_index = TypeIndex{0, typeToCategory(std::get<Type>(operands[7]))};
 			decl_op.array_element_size = std::get<int>(operands[8]);
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 				decl_op.array_count = *ull_val;
@@ -1714,7 +1714,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 
 					// Extract element type/size once for both addr_op and metadata
-					const TypeIndex elem_type = std::get<TypeIndex>(operands[7]);
+					const TypeIndex elem_type = TypeIndex{0, typeToCategory(std::get<Type>(operands[7]))};
 					const int  elem_size = std::get<int>(operands[8]);
 
 					// Build ArrayElementAddressOp

@@ -261,10 +261,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 							failed_value_extraction = true;
 							break;
 						}
-						substituted_template_args.emplace_back(value, lit.type());
+						substituted_template_args.emplace_back(value, TypeIndex{0, typeToCategory(lit.type())});
 					} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&substituted_expr)) {
 						const BoolLiteralNode& lit = *bool_literal;
-						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+						substituted_template_args.emplace_back(lit.value() ? 1 : 0, TypeIndex{0, TypeCategory::Bool});
 					} else {
 						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
 						failed_value_extraction = true;

@@ -782,7 +782,7 @@ ParseResult Parser::parse_type_specifier()
 			} else {
 				// Use the type's own Type value (Enum, UserDefined, etc.)
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					type_info->category(), user_type_index, type_size_bits, type_name_token, cv_qualifier));
+					user_type_index, type_size_bits, type_name_token, cv_qualifier));
 			}
 		}
 
@@ -1798,7 +1798,7 @@ ParseResult Parser::parse_type_specifier()
 							// This is a type alias - return the aliased type
 							type_size = static_cast<unsigned char>(type_info->type_size_);
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->category(), type_info->type_index_, type_size, type_name_token, cv_qualifier));
+								type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
 					}
 					

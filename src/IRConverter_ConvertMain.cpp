@@ -9298,14 +9298,14 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			int final_result_offset = variable_scopes.back().variables[*string].offset;
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(categoryToType(ctx.result_value.type_index.category()))}  // dest
 			);
 		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(categoryToType(ctx.result_value.type_index.category()))}  // dest
 			);
 		}
 
@@ -11232,7 +11232,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			Type value_type;
 			int value_size_bits;
 			if (lhs_ref_info.has_value()) {
-				value_type = lhs_ref_info->value_type;
+				value_type = categoryToType(lhs_ref_info->value_type_index.category());
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
@@ -14735,7 +14735,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
 			} else if (exception_type != Type::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
-				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(typeToCategory(exception_type));
 			}
 
 			if (!typeinfo_symbol.empty()) {

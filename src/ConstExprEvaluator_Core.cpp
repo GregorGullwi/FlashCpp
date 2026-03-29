@@ -2713,7 +2713,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			} else if (arg_val.is_uint()) {
 				arg_type = Type::UnsignedLongLong;
 			}
-			template_args.emplace_back(arg_val.as_int(), arg_type);
+			template_args.emplace_back(arg_val.as_int(), TypeIndex{0, typeToCategory(arg_type)});
 		} else {
 			return EvalResult::error("Unsupported template argument type for variable template");
 		}
