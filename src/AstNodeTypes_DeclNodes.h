@@ -888,7 +888,8 @@ struct CanonicalTypeAlias {
 };
 
 // Canonicalize chained typedef / using aliases represented as TypeCategory::UserDefined.
-inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeIndex type_index) {
+inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
+	const TypeCategory type_cat = type_index.category();
 	const size_t typeInfoCount = getTypeInfoCount();
 	if (type_cat != TypeCategory::UserDefined || !type_index.is_valid()) {
 		return { .type_index = TypeIndex{ type_index.index(), type_cat }};
@@ -914,14 +915,12 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory type_cat, TypeInd
 	return { .type_index = TypeIndex{original_type_index.index(), type_cat}};
 }
 
-// Canonicalize: 1-arg overload — uses type_index's own category.
-inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
-	return canonicalize_type_alias(type_index.category(), type_index);
-}
-
 // Legacy bridge: accepts Type; converts to TypeCategory internally.
 inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
-	return canonicalize_type_alias(typeToCategory(type), type_index);
+	if (typeToCategory(type) == type_index.category()) {
+		return canonicalize_type_alias(type_index);
+	}
+	return canonicalize_type_alias(TypeIndex{type_index.index(), typeToCategory(type)});
 }
 
 // Resolve typedef/using alias chains. Returns the resolved TypeIndex.
@@ -954,7 +953,7 @@ TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t
 TypeInfo& add_instantiated_type(StringHandle name, TypeCategory type, uint32_t size_bits);
 
 // For adding an alias entry that copies type info from another TypeInfo
-TypeInfo& add_type_alias_copy(StringHandle name, TypeCategory cat, TypeIndex source_type_index, uint32_t size_bits);
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();
@@ -1308,8 +1307,8 @@ public:
 		if (type_index_.category() != other.type_index_.category()) {
 			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
 			// types such as enum vs int just because they share a runtime size.
-			TypeCategory resolved_type = canonicalize_type_alias(type_index_.category(), type_index_).type_index.category();
-			TypeCategory other_resolved_type = canonicalize_type_alias(other.type_index_.category(), other.type_index_).type_index.category();
+			TypeCategory resolved_type = canonicalize_type_alias(type_index_).type_index.category();
+			TypeCategory other_resolved_type = canonicalize_type_alias(other.type_index_).type_index.category();
 			if (resolved_type != other_resolved_type) {
 				return false;
 			}

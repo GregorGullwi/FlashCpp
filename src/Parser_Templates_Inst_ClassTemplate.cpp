@@ -2195,7 +2195,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
-				typeToCategory(substituted_type),
 				TypeIndex{substituted_type_index},
 				substituted_size
 			);
@@ -4959,7 +4958,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the type alias in getTypesByNameMap()
-		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, typeToCategory(substituted_type), TypeIndex{substituted_type_index}, substituted_size);
+		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, TypeIndex{substituted_type_index}, substituted_size);
 		if (substituted_type == Type::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 			if (const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo()) {
 				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));

@@ -260,8 +260,10 @@ struct TemplateTypeArg {
 		return arg;
 	}
 
-	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx) {
-		return makeType(categoryToType(cat), idx);
+	static TemplateTypeArg makeType(TypeIndex idx) {
+		TemplateTypeArg arg;
+		arg.type_index = idx;
+		return arg;
 	}
 	
 	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {

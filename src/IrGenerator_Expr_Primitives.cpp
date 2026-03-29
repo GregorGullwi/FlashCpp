@@ -310,8 +310,10 @@
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
-		auto preserveSemanticTypeIndex = [](TypeCategory cat, TypeIndex type_index) {
-			return needs_type_index(cat) ? type_index : TypeIndex{0, cat};
+		auto preserveSemanticTypeIndex = [](TypeIndex semantic_type_index) {
+			return needs_type_index(semantic_type_index.category())
+				? semantic_type_index
+				: TypeIndex{0, semantic_type_index.category()};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -950,7 +952,7 @@
 					Type pointee_type = type_node.type();
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
 
-					TypeIndex type_index = preserveSemanticTypeIndex(typeToCategory(pointee_type), type_node.type_index());
+					TypeIndex type_index = preserveSemanticTypeIndex(TypeIndex{type_node.type_index().index(), typeToCategory(pointee_type)});
 
 					// Create a TempVar with Indirect lvalue metadata for compound assignments
 					// This allows handleLValueCompoundAssignment to work with reference variables
@@ -1007,7 +1009,7 @@
 				);
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type_index().category(), type_node.type_index());
+				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type_index());
 				return makeIdentifierResult(pointee_size, IrOperand{result_temp}, type_index);
 			}
 
@@ -1151,7 +1153,7 @@
 						);
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-						TypeIndex type_index = preserveSemanticTypeIndex(typeToCategory(pointee_type), type_node.type_index());
+						TypeIndex type_index = preserveSemanticTypeIndex(TypeIndex{type_node.type_index().index(), typeToCategory(pointee_type)});
 						return makeExprResult(type_index, SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
@@ -1173,7 +1175,7 @@
 					);
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type_index().category(), type_node.type_index());
+					TypeIndex type_index = preserveSemanticTypeIndex(type_node.type_index());
 					return makeIdentifierResult(pointee_size, IrOperand{result_temp}, type_index);
 				}
 

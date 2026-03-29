@@ -127,7 +127,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 
@@ -268,7 +268,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 
@@ -537,7 +537,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 
@@ -1022,7 +1022,7 @@ std::optional<std::pair<TypeCategory, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	TypeCategory substituted_type = substituted_type_index.category();
 	
 	// Cache the result
-	registry.markEvaluated(instantiated_class_name, member_name, substituted_type, substituted_type_index);
+	registry.markEvaluated(instantiated_class_name, member_name, substituted_type_index);
 	
 	FLASH_LOG(Templates, Debug, "Successfully evaluated lazy type alias: ", 
 	          instantiated_class_name, "::", member_name, 

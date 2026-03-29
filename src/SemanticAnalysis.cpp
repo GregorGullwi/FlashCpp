@@ -2920,7 +2920,7 @@ static bool structHasConversionOperatorTo(
 			if (!return_type_node.is<TypeSpecifierNode>()) continue;
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			const CanonicalTypeAlias canonical_return_type =
-				canonicalize_type_alias(type_spec.category(), type_spec.type_index());
+				canonicalize_type_alias(type_spec.type_index());
 			TypeCategory resolved_type = canonical_return_type.type_index.category();
 			if (resolved_type == typeToCategory(to_desc.base_type)) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.

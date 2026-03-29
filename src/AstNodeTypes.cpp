@@ -174,10 +174,10 @@ TypeInfo& add_instantiated_type(StringHandle name, TypeCategory type, uint32_t s
     return type_info;
 }
 
-TypeInfo& add_type_alias_copy(StringHandle name, [[maybe_unused]] TypeCategory cat, TypeIndex source_type_index, uint32_t size_bits) {
-    auto& type_info = gTypeInfo.emplace_back(name, source_type_index, size_bits);
-    gTypesByName.emplace(type_info.name(), &type_info);
-    return type_info;
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits) {
+	auto& type_info = gTypeInfo.emplace_back(name, source_type_index, size_bits);
+	gTypesByName.emplace(type_info.name(), &type_info);
+	return type_info;
 }
 
 TypeCreationResult add_empty_type_entry() {

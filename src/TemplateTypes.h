@@ -76,9 +76,9 @@ struct TypeIndexArg {
 	
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
 	
-	TypeIndexArg(TypeIndex idx, TypeCategory type, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
+	TypeIndexArg(TypeIndex idx, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
 		: type_index(idx)
-		, base_type(type)
+		, base_type(idx.category())
 		, cv_qualifier(cv)
 		, ref_qualifier(ref)
 		, pointer_depth(ptr_depth) {}

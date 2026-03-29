@@ -408,13 +408,13 @@ public:
 	
 	// Mark a type alias as evaluated and cache the result
 	// Returns true if the alias was found and marked, false if not registered
-	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
-	                   TypeCategory result_type, TypeIndex result_type_index) {
+	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name,
+	                   TypeIndex result_type_index) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end()) {
 			it->second.is_evaluated = true;
-			it->second.evaluated_type = result_type;
+			it->second.evaluated_type = result_type_index.category();
 			it->second.evaluated_type_index = result_type_index;
 			FLASH_LOG(Templates, Debug, "Marked lazy type alias as evaluated: ", key);
 			return true;
