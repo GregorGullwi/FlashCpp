@@ -79,8 +79,8 @@ private:
 		TypeIndex type_index = TypeIndex{0, TypeCategory::Void};
 		SizeInBits size_in_bits;
 
-		// Returns the legacy Type enum derived from the embedded TypeCategory.
-		Type bindingType() const { return categoryToType(type_index.category()); }
+		// Returns the TypeCategory derived from the embedded TypeIndex.
+		TypeCategory bindingType() const { return type_index.category(); }
 	};
 
 
@@ -834,7 +834,7 @@ private:
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
 		SizeInBits size_in_bits;
 		TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
-		Type type() const { return categoryToType(type_index.category()); }
+		TypeCategory type() const { return type_index.category(); }
 	};
 
 	// Map from local static variable name to info

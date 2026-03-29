@@ -274,7 +274,7 @@ inline bool isTempVarReference(const TempVar& temp) {
 }
 
 // Get the value type of a reference TempVar (returns Invalid if not a reference)
-inline Type getTempVarValueType(const TempVar& temp) {
+inline TypeCategory getTempVarValueType(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
 	return meta.valueType();
 }

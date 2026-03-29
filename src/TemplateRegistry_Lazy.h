@@ -138,7 +138,7 @@ struct LazyStaticMemberInfo {
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;                   // True if initializer contains template parameters
 
-	Type memberType() const { return categoryToType(type_index.category()); }
+	TypeCategory memberType() const { return type_index.category(); }
 };
 
 // Registry for tracking uninstantiated template static members

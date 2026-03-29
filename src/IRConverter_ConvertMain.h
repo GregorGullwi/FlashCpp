@@ -127,7 +127,7 @@ private:
 		bool holds_address_only = false;
 
 		// Accessor helpers
-		Type valueType() const { return categoryToType(value_type_index.category()); }
+		TypeCategory valueType() const { return value_type_index.category(); }
 		TypeCategory category() const { return value_type_index.category(); }
 	};
 
@@ -1014,7 +1014,7 @@ private:
 		std::vector<char> init_data;  // Raw bytes for initialized data
 		StringHandle reloc_target;    // If valid, data relocation (R_X86_64_64) for this symbol
 		bool is_rodata = false;       // If true, emit init_data to .rodata instead of .data
-		Type varType() const { return categoryToType(type_index.category()); }
+		TypeCategory varType() const { return type_index.category(); }
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
 

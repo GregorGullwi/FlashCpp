@@ -1929,9 +1929,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 
 			// Check TempVar metadata next
 			if (isTempVarReference(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeCategory vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type_index = TypeIndex{0, typeToCategory(vt)},
+					.value_type_index = TypeIndex{0, vt},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -1939,9 +1939,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 				};
 			}
 			if (isTempVarAddressOnly(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeCategory vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type_index = TypeIndex{0, typeToCategory(vt)},
+					.value_type_index = TypeIndex{0, vt},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -6209,7 +6209,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 		}
 
 		int size_in_bits = static_cast<int>(global_info->size_in_bytes * 8);
-		Type var_type = global_info->varType();
+		TypeCategory var_type = global_info->varType();
 		bool is_floating_point = (var_type == TypeCategory::Float || var_type == TypeCategory::Double);
 		bool is_float = (var_type == TypeCategory::Float);
 
@@ -11220,7 +11220,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			TypeCategory value_type;
 			int value_size_bits;
 			if (lhs_ref_info.has_value()) {
-				value_type = typeToCategory(lhs_ref_info->valueType());
+				value_type = lhs_ref_info->valueType();
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata

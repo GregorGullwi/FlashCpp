@@ -255,7 +255,7 @@
 					result.total_member_offset = accumulated_offset;
 					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
 					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
-					result.final_type_index = TypeIndex::fromTypeAndIndex(typeToCategory(binding_info.bindingType()), {});
+					result.final_type_index = TypeIndex{0, binding_info.bindingType()};
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}

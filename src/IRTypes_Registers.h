@@ -274,7 +274,7 @@ struct TempVarMetadata {
 	bool is_rvalue_reference = false;
 
 	// Accessors for the value type
-	Type valueType() const { return categoryToType(value_type_index.category()); }
+	TypeCategory valueType() const { return value_type_index.category(); }
 	TypeCategory valueCategory() const { return value_type_index.category(); }
 	
 	// Constructor
