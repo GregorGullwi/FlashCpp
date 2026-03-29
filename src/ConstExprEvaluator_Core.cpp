@@ -65,14 +65,31 @@ namespace {
 
 	EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
 		const TypeCategory category = target_type.category();
-		EvalResult result = (category == TypeCategory::Bool)
-			? EvalResult::from_bool(expr_result.as_bool())
-			: (isFloatingPointType(category)
-				? EvalResult::from_double(expr_result.as_double())
-				: ((isIntegralType(category) || category == TypeCategory::Enum) &&
-					(target_type.category() == TypeCategory::Bool || is_unsigned_integer_type(target_type.category()))
-					? EvalResult::from_uint(expr_result.as_uint_raw())
-					: EvalResult::from_int(expr_result.as_int())));
+		if (category == TypeCategory::Bool) {
+			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+			result.set_exact_type(target_type);
+			return result;
+		}
+		if (isFloatingPointType(category)) {
+			EvalResult result = EvalResult::from_double(expr_result.as_double());
+			result.set_exact_type(target_type);
+			return result;
+		}
+		// For enum types, resolve the underlying type to determine signedness.
+		// is_unsigned_integer_type(Enum) is always false, so we must check the
+		// actual underlying type (e.g., unsigned int) to pick from_uint vs from_int.
+		TypeCategory effective_category = category;
+		if (category == TypeCategory::Enum) {
+			TypeIndex ti = target_type.type_index();
+			if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
+				if (const EnumTypeInfo* ei = getTypeInfo(ti).getEnumInfo()) {
+					effective_category = ei->underlying_type;
+				}
+			}
+		}
+		EvalResult result = is_unsigned_integer_type(effective_category)
+			? EvalResult::from_uint(expr_result.as_uint_raw())
+			: EvalResult::from_int(expr_result.as_int());
 		result.set_exact_type(target_type);
 		return result;
 	}
