@@ -2195,7 +2195,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
-				substituted_type,
+				typeToCategory(substituted_type),
 				TypeIndex{substituted_type_index},
 				substituted_size
 			);
@@ -2371,7 +2371,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
 						Type concrete_type = deduced_arg.typeEnum();
-						auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), concrete_type, get_type_size_bits(concrete_type));
+						auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), typeToCategory(concrete_type), get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
 							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
 						template_scope.addParameter(&type_info);
@@ -4959,7 +4959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the type alias in getTypesByNameMap()
-		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
+		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, typeToCategory(substituted_type), TypeIndex{substituted_type_index}, substituted_size);
 		if (substituted_type == Type::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 			if (const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo()) {
 				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));

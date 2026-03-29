@@ -55,11 +55,11 @@ namespace FlashCpp {
  * pointers, cv-qualifiers) is encoded in the TypeIndex itself.
  * 
  * NOTE: For primitive types (int, float, etc.), type_index may be 0, so we 
- * also store base_type to ensure unique hashes for different primitive types.
+ * also store the category to ensure unique hashes for different primitive types.
  */
 struct TypeIndexArg {
 	TypeIndex type_index {};
-	Type base_type = Type::Invalid;  // Needed for primitive types where type_index is 0
+	TypeCategory base_type = TypeCategory::Invalid;  // Needed for primitive types where type_index is 0
 	
 	// CV-qualifiers and reference info that affect template identity
 	// These are stored separately because the same TypeIndex with different
@@ -76,12 +76,16 @@ struct TypeIndexArg {
 	
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
 	
-	TypeIndexArg(TypeIndex idx, Type type, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
+	TypeIndexArg(TypeIndex idx, TypeCategory type, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
 		: type_index(idx)
 		, base_type(type)
 		, cv_qualifier(cv)
 		, ref_qualifier(ref)
 		, pointer_depth(ptr_depth) {}
+
+	Type typeEnum() const noexcept {
+		return categoryToType(base_type);
+	}
 	
 	bool operator==(const TypeIndexArg& other) const {
 		return type_index == other.type_index &&
