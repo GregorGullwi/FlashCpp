@@ -27,7 +27,7 @@
 
 			ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 			TypedValue init_value = toTypedValue(init_operands);
-			emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, pointer_var, Token());
+			emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 		};
 
 		// Check if this is an array allocation (with or without placement)
@@ -158,7 +158,7 @@
 								// Evaluate the initializer expression
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -262,7 +262,7 @@
 
 								ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 									TypedValue init_value = toTypedValue(init_operands);
-									emitDereferenceStore(init_value, typeToCategory(allocated_type_enum), size_in_bits, element_ptr, Token());
+									emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
 							}
 						}
 					}
@@ -785,7 +785,7 @@
 		// More complex casts (e.g., pointer casts, numeric conversions) would need additional logic
 
 		// If the types are the same, just return the expression as-is
-		if (typeToCategory(source_type) == target_type && source_size == target_size) {
+		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
 				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
@@ -793,16 +793,16 @@
 		}
 
 		// For enum to int or int to enum, we can just change the type
-		if ((typeToCategory(source_type) == TypeCategory::Enum && target_type == TypeCategory::Int) ||
-		(typeToCategory(source_type) == TypeCategory::Int && target_type == TypeCategory::Enum) ||
-		(typeToCategory(source_type) == TypeCategory::Enum && target_type == TypeCategory::UnsignedInt) ||
-		(typeToCategory(source_type) == TypeCategory::UnsignedInt && target_type == TypeCategory::Enum)) {
+		if ((source_type == TypeCategory::Enum && target_type == TypeCategory::Int) ||
+		(source_type == TypeCategory::Int && target_type == TypeCategory::Enum) ||
+		(source_type == TypeCategory::Enum && target_type == TypeCategory::UnsignedInt) ||
+		(source_type == TypeCategory::UnsignedInt && target_type == TypeCategory::Enum)) {
 			// Return the value with the new type
 			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
-		if (is_floating_point_type(typeToCategory(source_type)) && is_integer_type(target_type)) {
+		if (is_floating_point_type(source_type) && is_integer_type(target_type)) {
 			TempVar result_temp = var_counter.next();
 			// Extract IrValue from IrOperand - visitExpressionNode returns [type, size, value]
 			// where value is TempVar, string_view, unsigned long long, or double
@@ -829,7 +829,7 @@
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
-		if (is_integer_type(typeToCategory(source_type)) && is_floating_point_type(target_type)) {
+		if (is_integer_type(source_type) && is_floating_point_type(target_type)) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -853,7 +853,7 @@
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
-		if (is_floating_point_type(typeToCategory(source_type)) && is_floating_point_type(target_type) && typeToCategory(source_type) != target_type) {
+		if (is_floating_point_type(source_type) && is_floating_point_type(target_type) && source_type != target_type) {
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
@@ -878,7 +878,7 @@
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
 		// e.g. static_cast<bool>(42) must produce 1, not 42
-		if (is_integer_type(typeToCategory(source_type)) && target_type == TypeCategory::Bool) {
+		if (is_integer_type(source_type) && target_type == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),
@@ -890,7 +890,7 @@
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
-		if (is_floating_point_type(typeToCategory(source_type)) && target_type == TypeCategory::Bool) {
+		if (is_floating_point_type(source_type) && target_type == TypeCategory::Bool) {
 			TempVar result_temp = var_counter.next();
 			BinaryOp bin_op{
 				.lhs = toTypedValue(expr_operands),

@@ -138,7 +138,7 @@
 	ExpressionContext context) {
 		auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
-			result.category_ = typeToCategory(type);
+			result.category_ = type;
 			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
@@ -1422,7 +1422,7 @@
 					PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 			}
 
-			TempVar deref_var = emitDereference(typeToCategory(member->memberType()), 64, 1, IrValue(result_var), Token());
+			TempVar deref_var = emitDereference(member->memberType(), 64, 1, IrValue(result_var), Token());
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
@@ -1516,7 +1516,7 @@
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
 							size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
-							if (ref_size == 0 && typeToCategory(static_member->memberType()) == TypeCategory::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
+							if (ref_size == 0 && static_member->memberType() == TypeCategory::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(static_member->type_index).getStructInfo();
 								if (si) ref_size = si->total_size;
 							}
@@ -1889,7 +1889,7 @@
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (typeToCategory(expr_type) == TypeCategory::Struct) {
+			if (expr_type == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("sizeof(struct_expression) not fully implemented yet");
@@ -2000,7 +2000,7 @@
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (typeToCategory(expr_type) == TypeCategory::Struct) {
+			if (expr_type == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("alignof(struct_expression) not fully implemented yet");
@@ -2009,7 +2009,7 @@
 			else {
 				// For primitive types
 				size_t size_in_bytes = size_in_bits / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, typeToCategory(expr_type));
+				alignment = calculate_alignment_from_size(size_in_bytes, expr_type);
 			}
 		}
 
@@ -2441,7 +2441,7 @@
 				// - All non-static data members have same access control
 				// - No base classes with non-static data members
 				// - No base classes of the same type as first non-static data member
-				if (typeToCategory(type) == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2469,7 +2469,7 @@
 			case TypeTraitKind::HasUniqueObjectRepresentations:
 				// Types with no padding bits have unique object representations
 				// Integral types (except bool), and trivially copyable types without padding
-				if (is_integer_type(typeToCategory(type))
+				if (is_integer_type(type)
 				&& !is_reference && pointer_depth == 0) {
 					result = true;
 				}
@@ -2570,12 +2570,12 @@
 
 			case TypeTraitKind::IsSigned:
 				// __is_signed - checks if integral type is signed
-				result = is_signed_integer_type(typeToCategory(type)) & !is_reference & (pointer_depth == 0);
+				result = is_signed_integer_type(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnsigned:
 				// __is_unsigned - checks if integral type is unsigned
-				result = (typeToCategory(type) == TypeCategory::Bool || is_unsigned_integer_type(typeToCategory(type))) & !is_reference & (pointer_depth == 0);
+				result = (type == TypeCategory::Bool || is_unsigned_integer_type(type)) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
@@ -2878,7 +2878,7 @@
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (typeToCategory(type) == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				else if (type == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2993,7 +2993,7 @@
 			case TypeTraitKind::UnderlyingType:
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
-				if (typeToCategory(type) == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
+				if (type == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
@@ -3561,16 +3561,16 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 					// This handles cases like `operator value_type()` where `using value_type = T;`
 					// Use recursive resolution to handle chains of type aliases
-					if (typeToCategory(resolved_type) == TypeCategory::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+					if (resolved_type == TypeCategory::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
 						TypeIndex current_type_index = type_spec.type_index();
 						int max_depth = 10;  // Prevent infinite loops from circular aliases
-						while (typeToCategory(resolved_type) == TypeCategory::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
+						while (resolved_type == TypeCategory::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
 							const TypeInfo& alias_type_info = getTypeInfo(current_type_index);
-							if (!alias_type_info.isVoid() && typeToCategory(alias_type_info.resolvedType()) != TypeCategory::UserDefined) {
+							if (!alias_type_info.isVoid() && alias_type_info.resolvedType() != TypeCategory::UserDefined) {
 								resolved_type = alias_type_info.resolvedType();
 								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
 								break;
-							} else if (typeToCategory(alias_type_info.resolvedType()) == TypeCategory::UserDefined && alias_type_info.type_index_ != current_type_index) {
+							} else if (alias_type_info.resolvedType() == TypeCategory::UserDefined && alias_type_info.type_index_ != current_type_index) {
 								// Follow the chain of aliases
 								current_type_index = alias_type_info.type_index_;
 							} else {
@@ -3579,7 +3579,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						}
 					}
 
-					if (typeToCategory(resolved_type) == target_type) {
+					if (resolved_type == target_type) {
 						// Prefer non-const match for non-const source; const for const source
 						if (source_is_const == member_func.is_const()) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
@@ -3595,7 +3595,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// but the return type wasn't fully updated in the AST.
 					// Note: target_type can never be Struct, Enum, or UserDefined here — getTypeName()
 					// returns "" for those types, causing an early `return nullptr` above (line 3470-3472).
-					if (typeToCategory(resolved_type) == TypeCategory::UserDefined) {
+					if (resolved_type == TypeCategory::UserDefined) {
 						int expected_size = get_type_size_bits(target_type);
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
@@ -3716,7 +3716,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = TypeIndex::fromTypeAndIndex(categoryToType(target_type), target_type_index);
+	call_op.return_type_index = TypeIndex::fromTypeAndIndex(target_type, target_type_index);
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;

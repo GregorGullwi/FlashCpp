@@ -47,13 +47,13 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
 static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, TypeCategory member_type) {
-	if (typeToCategory(member_type) == TypeCategory::Float) {
+	if (member_type == TypeCategory::Float) {
 		float fval = static_cast<float>(r.as_double());
 		uint32_t fbits = 0;
 		std::memcpy(&fbits, &fval, sizeof(float));
 		return static_cast<unsigned long long>(fbits);
 	}
-	if (typeToCategory(member_type) == TypeCategory::Double || typeToCategory(member_type) == TypeCategory::LongDouble) {
+	if (member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
 		double dval = r.as_double();
 		unsigned long long dbits = 0;
 		std::memcpy(&dbits, &dval, sizeof(double));
@@ -72,7 +72,7 @@ static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, 
 ExprResult AstToIr::materializeConstevalAggregateResult(
 	const ConstExpr::EvalResult& eval_result,
 	const TypeSpecifierNode& ret_spec,
-	Type ret_type,
+	TypeCategory ret_type,
 	SizeInBits ret_size,
 	const Token& call_token) {
 	if (eval_result.object_member_bindings.empty()) return {};
@@ -171,16 +171,16 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									Type operand_type = Type::Int;  // Default
+									TypeCategory operand_type = TypeCategory::Int;  // Default
 									int operand_size = 32;
 									if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
 										const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
-										operand_type = categoryToType(type.type());
+										operand_type = type.type();
 										operand_size = static_cast<int>(type.size_in_bits());
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 
-									op.operand.setType(typeToCategory(operand_type));
+									op.operand.setType(operand_type);
 									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
@@ -973,12 +973,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
 			// Float / double
-			if (typeToCategory(ret_type) == TypeCategory::Float) {
+			if (ret_type == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
 				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			if (typeToCategory(ret_type) == TypeCategory::Double || typeToCategory(ret_type) == TypeCategory::LongDouble) {
+			if (ret_type == TypeCategory::Double || ret_type == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
 				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -987,7 +987,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
-					eval_result, ret_spec, categoryToType(ret_type), ret_size, functionCallNode.called_from());
+					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
 				if (agg.category() != TypeCategory::Void) return agg;
 			}
 
@@ -1145,10 +1145,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						Type from_type = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
-						const Type to_type   = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
+						TypeCategory from_type = sema_->typeContext().get(cast_info.source_type_id).category();
+						const TypeCategory to_type   = sema_->typeContext().get(cast_info.target_type_id).category();
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							typeToCategory(from_type) == TypeCategory::Struct) {
+							from_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
@@ -1156,13 +1156,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), typeToCategory(param_base_type), param_type->type_index(), source_is_const);
+									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
 									const int param_size = static_cast<int>(param_type->size_in_bits());
 									if (auto result = emitConversionOperatorCall(argumentIrOperands, src_type_info, *conv_op,
-											typeToCategory(param_base_type), param_type->type_index(), param_size,
+											param_base_type, param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
 										arg_type = argumentIrOperands.typeEnum();
@@ -1171,12 +1171,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 									}
 								}
 							}
-						} else if (!is_struct_type(typeToCategory(from_type)) && !is_struct_type(typeToCategory(to_type))) {
+						} else if (!is_struct_type(from_type) && !is_struct_type(to_type)) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
-								from_type = categoryToType(argumentIrOperands.typeEnum());
-							argumentIrOperands = generateTypeConversion(argumentIrOperands, typeToCategory(from_type), typeToCategory(to_type), functionCallNode.called_from());
+							if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
+								from_type = argumentIrOperands.typeEnum();
+							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
 							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;
 							sema_applied_arg_conversion = true;
@@ -1198,12 +1198,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (standard_conversion.is_valid &&
 						standard_conversion.rank != ConversionRank::UserDefined) {
 						if (sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(typeToCategory(arg_type)) && is_standard_arithmetic_type(typeToCategory(param_base_type)) &&
+							is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
 							!(sema_ && sema_->hasUnresolvedCallArgs(&functionCallNode))) {
 							throw InternalError(std::string("Phase 15: sema missed function call argument conversion (")
 								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 						}
-						argumentIrOperands = generateTypeConversion(argumentIrOperands, typeToCategory(arg_type), typeToCategory(param_base_type), functionCallNode.called_from());
+						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
 						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
 					}
@@ -1211,7 +1211,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
 				// This handles implicit conversions via converting constructors
-				if (arg_type != param_base_type && typeToCategory(param_base_type) == TypeCategory::Struct && param_type->pointer_depth() == 0) {
+				if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
 					if (param_type_index.is_valid() && param_type_index.index() < getTypeInfoCount()) {
@@ -1283,7 +1283,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				}
 
 				// Check if argument is struct type and parameter expects different type
-				if (typeToCategory(arg_type) == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
+				if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
 						const int param_size = static_cast<int>(param_type->size_in_bits());
@@ -1291,14 +1291,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						// Look for a conversion operator to the parameter type
 						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), typeToCategory(param_base_type), param_type->type_index(), source_is_const);
+							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
 								StringTable::getStringView(source_type_info.name()),
 								" to parameter type");
 							if (auto result = emitConversionOperatorCall(argumentIrOperands, source_type_info, *conv_op,
-									typeToCategory(param_base_type), param_type->type_index(), param_size, Token()))
+									param_base_type, param_type->type_index(), param_size, Token()))
 								argumentIrOperands = *result;
 						}
 					}

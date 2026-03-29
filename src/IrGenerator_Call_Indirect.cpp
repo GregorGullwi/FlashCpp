@@ -595,7 +595,7 @@
 			}
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
-					eval_result, ret_spec, categoryToType(ret_type), ret_size,
+					eval_result, ret_spec, ret_type, ret_size,
 					memberFunctionCallNode.called_from());
 				if (agg.category() != TypeCategory::Void) return agg;
 			}

@@ -539,7 +539,7 @@ private:
 	ExprResult materializeConstevalAggregateResult(
 		const ConstExpr::EvalResult& eval_result,
 		const TypeSpecifierNode& ret_spec,
-		Type ret_type,
+		TypeCategory ret_type,
 		SizeInBits ret_size,
 		const Token& call_token);
 
