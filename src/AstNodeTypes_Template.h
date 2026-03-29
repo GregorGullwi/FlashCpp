@@ -756,6 +756,13 @@ struct StaticMemberDecl {
 		: name(name_), type_index(TypeIndex::fromTypeAndIndex(typeToCategory(type_), type_index_)), size(size_), alignment(alignment_),
 		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
 		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
+
+	StaticMemberDecl(StringHandle name_, TypeCategory cat_, TypeIndex type_index_, size_t size_, size_t alignment_,
+	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
+	                 ReferenceQualifier ref_qual_ = ReferenceQualifier::None, int ptr_depth_ = 0)
+		: name(name_), type_index(TypeIndex{type_index_.index(), cat_}), size(size_), alignment(alignment_),
+		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
+		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
 };
 
 class StructDeclarationNode {
@@ -885,7 +892,7 @@ public:
 	void add_static_member(StringHandle name, TypeCategory cat, TypeIndex type_index, size_t size, size_t alignment,
 	                       AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 	                       ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
-		static_members_.emplace_back(name, categoryToType(cat), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+		static_members_.emplace_back(name, cat, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
 	}
 
 	const std::vector<StaticMemberDecl>& static_members() const {
@@ -916,6 +923,18 @@ public:
 		}
 		// Note: If anonymous_unions_ is empty, this is a programming error in the parser
 		// The parser should always call add_anonymous_union_marker() before adding members
+	}
+
+	// TypeCategory overload — avoids categoryToType() at call sites.
+	void add_anonymous_union_member(StringHandle member_name, TypeCategory cat, TypeIndex type_index,
+	                                 size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
+	                                 size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
+	                                 bool is_array,
+	                                 int pointer_depth,
+	                                 std::vector<size_t> array_dimensions) {
+		add_anonymous_union_member(member_name, categoryToType(cat), type_index, member_size, member_alignment,
+			bitfield_width, referenced_size_bits, reference_qualifier, is_array, pointer_depth,
+			std::move(array_dimensions));
 	}
 	
 	const std::vector<AnonymousUnionInfo>& anonymous_unions() const {

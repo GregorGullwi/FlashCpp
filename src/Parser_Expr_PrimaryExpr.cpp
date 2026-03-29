@@ -2677,19 +2677,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (node->is<ExpressionNode>()) {
 						const auto& expr = node->as<ExpressionNode>();
 						std::optional<TypeSpecifierNode> arg_type_node_opt;
-						Type arg_type = Type::Int;  // Default assumption
+						TypeCategory arg_type = TypeCategory::Int;  // Default assumption
 						bool is_lvalue = false;  // Track if this is an lvalue for perfect forwarding
 					
 						std::visit([&](const auto& inner) {
 							using T = std::decay_t<decltype(inner)>;
 							if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-								arg_type = Type::Bool;
+								arg_type = TypeCategory::Bool;
 								// Boolean literals are rvalues
 							} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-								arg_type = categoryToType(inner.type());
+								arg_type = inner.type();
 								// Literals are rvalues
 							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-								arg_type = Type::Char;  // const char*
+								arg_type = TypeCategory::Char;  // const char*
 								// String literals are lvalues (but typically decay to pointers)
 							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 								// Look up the identifier's type
@@ -2700,7 +2700,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
 											const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();
 											arg_type_node_opt = type_spec;
-											arg_type = categoryToType(type_spec.type());
+											arg_type = type_spec.type();
 											// Named variables are lvalues
 											is_lvalue = true;
 										}
@@ -3412,23 +3412,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// For now, we'll use a simple heuristic
 							if (node->is<ExpressionNode>()) {
 								const auto& expr = node->as<ExpressionNode>();
-								Type arg_type = Type::Int;  // Default assumption
+								TypeCategory arg_type = TypeCategory::Int;  // Default assumption
 								
 								std::visit([&](const auto& inner) {
 									using T = std::decay_t<decltype(inner)>;
 									if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-										arg_type = Type::Bool;
+										arg_type = TypeCategory::Bool;
 									} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
-										arg_type = categoryToType(inner.type());
+										arg_type = inner.type();
 									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										arg_type = Type::Char;  // const char*
+										arg_type = TypeCategory::Char;  // const char*
 									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 										// Look up the identifier's type
 										auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 										if (id_type.has_value()) {
 											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 												if (decl->type_node().template is<TypeSpecifierNode>()) {
-													arg_type = categoryToType(decl->type_node().template as<TypeSpecifierNode>().type());
+													arg_type = decl->type_node().template as<TypeSpecifierNode>().type();
 												}
 											}
 										}

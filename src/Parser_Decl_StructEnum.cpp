@@ -1269,7 +1269,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
-							categoryToType(anon_member_type_spec.type()),
+							anon_member_type_spec.type(),
 							anon_member_type_spec.type_index(),
 							member_size,
 							member_alignment,

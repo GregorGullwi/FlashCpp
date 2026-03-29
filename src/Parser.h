@@ -996,7 +996,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_seh_leave_statement();  // Parse __leave statement
 
         // Helper functions for auto type deduction
-        Type deduce_type_from_expression(const ASTNode& expr);
+        TypeCategory deduce_type_from_expression(const ASTNode& expr);
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
         std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
         std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);

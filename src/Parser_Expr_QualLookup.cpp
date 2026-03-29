@@ -1814,16 +1814,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 }
 
 // Helper function to deduce the type of an expression for auto type deduction
-Type Parser::deduce_type_from_expression(const ASTNode& expr) {
+TypeCategory Parser::deduce_type_from_expression(const ASTNode& expr) {
 	// For now, use a simple approach: use the existing get_expression_type function
 	// which returns TypeSpecifierNode, and extract the type from it
 	auto type_spec_opt = get_expression_type(expr);
 	if (type_spec_opt.has_value()) {
-		return categoryToType(type_spec_opt->type());
+		return type_spec_opt->type();
 	}
 
 	// Default to int if we can't determine the type
-	return Type::Int;
+	return TypeCategory::Int;
 }
 
 // Helper function to deduce and update auto return type from function body

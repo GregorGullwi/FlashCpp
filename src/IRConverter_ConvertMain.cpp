@@ -14695,7 +14695,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
 			} else if (exception_type != TypeCategory::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
-				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(categoryToType(exception_type));
+				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
 			}
 
 			if (!typeinfo_symbol.empty()) {

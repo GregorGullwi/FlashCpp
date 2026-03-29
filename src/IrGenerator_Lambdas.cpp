@@ -110,7 +110,7 @@
 				}
 
 				info.parameters.emplace_back(
-					categoryToType(param_type.type()),
+					param_type.type(),
 					param_type.size_in_bits(),
 					static_cast<int>(param_type.pointer_levels().size()),
 					std::string(param_decl.identifier_token().value())
@@ -914,14 +914,14 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 
 	// Compute the mangled name for the __invoke function
 	// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-	Type return_type = Type::Void;
+	TypeCategory return_type = TypeCategory::Void;
 	int return_size = 0;
 	if (lambda.return_type().has_value()) {
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-		return_type = categoryToType(ret_type_node.type());
+		return_type = ret_type_node.type();
 		return_size = ret_type_node.size_in_bits();
 	}
-	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());
+	TypeSpecifierNode return_type_node(return_type, TypeQualifier::None, return_size, lambda.lambda_token());
 
 	// Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;

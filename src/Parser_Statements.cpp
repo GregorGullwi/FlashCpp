@@ -1025,7 +1025,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 			} else {
 				// Fallback: deduce basic type
-				Type deduced_type = deduce_type_from_expression(*initializer);
+				TypeCategory deduced_type = deduce_type_from_expression(*initializer);
 				unsigned char deduced_size = get_type_size_bits(deduced_type);
 				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 

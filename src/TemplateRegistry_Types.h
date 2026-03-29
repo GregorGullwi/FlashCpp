@@ -303,7 +303,9 @@ struct TemplateTypeArg {
 	}
 
 	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx = TypeIndex{}) {
-		return makeType(categoryToType(cat), idx);
+		TemplateTypeArg arg;
+		arg.type_index = makeTypeIndex(cat, idx);
+		return arg;
 	}
 	
 	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {
@@ -315,7 +317,7 @@ struct TemplateTypeArg {
 	}
 
 	static TemplateTypeArg makeValue(int64_t v, TypeCategory cat) {
-		return TemplateTypeArg(v, categoryToType(cat));
+		return TemplateTypeArg(v, cat);
 	}
 	
 	static TemplateTypeArg makeTemplate(StringHandle name) {

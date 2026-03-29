@@ -993,7 +993,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Build template argument list
 	InlineVector<TemplateTypeArg, 4> template_args;
-	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
+	std::vector<TypeCategory> deduced_type_args;  // For types extracted from instantiated names
 	size_t function_pack_arg_start = SIZE_MAX;
 	if (has_function_parameter_pack) {
 		size_t params_before_pack = 0;
@@ -1088,7 +1088,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// placeholder), because dependent non-type params are stored as
 							// is_value==false in the placeholder even though they carry an integer value
 							// at instantiation time.
-							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), categoryToType(c.typeEnum()));
+							TemplateTypeArg new_arg = TemplateTypeArg::makeValue(c.intValue(), c.typeEnum());
 							auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
 							if (!inserted && !(it->second == new_arg)) {
 								FLASH_LOG_FORMAT(Templates, Error,
@@ -1197,7 +1197,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								const auto& stored_args = type_info.templateArgs();
 								for (const auto& stored_arg : stored_args) {
 									if (!stored_arg.is_value) {
-										deduced_type_args.push_back(categoryToType(stored_arg.typeEnum()));
+										deduced_type_args.push_back(stored_arg.typeEnum());
 									}
 								}
 								
@@ -1255,7 +1255,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (map_it != param_name_to_arg.end()) {
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
-					Type deduced_type = deduced_type_args[0];
+					TypeCategory deduced_type = deduced_type_args[0];
 					template_args.push_back(TemplateTypeArg::makeType(deduced_type));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {

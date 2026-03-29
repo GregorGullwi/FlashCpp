@@ -125,15 +125,34 @@ inline ExprResult makeExprResultImpl(
 	};
 }
 
+// TypeCategory overload — avoids round-trip through categoryToType/typeToCategory.
+inline ExprResult makeExprResultImpl(
+	TypeCategory cat,
+	SizeInBits size_in_bits,
+	IrOperand value,
+	TypeIndex type_index,
+	PointerDepth pointer_depth,
+	ValueStorage storage
+) {
+	return {
+		.category_ = cat,
+		.size_in_bits = size_in_bits,
+		.value = std::move(value),
+		.type_index = type_index,
+		.pointer_depth = pointer_depth,
+		.ir_type = toIrType(cat),
+		.storage = storage
+	};
+}
+
 // All six arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
 inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, storage);
 }
 
-/// TypeCategory bridge overload — converts cat to the legacy Type via categoryToType()
-/// so call sites that have already adopted TypeCategory do not need explicit conversions.
+/// TypeCategory overload — calls native TypeCategory makeExprResultImpl directly.
 inline ExprResult makeExprResult(TypeCategory cat, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
-	return makeExprResultImpl(categoryToType(cat), size_in_bits, std::move(value), type_index, pointer_depth, storage);
+	return makeExprResultImpl(cat, size_in_bits, std::move(value), type_index, pointer_depth, storage);
 }
 
 /// Returns a copy of \p tv with the storage discriminator set to \p storage.

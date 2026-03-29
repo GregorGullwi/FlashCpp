@@ -1299,7 +1299,16 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type,
 
 // TypeCategory overload — avoids bridge through categoryToType().
 inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placeholder_cat, TypeSpecifierNode deduced_type) {
-	return finalizePlaceholderTypeDeduction(categoryToType(placeholder_cat), std::move(deduced_type));
+	assert(isPlaceholderAutoType(placeholder_cat));
+	if (placeholder_cat != TypeCategory::Auto) {
+		return deduced_type;
+	}
+
+	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
+	if (deduced_type.pointer_depth() == 0 && !deduced_type.is_array()) {
+		deduced_type.set_cv_qualifier(CVQualifier::None);
+	}
+	return deduced_type;
 }
 
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
