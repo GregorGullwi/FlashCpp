@@ -158,13 +158,19 @@ inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, 
 
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
-	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	
 	TypedValue result;
-	Type legacy_type = std::get<Type>(operands[0]);
-	result.type_index = TypeIndex{0, typeToCategory(legacy_type)};
-	result.ir_type = toIrType(legacy_type);
+	TypeCategory category = TypeCategory::Invalid;
+	if (std::holds_alternative<Type>(operands[0])) {
+		category = typeToCategory(std::get<Type>(operands[0]));
+	} else if (std::holds_alternative<int>(operands[0])) {
+		category = static_cast<TypeCategory>(std::get<int>(operands[0]));
+	} else {
+		assert(false && "Expected operand order [type/category][size_in_bits][value][metadata]");
+	}
+	result.type_index = TypeIndex{0, category};
+	result.ir_type = toIrType(category);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
 	result.pointer_depth = PointerDepth{};

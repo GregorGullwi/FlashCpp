@@ -404,7 +404,7 @@
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
-				if (resolved_member && categoryToType(resolved_member->type_index.category()) == Type::FunctionPointer) {
+				if (resolved_member && resolved_member->type_index.category() == TypeCategory::FunctionPointer) {
 					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
 					std::variant<StringHandle, TempVar> function_pointer;
 					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
@@ -433,13 +433,13 @@
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
 					TypeIndex ret_type_index = resolved_member->function_signature->return_type_index;
-					Type ret_type = categoryToType(ret_type_index.category());
-					int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+					TypeCategory ret_category = ret_type_index.category();
+					int ret_size = (ret_category == TypeCategory::Void) ? 0 : get_type_size_bits(ret_category);
 					return makeExprResult(ret_type_index, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && isIrStructType(toIrType(categoryToType(resolved_member->type_index.category())))) {
+				if (resolved_member && isIrStructType(toIrType(resolved_member->type_index))) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
@@ -448,7 +448,7 @@
 							// Look for the called function name in this struct's members
 							StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 							for (const auto& member : member_struct_info->members) {
-								if (member.getName() == func_name_handle && categoryToType(member.type_index.category()) == Type::FunctionPointer) {
+								if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
 									// Found a function pointer member! Generate indirect call
 									TempVar ret_var = var_counter.next();
 
@@ -495,8 +495,8 @@
 										throw InternalError("Function pointer member missing function_signature for indirect call return type");
 									}
 									TypeIndex ret_type_index = member.function_signature->return_type_index;
-									Type ret_type = categoryToType(ret_type_index.category());
-									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+									TypeCategory ret_category = ret_type_index.category();
+									int ret_size = (ret_category == TypeCategory::Void) ? 0 : get_type_size_bits(ret_category);
 									return makeExprResult(ret_type_index, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
@@ -776,7 +776,7 @@
 				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
 					auto fp_member = struct_info->findMemberRecursive(func_name_handle);
-					if (fp_member.has_value() && categoryToType(fp_member->type_index.category()) == Type::FunctionPointer) {
+					if (fp_member.has_value() && fp_member->type_index.category() == TypeCategory::FunctionPointer) {
 						const auto& member = *fp_member;
 						// This is a call through a function pointer member!
 						// Generate an indirect call instead of a member function call
