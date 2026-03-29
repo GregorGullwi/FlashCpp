@@ -464,6 +464,7 @@ TypedValue AstToIr::materializeDefaultArgument(
 	const TypeSpecifierNode& param_type_spec,
 	std::string_view error_context) {
 	auto materializePlaceholderCtorDefault = [&](const ConstructorCallNode& ctor_call) -> std::optional<TypedValue> {
+		const TypeCategory param_type_category = param_type_spec.category();
 		if (ctor_call.arguments().size() == 0 &&
 			ctor_call.type_node().is<TypeSpecifierNode>() &&
 			(ctor_call.type_node().as<TypeSpecifierNode>().type() == Type::UserDefined ||
@@ -472,10 +473,10 @@ TypedValue AstToIr::materializeDefaultArgument(
 			 isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
 			!is_struct_type(param_type_spec.type()) &&
 			param_type_spec.type() != Type::UserDefined) {
-			const int type_size_bits = get_type_size_bits(param_type_spec.type());
-			TypedValue concrete_default = is_floating_point_type(param_type_spec.type())
-				? makeTypedValue(TypeIndex{0, typeToCategory(param_type_spec.type())}, SizeInBits{type_size_bits}, 0.0)
-				: makeTypedValue(TypeIndex{0, typeToCategory(param_type_spec.type())}, SizeInBits{type_size_bits}, 0ULL);
+			const int type_size_bits = get_type_size_bits(param_type_category);
+			TypedValue concrete_default = is_floating_point_type(param_type_category)
+				? makeTypedValue(TypeIndex{0, param_type_category}, SizeInBits{type_size_bits}, 0.0)
+				: makeTypedValue(TypeIndex{0, param_type_category}, SizeInBits{type_size_bits}, 0ULL);
 			applyTypeNodeMetadata(concrete_default, param_type_spec);
 			return concrete_default;
 		}
@@ -628,37 +629,45 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// The sema pass annotates each branch with a conversion to the common type.
 		// We also try parser type inference as a fallback.
 		Type common_type = Type::Invalid;
+		TypeCategory common_type_category = TypeCategory::Invalid;
 		// Check sema annotations: if either branch has a conversion annotation, that
 		// tells us the target (common) type.
 		if (sema_) {
 			Type true_target = getSemaAnnotatedTargetType(ternaryNode.true_expr());
 			Type false_target = getSemaAnnotatedTargetType(ternaryNode.false_expr());
-			if (true_target != Type::Invalid)
+			if (true_target != Type::Invalid) {
 				common_type = true_target;
-			else if (false_target != Type::Invalid)
+				common_type_category = typeToCategory(true_target);
+			} else if (false_target != Type::Invalid) {
 				common_type = false_target;
+				common_type_category = typeToCategory(false_target);
+			}
 		}
 		// Fallback: try parser type inference
 		if (common_type == Type::Invalid && parser_) {
 			auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 			auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
-			if (true_ts.has_value() && false_ts.has_value())
+			if (true_ts.has_value() && false_ts.has_value()) {
 				common_type = get_common_type(true_ts->type(), false_ts->type());
+				common_type_category = typeToCategory(common_type);
+			}
 		}
 
 		// Evaluate true expression
 		ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
 		// Finalize common_type: if parser inference failed, fall back to true branch type
-		if (common_type == Type::Invalid)
-			common_type = categoryToType(true_result.type_index.category());
+		if (common_type == Type::Invalid) {
+			common_type_category = true_result.type_index.category();
+			common_type = categoryToType(common_type_category);
+		}
 
 		// Convert true result to common type if needed.
 		// NOTE: sema annotations were already consumed above when determining common_type
 		// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
 		// there is no need to re-query the annotation here since both paths would produce
 		// the same generateTypeConversion call (sema_target == common_type by construction).
-		if (categoryToType(true_result.type_index.category()) != common_type)
+		if (true_result.type_index.category() != common_type_category)
 			true_result = generateTypeConversion(true_result, categoryToType(true_result.type_index.category()), common_type, ternaryNode.get_token());
 
 		int result_size = get_type_size_bits(common_type);
@@ -670,7 +679,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// Assign true_expr result to result variable
 		AssignmentOp assign_true_op;
 		assign_true_op.result = result_var;
-		assign_true_op.lhs.type_index = TypeIndex{assign_true_op.lhs.type_index.index(), typeToCategory(common_type)}; assign_true_op.lhs.ir_type = toIrType(common_type);
+		assign_true_op.lhs.type_index = TypeIndex{0, common_type_category};
+		assign_true_op.lhs.ir_type = toIrType(common_type_category);
 		assign_true_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_true_op.lhs.value = result_var;
 		assign_true_op.rhs = toTypedValue(true_result);
@@ -687,13 +697,14 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
 
 		// Convert false result to common type if needed (same reasoning as true branch above).
-		if (categoryToType(false_result.type_index.category()) != common_type)
+		if (false_result.type_index.category() != common_type_category)
 			false_result = generateTypeConversion(false_result, categoryToType(false_result.type_index.category()), common_type, ternaryNode.get_token());
 
 		// Assign false_expr result to result variable
 		AssignmentOp assign_false_op;
 		assign_false_op.result = result_var;
-		assign_false_op.lhs.type_index = TypeIndex{assign_false_op.lhs.type_index.index(), typeToCategory(common_type)}; assign_false_op.lhs.ir_type = toIrType(common_type);
+		assign_false_op.lhs.type_index = TypeIndex{0, common_type_category};
+		assign_false_op.lhs.ir_type = toIrType(common_type_category);
 		assign_false_op.lhs.size_in_bits = SizeInBits{result_size};
 		assign_false_op.lhs.value = result_var;
 		assign_false_op.rhs = toTypedValue(false_result);
@@ -703,7 +714,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 
 		// Return the result variable
-		return makeExprResult(TypeIndex{0, typeToCategory(common_type)}, SizeInBits{result_size}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{0, common_type_category}, SizeInBits{result_size}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
@@ -1217,13 +1228,21 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 
 		auto makeReferenceArgument = [&](const ExprResult& operand_result, Type operand_type, int operand_size) -> std::optional<TypedValue> {
+			const TypeCategory operand_type_category = operand_result.type_index.category() != TypeCategory::Invalid
+				? operand_result.type_index.category()
+				: typeToCategory(operand_type);
+			TypeIndex operand_type_index = operand_result.type_index;
+			if (operand_type_index.category() == TypeCategory::Invalid) {
+				operand_type_index = TypeIndex{operand_type_index.index(), operand_type_category};
+			}
+
 			TypedValue arg;
-			arg.type_index = TypeIndex{arg.type_index.index(), typeToCategory(operand_type)}; arg.ir_type = toIrType(operand_type);
-			arg.ir_type = toIrType(operand_type);
+			arg.type_index = TypeIndex{0, operand_type_category};
+			arg.ir_type = toIrType(operand_type_category);
 			arg.size_in_bits = SizeInBits{64};
 
 			if (const auto* string = std::get_if<StringHandle>(&operand_result.value)) {
-				arg.value = emitAddressOf(TypeIndex{0, typeToCategory(operand_type)}, operand_size, IrValue(*string));
+				arg.value = emitAddressOf(operand_type_index, operand_size, IrValue(*string));
 				return arg;
 			}
 
@@ -1249,7 +1268,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				arg.value = is_already_address
 					? IrValue(temp_var)
-					: emitAddressOf(TypeIndex{0, typeToCategory(operand_type)}, operand_size, IrValue(temp_var));
+					: emitAddressOf(operand_type_index, operand_size, IrValue(temp_var));
 				return arg;
 			}
 
@@ -1262,7 +1281,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar temp_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = temp_var;
-			assign_op.lhs = makeTypedValue(TypeIndex{0, typeToCategory(operand_type)}, SizeInBits{static_cast<int>(operand_size)}, temp_var);
+			assign_op.lhs = makeTypedValue(operand_type_index, SizeInBits{static_cast<int>(operand_size)}, temp_var);
 
 			IrValue rhs_value;
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operand_result.value)) {
@@ -1270,10 +1289,10 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			} else {
 				rhs_value = std::get<double>(operand_result.value);
 			}
-			assign_op.rhs = makeTypedValue(TypeIndex{0, typeToCategory(operand_type)}, SizeInBits{static_cast<int>(operand_size)}, rhs_value);
+			assign_op.rhs = makeTypedValue(operand_type_index, SizeInBits{static_cast<int>(operand_size)}, rhs_value);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
-			arg.value = emitAddressOf(TypeIndex{0, typeToCategory(operand_type)}, operand_size, IrValue(temp_var));
+			arg.value = emitAddressOf(operand_type_index, operand_size, IrValue(temp_var));
 			return arg;
 		};
 
@@ -1741,7 +1760,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 
-				bool needs_hidden_return = needsHiddenReturnParam(typeToCategory(return_type.type()), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
+				bool needs_hidden_return = needsHiddenReturnParam(return_type.category(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
 				if (needs_hidden_return) {
 					call_op.return_slot = result_var;
 				}
@@ -1877,9 +1896,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Resolve actual return type - defaulted operator<=> has 'auto' return type
 				// that is deduced to int (returning -1/0/1)
 				Type resolved_return_type = return_type.type();
+				TypeCategory resolved_return_type_category = return_type.category();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (isPlaceholderAutoType(resolved_return_type) && op == "<=>") {
 					resolved_return_type = Type::Int;
+					resolved_return_type_category = TypeCategory::Int;
 					actual_return_size = 32;
 				}
 				if (actual_return_size == 0 && resolved_return_type == Type::Struct && return_type.type_index().is_valid()) {
@@ -1888,13 +1909,17 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
 					}
 				}
-				call_op.return_type_index = TypeIndex::fromTypeAndIndex(resolved_return_type, return_type.type_index());
+				TypeIndex resolved_return_type_index = return_type.type_index();
+				if (resolved_return_type_index.category() != resolved_return_type_category) {
+					resolved_return_type_index = TypeIndex{resolved_return_type_index.index(), resolved_return_type_category};
+				}
+				call_op.return_type_index = resolved_return_type_index;
 				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 				call_op.is_member_function = true;  // This is a member function call
 
 				// Detect if returning struct by value (needs hidden return parameter for RVO)
-				bool returns_struct_by_value = returnsStructByValue(typeToCategory(resolved_return_type), return_type.pointer_depth(), return_type.is_reference());
-				bool needs_hidden_return_param = needsHiddenReturnParam(typeToCategory(resolved_return_type), return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
+				bool returns_struct_by_value = returnsStructByValue(resolved_return_type_category, return_type.pointer_depth(), return_type.is_reference());
+				bool needs_hidden_return_param = needsHiddenReturnParam(resolved_return_type_category, return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
 
 				if (needs_hidden_return_param) {
 					call_op.return_slot = result_var;
@@ -1910,9 +1935,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				// Add 'this' pointer as first argument
+				const TypeCategory this_type_category = lhsExprResult.type_index.category() != TypeCategory::Invalid
+					? lhsExprResult.type_index.category()
+					: typeToCategory(lhsType);
 				TypedValue this_arg;
-				this_arg.type_index = TypeIndex{this_arg.type_index.index(), typeToCategory(lhsType)}; this_arg.ir_type = toIrType(lhsType);
-				this_arg.ir_type = toIrType(lhsType);
+				this_arg.type_index = TypeIndex{0, this_type_category};
+				this_arg.ir_type = toIrType(this_type_category);
 				this_arg.size_in_bits = SizeInBits{64};  // 'this' is always a pointer (64-bit)
 				this_arg.value = lhs_addr;
 				call_op.args.push_back(this_arg);
@@ -1936,7 +1964,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Return the result with resolved types
 				return makeExprResult(
-					TypeIndex::fromTypeAndIndex(resolved_return_type, return_type.type_index()),
+					resolved_return_type_index,
 					SizeInBits{static_cast<int>(actual_return_size)},
 					IrOperand{result_var},
 					PointerDepth{}, ValueStorage::ContainsData);
