@@ -304,7 +304,7 @@ ParseResult Parser::parse_type_specifier()
 				const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
 				if (enum_type_info.enum_info_) {
 					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
-					Type underlying = enum_info->underlying_type;
+					TypeCategory underlying = enum_info->underlying_type;
 					int underlying_size = enum_info->underlying_size;
 					FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -318,7 +318,7 @@ ParseResult Parser::parse_type_specifier()
 			const TypeInfo& type_info = getTypeInfo(arg_type.type_index());
 			if (type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
-				Type underlying = enum_info->underlying_type;
+				TypeCategory underlying = enum_info->underlying_type;
 				int underlying_size = enum_info->underlying_size;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(

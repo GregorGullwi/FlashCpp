@@ -3640,11 +3640,11 @@ ParseResult Parser::parse_enum_declaration()
 	auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
-	Type underlying_type = Type::Int;
+	TypeCategory underlying_type = TypeCategory::Int;
 	int underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
 		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-		underlying_type = categoryToType(type_spec.type());
+		underlying_type = type_spec.type();
 		underlying_size = type_spec.size_in_bits();
 	}
 	enum_info->underlying_type = underlying_type;

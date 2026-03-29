@@ -649,12 +649,20 @@ struct Enumerator {
 struct EnumTypeInfo {
 	StringHandle name;
 	bool is_scoped;                  // true for enum class, false for enum
-	Type underlying_type;            // Underlying type (default: int)
+	TypeCategory underlying_type;    // Underlying type category (default: Int)
 	unsigned char underlying_size;   // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
-	EnumTypeInfo(StringHandle n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
+	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+
+	// Legacy Type overload — bridges through typeToCategory().
+	EnumTypeInfo(StringHandle n, bool scoped, Type underlying, unsigned char size)
+		: EnumTypeInfo(n, scoped, typeToCategory(underlying), size) {}
+
+	// Convenience: default underlying type is Int/32-bit
+	explicit EnumTypeInfo(StringHandle n, bool scoped = false)
+		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
 	
 	StringHandle getName() const {
 		return name;
@@ -1008,31 +1016,35 @@ inline void forEachTypeInfo(Fn&& fn) {
 
 // Get the natural alignment for a type (in bytes)
 // This follows the x64 Windows ABI alignment rules
-inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
-	switch (type) {
-		case Type::Void:
+inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
+	switch (cat) {
+		case TypeCategory::Void:
 			return 1;
-		case Type::Bool:
-		case Type::Char:
-		case Type::UnsignedChar:
+		case TypeCategory::Bool:
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
 			return 1;
-		case Type::Short:
-		case Type::UnsignedShort:
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::WChar:
+		case TypeCategory::Char16:
 			return 2;
-		case Type::Int:
-		case Type::UnsignedInt:
-		case Type::Long:
-		case Type::UnsignedLong:
-		case Type::Float:
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::Float:
+		case TypeCategory::Char32:
 			return 4;
-		case Type::LongLong:
-		case Type::UnsignedLongLong:
-		case Type::Double:
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+		case TypeCategory::Double:
 			return 8;
-		case Type::LongDouble:
+		case TypeCategory::LongDouble:
 			// On x64 Windows, long double is 8 bytes (same as double)
 			return 8;
-		case Type::Struct:
+		case TypeCategory::Struct:
 			// For structs, alignment is determined by the struct's alignment field
 			// This should be passed separately
 			return type_size_bytes;
@@ -1042,9 +1054,9 @@ inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
 	}
 }
 
-// TypeCategory overload — bridges through categoryToType().
-inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
-	return get_type_alignment(categoryToType(cat), type_size_bytes);
+// Legacy Type overload — bridges through typeToCategory().
+inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
+	return get_type_alignment(typeToCategory(type), type_size_bytes);
 }
 
 // Type utilities — TypeCategory overloads are in AstNodeTypes_TypeSystem.h

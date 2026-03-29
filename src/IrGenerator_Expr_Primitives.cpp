@@ -291,7 +291,7 @@
 			const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
 			if (!is_enum_pointer && type_node.category() == TypeCategory::Enum && type_node.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
-					result_type = typeToCategory(enum_info->underlying_type);
+					result_type = enum_info->underlying_type;
 				}
 			}
 			TypeCategory semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());

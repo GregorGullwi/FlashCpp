@@ -180,21 +180,12 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 	return ConversionPlan::no_match();
 }
 
-// Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
-// Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
-inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
-	if (typeToCategory(base_type) == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
-			return ei->underlying_type;
-	}
-	return base_type;
-}
-
-// TypeCategory overload: resolve Enum to its underlying integer category.
+// Resolve Enum to its underlying integer category.
+// Returns the category unchanged if it is not an enum or the TypeIndex is invalid.
 inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeCategory cat, TypeIndex type_index) {
 	if (cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
-			return typeToCategory(ei->underlying_type);
+			return ei->underlying_type;
 	}
 	return cat;
 }
@@ -1851,7 +1842,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& spec) {
 	FlashCpp::TypeIndexArg arg;
 	arg.type_index = spec.type_index();
-	arg.base_type = categoryToType(spec.type());  // Include base type for primitive types
+	arg.base_type = spec.type();  // Include base type for primitive types
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));

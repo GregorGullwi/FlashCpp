@@ -618,7 +618,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
-				Type literal_type = categoryToType(lit.type());  // Get the type of the literal (bool, int, etc.)
+				TypeCategory literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
 				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
