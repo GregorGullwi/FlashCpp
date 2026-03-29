@@ -3054,7 +3054,7 @@
 			case TypeTraitKind::UnderlyingType:
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
-				if (type == Type::Enum && !is_reference && pointer_depth == 0 &&
+				if (type_spec.type_index().category() == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();

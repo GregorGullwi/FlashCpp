@@ -1455,7 +1455,7 @@ public:  // Public methods for template instantiation
                 // so we must verify via EnumTypeInfo::findEnumerator before classifying.
                 if (decl.type_node().is<TypeSpecifierNode>()) {
                     const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-                    if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+					if (ts.type_index().category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
                         size_t enum_idx = ts.type_index().index();
                         if (enum_idx < getTypeInfoCount()) {
                             const EnumTypeInfo* enum_info = getTypeInfo(TypeIndex{enum_idx}).getEnumInfo();
