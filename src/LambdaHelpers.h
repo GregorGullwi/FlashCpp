@@ -23,8 +23,8 @@ inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct
 			member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 			TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-			if (isPlaceholderAutoType(return_type.type())) {
-				return_type = TypeSpecifierNode(Type::Void, TypeQualifier::None, get_type_size_bits(Type::Void), func_decl.decl_node().identifier_token());
+			if (isPlaceholderAutoType(return_type.category())) {
+				return_type = TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, get_type_size_bits(TypeCategory::Void), func_decl.decl_node().identifier_token());
 			}
 
 			LambdaStructSignature sig{ return_type, {} };

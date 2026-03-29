@@ -1267,11 +1267,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(closure_type->type_index_, closure_size_bits, lambda.lambda_token());
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeIndex{0, TypeCategory::Struct}, 64, lambda.lambda_token());
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1282,15 +1282,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 	}
 	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const auto& literal = std::get<NumericLiteralNode>(expr);
-		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
+		return TypeSpecifierNode(literal.category(), literal.qualifier(), literal.sizeInBits());
 	}
 	else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
+		TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
 		char_type.add_pointer_level();
 		return char_type;
 	}
@@ -1381,12 +1381,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		    op_kind == tok::Less || op_kind == tok::Greater ||
 		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
 		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
-			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 		}
 
 		// For bitwise/arithmetic operators, check the LHS type
 		// If LHS is an enum, check for free function operator overloads
-		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
+		if (lhs_type_opt.has_value() && lhs_type_opt->category() == TypeCategory::Enum) {
 			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
 			StringBuilder op_name_builder;
 			op_name_builder.append("operator"sv);
@@ -1413,7 +1413,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Default: return int for arithmetic/bitwise operations
-		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+		return TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		// For unary operators, handle type transformations
@@ -1457,7 +1457,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 					if (!lambda_ptr) {
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+						if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1500,7 +1500,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
-		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
+		if (op == "+" && operand_type.category() == TypeCategory::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(operand_type.type_index());
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1537,7 +1537,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const ASTNode& object_node = member_call.object();
 		if (object_node.is<ExpressionNode>()) {
 			auto object_type_opt = get_expression_type(object_node);
-			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
+			if (object_type_opt.has_value() && object_type_opt->category() == TypeCategory::Struct) {
 				size_t struct_type_index = object_type_opt->type_index().index();
 				if (struct_type_index < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
@@ -1581,11 +1581,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(closure_type->type_index_, closure_size_bits, lambda.lambda_token());
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeIndex{0, TypeCategory::Struct}, 64, lambda.lambda_token());
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
@@ -1645,7 +1645,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(member_ctx.struct_type_index);
-						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+						object_type_opt = TypeSpecifierNode(type_info.type_index_, type_info.type_size_ * 8);
 					}
 				}
 			}
@@ -1660,7 +1660,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const TypeSpecifierNode& object_type = *object_type_opt;
 		
 		// Handle struct/class member access
-		if (is_struct_type(object_type.type())) {
+		if (is_struct_type(object_type.category())) {
 			size_t struct_type_index = object_type.type_index().index();
 			if (struct_type_index < getTypeInfoCount()) {
 				// Look up the member
@@ -1691,7 +1691,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
-		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
+		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
 	}
 	else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		// For ternary expressions (cond ? true_expr : false_expr), determine the common type
