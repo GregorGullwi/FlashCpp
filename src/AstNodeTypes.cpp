@@ -285,8 +285,34 @@ void initialize_native_types() {
 
 }
 
+bool is_integer_type(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::Char:
+        case TypeCategory::UnsignedChar:
+        case TypeCategory::WChar:
+        case TypeCategory::Char8:
+        case TypeCategory::Char16:
+        case TypeCategory::Char32:
+        case TypeCategory::Short:
+        case TypeCategory::UnsignedShort:
+        case TypeCategory::Int:
+        case TypeCategory::UnsignedInt:
+        case TypeCategory::Long:
+        case TypeCategory::UnsignedLong:
+        case TypeCategory::LongLong:
+        case TypeCategory::UnsignedLongLong:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool is_integer_type(Type type) {
     return is_integer_type(typeToCategory(type));
+}
+
+bool is_bool_type(TypeCategory type) {
+    return type == TypeCategory::Bool;
 }
 
 bool is_bool_type(Type type) {
@@ -301,8 +327,41 @@ bool is_struct_type(Type type) {
     return is_struct_type(typeToCategory(type));
 }
 
+bool is_signed_integer_type(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::Char:
+        case TypeCategory::Short:
+        case TypeCategory::Int:
+        case TypeCategory::Long:
+        case TypeCategory::LongLong:
+            return true;
+        case TypeCategory::WChar:
+            return g_target_data_model != TargetDataModel::LLP64;
+        default:
+            return false;
+    }
+}
+
 bool is_signed_integer_type(Type type) {
     return is_signed_integer_type(typeToCategory(type));
+}
+
+bool is_unsigned_integer_type(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::UnsignedChar:
+        case TypeCategory::UnsignedShort:
+        case TypeCategory::UnsignedInt:
+        case TypeCategory::UnsignedLong:
+        case TypeCategory::UnsignedLongLong:
+        case TypeCategory::Char8:
+        case TypeCategory::Char16:
+        case TypeCategory::Char32:
+            return true;
+        case TypeCategory::WChar:
+            return g_target_data_model == TargetDataModel::LLP64;
+        default:
+            return false;
+    }
 }
 
 bool is_unsigned_integer_type(Type type) {
@@ -416,34 +475,6 @@ int get_type_size_bits(TypeIndex type_index) {
 	return get_type_size_bits(type_index.category());
 }
 
-Type promote_integer_type(Type type) {
-    // C++ integer promotion rules: bool, char, and short promote to int
-    switch (type) {
-        case Type::Bool:
-        case Type::Char:
-        case Type::Short:
-        case Type::Char8:      // char8_t (8-bit unsigned) promotes to int
-        case Type::Char16:     // char16_t (16-bit unsigned) promotes to int
-            return Type::Int;
-        case Type::UnsignedChar:
-        case Type::UnsignedShort:
-            // If int can represent all values of the original type, promote to int
-            // Otherwise promote to unsigned int (but for char/short, int is always sufficient)
-            return Type::Int;
-        case Type::WChar:
-            // wchar_t promotion is target-dependent:
-            // On Windows (16-bit): promotes to int
-            // On Linux (32-bit): doesn't promote (same size as int)
-            return (get_wchar_size_bits() < 32) ? Type::Int : Type::WChar;
-        case Type::Char32:
-            // char32_t (32-bit) doesn't promote - same size as int
-            return Type::Char32;
-        default:
-            // Types int and larger don't get promoted
-            return type;
-    }
-}
-
 TypeCategory promote_integer_type(TypeCategory type) {
     switch (type) {
         case TypeCategory::Bool:
@@ -463,6 +494,77 @@ TypeCategory promote_integer_type(TypeCategory type) {
     }
 }
 
+static Type legacy_type_from_category(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::Void:
+            return Type::Void;
+        case TypeCategory::Bool:
+            return Type::Bool;
+        case TypeCategory::Char:
+            return Type::Char;
+        case TypeCategory::UnsignedChar:
+            return Type::UnsignedChar;
+        case TypeCategory::WChar:
+            return Type::WChar;
+        case TypeCategory::Char8:
+            return Type::Char8;
+        case TypeCategory::Char16:
+            return Type::Char16;
+        case TypeCategory::Char32:
+            return Type::Char32;
+        case TypeCategory::Short:
+            return Type::Short;
+        case TypeCategory::UnsignedShort:
+            return Type::UnsignedShort;
+        case TypeCategory::Int:
+            return Type::Int;
+        case TypeCategory::UnsignedInt:
+            return Type::UnsignedInt;
+        case TypeCategory::Long:
+            return Type::Long;
+        case TypeCategory::UnsignedLong:
+            return Type::UnsignedLong;
+        case TypeCategory::LongLong:
+            return Type::LongLong;
+        case TypeCategory::UnsignedLongLong:
+            return Type::UnsignedLongLong;
+        case TypeCategory::Float:
+            return Type::Float;
+        case TypeCategory::Double:
+            return Type::Double;
+        case TypeCategory::LongDouble:
+            return Type::LongDouble;
+        case TypeCategory::UserDefined:
+            return Type::UserDefined;
+        case TypeCategory::Auto:
+            return Type::Auto;
+        case TypeCategory::DeclTypeAuto:
+            return Type::DeclTypeAuto;
+        case TypeCategory::Function:
+            return Type::Function;
+        case TypeCategory::Struct:
+            return Type::Struct;
+        case TypeCategory::Enum:
+            return Type::Enum;
+        case TypeCategory::FunctionPointer:
+            return Type::FunctionPointer;
+        case TypeCategory::MemberFunctionPointer:
+            return Type::MemberFunctionPointer;
+        case TypeCategory::MemberObjectPointer:
+            return Type::MemberObjectPointer;
+        case TypeCategory::Nullptr:
+            return Type::Nullptr;
+        case TypeCategory::Invalid:
+            return Type::Invalid;
+        default:
+            return Type::Invalid;
+    }
+}
+
+Type promote_integer_type(Type type) {
+    return legacy_type_from_category(promote_integer_type(typeToCategory(type)));
+}
+
 Type promote_floating_point_type(Type type) {
     // Floating-point promotions: float promotes to double in some contexts
     // For now, keep types as-is (no automatic promotion)
@@ -470,28 +572,6 @@ Type promote_floating_point_type(Type type) {
 }
 
 // Helper function to get the unsigned version of an integer type
-static Type get_unsigned_version(Type type) {
-    switch (type) {
-        case Type::Char:
-        case Type::UnsignedChar:
-            return Type::UnsignedChar;
-        case Type::Short:
-        case Type::UnsignedShort:
-            return Type::UnsignedShort;
-        case Type::Int:
-        case Type::UnsignedInt:
-            return Type::UnsignedInt;
-        case Type::Long:
-        case Type::UnsignedLong:
-            return Type::UnsignedLong;
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
-            return Type::UnsignedLongLong;
-        default:
-            return type;  // Keep as-is for non-integer types
-    }
-}
-
 static TypeCategory get_unsigned_version(TypeCategory type) {
     switch (type) {
         case TypeCategory::Char:
@@ -523,15 +603,6 @@ static TypeCategory get_unsigned_version(TypeCategory type) {
 // because max(long) = 2^63-1 > max(uint) = 2^32-1.
 // But: signed int (32 bits) CANNOT represent all unsigned int (32 bits) values
 // because max(int) = 2^31-1 < max(uint) = 2^32-1.
-static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
-    // Get the bit sizes for comparison
-    int signed_bits = get_type_size_bits(signed_type);
-    int unsigned_bits = get_type_size_bits(unsigned_type);
-    
-    // Strictly greater means all values can be represented
-    return signed_bits > unsigned_bits;
-}
-
 static bool can_represent_all_values(TypeCategory signed_type, TypeCategory unsigned_type) {
     int signed_bits = get_type_size_bits(signed_type);
     int unsigned_bits = get_type_size_bits(unsigned_type);
@@ -539,67 +610,7 @@ static bool can_represent_all_values(TypeCategory signed_type, TypeCategory unsi
 }
 
 Type get_common_type(Type left, Type right) {
-    // C++20 usual arithmetic conversions [conv.arith]
-    
-    // Floating-point types have higher precedence than integer types
-    bool left_is_fp = is_floating_point_type(left);
-    bool right_is_fp = is_floating_point_type(right);
-
-    if (left_is_fp && right_is_fp) {
-        // Both floating-point: higher rank wins
-        int left_fp_rank = get_floating_point_rank(left);
-        int right_fp_rank = get_floating_point_rank(right);
-        return (left_fp_rank > right_fp_rank) ? left : right;
-    }
-
-    if (left_is_fp) {
-        return left;  // Floating-point wins over integer
-    }
-
-    if (right_is_fp) {
-        return right;  // Floating-point wins over integer
-    }
-
-    // Both are integer types: apply integer promotions first
-    // This handles bool -> int, char -> int, short -> int, unsigned char/short -> int
-    left = promote_integer_type(left);
-    right = promote_integer_type(right);
-
-    // After promotion, check if types are the same
-    if (left == right) {
-        return left;
-    }
-
-    // Get signedness and ranks
-    bool left_unsigned = is_unsigned_integer_type(left);
-    bool right_unsigned = is_unsigned_integer_type(right);
-    int left_rank = get_integer_rank(left);
-    int right_rank = get_integer_rank(right);
-
-    // Case 1: Same signedness - higher rank wins
-    if (left_unsigned == right_unsigned) {
-        return (left_rank > right_rank) ? left : right;
-    }
-
-    // Case 2: One is signed, one is unsigned - apply C++20 rules
-    // Identify which is signed and which is unsigned
-    Type signed_type = left_unsigned ? right : left;
-    Type unsigned_type = left_unsigned ? left : right;
-    int signed_rank = left_unsigned ? right_rank : left_rank;
-    int unsigned_rank = left_unsigned ? left_rank : right_rank;
-
-    // Rule 1: If unsigned type's rank >= signed type's rank, convert to unsigned
-    if (unsigned_rank >= signed_rank) {
-        return unsigned_type;
-    }
-
-    // Rule 2: If signed type can represent all values of unsigned type, convert to signed
-    if (can_represent_all_values(signed_type, unsigned_type)) {
-        return signed_type;
-    }
-
-    // Rule 3: Convert both to unsigned version of the signed type
-    return get_unsigned_version(signed_type);
+    return legacy_type_from_category(get_common_type(typeToCategory(left), typeToCategory(right)));
 }
 
 TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
