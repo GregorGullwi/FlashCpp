@@ -484,7 +484,7 @@
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
 		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
 		return makeExprResult(
-			Type::Struct,
+			TypeCategory::Struct,
 			SizeInBits{static_cast<int>(closure_size_bits)},
 			IrOperand{StringTable::getOrInternStringHandle(closure_var_name)},
 			closure_type_index
@@ -1210,7 +1210,7 @@ const Token& fallback_token) const {
 		? closure_type->getStructInfo()->total_size * 8
 		: 64;
 	return TypeSpecifierNode(
-		Type::Struct,
+		TypeCategory::Struct,
 		closure_type->type_index_,
 		closure_size,
 		fallback_token

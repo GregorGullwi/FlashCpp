@@ -1020,7 +1020,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							
 							// Create a TypeSpecifierNode for the anonymous type
 							TypeSpecifierNode anon_type_spec(
-								Type::Struct,
+								TypeCategory::Struct,
 								anon_type_info.type_index_,
 								static_cast<unsigned char>(anon_struct_info->total_size),
 								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0)
@@ -2523,7 +2523,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		do {
 			// Handle pointer declarators
 			TypeSpecifierNode var_type_spec(
-				Type::Struct,
+				TypeCategory::Struct,
 				struct_type_info.type_index_,
 				static_cast<unsigned char>(0),  // Size will be set later
 				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0)
@@ -3046,7 +3046,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: const Type& other
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3091,7 +3091,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3113,7 +3113,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3163,7 +3163,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: Type&& other (rvalue reference)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3205,7 +3205,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3227,7 +3227,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
+			TypeCategory::Struct,
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
@@ -3281,7 +3281,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		for (const auto& [op_kind, op_name] : comparison_ops) {
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Bool,
+				TypeCategory::Bool,
 				TypeIndex{},  // type_index for bool
 				8,  // size in bits
 				name_token,
@@ -3302,7 +3302,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Struct,
+				TypeCategory::Struct,
 				struct_type_index,
 				static_cast<int>(struct_info->total_size * 8),  // size in bits
 				name_token,
@@ -3726,7 +3726,7 @@ ParseResult Parser::parse_enum_declaration()
 		// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
+				TypeCategory::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 			gSymbolTable.insert(enumerator_name, enumerator_decl);
 		}
@@ -3792,7 +3792,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 		return std::nullopt;
 	}
 	
-	// parse_declarator produces a DeclarationNode whose TypeSpecifierNode has Type::FunctionPointer
+	// parse_declarator produces a DeclarationNode whose TypeSpecifierNode has TypeCategory::FunctionPointer
 	if (!result.node()->is<DeclarationNode>()) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
@@ -4256,7 +4256,7 @@ ParseResult Parser::parse_friend_declaration()
 			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
 				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
 			} else {
-				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, TypeIndex{}, 0, Token());
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token());
 			}
 
 			// Build the declaration and function declaration nodes

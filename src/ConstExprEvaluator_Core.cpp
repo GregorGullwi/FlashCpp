@@ -273,7 +273,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 			? std::string_view(raw.data() + 1, raw.size() - 2) : raw;
 		// Build an is_array result whose elements are the individual characters.
 		// The null terminator is appended so that str[n] == '\0' comparisons work.
-		const TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8);
+		const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8);
 		EvalResult result = EvalResult::from_int(0LL);
 		result.is_array = true;
 		for (size_t si = 0; si < str_content.size(); ++si) {
@@ -2704,11 +2704,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			if (!arg_val.success()) {
 				return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
 			}
-			Type arg_type = Type::Int;
+			TypeCategory arg_type = TypeCategory::Int;
 			if (std::holds_alternative<bool>(arg_val.value)) {
-				arg_type = Type::Bool;
+				arg_type = TypeCategory::Bool;
 			} else if (arg_val.is_uint()) {
-				arg_type = Type::UnsignedLongLong;
+				arg_type = TypeCategory::UnsignedLongLong;
 			}
 			template_args.emplace_back(arg_val.as_int(), arg_type);
 		} else {

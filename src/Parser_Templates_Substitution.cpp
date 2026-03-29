@@ -274,7 +274,7 @@ ASTNode Parser::substituteTemplateParameters(
 						// not from this forward declaration's type node.
 						Token new_token(Token::Type::Identifier, new_func_name,
 							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
-						auto type_node_ast = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
 						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
 						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
 							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));
@@ -358,7 +358,7 @@ ASTNode Parser::substituteTemplateParameters(
 					} else if (op == ",") {
 						Token void_token(Token::Type::Literal, "0"sv, 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(
-							void_token, 0ULL, Type::Void, TypeQualifier::None, 0));
+							void_token, 0ULL, TypeCategory::Void, TypeQualifier::None, 0));
 					}
 					FLASH_LOG(Templates, Warning, "Complex fold expression with empty pack and operator '", op, "'");
 					return node;
@@ -443,7 +443,7 @@ ASTNode Parser::substituteTemplateParameters(
 									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
 								} else {
 									// Determine the result type from the variadic parameter's declared type
-									// e.g., template<unsigned... args> -> Type::UnsignedInt, 32 bits
+									// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
 									TypeCategory result_type = TypeCategory::Int;
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
@@ -738,7 +738,7 @@ ASTNode Parser::substituteTemplateParameters(
 			                   sizeof_pack.sizeof_token().file_index());
 			ASTNode result = emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
-				                  Type::Int, TypeQualifier::None, 32));
+				                  TypeCategory::Int, TypeQualifier::None, 32));
 			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
 			return result;
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
@@ -797,7 +797,7 @@ ASTNode Parser::substituteTemplateParameters(
 									                   sizeof_expr.sizeof_token().file_index());
 									return emplace_node<ExpressionNode>(
 										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size), 
-										                  Type::UnsignedLongLong, TypeQualifier::None, 64));
+										                  TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
 								}
 								break;
 							}

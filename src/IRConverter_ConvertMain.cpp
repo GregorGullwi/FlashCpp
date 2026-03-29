@@ -1904,7 +1904,7 @@ std::string IrToObjConverter<TWriterClass>::buildDestructorMangledNameFromString
 			class_name_str = class_name_str.substr(0, colon_pos);
 		}
 		std::vector<TypeSpecifierNode> empty_params;
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name_str;
 		return std::string(writer.generateMangledName(func_name, sig));
@@ -4661,7 +4661,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(Type::Void, TypeIndex{}, 0);
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeIndex{}, 0);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -5256,7 +5256,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Build FunctionSignature for proper overload resolution
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -5334,7 +5334,7 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 
 		// Build FunctionSignature for destructor (destructors take no parameters and return void)
 		std::vector<TypeSpecifierNode> empty_params;  // Destructors have no parameters
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name;
 

@@ -1526,7 +1526,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 			}
 			if (std::holds_alternative<StringLiteralNode>(expr)) {
-				TypeSpecifierNode str_type(Type::Char, TypeQualifier::None, 8);
+				TypeSpecifierNode str_type(TypeCategory::Char, TypeQualifier::None, 8);
 				str_type.add_pointer_level(CVQualifier::Const);
 				return str_type;
 			}

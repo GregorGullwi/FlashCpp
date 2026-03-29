@@ -320,10 +320,6 @@ enum class Type : int_fast16_t {
 	Count_,               // Sentinel — must be last; static_assert below enforces count
 };
 
-inline bool isPlaceholderAutoType(Type type) {
-	return type == Type::Auto || type == Type::DeclTypeAuto;
-}
-
 // Type classification model:
 // - Primitive builtins are identified entirely by the Type enum and never need a
 //   gTypeInfo lookup for identity.

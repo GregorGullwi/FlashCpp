@@ -125,22 +125,9 @@ struct TemplateArgumentValue {
 	TypeCategory typeEnum() const { return type_index.category(); }
 
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx) {
-		TemplateArgumentValue v;
-		v.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(t), idx);
-		return v;
-	}
-
 	static TemplateArgumentValue makeType(TypeCategory cat, TypeIndex idx) {
 		TemplateArgumentValue v;
 		v.type_index = TypeIndex::fromTypeAndIndex(cat, idx);
-		return v;
-	}
-
-	static TemplateArgumentValue makeValue(int64_t val, Type value_type) {
-		TemplateArgumentValue v;
-		v.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(value_type), TypeIndex{});
-		v.value = val;
 		return v;
 	}
 
@@ -202,7 +189,6 @@ struct TemplateTypeArg {
 	// Returns the TypeCategory — replaces legacy Type accessor.
 	TypeCategory typeEnum() const noexcept { return type_index.category(); }
 	// Set the type (updates type_index category without changing the index slot).
-	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
 	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	
@@ -211,12 +197,7 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
-	// Helper: delegates to TypeIndex::fromTypeAndIndex — builds a TypeIndex with the
-	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
-	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
-		return TypeIndex::fromTypeAndIndex(typeToCategory(t), idx);
-	}
-	// TypeCategory overload — builds a TypeIndex with category directly.
+	// Builds a TypeIndex with category directly.
 	static TypeIndex makeTypeIndex(TypeCategory cat, TypeIndex idx) noexcept {
 		return TypeIndex{idx.index(), cat};
 	}
@@ -276,9 +257,6 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
-	TemplateTypeArg(int64_t val, Type type)
-		: TemplateTypeArg(val, typeToCategory(type)) {}
-
 	TemplateTypeArg(int64_t val, TypeCategory category)
 		: type_index(TypeIndex{0, category})
 		, ref_qualifier(ReferenceQualifier::None)
@@ -296,12 +274,6 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
-		TemplateTypeArg arg;
-		arg.type_index = makeTypeIndex(t, idx);
-		return arg;
-	}
-
 	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx = TypeIndex{}) {
 		TemplateTypeArg arg;
 		arg.type_index = makeTypeIndex(cat, idx);
@@ -312,10 +284,6 @@ struct TemplateTypeArg {
 		return TemplateTypeArg(ts);  // delegate to existing constructor
 	}
 	
-	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
-		return TemplateTypeArg(v, type);
-	}
-
 	static TemplateTypeArg makeValue(int64_t v, TypeCategory cat) {
 		return TemplateTypeArg(v, cat);
 	}

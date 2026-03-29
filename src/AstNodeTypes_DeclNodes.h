@@ -656,10 +656,6 @@ struct EnumTypeInfo {
 	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 
-	// Legacy Type overload — bridges through typeToCategory().
-	EnumTypeInfo(StringHandle n, bool scoped, Type underlying, unsigned char size)
-		: EnumTypeInfo(n, scoped, typeToCategory(underlying), size) {}
-
 	// Convenience: default underlying type is Int/32-bit
 	explicit EnumTypeInfo(StringHandle n, bool scoped = false)
 		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
@@ -916,10 +912,6 @@ struct CanonicalTypeAlias {
 	explicit CanonicalTypeAlias(TypeIndex idx)
 		: type_index(idx) {}
 
-	// Legacy bridge: stamps TypeCategory from the legacy Type into TypeIndex.
-	CanonicalTypeAlias(Type t, TypeIndex idx)
-		: type_index(idx.category() != TypeCategory::Invalid ? idx : TypeIndex{idx.index(), typeToCategory(t)}) {}
-
 	// Returns the TypeCategory for backward compat.
 	TypeCategory typeEnum() const { return type_index.category(); }
 
@@ -960,13 +952,6 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	return CanonicalTypeAlias{original_type_index};
 }
 
-// Legacy overload — bridges Type into TypeIndex for callers not yet migrated.
-inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
-	if (type_index.category() == TypeCategory::Invalid)
-		type_index = TypeIndex{type_index.index(), typeToCategory(type)};
-	return canonicalize_type_alias(type_index);
-}
-
 // TypeCategory overload — avoids bridge through categoryToType().
 inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory cat, TypeIndex type_index) {
 	if (type_index.category() == TypeCategory::Invalid)
@@ -979,8 +964,6 @@ inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
-
-TypeCreationResult add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
@@ -996,9 +979,6 @@ TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t
 
 // For adding a concrete instantiated type with known size (registers in gTypesByName too)
 TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
-inline TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits) {
-	return add_instantiated_type(name, typeToCategory(type), size_bits);
-}
 
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
@@ -1054,11 +1034,6 @@ inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
 	}
 }
 
-// Legacy Type overload — bridges through typeToCategory().
-inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
-	return get_type_alignment(typeToCategory(type), type_size_bytes);
-}
-
 // Type utilities — TypeCategory overloads are in AstNodeTypes_TypeSystem.h
 int get_integer_rank(TypeCategory type);
 int get_floating_point_rank(TypeCategory type);
@@ -1073,7 +1048,6 @@ inline int get_wchar_size_bits() {
 	return (g_target_data_model == TargetDataModel::LLP64) ? 16 : 32;
 }
 
-int get_type_size_bits(Type type);      // delegates to get_type_size_bits(typeToCategory(type))
 int get_type_size_bits(TypeCategory cat);  // primary implementation — full switch on TypeCategory
 TypeCategory promote_integer_type(TypeCategory type);
 TypeCategory get_common_type(TypeCategory left, TypeCategory right);
@@ -1108,15 +1082,6 @@ public:
 	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
 		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
-
-	// Legacy constructors — kept temporarily for compilation; will be removed.
-	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, typeToCategory(type)}) {}
-
-	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
-		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index.category() != TypeCategory::Invalid ? type_index : TypeIndex{type_index.index(), typeToCategory(type)}), reference_qualifier_(reference_qualifier) {}
 
 	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
 	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
@@ -1208,7 +1173,6 @@ public:
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
-	void set_type(Type t) { type_index_ = TypeIndex{type_index_.index(), typeToCategory(t)}; }
 	void set_category(TypeCategory cat) { type_index_ = TypeIndex{type_index_.index(), cat}; }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
@@ -1296,20 +1260,6 @@ public:
 // Plain `auto` follows template-argument-deduction-style stripping of top-level
 // references/cv for value returns, while `decltype(auto)` preserves the exact
 // type category and qualifiers of the deduced expression.
-inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
-	assert(isPlaceholderAutoType(placeholder_type));
-	if (typeToCategory(placeholder_type) != TypeCategory::Auto) {
-		return deduced_type;
-	}
-
-	deduced_type.set_reference_qualifier(ReferenceQualifier::None);
-	if (deduced_type.pointer_depth() == 0 && !deduced_type.is_array()) {
-		deduced_type.set_cv_qualifier(CVQualifier::None);
-	}
-	return deduced_type;
-}
-
-// TypeCategory overload — avoids bridge through categoryToType().
 inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placeholder_cat, TypeSpecifierNode deduced_type) {
 	assert(isPlaceholderAutoType(placeholder_cat));
 	if (placeholder_cat != TypeCategory::Auto) {
@@ -1517,7 +1467,6 @@ using NumericLiteralValue = std::variant<unsigned long long, double>;
 
 class NumericLiteralNode {
 public:
-	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(typeToCategory(type)), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(cat), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
 	std::string_view token() const { return identifier_.value(); }

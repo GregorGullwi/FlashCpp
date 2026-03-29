@@ -764,7 +764,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
         std::string_view id_name = StringTable::getStringView(id_handle);
         
         // Create a placeholder TypeSpecifierNode (we'll use Auto type as a placeholder)
-        TypeSpecifierNode placeholder_type(Type::Auto, TypeQualifier::None, 0, Token());
+        TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, 0, Token());
         
         // Create a placeholder DeclarationNode
         Token placeholder_token(Token::Type::Identifier, id_name, 0, 0, 0);
@@ -1058,7 +1058,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
         // Create a new TypeSpecifierNode for the function pointer
         // Function pointers are 64 bits (8 bytes) on x64
-        TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+        TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64);
 
         FunctionSignature sig;
         sig.return_type_index = return_type_index;

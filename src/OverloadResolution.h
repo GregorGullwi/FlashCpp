@@ -193,11 +193,6 @@ inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeCategory cat, TypeInde
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.
-inline TypeConversionResult can_convert_type(Type from, Type to) {
-	return buildConversionPlan(typeToCategory(from), typeToCategory(to)).toResult();
-}
-
-// TypeCategory overload — avoids bridge through categoryToType.
 inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to) {
 	return buildConversionPlan(from, to).toResult();
 }

@@ -83,10 +83,6 @@ struct TypeIndexArg {
 		, ref_qualifier(ref)
 		, pointer_depth(ptr_depth) {}
 	
-	// Legacy Type overload — bridges through typeToCategory().
-	TypeIndexArg(TypeIndex idx, Type type, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
-		: TypeIndexArg(idx, typeToCategory(type), cv, ref, ptr_depth) {}
-	
 	bool operator==(const TypeIndexArg& other) const {
 		return type_index == other.type_index &&
 		       base_type == other.base_type &&

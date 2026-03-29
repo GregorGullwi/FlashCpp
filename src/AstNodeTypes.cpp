@@ -79,14 +79,6 @@ TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, Names
     return TypeCreationResult{type_info, idx};
 }
 
-TypeCreationResult add_function_type(StringHandle name, [[maybe_unused]] Type return_type, NamespaceHandle ns) {
-    TypeIndex idx{gTypeInfo.size(), TypeCategory::Function};
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), idx, 0);
-    type_info.setNamespaceHandle(ns);
-    gTypesByName.emplace(type_info.name(), &type_info);
-    return TypeCreationResult{type_info, idx};
-}
-
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
     // Check if type already exists (forward declaration case)
     auto existing_it = gTypesByName.find(name);
@@ -388,10 +380,6 @@ int get_type_size_bits(TypeCategory cat) {
         default:
             return 0;
     }
-}
-
-int get_type_size_bits(Type type) {
-    return get_type_size_bits(typeToCategory(type));
 }
 
 TypeCategory promote_integer_type(TypeCategory type) {

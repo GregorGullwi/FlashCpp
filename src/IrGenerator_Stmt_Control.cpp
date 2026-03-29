@@ -731,7 +731,7 @@
 		);
 		auto zero_literal = ASTNode::emplace_node<ExpressionNode>(
 			NumericLiteralNode(Token(Token::Type::Literal, "0"sv, 0, 0, 0),
-				static_cast<unsigned long long>(0), Type::Int, TypeQualifier::None, 32)
+				static_cast<unsigned long long>(0), TypeCategory::Int, TypeQualifier::None, 32)
 		);
 		auto first_element = ASTNode::emplace_node<ExpressionNode>(
 			ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "["sv, 0, 0, 0))

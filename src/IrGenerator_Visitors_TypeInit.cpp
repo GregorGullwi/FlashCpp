@@ -1171,7 +1171,7 @@
 					if (last_colon != std::string_view::npos) {
 						func_name = class_name.substr(last_colon + 2);
 					}
-					TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
+					TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0);
 					ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 						func_name,
 						void_return,
@@ -1822,9 +1822,9 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			FunctionParam func_param;
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
-				Type concrete_type = inst_info.template_args[i];
-				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_type, {});
-				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_type)};
+				TypeCategory concrete_cat = typeToCategory(inst_info.template_args[i]);
+				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_cat, {});
+				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_cat)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
@@ -1955,11 +1955,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 			// Create declaration with concrete type
 			if (i < inst_info.template_args.size()) {
-				Type concrete_type = inst_info.template_args[i];
+				TypeCategory concrete_cat = typeToCategory(inst_info.template_args[i]);
 				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					concrete_type,
+					concrete_cat,
 					TypeQualifier::None,
-					get_type_size_bits(concrete_type),
+					get_type_size_bits(concrete_cat),
 					param_decl.identifier_token()
 				);
 				auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());

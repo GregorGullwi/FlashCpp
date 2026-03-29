@@ -1309,7 +1309,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 
 		if (node.is<ReturnStatementNode>()) {
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
-			TypeSpecifierNode current_type(Type::Void, TypeQualifier::None, 0, ret.return_token());
+			TypeSpecifierNode current_type(TypeCategory::Void, TypeQualifier::None, 0, ret.return_token());
 			if (ret.expression().has_value()) {
 				auto expr_type = get_expression_type_for_return(*ret.expression());
 				if (!expr_type.has_value()) {
@@ -1448,7 +1448,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	}
 
 	return deduced_type.value_or(TypeSpecifierNode(
-		Type::Void,
+		TypeCategory::Void,
 		TypeQualifier::None,
 		get_type_size_bits(TypeCategory::Void)));
 }

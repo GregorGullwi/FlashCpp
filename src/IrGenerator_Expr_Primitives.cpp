@@ -102,7 +102,7 @@
 		ASTNode object_node = dtor.object();
 		std::string_view object_name;
 		const DeclarationNode* object_decl = nullptr;
-		TypeSpecifierNode object_type(Type::Void, TypeQualifier::None, 0);
+		TypeSpecifierNode object_type(TypeCategory::Void, TypeQualifier::None, 0);
 
 		if (object_node.is<ExpressionNode>()) {
 			const ExpressionNode& object_expr = object_node.as<ExpressionNode>();

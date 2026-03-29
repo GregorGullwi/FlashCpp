@@ -122,7 +122,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name, 
 	                identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, type_token);
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, type_token);
 	
 	// Create ConstructorCallNode
 	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
@@ -371,7 +371,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 		// Fall back to forward declaration only if we still couldn't resolve.
 		if (!decl_ptr) {
-			auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, func_token);
 			auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
 			decl_ptr = &forward_decl.as<DeclarationNode>();
 		}
@@ -1220,7 +1220,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 		}
 	}
 
-	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1237,7 +1237,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 		sig.parameter_type_indices.push_back(param_type.type_index());
 	}
 
-	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token);
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1297,7 +1297,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
+		TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
 		char_type.add_pointer_level();
 		return char_type;
 	}
@@ -1798,10 +1798,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			} else if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: for enum-typed arguments (e.g. Ns::Color::Red),
-				// return a TypeSpecifierNode with Type::Enum and the enum's type_index so ADL
+				// return a TypeSpecifierNode with TypeCategory::Enum and the enum's type_index so ADL
 				// can find functions in the enum's associated namespace.
 				const TypeInfo* enum_type_info = struct_type_it->second;
-				TypeSpecifierNode enum_type(Type::Enum, TypeQualifier::None,
+				TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None,
 				                            enum_type_info->getEnumInfo()->underlying_size);
 				enum_type.set_type_index(enum_type_info->type_index_);
 				return enum_type;

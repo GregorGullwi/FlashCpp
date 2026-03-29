@@ -866,7 +866,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create type specifier for the typedef
-			TypeSpecifierNode type_spec(Type::Enum, TypeQualifier::None, underlying_size, alias_token);
+			TypeSpecifierNode type_spec(TypeCategory::Enum, TypeQualifier::None, underlying_size, alias_token);
 			type_spec.set_type_index(enum_type_index);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
 			
@@ -1493,7 +1493,7 @@ ParseResult Parser::parse_typedef_declaration()
 							advance(); // consume the member name
 							
 							// Create type specifier for the anonymous type
-							TypeSpecifierNode anon_type_spec(Type::Struct, TypeQualifier::None, 
+							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None, 
 								static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword);
 							anon_type_spec.set_type_index(anon_type_info.type_index_);
 							for (int i = 0; i < ptr_levels; i++) {
@@ -2027,7 +2027,7 @@ ParseResult Parser::parse_typedef_declaration()
 		TypeIndex return_type_index = type_spec.type_index();
 		
 		// Create a new TypeSpecifierNode for the function pointer (64-bit pointer)
-		TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64);
 		
 		// Create a basic function signature with the return type
 		// Note: We don't have full parameter info here since we just skipped the param list

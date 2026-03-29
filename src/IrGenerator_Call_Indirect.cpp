@@ -69,7 +69,7 @@
 
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(Type::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
+				TypeSpecifierNode return_type_node(TypeCategory::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
@@ -251,7 +251,7 @@
 
 			immediate_lambda_object_name = std::get<StringHandle>(lambda_result.value);
 			immediate_lambda_object_type = TypeSpecifierNode(
-				Type::Struct,
+				TypeCategory::Struct,
 				lambda_result.type_index,
 				static_cast<int>(lambda_result.size_in_bits.value),
 				memberFunctionCallNode.called_from()
@@ -311,7 +311,7 @@
 									? closure_type->getStructInfo()->total_size * 8
 									: 64;
 								object_type = TypeSpecifierNode(
-									Type::Struct,
+									TypeCategory::Struct,
 									closure_type->type_index_,
 									closure_size,
 									object_decl->identifier_token()
@@ -1198,7 +1198,7 @@
 														? closure_type->getStructInfo()->total_size * 8
 														: 64;
 													type_node = TypeSpecifierNode(
-														Type::Struct,
+														TypeCategory::Struct,
 														closure_type->type_index_,
 														closure_size,
 														decl->identifier_token()

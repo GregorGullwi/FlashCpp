@@ -107,26 +107,6 @@ struct ExprResult {
 };
 
 inline ExprResult makeExprResultImpl(
-	Type type,
-	SizeInBits size_in_bits,
-	IrOperand value,
-	TypeIndex type_index,
-	PointerDepth pointer_depth,
-	ValueStorage storage
-) {
-	return {
-		.category_ = typeToCategory(type),
-		.size_in_bits = size_in_bits,
-		.value = std::move(value),
-		.type_index = type_index,
-		.pointer_depth = pointer_depth,
-		.ir_type = toIrType(type),
-		.storage = storage
-	};
-}
-
-// TypeCategory overload — avoids round-trip through categoryToType/typeToCategory.
-inline ExprResult makeExprResultImpl(
 	TypeCategory cat,
 	SizeInBits size_in_bits,
 	IrOperand value,
@@ -146,11 +126,6 @@ inline ExprResult makeExprResultImpl(
 }
 
 // All six arguments are required; pass TypeIndex{} / PointerDepth{} explicitly when unused.
-inline ExprResult makeExprResult(Type type, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
-	return makeExprResultImpl(type, size_in_bits, std::move(value), type_index, pointer_depth, storage);
-}
-
-/// TypeCategory overload — calls native TypeCategory makeExprResultImpl directly.
 inline ExprResult makeExprResult(TypeCategory cat, SizeInBits size_in_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 	return makeExprResultImpl(cat, size_in_bits, std::move(value), type_index, pointer_depth, storage);
 }

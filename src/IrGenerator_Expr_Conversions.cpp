@@ -1703,7 +1703,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const auto& actual_params = func_decl.parameter_nodes();
 	if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
 		// Postfix overload has a dummy int parameter
-		TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
+		TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token());
 		param_types.push_back(int_type);
 	}
 	std::vector<std::string_view> empty_namespace;
@@ -2715,7 +2715,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 		return makeExprResult(
-			Type::Struct,
+			TypeCategory::Struct,
 			SizeInBits{actual_size_bits},
 			IrOperand{result_var},
 			target_type.type_index(), PointerDepth{}, ValueStorage::ContainsData);

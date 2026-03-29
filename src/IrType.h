@@ -50,10 +50,6 @@ enum class IrType : int_fast16_t {
 // ============================================================================
 IrType toIrType(TypeCategory cat);
 
-// Legacy Type overload — backward-compatibility bridge that converts to
-// TypeCategory and delegates.  New code should prefer the TypeCategory overload.
-inline IrType toIrType(Type semantic_type) { return toIrType(typeToCategory(semantic_type)); }
-
 // TypeIndex overload — uses the cached category carried by the TypeIndex.
 inline IrType toIrType(TypeIndex type_index) { return toIrType(type_index.category()); }
 

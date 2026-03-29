@@ -153,7 +153,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 						std::string_view ctor_class_name = potential_class.value();
 
 						// Create a void return type for constructors/destructors
-						auto void_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, ctor_name_token);
+						auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, ctor_name_token);
 						auto [ctor_decl_node, ctor_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, ctor_name_token);
 						auto [ctor_func_node, ctor_func_ref] = emplace_node_ref<FunctionDeclarationNode>(ctor_decl_ref, ctor_name_token.value());
 
@@ -800,13 +800,13 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	// Bind template parameters to concrete types using RAII scope guard (Phase 6)
 	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
-		Type concrete_type = concrete_types[i];
+		TypeCategory concrete_cat = typeToCategory(concrete_types[i]);
 		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name
 		auto& type_info = add_instantiated_type(
 			param_name,
-			concrete_type,
+			concrete_cat,
 			0 // Placeholder size
 		);
 

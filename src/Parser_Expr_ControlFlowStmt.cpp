@@ -833,7 +833,7 @@ ParseResult Parser::parse_lambda_expression() {
         // Determine the type for the capture variable
         // For init-captures, we need to get the type from the initializer
         // For regular captures, we look up the original variable
-        TypeSpecifierNode capture_type_node(Type::Auto, TypeQualifier::None, 0, id_token);
+        TypeSpecifierNode capture_type_node(TypeCategory::Auto, TypeQualifier::None, 0, id_token);
         
         if (capture.has_initializer()) {
             // Init-capture: [x = expr]
@@ -996,7 +996,7 @@ ParseResult Parser::parse_lambda_expression() {
             FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
         } else {
             // No return statement found or return with no value - lambda returns void
-            return_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0);
+            return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0);
             FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
         }
     }
@@ -1178,7 +1178,7 @@ ParseResult Parser::parse_lambda_expression() {
             if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
                 // [this] capture: store a pointer to the enclosing object (8 bytes on x64)
                 // We'll store it with a special member name so it can be accessed later
-                TypeSpecifierNode ptr_type(Type::Void, TypeQualifier::None, 64);
+                TypeSpecifierNode ptr_type(TypeCategory::Void, TypeQualifier::None, 64);
                 ptr_type.add_pointer_level();  // Make it a void*
                 
                 // Phase 7B: Intern special member name and use StringHandle overload
@@ -1226,7 +1226,7 @@ ParseResult Parser::parse_lambda_expression() {
             }
 
             auto var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
-            TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
+            TypeSpecifierNode var_type(TypeCategory::Int, TypeQualifier::None, 32);  // Default type
             
             if (capture.has_initializer()) {
                 // Init-capture: type is inferred from the initializer
@@ -1347,7 +1347,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Generate operator() member function for the lambda
     // This allows lambda() calls to work
     // Determine return type
-    TypeSpecifierNode return_type_spec(Type::Void, TypeQualifier::None, 0);
+    TypeSpecifierNode return_type_spec(TypeCategory::Void, TypeQualifier::None, 0);
     if (return_type.has_value()) {
         return_type_spec = return_type->as<TypeSpecifierNode>();
     }

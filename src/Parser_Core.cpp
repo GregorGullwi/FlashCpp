@@ -1021,7 +1021,7 @@ void Parser::register_builtin_functions() {
 	Token dummy_token(Token::Type::Identifier, ""sv, 0, 0, 0);
 	
 	// Helper lambda to register a builtin function with one parameter
-	auto register_builtin = [&](std::string_view name, Type return_type, Type param_type) {
+	auto register_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param_type) {
 		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
@@ -1050,7 +1050,7 @@ void Parser::register_builtin_functions() {
 	};
 	
 	// Helper lambda to register a builtin function with two parameters
-	auto register_two_param_builtin = [&](std::string_view name, Type return_type, Type param1_type, Type param2_type) {
+	auto register_two_param_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param1_type, TypeCategory param2_type) {
 		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
@@ -1085,7 +1085,7 @@ void Parser::register_builtin_functions() {
 	};
 	
 	// Helper lambda to register a builtin function with no parameters
-	auto register_no_param_builtin = [&](std::string_view name, Type return_type) {
+	auto register_no_param_builtin = [&](std::string_view name, TypeCategory return_type) {
 		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
@@ -1109,37 +1109,37 @@ void Parser::register_builtin_functions() {
 	// __builtin_va_start(va_list*, last_param) - Clang-style
 	// __va_start(va_list*, last_param) - MSVC-style (legacy)
 	// Both return void
-	register_two_param_builtin("__builtin_va_start", Type::Void, Type::UnsignedLongLong, Type::UnsignedLongLong);
-	register_two_param_builtin("__va_start", Type::Void, Type::UnsignedLongLong, Type::UnsignedLongLong);
+	register_two_param_builtin("__builtin_va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
+	register_two_param_builtin("__va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
 	
 	// __builtin_va_arg(va_list, type) - returns the specified type
 	// For registration purposes, we use int as the return type (will be overridden in codegen)
 	// The second parameter is the type identifier, but we just register it as int for parsing
-	register_two_param_builtin("__builtin_va_arg", Type::Int, Type::UnsignedLongLong, Type::Int);
+	register_two_param_builtin("__builtin_va_arg", TypeCategory::Int, TypeCategory::UnsignedLongLong, TypeCategory::Int);
 	
 	// Register integer abs builtins
-	register_builtin("__builtin_labs", Type::Long, Type::Long);
-	register_builtin("__builtin_llabs", Type::LongLong, Type::LongLong);
+	register_builtin("__builtin_labs", TypeCategory::Long, TypeCategory::Long);
+	register_builtin("__builtin_llabs", TypeCategory::LongLong, TypeCategory::LongLong);
 	
 	// Register floating point abs builtins
-	register_builtin("__builtin_fabs", Type::Double, Type::Double);
-	register_builtin("__builtin_fabsf", Type::Float, Type::Float);
-	register_builtin("__builtin_fabsl", Type::LongDouble, Type::LongDouble);
+	register_builtin("__builtin_fabs", TypeCategory::Double, TypeCategory::Double);
+	register_builtin("__builtin_fabsf", TypeCategory::Float, TypeCategory::Float);
+	register_builtin("__builtin_fabsl", TypeCategory::LongDouble, TypeCategory::LongDouble);
 	
 	// Register optimization hint intrinsics
 	// __builtin_unreachable() - marks unreachable code paths
-	register_no_param_builtin("__builtin_unreachable", Type::Void);
+	register_no_param_builtin("__builtin_unreachable", TypeCategory::Void);
 	
 	// __builtin_assume(condition) - assumes condition is true for optimization
-	register_builtin("__builtin_assume", Type::Void, Type::Bool);
+	register_builtin("__builtin_assume", TypeCategory::Void, TypeCategory::Bool);
 	
 	// __builtin_expect(expr, expected) - branch prediction hint, returns expr
 	// Using LongLong to match typical usage pattern
-	register_two_param_builtin("__builtin_expect", Type::LongLong, Type::LongLong, Type::LongLong);
+	register_two_param_builtin("__builtin_expect", TypeCategory::LongLong, TypeCategory::LongLong, TypeCategory::LongLong);
 	
 	// __builtin_launder(ptr) - optimization barrier for pointers
 	// Using UnsignedLongLong (pointer-sized) for the parameter and return type
-	register_builtin("__builtin_launder", Type::UnsignedLongLong, Type::UnsignedLongLong);
+	register_builtin("__builtin_launder", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
 	
 	// Helper to register an extern "C" function builtin with an arbitrary signature.
 	auto register_extern_c_builtin = [&](std::string_view name, const ASTNode& return_type, std::initializer_list<ASTNode> params) {
@@ -1152,7 +1152,7 @@ void Parser::register_builtin_functions() {
 		gSymbolTable.insert(name, fn);
 	};
 	
-	auto make_builtin_type = [&](Type base_type, CVQualifier cv, int pointer_depth) {
+	auto make_builtin_type = [&](TypeCategory base_type, CVQualifier cv, int pointer_depth) {
 		auto [t, t_ref] = emplace_node_ref<TypeSpecifierNode>(base_type, TypeQualifier::None, get_type_size_bits(base_type), dummy_token, cv);
 		for (int i = 0; i < pointer_depth; ++i) {
 			t_ref.add_pointer_level();
@@ -1163,29 +1163,29 @@ void Parser::register_builtin_functions() {
 	// size_t is 64-bit on all supported platforms, but the underlying type differs:
 	// LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
 	// LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
-	const Type size_t_base = context_.isLLP64() ? Type::UnsignedLongLong : Type::UnsignedLong;
+	const TypeCategory size_t_base = context_.isLLP64() ? TypeCategory::UnsignedLongLong : TypeCategory::UnsignedLong;
 	
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
 		"__builtin_strlen",
 		make_builtin_type(size_t_base, CVQualifier::None, 0),
-		{ make_builtin_type(Type::Char, CVQualifier::Const, 1) });
+		{ make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1) });
 	
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
 	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
 	// before those headers are explicitly included.
-	const ASTNode wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::None, 1);
-	const ASTNode const_wchar_t_ptr = make_builtin_type(Type::WChar, CVQualifier::Const, 1);
+	const ASTNode wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::None, 1);
+	const ASTNode const_wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::Const, 1);
 	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 	
 	register_extern_c_builtin(
 		"wmemcmp",
-		make_builtin_type(Type::Int, CVQualifier::None, 0),
+		make_builtin_type(TypeCategory::Int, CVQualifier::None, 0),
 		{ const_wchar_t_ptr, const_wchar_t_ptr, size_t_type });
 	register_extern_c_builtin(
 		"wmemchr",
 		wchar_t_ptr,
-		{ const_wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
+		{ const_wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type });
 	register_extern_c_builtin(
 		"wmemcpy",
 		wchar_t_ptr,
@@ -1197,7 +1197,7 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin(
 		"wmemset",
 		wchar_t_ptr,
-		{ wchar_t_ptr, make_builtin_type(Type::WChar, CVQualifier::None, 0), size_t_type });
+		{ wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type });
 	register_extern_c_builtin(
 		"wcslen",
 		size_t_type,
@@ -1206,5 +1206,5 @@ void Parser::register_builtin_functions() {
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling
-	register_no_param_builtin("terminate", Type::Void);
+	register_no_param_builtin("terminate", TypeCategory::Void);
 }

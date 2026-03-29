@@ -334,7 +334,6 @@ public:
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata = false);
 	void add_typeinfo(std::string_view typeinfo_symbol, const void* typeinfo_data, size_t typeinfo_size);
 	std::string get_or_create_builtin_typeinfo(TypeCategory cat);
-	std::string get_or_create_builtin_typeinfo(Type type) { return get_or_create_builtin_typeinfo(typeToCategory(type)); }
 	std::string get_or_create_class_typeinfo(std::string_view class_name);
 	std::string get_or_create_class_typeinfo(const StructTypeInfo* struct_info);
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr);
