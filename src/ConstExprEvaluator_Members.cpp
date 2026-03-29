@@ -2808,7 +2808,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				struct TraitInput {
-					Type base_type;
+					TypeCategory base_type;
 					TypeIndex type_index;
 					size_t pointer_depth;
 					ReferenceQualifier ref_qualifier;
@@ -2839,7 +2839,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					const auto& arg_info = resolved_type_info->template_args_[0];
 					TraitInput input{
-						.base_type = arg_info.typeEnum(),
+						.base_type = arg_info.category(),
 						.type_index = arg_info.type_index,
 						.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
 						.ref_qualifier = arg_info.ref_qualifier,
@@ -2852,7 +2852,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					if (input.type_index.is_valid() && input.type_index.index() < getTypeInfoCount()) {
 						input.type_info = &getTypeInfo(input.type_index);
-						input.base_type = categoryToType(input.type_info->category());
+						input.base_type = input.type_info->category();
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
 						input.struct_info = input.type_info->getStructInfo();
