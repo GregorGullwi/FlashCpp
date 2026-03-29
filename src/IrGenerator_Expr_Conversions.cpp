@@ -246,12 +246,12 @@
 			{
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 				if (binding_info.is_global_or_static &&
-					categoryToType(binding_info.type_index.category()) != Type::Void &&
+					binding_info.type_index.category() != TypeCategory::Void &&
 					binding_info.size_in_bits.is_set()) {
 					AddressComponents result;
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
-					result.final_type = categoryToType(binding_info.type_index.category());
+					result.final_type = binding_info.type_index.category();
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
@@ -269,9 +269,9 @@
 			AddressComponents result;
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
-			result.final_type = type_node->type();
+			result.final_type = type_node->category();
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
-			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
+			if (result.final_type == TypeCategory::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
@@ -295,14 +295,14 @@
 			// Get object type to lookup member
 			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 
-			Type object_type = categoryToType(object_operands.type_index.category());
+			TypeCategory object_type = object_operands.type_index.category();
 			TypeIndex type_index {};
 			if (object_operands.type_index.is_valid()) {
 				type_index = object_operands.type_index;
 			}
 
 			// Look up member information
-			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_type != Type::Struct) {
+			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_type != TypeCategory::Struct) {
 				return std::nullopt;
 			}
 
@@ -323,7 +323,7 @@
 			}
 
 			// Update type to member type
-			base_components->final_type = categoryToType(result.member->type_index.category());
+			base_components->final_type = result.member->type_index.category();
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
@@ -347,7 +347,7 @@
 			ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
 
-			Type element_type = categoryToType(array_operands.type_index.category());
+			TypeCategory element_type = array_operands.type_index.category();
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -360,7 +360,7 @@
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
-					} else if (type_node.type() == Type::Struct) {
+					} else if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
 						if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
@@ -372,7 +372,7 @@
 					} else {
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(type_node.type());
+							element_size_bits = get_type_size_bits(type_node.category());
 						}
 					}
 				}
@@ -380,7 +380,7 @@
 				// Array from expression (e.g., member access: obj.arr_member[idx])
 				// array_operands[1] contains total array size, we need element size
 				// For primitive types, use the type's size directly
-				if (element_type == Type::Struct) {
+				if (element_type == TypeCategory::Struct) {
 					// For struct arrays, element_size_bits is already correct from member info
 					// (it contains the struct size, not the total array size)
 				} else {
@@ -641,14 +641,14 @@
 				compute_addr_op.base = addr_components->base;
 				compute_addr_op.array_indices = std::move(addr_components->array_indices);
 				compute_addr_op.total_member_offset = addr_components->total_member_offset;
-				compute_addr_op.result_type_index = TypeIndex{0, typeToCategory(addr_components->final_type)};
+				compute_addr_op.result_type_index = TypeIndex{0, addr_components->final_type};
 				compute_addr_op.result_size_bits = addr_components->final_size_bits;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 
 				// Return pointer to result (64-bit pointer)
 				return makeExprResult(
-					TypeIndex{0, typeToCategory(addr_components->final_type)},
+					TypeIndex{0, addr_components->final_type},
 					SizeInBits{64},
 					result_var,
 					PointerDepth{addr_components->pointer_depth.value + 1}, ValueStorage::ContainsAddress);

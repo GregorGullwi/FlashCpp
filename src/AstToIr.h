@@ -56,7 +56,7 @@ private:
 		std::variant<StringHandle, TempVar> base;           // Base variable or temp
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
-		Type final_type = Type::Void;                       // Type of final result
+		TypeCategory final_type = TypeCategory::Void;       // Type of final result
 		SizeInBits final_size_bits;                         // Size in bits
 		PointerDepth pointer_depth;                         // Pointer depth of final result
 	};
@@ -809,7 +809,7 @@ private:
 	// Current function mangled name (used for static local variable namespacing)
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
-	Type current_function_return_type_;  // Current function's return type
+	TypeCategory current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter

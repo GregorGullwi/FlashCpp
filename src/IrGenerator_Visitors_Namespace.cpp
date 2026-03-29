@@ -212,11 +212,11 @@
 
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			{
-				Type expr_type = categoryToType(operands.type_index.category());
+				TypeCategory expr_type = operands.type_index.category();
 
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
-				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+				if (expr_type == TypeCategory::Void && current_function_return_type_ == TypeCategory::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
 					emitDestructorsForNonLocalExit(0);
@@ -232,15 +232,16 @@
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
-				Type expr_type = categoryToType(operands.type_index.category());
+				TypeCategory expr_type = operands.type_index.category();
 				int expr_size = operands.size_in_bits.value;
 
 				// Get the current function's return type
-				Type return_type = current_function_return_type_;
+				TypeCategory return_type = current_function_return_type_;
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
-					return_type,
-					current_function_return_type_index_,
+					current_function_return_type_index_.is_valid()
+						? current_function_return_type_index_
+						: TypeIndex{0, return_type},
 					return_size,
 					node.return_token());
 				const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
@@ -252,7 +253,7 @@
 				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 						operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
 					operands = *materialized;
-					expr_type = categoryToType(operands.type_index.category());
+					expr_type = operands.type_index.category();
 					expr_size = operands.size_in_bits.value;
 					sema_applied_conversion = true;
 				}
@@ -271,16 +272,16 @@
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
-								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const TypeIndex ret_type_idx = (return_type == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, return_type, ret_type_idx, source_is_const);
+									src_struct_info, categoryToType(return_type), ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");
 									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
-											return_type, ret_type_idx, return_size, node.return_token())) {
+											categoryToType(return_type), ret_type_idx, return_size, node.return_token())) {
 										operands = *result;
 										sema_applied_conversion = true;
 									}
@@ -304,32 +305,32 @@
 				if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 					// Check for user-defined conversion operator (fallback when sema did not run)
 					// If expr is a struct type with a conversion operator to return_type, call it
-					if (expr_type == Type::Struct) {
+					if (expr_type == TypeCategory::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
 						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+							const TypeIndex ret_type_idx = (return_type == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, ret_type_idx, isExprConstQualified(*expr_opt));
+								source_struct_info, categoryToType(return_type), ret_type_idx, isExprConstQualified(*expr_opt));
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
 									StringTable::getStringView(source_type_info.name()),
 									" to return type");
 								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
-										return_type, ret_type_idx, return_size, node.return_token()))
+										categoryToType(return_type), ret_type_idx, return_size, node.return_token()))
 									operands = *result;
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
-								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+								operands = generateTypeConversion(operands, categoryToType(expr_type), categoryToType(return_type), node.return_token());
 							}
 						} else {
 							// No valid type_index - fall back to generateTypeConversion
-							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+							operands = generateTypeConversion(operands, categoryToType(expr_type), categoryToType(return_type), node.return_token());
 						}
 					} else {
 						// Phase 15: sema should annotate standard arithmetic return conversions.
@@ -337,11 +338,11 @@
 						// some expression contexts). Same-type size mismatches are not type
 						// conversions — no annotation expected.
 						if (sema_normalized_current_function_ && expr_type != return_type &&
-							is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
-							throw InternalError(std::string("Phase 15: sema missed return conversion (") + std::string(getTypeName(expr_type)) + " -> " + std::string(getTypeName(return_type)) + ")");
+							is_standard_arithmetic_type(categoryToType(expr_type)) && is_standard_arithmetic_type(categoryToType(return_type))) {
+							throw InternalError(std::string("Phase 15: sema missed return conversion (") + std::string(getTypeName(categoryToType(expr_type))) + " -> " + std::string(getTypeName(categoryToType(return_type))) + ")");
 						}
 						// Fallback for non-arithmetic types (enum, user_defined, etc.)
-						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+						operands = generateTypeConversion(operands, categoryToType(expr_type), categoryToType(return_type), node.return_token());
 					}
 				}
 			}
@@ -362,10 +363,10 @@
 						addr_member_op.result = address_temp;
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
-						addr_member_op.member_type_index = TypeIndex{0, typeToCategory(current_function_return_type_)};
+						addr_member_op.member_type_index = TypeIndex{0, current_function_return_type_};
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						TempVarMetadata address_meta = TempVarMetadata::makeReference(TypeIndex{0, typeToCategory(current_function_return_type_)}, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(TypeIndex{0, current_function_return_type_}, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands.value = address_temp;

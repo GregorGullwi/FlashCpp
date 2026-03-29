@@ -54,7 +54,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
-		current_function_return_type_ = ret_type_spec.type();
+		current_function_return_type_ = ret_type_spec.category();
 		current_function_returns_reference_ = ret_type_spec.is_reference();
 
 		int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
