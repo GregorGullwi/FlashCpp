@@ -2889,14 +2889,14 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 					
 					// Convert the stored value based on the template argument type
-					switch (value_arg.typeEnum()) {
-						case Type::Bool:
+					switch (value_arg.category()) {
+						case TypeCategory::Bool:
 							return EvalResult::from_bool(value_arg.intValue() != 0);
-						case Type::UnsignedChar:
-						case Type::UnsignedShort:
-						case Type::UnsignedInt:
-						case Type::UnsignedLong:
-						case Type::UnsignedLongLong:
+						case TypeCategory::UnsignedChar:
+						case TypeCategory::UnsignedShort:
+						case TypeCategory::UnsignedInt:
+						case TypeCategory::UnsignedLong:
+						case TypeCategory::UnsignedLongLong:
 							return EvalResult::from_uint(static_cast<unsigned long long>(value_arg.intValue()));
 						default:
 							return EvalResult::from_int(value_arg.intValue());

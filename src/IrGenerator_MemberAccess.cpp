@@ -1549,7 +1549,7 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
+			TypeCategory type_cat = type_spec.category();
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
@@ -1614,7 +1614,7 @@
 				}
 			}
 			// Handle struct types
-			else if (type == Type::Struct) {
+			else if (type_cat == TypeCategory::Struct) {
 				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
@@ -1921,10 +1921,10 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
+			TypeCategory type_cat = type_spec.category();
 
 			// Handle struct types
-			if (type == Type::Struct) {
+			if (type_cat == TypeCategory::Struct) {
 				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
@@ -1943,7 +1943,7 @@
 			else {
 				// For primitive types, use standard alignment calculation
 				size_t size_in_bytes = type_spec.size_in_bits() / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, type);
+				alignment = calculate_alignment_from_size(size_in_bytes, type_cat);
 			}
 		}
 		else {
@@ -2156,8 +2156,8 @@
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		Type type = type_spec.type();
-		TypeCategory type_cat = typeToCategory(type);
+		TypeCategory type_cat = type_spec.category();
+		Type type = categoryToType(type_cat);
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
@@ -2176,7 +2176,7 @@
 						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Both types must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
+						if (type_cat == TypeCategory::Struct && derived_spec.category() == TypeCategory::Struct &&
 						!is_reference && pointer_depth == 0 &&
 						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
 						type_spec.type_index().index() < getTypeInfoCount() &&
@@ -2214,7 +2214,7 @@
 						const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Check if all properties match exactly
-						result = (type == second_spec.type() &&
+						result = (type_cat == second_spec.category() &&
 						is_reference == second_spec.is_reference() &&
 						is_rvalue_reference == second_spec.is_rvalue_reference() &&
 						pointer_depth == second_spec.pointer_depth() &&
@@ -2234,8 +2234,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2248,7 +2248,7 @@
 							result = true;
 						}
 						// Arithmetic types are generally convertible to each other
-						else if (isArithmeticType(typeToCategory(from_type)) && isArithmeticType(typeToCategory(to_type)) &&
+						else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0) {
 							result = true;
@@ -2260,11 +2260,11 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_type == TypeCategory::Struct && to_type == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2294,8 +2294,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2308,7 +2308,7 @@
 							result = true;
 						}
 						// Arithmetic types are nothrow convertible to each other
-						else if (isArithmeticType(typeToCategory(from_type)) && isArithmeticType(typeToCategory(to_type)) &&
+						else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0) {
 							result = true;
@@ -2319,11 +2319,11 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is nothrow convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types (nothrow if no virtual base)
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_type == TypeCategory::Struct && to_type == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2347,7 +2347,7 @@
 
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2359,7 +2359,7 @@
 				// A final class cannot be derived from
 				// Note: This requires tracking 'final' keyword on classes
 				// For now, check if any member function is marked final
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2377,7 +2377,7 @@
 
 			case TypeTraitKind::IsAbstract:
 				// An abstract class has at least one pure virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2387,7 +2387,7 @@
 
 			case TypeTraitKind::IsEmpty:
 				// An empty class has no non-static data members (excluding empty base classes)
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2481,10 +2481,10 @@
 			case TypeTraitKind::HasUniqueObjectRepresentations:
 				// Types with no padding bits have unique object representations
 				// Integral types (except bool), and trivially copyable types without padding
-				if ((type == Type::Char || type == Type::Short || type == Type::Int ||
-				type == Type::Long || type == Type::LongLong || type == Type::UnsignedChar ||
-				type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				if ((type_cat == TypeCategory::Char || type_cat == TypeCategory::Short || type_cat == TypeCategory::Int ||
+				type_cat == TypeCategory::Long || type_cat == TypeCategory::LongLong || type_cat == TypeCategory::UnsignedChar ||
+				type_cat == TypeCategory::UnsignedShort || type_cat == TypeCategory::UnsignedInt ||
+				type_cat == TypeCategory::UnsignedLong || type_cat == TypeCategory::UnsignedLongLong)
 				&& !is_reference && pointer_depth == 0) {
 					result = true;
 				}
@@ -2500,7 +2500,7 @@
 				if (isScalarType(type_cat, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (isIrStructType(toIrType(type)) &&
+				else if (isIrStructType(toIrType(type_cat)) &&
 				type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
@@ -2514,7 +2514,7 @@
 				if (isScalarType(type_cat, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (isIrStructType(toIrType(type)) &&
+				else if (isIrStructType(toIrType(type_cat)) &&
 				type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
@@ -2528,7 +2528,7 @@
 				if (isScalarType(type_cat, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				else if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2566,7 +2566,7 @@
 				if (isScalarType(type_cat, is_reference, pointer_depth) || is_reference) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				else if (type_cat == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
