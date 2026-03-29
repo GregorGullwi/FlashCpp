@@ -310,6 +310,9 @@
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
+		auto replaceCategory = [](TypeIndex type_index, TypeCategory category) {
+			return TypeIndex{type_index.index(), category};
+		};
 		auto preserveSemanticTypeIndex = [](TypeIndex semantic_type_index) {
 			return needs_type_index(semantic_type_index.category())
 				? semantic_type_index
@@ -952,7 +955,7 @@
 					Type pointee_type = type_node.type();
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
 
-					TypeIndex type_index = preserveSemanticTypeIndex(TypeIndex{type_node.type_index().index(), typeToCategory(pointee_type)});
+					TypeIndex type_index = preserveSemanticTypeIndex(replaceCategory(type_node.type_index(), typeToCategory(pointee_type)));
 
 					// Create a TempVar with Indirect lvalue metadata for compound assignments
 					// This allows handleLValueCompoundAssignment to work with reference variables
@@ -1153,7 +1156,7 @@
 						);
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-						TypeIndex type_index = preserveSemanticTypeIndex(TypeIndex{type_node.type_index().index(), typeToCategory(pointee_type)});
+						TypeIndex type_index = preserveSemanticTypeIndex(replaceCategory(type_node.type_index(), typeToCategory(pointee_type)));
 						return makeExprResult(type_index, SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 

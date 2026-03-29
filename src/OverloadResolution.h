@@ -1364,17 +1364,17 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	return TypeSpecifierNode(effective_category, TypeQualifier::None, size_bits);
 }
 
+inline TypeIndex replaceCategory(TypeIndex type_index, TypeCategory category) {
+	return TypeIndex{type_index.index(), category};
+}
+
 inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex type_index) {
 	const TypeCategory type_category = typeToCategory(type);
 	TypeIndex effective_type_index = type_index;
 	if (type_category != TypeCategory::Invalid && type_category != effective_type_index.category()) {
-		effective_type_index = TypeIndex{type_index.index(), type_category};
+		effective_type_index = replaceCategory(type_index, type_category);
 	}
 	return makeBinaryOperatorTypeSpecifier(effective_type_index);
-}
-
-inline TypeIndex withCategory(TypeIndex type_index, TypeCategory category) {
-	return TypeIndex{type_index.index(), category};
 }
 
 inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
@@ -1605,7 +1605,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	}
 	return findBinaryOperatorOverload(
 		makeBinaryOperatorTypeSpecifier(left_type_index),
-		makeBinaryOperatorTypeSpecifier(withCategory(right_type_index, effective_right_category)),
+		makeBinaryOperatorTypeSpecifier(replaceCategory(right_type_index, effective_right_category)),
 		operator_kind);
 }
 
@@ -1852,7 +1852,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	}
 	return findBinaryOperatorOverloadWithFreeFunction(
 		makeBinaryOperatorTypeSpecifier(left_type_index),
-		makeBinaryOperatorTypeSpecifier(withCategory(right_type_index, effective_right_category)),
+		makeBinaryOperatorTypeSpecifier(replaceCategory(right_type_index, effective_right_category)),
 		operator_kind,
 		operator_symbol,
 		symbol_table);
