@@ -921,7 +921,7 @@ private:
 		StringHandle qualified_template_name;  // e.g., "Container::insert"
 		StringHandle mangled_name;  // e.g., "insert_int"
 		StringHandle struct_name;   // e.g., "Container"
-		std::vector<Type> template_args;  // Concrete types
+		std::vector<TypeCategory> template_args;  // Concrete types
 		SaveHandle body_position;  // Handle to saved position where the template body starts
 		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
 		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template

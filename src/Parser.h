@@ -930,7 +930,7 @@ public:  // Public methods for template instantiation
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
 		const InlineVector<std::string_view, 4>& template_param_names,
-		const std::vector<Type>& concrete_types,
+		const std::vector<TypeCategory>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
 		TypeIndex struct_type_index = TypeIndex{}     // Optional: for member functions
 	);

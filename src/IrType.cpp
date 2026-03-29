@@ -35,9 +35,7 @@ IrType toIrType(TypeCategory cat) {
 
 		// Aggregate / user-defined types
 		// TypeAlias is included here because unresolved aliases that reach IR
-		// were previously lowered via categoryToType(TypeAlias) → Type::UserDefined
-		// → IrType::Struct.  Ideally aliases are resolved before codegen, but
-		// during the transition period this preserves the existing behavior.
+		// are treated as struct-like for codegen purposes.
 		case TypeCategory::Struct:
 		case TypeCategory::UserDefined:
 		case TypeCategory::TypeAlias:

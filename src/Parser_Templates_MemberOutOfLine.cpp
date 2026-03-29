@@ -790,7 +790,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 std::optional<ASTNode> Parser::parseTemplateBody(
 	SaveHandle body_pos,
 	const InlineVector<std::string_view, 4>& template_param_names,
-	const std::vector<Type>& concrete_types,
+	const std::vector<TypeCategory>& concrete_types,
 	StringHandle struct_name,
 	TypeIndex struct_type_index
 ) {
@@ -800,7 +800,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	// Bind template parameters to concrete types using RAII scope guard (Phase 6)
 	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
-		TypeCategory concrete_cat = typeToCategory(concrete_types[i]);
+		TypeCategory concrete_cat = concrete_types[i];
 		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name

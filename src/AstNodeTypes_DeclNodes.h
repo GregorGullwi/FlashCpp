@@ -952,7 +952,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	return CanonicalTypeAlias{original_type_index};
 }
 
-// TypeCategory overload — avoids bridge through categoryToType().
+// TypeCategory overload — operates directly on TypeCategory.
 inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory cat, TypeIndex type_index) {
 	if (type_index.category() == TypeCategory::Invalid)
 		type_index = TypeIndex{type_index.index(), cat};

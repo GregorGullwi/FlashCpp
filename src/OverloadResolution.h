@@ -200,7 +200,7 @@ inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to)
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
-inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = TypeIndex{}) {
+inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_type, TypeIndex target_type_index) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
 	if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
@@ -1268,10 +1268,6 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 		base_name = base_name.substr(0, dollar_pos);
 	}
 	return (template_base_name == base_name) ? left_type_index : param_idx;
-}
-
-inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
-	return needs_type_index(type);
 }
 
 inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {

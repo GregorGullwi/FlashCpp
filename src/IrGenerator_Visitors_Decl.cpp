@@ -146,9 +146,7 @@
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track return type index and hidden parameter flag for current function context
-		// Use fromTypeAndIndex to ensure TypeCategory is embedded even for primitive types
-		// (TypeSpecifierNode built with the Type-only constructor stores TypeIndex{0} with
-		// TypeCategory::Invalid; fromTypeAndIndex falls back to typeToCategory(type) in that case).
+		// Use the type_index which carries the TypeCategory.
 		current_function_return_type_index_ = ret_type.type_index();
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 

@@ -1822,7 +1822,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			FunctionParam func_param;
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
-				TypeCategory concrete_cat = typeToCategory(inst_info.template_args[i]);
+				TypeCategory concrete_cat = inst_info.template_args[i];
 				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_cat, {});
 				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_cat)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
@@ -1955,7 +1955,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 			// Create declaration with concrete type
 			if (i < inst_info.template_args.size()) {
-				TypeCategory concrete_cat = typeToCategory(inst_info.template_args[i]);
+				TypeCategory concrete_cat = inst_info.template_args[i];
 				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 					concrete_cat,
 					TypeQualifier::None,
