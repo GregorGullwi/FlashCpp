@@ -168,7 +168,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					sizeof_node.sizeof_token()
+					sizeof_node.sizeof_token(), CVQualifier::None
 				);
 				new_type.set_type_index(arg.type_index);
 				
@@ -203,7 +203,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 								arg.typeEnum(),
 								TypeQualifier::None,
 								get_type_size_bits(arg.category()),
-								sizeof_node.sizeof_token()
+								sizeof_node.sizeof_token(), CVQualifier::None
 							);
 							new_type.set_type_index(arg.type_index);
 							
@@ -270,7 +270,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					ctor.called_from()
+					ctor.called_from(), CVQualifier::None
 				);
 				
 				// Recursively substitute in arguments
@@ -334,7 +334,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					unop.get_token()
+					unop.get_token(), CVQualifier::None
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
 				new_type.set_reference_qualifier(arg.ref_qualifier);
@@ -637,7 +637,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					orig_token
+					orig_token, CVQualifier::None
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
 				substituted_type.set_reference_qualifier(arg.ref_qualifier);

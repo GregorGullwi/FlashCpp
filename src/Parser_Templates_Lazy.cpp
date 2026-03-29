@@ -330,7 +330,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		return_type,
 		return_type_spec.qualifier(),
 		get_type_size_bits(return_type),
-		return_type_spec.token()
+		return_type_spec.token(),
+		CVQualifier::None
 	);
 	substituted_return_type.set_type_index(return_type_index);
 
@@ -868,7 +869,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	}
 	
 	// Perform type substitution
-	TypeSpecifierNode original_type_spec(lazy_info.memberType(), TypeQualifier::None, lazy_info.size * 8);
+	TypeSpecifierNode original_type_spec(lazy_info.memberType(), TypeQualifier::None, lazy_info.size * 8, Token{}, CVQualifier::None);
 	original_type_spec.set_type_index(lazy_info.type_index);
 	
 	auto [substituted_type, substituted_type_index] = substitute_template_parameter(

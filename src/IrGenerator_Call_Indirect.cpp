@@ -69,7 +69,7 @@
 
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(TypeCategory::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
+				TypeSpecifierNode return_type_node(TypeCategory::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
@@ -107,23 +107,24 @@
 									arg_types.push_back(type_node);
 								} else {
 									// Default to int
-									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 								}
 							} else {
-								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 							}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-								static_cast<unsigned char>(literal->sizeInBits())));
+								static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 						} else {
 							// For complex expressions, evaluate and get type
 							ExprResult operand_result = visitExpressionNode(arg_expr);
 							arg_types.push_back(TypeSpecifierNode(
 								operand_result.typeEnum(),
 								TypeQualifier::None,
-								static_cast<unsigned char>(operand_result.size_in_bits.value)
+								static_cast<unsigned char>(operand_result.size_in_bits.value),
+								Token{}, CVQualifier::None
 							));
 						}
 					});
@@ -254,7 +255,9 @@
 				TypeCategory::Struct,
 				lambda_result.type_index,
 				static_cast<int>(lambda_result.size_in_bits.value),
-				memberFunctionCallNode.called_from()
+				memberFunctionCallNode.called_from(),
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 
 			// For capturing lambdas, continue into the regular member function call path
@@ -314,7 +317,9 @@
 									TypeCategory::Struct,
 									closure_type->type_index_,
 									closure_size,
-									object_decl->identifier_token()
+									object_decl->identifier_token(),
+									CVQualifier::None,
+									ReferenceQualifier::None
 								);
 								// Preserve rvalue reference flag
 								object_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
@@ -1130,17 +1135,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(TypeCategory::Bool));
+							template_args.push_back(TemplateTypeArg::makeType(TypeCategory::Bool, TypeIndex{}));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
+							template_args.push_back(TemplateTypeArg::makeType(lit.type(), TypeIndex{}));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(type.type()));
+								template_args.push_back(TemplateTypeArg::makeType(type.type(), TypeIndex{}));
 							}
 						}
 					});
@@ -1201,7 +1206,9 @@
 														TypeCategory::Struct,
 														closure_type->type_index_,
 														closure_size,
-														decl->identifier_token()
+														decl->identifier_token(),
+														CVQualifier::None,
+														ReferenceQualifier::None
 													);
 													// Preserve rvalue reference flag
 													type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
@@ -1210,19 +1217,19 @@
 										}
 										arg_types.push_back(type_node);
 									} else {
-										arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
+										arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 									}
 								} else {
-									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 								}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 							} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 								arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-									static_cast<unsigned char>(literal->sizeInBits())));
+									static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 							} else {
 								// Default to int for complex expressions
-								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 							}
 						});
 
@@ -1263,7 +1270,9 @@
 									matched_lambda_info->returnType(),
 									matched_lambda_info->return_type_index,
 									matched_lambda_info->return_size,
-									matched_lambda_info->lambda_token);
+									matched_lambda_info->lambda_token,
+									CVQualifier::None,
+									ReferenceQualifier::None);
 								if (matched_lambda_info->returns_reference) {
 									resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
 									resolved_generic_return_type->set_size_in_bits(64);

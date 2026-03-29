@@ -418,7 +418,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									targ.type_index,
 									64,
 									Token{},
-									targ.cv_qualifier
+									targ.cv_qualifier,
+									ReferenceQualifier::None
 								);
 								
 								for (size_t i = 0; i < targ.pointer_depth; ++i) {
@@ -1023,7 +1024,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								TypeCategory::Struct,
 								anon_type_info.type_index_,
 								static_cast<unsigned char>(anon_struct_info->total_size),
-								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0)
+								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0),
+								CVQualifier::None,
+								ReferenceQualifier::None
 							);
 							
 							// Create a member with the anonymous type
@@ -2526,7 +2529,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				TypeCategory::Struct,
 				struct_type_info.type_index_,
 				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0)
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0),
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			
 			// Parse any pointer levels
@@ -2946,7 +2951,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						base_param_type.type_index(),
 						base_param_type.size_in_bits(),
 						base_param_decl.identifier_token(),
-						base_param_type.cv_qualifier()
+						base_param_type.cv_qualifier(),
+						ReferenceQualifier::None
 					);
 					
 					// Copy reference qualifiers
@@ -3050,7 +3056,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::Const  // const qualifier
+			CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 		);
 
 		// Make it a reference type
@@ -3095,7 +3102,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3117,7 +3125,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::Const  // const qualifier
+			CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 		);
 		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3167,7 +3176,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 
 		// Make it an rvalue reference type
@@ -3209,7 +3219,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3231,7 +3242,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_type_index,
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 		move_param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // true = rvalue reference
 
@@ -3285,7 +3297,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				TypeIndex{},  // type_index for bool
 				8,  // size in bits
 				name_token,
-				CVQualifier::None
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			
 			// Create declaration node for the operator
@@ -3306,7 +3319,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				struct_type_index,
 				static_cast<int>(struct_info->total_size * 8),  // size in bits
 				name_token,
-				CVQualifier::Const  // const qualifier
+				CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 			);
 			param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 			
@@ -3726,7 +3740,7 @@ ParseResult Parser::parse_enum_declaration()
 		// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
-				TypeCategory::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
+				TypeCategory::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 			gSymbolTable.insert(enumerator_name, enumerator_decl);
 		}
@@ -4256,7 +4270,7 @@ ParseResult Parser::parse_friend_declaration()
 			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
 				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
 			} else {
-				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token());
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token(), CVQualifier::None, ReferenceQualifier::None);
 			}
 
 			// Build the declaration and function declaration nodes

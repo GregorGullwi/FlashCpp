@@ -2710,7 +2710,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}, expr);
 					
 						TypeSpecifierNode arg_type_node = arg_type_node_opt.value_or(
-							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token())
+							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None)
 						);
 						if (is_lvalue) {
 							// Mark as lvalue reference for perfect forwarding template deduction
@@ -3435,7 +3435,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 								}, expr);
 								
-								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
 							}
 						}
 

@@ -200,13 +200,13 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0);
+				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				appendTypeCode(output, ret_spec);
 				if (sig.parameter_type_indices.empty()) {
 					output += 'X';  // void parameter list
 				} else {
 					for (const TypeIndex& pt : sig.parameter_type_indices) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
 						appendTypeCode(output, param_spec);
 					}
 				}
@@ -370,14 +370,14 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0);
+				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				appendItaniumTypeCode(output, ret_spec);
 				// Encode parameter types
 				if (sig.parameter_type_indices.empty()) {
 					output += 'v';  // void parameter list
 				} else {
 					for (const TypeIndex& pt : sig.parameter_type_indices) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0);  // explicit ctor: see above
+						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
 						appendItaniumTypeCode(output, param_spec);
 					}
 				}
@@ -1397,7 +1397,7 @@ inline MangledName generateMangledNameFromNode(
 		}
 		
 		// Create a dummy TypeSpecifierNode for the return type (constructors return void)
-		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
+		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
@@ -1431,7 +1431,7 @@ inline MangledName generateMangledNameFromNode(
 		dtor_name += class_name;
 		
 		// Create a dummy TypeSpecifierNode for the return type (destructors return void)
-		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
+		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		
 		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},

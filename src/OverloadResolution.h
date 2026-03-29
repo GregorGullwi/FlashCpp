@@ -1334,10 +1334,10 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, Type
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {
-		return TypeSpecifierNode(effective_type, type_index, size_bits);
+		return TypeSpecifierNode(effective_type, type_index, size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	}
 
-	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits);
+	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 }
 
 inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {

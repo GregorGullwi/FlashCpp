@@ -833,7 +833,7 @@ ParseResult Parser::parse_lambda_expression() {
         // Determine the type for the capture variable
         // For init-captures, we need to get the type from the initializer
         // For regular captures, we look up the original variable
-        TypeSpecifierNode capture_type_node(TypeCategory::Auto, TypeQualifier::None, 0, id_token);
+        TypeSpecifierNode capture_type_node(TypeCategory::Auto, TypeQualifier::None, 0, id_token, CVQualifier::None);
         
         if (capture.has_initializer()) {
             // Init-capture: [x = expr]
@@ -929,7 +929,7 @@ ParseResult Parser::parse_lambda_expression() {
                         // If we couldn't deduce (possibly due to circular dependency guard),
                         // default to int as a safe fallback
                         if (!deduced_type.has_value()) {
-                            deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
+                            deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                             all_return_types.emplace_back(*deduced_type, lambda_token);
                             FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
                         }
@@ -1178,7 +1178,7 @@ ParseResult Parser::parse_lambda_expression() {
             if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
                 // [this] capture: store a pointer to the enclosing object (8 bytes on x64)
                 // We'll store it with a special member name so it can be accessed later
-                TypeSpecifierNode ptr_type(TypeCategory::Void, TypeQualifier::None, 64);
+                TypeSpecifierNode ptr_type(TypeCategory::Void, TypeQualifier::None, 64, Token{}, CVQualifier::None);
                 ptr_type.add_pointer_level();  // Make it a void*
                 
                 // Phase 7B: Intern special member name and use StringHandle overload
@@ -1226,7 +1226,7 @@ ParseResult Parser::parse_lambda_expression() {
             }
 
             auto var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
-            TypeSpecifierNode var_type(TypeCategory::Int, TypeQualifier::None, 32);  // Default type
+            TypeSpecifierNode var_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);  // Default type
             
             if (capture.has_initializer()) {
                 // Init-capture: type is inferred from the initializer
@@ -1235,7 +1235,7 @@ ParseResult Parser::parse_lambda_expression() {
                 
                 // Try to infer type from the initializer expression
                 if (init_expr.is<NumericLiteralNode>()) {
-                    var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
+                    var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                 } else if (init_expr.is<IdentifierNode>()) {
                     // Look up the identifier's type
                     auto init_id = init_expr.as<IdentifierNode>().nameHandle();
@@ -1251,7 +1251,7 @@ ParseResult Parser::parse_lambda_expression() {
                     const auto& expr_node = init_expr.as<ExpressionNode>();
                     if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
                         // For binary operations, assume int type for arithmetic
-                        var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
+                        var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                     } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
                         auto init_id = std::get<IdentifierNode>(expr_node).nameHandle();
                         auto init_symbol = lookup_symbol(init_id);
@@ -1347,7 +1347,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Generate operator() member function for the lambda
     // This allows lambda() calls to work
     // Determine return type
-    TypeSpecifierNode return_type_spec(TypeCategory::Void, TypeQualifier::None, 0);
+    TypeSpecifierNode return_type_spec(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
     if (return_type.has_value()) {
         return_type_spec = return_type->as<TypeSpecifierNode>();
     }

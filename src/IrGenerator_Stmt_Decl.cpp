@@ -88,7 +88,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return std::nullopt;
 			}
 
-			TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8);
+			TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8, Token{}, CVQualifier::None);
 			member_type.set_type_index(member->type_index);
 			if (member->pointer_depth > 0) {
 				member_type.add_pointer_levels(member->pointer_depth);
@@ -2638,7 +2638,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// Create a TypeSpecifierNode for this binding's type
 				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None,
-				static_cast<unsigned char>(array_element_size), Token());
+				static_cast<unsigned char>(array_element_size), Token(), CVQualifier::None);
 
 				// If this is a reference binding (auto& or auto&&), mark the type as a reference
 				if (is_reference_binding) {
@@ -2987,7 +2987,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						// Create synthetic declaration for symbol table
 						TypeSpecifierNode binding_type(element_type, TypeQualifier::None,
-						static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token());
+						static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token(), CVQualifier::None);
 						binding_type.set_type_index(element_type_index);
 
 						ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
@@ -3054,7 +3054,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			// For struct types, type_index is what matters, not size_in_bits
 			size_t member_size_bits_full = member.size * 8;
 			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
-			TypeSpecifierNode binding_type(member.memberType(), TypeQualifier::None, member_size_bits, Token());
+			TypeSpecifierNode binding_type(member.memberType(), TypeQualifier::None, member_size_bits, Token(), CVQualifier::None);
 			binding_type.set_type_index(member.type_index);
 
 			// If this is a reference binding (auto& or auto&&), mark the type as a reference

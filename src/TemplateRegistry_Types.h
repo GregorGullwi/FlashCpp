@@ -274,7 +274,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx = TypeIndex{}) {
+	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx) {
 		TemplateTypeArg arg;
 		arg.type_index = makeTypeIndex(cat, idx);
 		return arg;

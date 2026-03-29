@@ -1904,7 +1904,7 @@ std::string IrToObjConverter<TWriterClass>::buildDestructorMangledNameFromString
 			class_name_str = class_name_str.substr(0, colon_pos);
 		}
 		std::vector<TypeSpecifierNode> empty_params;
-		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name_str;
 		return std::string(writer.generateMangledName(func_name, sig));
@@ -4661,7 +4661,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(TypeCategory::Void, TypeIndex{}, 0);
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeIndex{}, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -4806,8 +4806,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
-				? TypeSpecifierNode(arg.typeEnum(), arg.type_index, arg.size_in_bits.value)
-				: TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg.size_in_bits.value);
+				? TypeSpecifierNode(arg.typeEnum(), arg.type_index, arg.size_in_bits.value, Token{}, CVQualifier::None, ReferenceQualifier::None)
+				: TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg.size_in_bits.value, Token{}, CVQualifier::None);
 			if (arg.pointer_depth.is_pointer()) {
 				for (int i = 0; i < arg.pointer_depth.value; ++i) {
 					ts.add_pointer_level();
@@ -4969,12 +4969,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							}
 						}
 
-						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
+						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv, ReferenceQualifier::None);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
 				} else if (paramType == TypeCategory::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
-					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier, ReferenceQualifier::None);
 					// Add pointer levels (rebuild after creating with type_index)
 					for (int p = 0; p < arg_pointer_depth; ++p) {
 						param_type.add_pointer_level(CVQualifier::None);
@@ -5256,7 +5256,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Build FunctionSignature for proper overload resolution
-		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -5334,7 +5334,7 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 
 		// Build FunctionSignature for destructor (destructors take no parameters and return void)
 		std::vector<TypeSpecifierNode> empty_params;  // Destructors have no parameters
-		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name;
 
@@ -6893,7 +6893,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 
 		// Construct return type
-		TypeSpecifierNode return_type(func_decl.returnType(), TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
+		TypeSpecifierNode return_type(func_decl.returnType(), TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value), Token{}, CVQualifier::None);
 		for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 			return_type.add_pointer_level();
 		}
@@ -6901,7 +6901,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Extract parameters
 		std::vector<TypeSpecifierNode> parameter_types;
 		for (const auto& param : func_decl.parameters) {
-			TypeSpecifierNode param_type(param.paramType(), TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value));
+			TypeSpecifierNode param_type(param.paramType(), TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value), Token{}, CVQualifier::None);
 			for (int i = 0; i < param.pointer_depth.value; ++i) {
 				param_type.add_pointer_level();
 			}

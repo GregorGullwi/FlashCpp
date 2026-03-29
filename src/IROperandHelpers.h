@@ -187,6 +187,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	TypedValue result;
 	result.type = std::get<TypeCategory>(operands[0]);
 	result.ir_type = toIrType(result.type);
+	result.is_signed = isSignedType(result.type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
 	result.type_index = TypeIndex::fromTypeAndIndex(result.type, {});
@@ -207,6 +208,7 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
 	tv.type = result.typeEnum();
 	tv.ir_type = result.ir_type;
+	tv.is_signed = isSignedType(result.typeEnum());
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
 	tv.type_index = TypeIndex{result.type_index.index(), result.typeEnum()};

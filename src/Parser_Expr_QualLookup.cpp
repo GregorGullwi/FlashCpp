@@ -1220,7 +1220,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 		}
 	}
 
-	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token(), CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1237,7 +1237,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 		sig.parameter_type_indices.push_back(param_type.type_index());
 	}
 
-	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token);
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token, CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1289,11 +1289,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const auto& literal = std::get<NumericLiteralNode>(expr);
-		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
+		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		// String literals have type "const char*" (pointer to const char)
@@ -1388,7 +1388,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		    op_kind == tok::Less || op_kind == tok::Greater ||
 		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
 		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
-			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
+			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		}
 
 		// For bitwise/arithmetic operators, check the LHS type
@@ -1420,7 +1420,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Default: return int for arithmetic/bitwise operations
-		return TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32);
+		return TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		// For unary operators, handle type transformations
@@ -1675,7 +1675,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
-					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8);
+					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8, Token{}, CVQualifier::None);
 					member_type.set_type_index(member_result.member->type_index);
 					if (member_result.member->pointer_depth > 0) {
 						member_type.add_pointer_levels(member_result.member->pointer_depth);
@@ -1698,7 +1698,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
-		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
+		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token(), CVQualifier::None);
 	}
 	else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		// For ternary expressions (cond ? true_expr : false_expr), determine the common type
@@ -1782,7 +1782,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
 						// Found the static member - return its type
-						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8);
+						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8, Token{}, CVQualifier::None);
 						member_type.set_type_index(static_member->type_index);
 						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
@@ -1802,7 +1802,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// can find functions in the enum's associated namespace.
 				const TypeInfo* enum_type_info = struct_type_it->second;
 				TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None,
-				                            enum_type_info->getEnumInfo()->underlying_size);
+				                            enum_type_info->getEnumInfo()->underlying_size, Token{}, CVQualifier::None);
 				enum_type.set_type_index(enum_type_info->type_index_);
 				return enum_type;
 			}

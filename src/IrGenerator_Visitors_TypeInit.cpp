@@ -1171,7 +1171,7 @@
 					if (last_colon != std::string_view::npos) {
 						func_name = class_name.substr(last_colon + 2);
 					}
-					TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0);
+					TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 					ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 						func_name,
 						void_return,

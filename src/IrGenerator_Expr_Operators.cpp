@@ -222,7 +222,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			if (nested_type_info.getStructInfo()) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
 				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
-				TypeSpecifierNode nested_type_spec(member.memberType(), member.type_index, nested_size_bits);
+				TypeSpecifierNode nested_type_spec(member.memberType(), member.type_index, nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
 					store_type = nested_result->type;
@@ -1498,7 +1498,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const auto& id = std::get<IdentifierNode>(expr);
 				if (id.name() == "nullptr") {
-					return TypeSpecifierNode(TypeCategory::Nullptr, TypeQualifier::None, 64, id.identifier_token());
+					return TypeSpecifierNode(TypeCategory::Nullptr, TypeQualifier::None, 64, id.identifier_token(), CVQualifier::None);
 				}
 				if (auto symbol = symbol_table.lookup(id.name())) {
 					const DeclarationNode* decl_ptr = nullptr;
@@ -1520,13 +1520,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return std::nullopt;
 			}
 			if (const auto* literal = std::get_if<NumericLiteralNode>(&expr)) {
-				return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits());
+				return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits(), Token{}, CVQualifier::None);
 			}
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
-				return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
+				return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 			}
 			if (std::holds_alternative<StringLiteralNode>(expr)) {
-				TypeSpecifierNode str_type(TypeCategory::Char, TypeQualifier::None, 8);
+				TypeSpecifierNode str_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 				str_type.add_pointer_level(CVQualifier::Const);
 				return str_type;
 			}
@@ -2046,7 +2046,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							TypeSpecifierNode resolved_return_type_node = return_type_node;
 							if (resolved_return_type_node.type() != return_type) {
-								resolved_return_type_node = TypeSpecifierNode(return_type, TypeQualifier::None, return_size, return_type_node.token());
+								resolved_return_type_node = TypeSpecifierNode(return_type, TypeQualifier::None, return_size, return_type_node.token(), CVQualifier::None);
 							}
 
 							// Generate mangled name for the operator<=> call

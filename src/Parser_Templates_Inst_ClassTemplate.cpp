@@ -1980,7 +1980,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Substitute type if it's a template parameter
 				// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				// Use substitute_template_parameter for consistent template parameter matching
@@ -2241,7 +2241,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			);
 		}
 		for (const auto& static_member : pattern_struct.static_members()) {
-			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
+			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 			original_type_spec.set_type_index(static_member.type_index);
 			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 				original_type_spec, template_params, template_args_for_pattern);
@@ -3327,7 +3327,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										subst.type_index,
 										0,  // size will be looked up
 										Token(),
-										type_spec.cv_qualifier()
+										type_spec.cv_qualifier(),
+										ReferenceQualifier::None
 									);
 									substituted = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
@@ -4103,7 +4104,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
-				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 				original_type_spec.set_type_index(static_member.type_index);
 				
 				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
@@ -4428,7 +4429,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
 			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
+			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 			original_type_spec.set_type_index(static_member.type_index);
 			
 			// Use substitute_template_parameter for consistent template parameter matching
@@ -4564,7 +4565,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_type,
 					type_spec.qualifier(),
 					get_type_size_bits(substituted_type),
-					Token()  // Empty token
+					Token(),  // Empty token
+					CVQualifier::None
 				);
 				substituted_type_spec.set_type_index(substituted_type_index);
 				
@@ -4681,7 +4683,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			auto copy_nested_static_members = [&](const StructTypeInfo& original_struct_info) {
 				for (const auto& static_member : original_struct_info.static_members) {
-					TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8);
+					TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 					original_type_spec.set_type_index(static_member.type_index);
 					auto [substituted_type, substituted_type_index] = substitute_template_parameter(
 						original_type_spec, template_params, template_args_to_use);
@@ -5188,7 +5190,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type,
 					return_type_spec.qualifier(),
 					get_substituted_type_size_bits(return_type, return_type_index),
-					decl.identifier_token()
+					decl.identifier_token(),
+					CVQualifier::None
 				);
 				substituted_return_type.set_type_index(return_type_index);
 
@@ -5326,7 +5329,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type,
 					return_type_spec.qualifier(),
 					get_substituted_type_size_bits(return_type, return_type_index),
-					decl.identifier_token()
+					decl.identifier_token(),
+					CVQualifier::None
 				);
 				substituted_return_type.set_type_index(return_type_index);
 
@@ -5592,7 +5596,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type,
 					return_type_spec.qualifier(),
 					get_substituted_type_size_bits(return_type, return_type_index),
-					decl.identifier_token()
+					decl.identifier_token(),
+					CVQualifier::None
 				);
 				substituted_return_type.set_type_index(return_type_index);
 
@@ -5628,7 +5633,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							param_type,
 							param_type_spec.qualifier(),
 							get_substituted_type_size_bits(param_type, param_type_index),
-							param_decl.identifier_token()
+							param_decl.identifier_token(),
+							CVQualifier::None
 						);
 						substituted_param_type.set_type_index(param_type_index);
 

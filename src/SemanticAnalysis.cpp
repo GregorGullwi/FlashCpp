@@ -104,7 +104,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 }
 
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
-	TypeSpecifierNode type_node(desc.category(), desc.type_index, 0);
+	TypeSpecifierNode type_node(desc.category(), desc.type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
 	type_node.set_reference_qualifier(desc.ref_qualifier);
 	for (const auto& pointer_level : desc.pointer_levels) {
@@ -1102,7 +1102,9 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			lambda_info.returnType(),
 			lambda_info.return_type_index,
 			lambda_info.return_size,
-			lambda_info.lambda_token);
+			lambda_info.lambda_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
 		if (lambda_info.returns_reference) {
 			lambda_return_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			lambda_return_type.set_size_in_bits(64);
@@ -1309,7 +1311,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 
 		if (node.is<ReturnStatementNode>()) {
 			const ReturnStatementNode& ret = node.as<ReturnStatementNode>();
-			TypeSpecifierNode current_type(TypeCategory::Void, TypeQualifier::None, 0, ret.return_token());
+			TypeSpecifierNode current_type(TypeCategory::Void, TypeQualifier::None, 0, ret.return_token(), CVQualifier::None);
 			if (ret.expression().has_value()) {
 				auto expr_type = get_expression_type_for_return(*ret.expression());
 				if (!expr_type.has_value()) {
@@ -1450,7 +1452,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	return deduced_type.value_or(TypeSpecifierNode(
 		TypeCategory::Void,
 		TypeQualifier::None,
-		get_type_size_bits(TypeCategory::Void)));
+		get_type_size_bits(TypeCategory::Void),
+		Token{},
+		CVQualifier::None));
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const {

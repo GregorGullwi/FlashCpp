@@ -1024,7 +1024,7 @@ void Parser::register_builtin_functions() {
 	auto register_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param_type) {
 		// Create return type node
 		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 		
 		// Create function name token
 		Token func_token = dummy_token;
@@ -1038,7 +1038,7 @@ void Parser::register_builtin_functions() {
 		
 		// Create parameter
 		Token param_token = dummy_token;
-		auto param_type_node = emplace_node<TypeSpecifierNode>(param_type, TypeQualifier::None, 64, param_token);
+		auto param_type_node = emplace_node<TypeSpecifierNode>(param_type, TypeQualifier::None, 64, param_token, CVQualifier::None);
 		auto param_decl = emplace_node<DeclarationNode>(param_type_node, param_token);
 		func_decl_ref.add_parameter_node(param_decl);
 		
@@ -1053,7 +1053,7 @@ void Parser::register_builtin_functions() {
 	auto register_two_param_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param1_type, TypeCategory param2_type) {
 		// Create return type node
 		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 		
 		// Create function name token
 		Token func_token = dummy_token;
@@ -1067,7 +1067,7 @@ void Parser::register_builtin_functions() {
 		
 		// Create first parameter
 		Token param1_token = dummy_token;
-		auto param1_type_node = emplace_node<TypeSpecifierNode>(param1_type, TypeQualifier::None, 64, param1_token);
+		auto param1_type_node = emplace_node<TypeSpecifierNode>(param1_type, TypeQualifier::None, 64, param1_token, CVQualifier::None);
 		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node, param1_token);
 		func_decl_ref.add_parameter_node(param1_decl);
 		
@@ -1088,7 +1088,7 @@ void Parser::register_builtin_functions() {
 	auto register_no_param_builtin = [&](std::string_view name, TypeCategory return_type) {
 		// Create return type node
 		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token);
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 		
 		// Create function name token
 		Token func_token = dummy_token;

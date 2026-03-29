@@ -402,7 +402,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 
 							// Type for mangling is rvalue reference to closure type
-							TypeSpecifierNode self_type(TypeCategory::Struct, closure_type_index, 8, Token());
+							TypeSpecifierNode self_type(TypeCategory::Struct, closure_type_index, 8, Token(), CVQualifier::None, ReferenceQualifier::None);
 							self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 							arg_types.push_back(self_type);
 						} else {
@@ -422,13 +422,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							call_op.args.push_back(makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value));
 
 							// Type for mangling
-							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
+							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token(), CVQualifier::None, ReferenceQualifier::None);
 							arg_types.push_back(type_node);
 						}
 					});
 
 					// Generate mangled name for operator() call
-					TypeSpecifierNode return_type_node(TypeCategory::Int, TypeIndex{}, 32, Token());
+					TypeSpecifierNode return_type_node(TypeCategory::Int, TypeIndex{}, 32, Token(), CVQualifier::None, ReferenceQualifier::None);
 					std::string_view mangled_name = generateMangledNameForCall(
 						"operator()",
 						return_type_node,

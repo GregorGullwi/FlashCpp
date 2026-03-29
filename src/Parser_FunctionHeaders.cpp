@@ -339,7 +339,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								if (elem_type.has_value()) {
 									arg_types.push_back(*elem_type);
 								} else {
-									arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token);
+									arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
 								}
 							}
 						}
@@ -360,7 +360,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						if (arg_type.has_value()) {
 							arg_types.push_back(*arg_type);
 						} else {
-							arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token);
+							arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
 						}
 					}
 				}
@@ -394,7 +394,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 							}
 						}
 						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
-							current_token_);
+							current_token_, CVQualifier::None);
 					}
 				}
 			}
@@ -907,7 +907,7 @@ ParseResult Parser::create_function_from_header(
 		type_node = ASTNode::emplace_node<TypeSpecifierNode>(*header.return_type);
 	} else {
 		// For constructors/destructors, create a void return type
-		type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token());
+		type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	// Create the declaration node with type and name

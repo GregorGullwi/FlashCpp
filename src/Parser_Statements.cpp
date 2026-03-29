@@ -1756,14 +1756,17 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						member_type_info.resolvedType(),
 						target_member.type_index,
 						member_type_info.type_size_ * 8,
-						Token()
+						Token(),
+						CVQualifier::None,
+						ReferenceQualifier::None
 					);
 				} else {
 					member_type_spec = TypeSpecifierNode(
 						target_member.memberType(),
 						TypeQualifier::None,
 						member_type_info.type_size_ * 8,
-						Token()
+						Token(),
+						CVQualifier::None
 					);
 					member_type_spec.set_type_index(target_member.type_index);
 				}
@@ -1773,7 +1776,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					target_member.memberType(),
 					TypeQualifier::None,
 					get_type_size_bits(target_member.memberType()),
-					Token()
+					Token(),
+					CVQualifier::None
 				);
 				have_member_type_spec = true;
 			}
@@ -2281,7 +2285,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 		size_bits = static_cast<int>(struct_info->total_size * 8);
 	}
 
-	TypeSpecifierNode resolved(TypeCategory::Struct, struct_type_info->type_index_, size_bits, type_specifier.token(), type_specifier.cv_qualifier());
+	TypeSpecifierNode resolved(TypeCategory::Struct, struct_type_info->type_index_, size_bits, type_specifier.token(), type_specifier.cv_qualifier(), ReferenceQualifier::None);
 	resolved.copy_indirection_from(type_specifier);
 	type_specifier = resolved;
 	return true;

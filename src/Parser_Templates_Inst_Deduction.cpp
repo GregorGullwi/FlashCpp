@@ -672,7 +672,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					resolved_info->typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(resolved_info->typeEnum()),
-					Token());
+					Token(), CVQualifier::None);
 				resolved_spec.set_type_index(resolved_info->type_index_);
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
@@ -1058,7 +1058,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							TypeSpecifierNode synth_ts(
 								c.typeEnum(), c.type_index,
 								get_type_size_bits(c.typeEnum()),
-								Token(), c.cv_qualifier);
+								Token(), c.cv_qualifier, ReferenceQualifier::None);
 							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
 								CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
 									? c.pointer_cv_qualifiers[pd] : CVQualifier::None;
@@ -1256,7 +1256,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
 					TypeCategory deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateTypeArg::makeType(deduced_type));
+					template_args.push_back(TemplateTypeArg::makeType(deduced_type, TypeIndex{}));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {
 					// Skip any arg slots fully consumed by the pre-deduction pass
@@ -1740,7 +1740,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				resolved_info->typeEnum(),
 				TypeQualifier::None,
 				get_type_size_bits(resolved_info->typeEnum()),
-				Token()
+				Token(), CVQualifier::None
 			);
 			resolved_spec.set_type_index(resolved_info->type_index_);
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);

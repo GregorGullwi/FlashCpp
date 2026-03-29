@@ -245,7 +245,9 @@
 					return_type,
 					current_function_return_type_index_,
 					return_size,
-					node.return_token());
+					node.return_token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
 				const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
 
 				// Check whether the semantic pass has already computed a cast annotation.

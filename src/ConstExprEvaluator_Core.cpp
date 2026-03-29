@@ -98,8 +98,7 @@ namespace {
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
 	const TypeCategory category = target_type.category();
-	if (category == TypeCategory::Bool ||
-		isIntegralType(category) ||
+	if (isIntegralType(category) ||
 		isFloatingPointType(category) ||
 		category == TypeCategory::Enum) {
 		return makeConvertedEvalResult(target_type, expr_result);
@@ -132,7 +131,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// Check what type of expression it is
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		EvalResult result = EvalResult::from_bool(bool_literal->value());
-		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8));
+		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 		return result;
 	}
 
@@ -290,7 +289,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 			? std::string_view(raw.data() + 1, raw.size() - 2) : raw;
 		// Build an is_array result whose elements are the individual characters.
 		// The null terminator is appended so that str[n] == '\0' comparisons work.
-		const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8);
+		const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		EvalResult result = EvalResult::from_int(0LL);
 		result.is_array = true;
 		for (size_t si = 0; si < str_content.size(); ++si) {
@@ -336,7 +335,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 // Internal evaluation methods for different node types
 EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal) {
 	const auto& value = literal.value();
-	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits());
+	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);

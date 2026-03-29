@@ -1714,7 +1714,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const auto& actual_params = func_decl.parameter_nodes();
 	if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
 		// Postfix overload has a dummy int parameter
-		TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token());
+		TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 		param_types.push_back(int_type);
 	}
 	std::vector<std::string_view> empty_namespace;

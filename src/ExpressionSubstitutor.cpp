@@ -356,7 +356,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					
 					// Create a TypeSpecifierNode for the instantiated type
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-						TypeCategory::Struct, new_type_index, 64, Token{}, CVQualifier::None
+						TypeCategory::Struct, new_type_index, 64, Token{}, CVQualifier::None, ReferenceQualifier::None
 					);
 					
 					// Create a ConstructorCallNode instead of FunctionCallNode
@@ -554,7 +554,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 			
 			// Create new forward declaration with corrected name
-			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 			ASTNode fwd_type_ast(&fwd_type_node);
 			auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
 			
@@ -698,7 +698,8 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			arg.type_index,
 			64,  // Default size, will be adjusted by type system
 			Token{},
-			arg.cv_qualifier
+			arg.cv_qualifier,
+			ReferenceQualifier::None
 		);
 		
 		// Add pointer levels if needed

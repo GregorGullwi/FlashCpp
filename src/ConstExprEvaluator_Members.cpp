@@ -19,20 +19,20 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 
 	if (value.object_type_index.is_valid() && value.object_type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(value.object_type_index);
-		return TypeSpecifierNode(type_info.typeEnum(), value.object_type_index, type_info.type_size_);
+		return TypeSpecifierNode(type_info.typeEnum(), value.object_type_index, type_info.type_size_, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {
-		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 	}
 	if (std::holds_alternative<long long>(value.value)) {
-		return TypeSpecifierNode(TypeCategory::LongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::LongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	}
 	if (value.is_uint()) {
-		return TypeSpecifierNode(TypeCategory::UnsignedLongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::UnsignedLongLong, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	}
 	if (std::holds_alternative<double>(value.value)) {
-		return TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 	}
 
 	return std::nullopt;
@@ -56,13 +56,13 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 	const TypeCategory promoted_type = promote_integer_type(type_spec.category());
 	const int promoted_width = get_type_size_bits(promoted_type);
 	if (promoted_width > 0) {
-		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width);
+		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width, Token{}, CVQualifier::None);
 	}
 
 	// Defensive fallback for unusual/dependent type shapes where the promoted
 	// type is known but the width table cannot provide a concrete bit-size yet.
 	if (type_spec.size_in_bits() > 0) {
-		return TypeSpecifierNode(promoted_type, TypeQualifier::None, type_spec.size_in_bits());
+		return TypeSpecifierNode(promoted_type, TypeQualifier::None, type_spec.size_in_bits(), Token{}, CVQualifier::None);
 	}
 
 	return std::nullopt;
@@ -193,7 +193,7 @@ std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
 	const TypeCategory result_type = get_common_type(lhs.exact_type->category(), rhs.exact_type->category());
 	const int result_bits = get_type_size_bits(result_type);
 	if (result_bits > 0) {
-		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits);
+		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits, Token{}, CVQualifier::None);
 	}
 	return std::nullopt;
 }

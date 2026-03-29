@@ -1320,7 +1320,7 @@
 				);
 			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
-				TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0);
+				TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 					ctor_function_name, return_type, node.parameter_nodes(),
 					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus, false));
@@ -2668,7 +2668,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
-						TypeSpecifierNode nested_spec(member.memberType(), member.type_index, nested_bits);
+						TypeSpecifierNode nested_spec(member.memberType(), member.type_index, nested_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {
 							MemberStoreOp store_op;

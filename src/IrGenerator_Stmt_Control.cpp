@@ -570,7 +570,9 @@
 							: resolved_member->memberType(),
 						resolved_member->type_index,
 						static_cast<int>(resolved_member->size * 8),
-						Token()
+						Token(),
+						CVQualifier::None,
+						ReferenceQualifier::None
 					);
 					if (resolved_member->pointer_depth > 0) {
 						inferred_range_type->add_pointer_levels(resolved_member->pointer_depth);
