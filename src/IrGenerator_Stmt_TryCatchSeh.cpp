@@ -228,7 +228,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			// Generate code for the expression to throw
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
-			Type expr_type = categoryToType(expr_result.type_index.category());
+			TypeCategory expr_type = expr_result.type_index.category();
 			size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
 			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
@@ -257,7 +257,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			if (!catch_scope_stack_.empty()) {
 				bool needs_materialization =
-					typeToCategory(expr_type) == TypeCategory::Struct &&
+					expr_type == TypeCategory::Struct &&
 					!is_rvalue &&
 					(std::holds_alternative<StringHandle>(exception_value) ||
 					 (std::holds_alternative<TempVar>(exception_value) &&
@@ -270,7 +270,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					StringHandle throw_storage_name = StringTable::getOrInternStringHandle(temp_name_builder.commit());
 
 					VariableDeclOp materialized_throw_decl;
-					materialized_throw_decl.type_index = TypeIndex{0, typeToCategory(expr_type)};
+					materialized_throw_decl.type_index = TypeIndex{0, expr_type};
 					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
 					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
