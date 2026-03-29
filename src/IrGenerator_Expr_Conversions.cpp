@@ -4,6 +4,17 @@
 #include "SemanticAnalysis.h"
 
 	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
+		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
+		// must never change their size (e.g. truncate 64→32). Only update the type
+		// metadata if needed; the value representation stays the same.
+		if (operands.pointer_depth.value > 0) {
+			if (operands.category() == toType) {
+				return operands;
+			}
+			return makeExprResult(toType, SizeInBits{64}, operands.value,
+				operands.type_index, operands.pointer_depth, operands.storage);
+		}
+
 		// Resolve enum to its underlying integer type so downstream size/signedness
 		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
 		fromType = resolveEnumUnderlyingTypeCategory(fromType, operands.type_index);
