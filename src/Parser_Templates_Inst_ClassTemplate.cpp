@@ -3653,11 +3653,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
 				
 				// Get the type information from the evaluated expression
-				Type base_type = base_type_spec.type();
 				TypeIndex base_type_index = base_type_spec.type_index();
 				
 				// Look up the base class type by its type index
-				if (base_type == Type::Struct && base_type_index.index() < getTypeInfoCount()) {
+				if (base_type_index.category() == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 					std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 					
@@ -3677,11 +3676,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const TypeSpecifierNode& base_type_spec = deferred_base.decltype_expression.as<TypeSpecifierNode>();
 			
 			// Get the type information from the decltype expression
-			Type base_type = base_type_spec.type();
 			TypeIndex base_type_index = base_type_spec.type_index();
 			
 			// Look up the base class type by its type index
-			if (base_type == Type::Struct && base_type_index.index() < getTypeInfoCount()) {
+			if (base_type_index.category() == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 				
@@ -3705,7 +3703,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeIndex member_type_index = substitute_template_parameter(
 			type_spec, template_params, template_args_to_use
 		);
-		Type member_type = categoryToType(member_type_index.category());
 
 		// WORKAROUND: If member type is a Struct or UserDefined that is actually a template (not an instantiation),
 		// try to instantiate it with the current template arguments.
@@ -3714,7 +3711,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		//   template<typename T> struct TD { TC<T> c; }; 
 		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
 		// We need to instantiate TC with the concrete args when instantiating TD.
-		if ((is_struct_type(member_type)) && member_type_index.index() < getTypeInfoCount()) {
+		if (is_struct_type(member_type_index.category()) && member_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
@@ -3755,20 +3752,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (inst_type_it != getTypesByNameMap().end()) {
 					// Update member_type_index to point to the instantiated type
 					member_type_index = inst_type_it->second->type_index_;
-					// Update member_type to match the instantiated type's actual type
-					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
-					member_type = categoryToType(inst_type_it->second->category());
+					member_type_index.setCategory(inst_type_it->second->category());
 				}
 			}
 		}
 
 		// After template refactoring, instantiated templates may have Type::UserDefined
-		// but gTypeInfo correctly stores them as Type::Struct. Synchronize member_type.
+		// but gTypeInfo correctly stores them as Type::Struct. Synchronize the cached category.
 		if (member_type_index.index() < getTypeInfoCount() && member_type_index.is_valid()) {
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
-			if (member_type_info.getStructInfo() && member_type == Type::UserDefined) {
-				// Fix Type::UserDefined to Type::Struct for instantiated templates
-				member_type = categoryToType(member_type_info.category());
+			if (member_type_info.getStructInfo() && member_type_index.category() == TypeCategory::UserDefined) {
+				member_type_index.setCategory(member_type_info.category());
 			}
 		}
 
@@ -3840,9 +3834,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// IMPORTANT: Preserve the base CV qualifier from the original type!
 		// For example: const T* should become const int* when T=int
 		auto substituted_type = emplace_node<TypeSpecifierNode>(
-			member_type,
 			member_type_index,
-			get_type_size_bits(member_type),
+			get_type_size_bits(member_type_index),
 			Token(),
 			type_spec.cv_qualifier()  // Preserve const/volatile qualifier
 		);
@@ -3867,7 +3860,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Compute per-element size, looking up struct sizes from gTypeInfo
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
+			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -3879,10 +3872,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (member_struct_info && member_struct_info->getStructInfo()) {
 					member_size = member_struct_info->getStructInfo()->total_size;
 				} else {
-					member_size = get_type_size_bits(member_type) / 8;
+					member_size = get_type_size_bits(member_type_index) / 8;
 				}
 			} else {
-				member_size = get_type_size_bits(member_type) / 8;
+				member_size = get_type_size_bits(member_type_index) / 8;
 			}
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
@@ -3949,7 +3942,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t element_size;
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				element_size = 8;
-			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
+			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -3961,17 +3954,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (member_struct_info && member_struct_info->getStructInfo()) {
 					element_size = member_struct_info->getStructInfo()->total_size;
 				} else {
-					element_size = get_type_size_bits(member_type) / 8;
+					element_size = get_type_size_bits(member_type_index) / 8;
 				}
 			} else {
-				element_size = get_type_size_bits(member_type) / 8;
+				element_size = get_type_size_bits(member_type_index) / 8;
 			}
 			member_size = element_size * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (member_type == Type::Struct && member_type_index.is_valid()) {
+			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -3987,12 +3980,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					                 decl.identifier_token().value(), member_type_index, member_size,
 					                 StringTable::getStringView(member_struct_info->name()));
 				} else {
-					member_size = get_type_size_bits(member_type) / 8;
+					member_size = get_type_size_bits(member_type_index) / 8;
 					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Struct member '{}' type_index={} not found in gTypeInfo, using default size={} bytes", 
 					                 decl.identifier_token().value(), member_type_index, member_size);
 				}
 			} else {
-				member_size = get_type_size_bits(member_type) / 8;
+				member_size = get_type_size_bits(member_type_index) / 8;
 			}
 		}
 
@@ -4001,7 +3994,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		size_t member_alignment;
 		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_alignment = 8;  // Pointer/reference alignment on x64
-		} else if (member_type == Type::Struct && member_type_index.is_valid()) {
+		} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 			// For struct types, look up the actual alignment from gTypeInfo
 			const TypeInfo* member_struct_info = nullptr;
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -4014,17 +4007,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (member_struct_info && member_struct_info->getStructInfo()) {
 				member_alignment = member_struct_info->getStructInfo()->alignment;
 			} else {
-				member_alignment = get_type_alignment(member_type, member_size);
+				member_alignment = get_type_alignment(member_type_index, member_size);
 			}
 		} else {
-			member_alignment = get_type_alignment(member_type, member_size);
+			member_alignment = get_type_alignment(member_type_index, member_size);
 		}
 		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 	
 		// For reference members, we need to pass the size of the referenced type, not the pointer size
 		size_t referenced_size_bits = 0;
 		if (ref_qual != ReferenceQualifier::None) {
-			referenced_size_bits = get_type_size_bits(member_type);
+			referenced_size_bits = get_type_size_bits(member_type_index);
 		}
 	
 		// Substitute template parameters in default member initializers
