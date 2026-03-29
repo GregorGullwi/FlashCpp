@@ -721,7 +721,7 @@ private:
         std::optional<StructMember> try_parse_function_pointer_member(TypeSpecifierNode return_type_spec);
         
         // Helper function to get Type and size for built-in type keywords
-        std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);
+        std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
         
         // Helper function to parse functional-style cast: Type(expression)
         // Returns ParseResult with StaticCastNode on success

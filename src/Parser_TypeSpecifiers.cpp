@@ -5,41 +5,41 @@
 #include "TypeTraitEvaluator.h"
 
 
-// Helper function to get Type and size for built-in type keywords
+// Helper function to get TypeCategory and size for built-in type keywords
 // Used by both parse_type_specifier and functional-style cast parsing
-std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
+std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
 	// Most types have fixed sizes, but 'long' size depends on target data model
-	static const std::unordered_map<std::string_view, std::pair<Type, unsigned char>> builtin_types = {
-		{"void", {Type::Void, 0}},
-		{"bool", {Type::Bool, 8}},
-		{"char", {Type::Char, 8}},
+	static const std::unordered_map<std::string_view, std::pair<TypeCategory, unsigned char>> builtin_types = {
+		{"void", {TypeCategory::Void, 0}},
+		{"bool", {TypeCategory::Bool, 8}},
+		{"char", {TypeCategory::Char, 8}},
 		// Note: "wchar_t" is handled specially below due to target-dependent size (16 on Windows, 32 on Linux)
-		{"char8_t", {Type::Char8, 8}},         // C++20 UTF-8 character type
-		{"char16_t", {Type::Char16, 16}},      // C++11 UTF-16 character type
-		{"char32_t", {Type::Char32, 32}},      // C++11 UTF-32 character type
-		{"short", {Type::Short, 16}},
-		{"int", {Type::Int, 32}},
+		{"char8_t", {TypeCategory::Char8, 8}},         // C++20 UTF-8 character type
+		{"char16_t", {TypeCategory::Char16, 16}},      // C++11 UTF-16 character type
+		{"char32_t", {TypeCategory::Char32, 32}},      // C++11 UTF-32 character type
+		{"short", {TypeCategory::Short, 16}},
+		{"int", {TypeCategory::Int, 32}},
 		// Note: "long" is handled specially below due to target-dependent size
-		{"float", {Type::Float, 32}},
-		{"double", {Type::Double, 64}},
-		{"__int8", {Type::Char, 8}},
-		{"__int16", {Type::Short, 16}},
-		{"__int32", {Type::Int, 32}},
-		{"__int64", {Type::LongLong, 64}},
-		{"signed", {Type::Int, 32}},  // signed without type defaults to int
-		{"unsigned", {Type::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
+		{"float", {TypeCategory::Float, 32}},
+		{"double", {TypeCategory::Double, 64}},
+		{"__int8", {TypeCategory::Char, 8}},
+		{"__int16", {TypeCategory::Short, 16}},
+		{"__int32", {TypeCategory::Int, 32}},
+		{"__int64", {TypeCategory::LongLong, 64}},
+		{"signed", {TypeCategory::Int, 32}},  // signed without type defaults to int
+		{"unsigned", {TypeCategory::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
 	};
 
 	// Handle "long" specially since its size depends on target data model
 	// Windows (LLP64): long = 32 bits, Linux/Unix (LP64): long = 64 bits
 	if (type_name == "long") {
-		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(TypeCategory::Long)));
+		return std::make_pair(TypeCategory::Long, static_cast<unsigned char>(get_type_size_bits(TypeCategory::Long)));
 	}
 
 	// Handle "wchar_t" specially since its size depends on target
 	// Windows (LLP64): wchar_t = 16 bits unsigned, Linux (LP64): wchar_t = 32 bits signed
 	if (type_name == "wchar_t") {
-		return std::make_pair(Type::WChar, static_cast<unsigned char>(get_wchar_size_bits()));
+		return std::make_pair(TypeCategory::WChar, static_cast<unsigned char>(get_wchar_size_bits()));
 	}
 	
 	auto it = builtin_types.find(type_name);
@@ -60,7 +60,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	advance(); // consume '('
 	
 	// Get type information first (needed for both empty and non-empty cases)
-	Type cast_type = Type::Int; // default
+	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
 	int type_size = 32;
 	
@@ -78,10 +78,10 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		auto type_it = getTypesByNameMap().find(type_handle);
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
-			cast_type = categoryToType(type_info->typeEnum());
+			cast_type = type_info->typeEnum();
 			type_size = type_info->type_size_;
 			if (type_info->isStruct()) {
-				cast_type = Type::Struct;
+				cast_type = TypeCategory::Struct;
 			}
 		}
 	}
@@ -94,7 +94,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		Token zero_token(Token::Type::Literal, "0"sv, type_token.line(), type_token.column(), type_token.file_index());
 		
 		// Use 0.0 for floating point types, 0 for integral types
-		if (typeToCategory(cast_type) == TypeCategory::Double || typeToCategory(cast_type) == TypeCategory::Float) {
+		if (cast_type == TypeCategory::Double || cast_type == TypeCategory::Float) {
 			auto zero_expr = emplace_node<ExpressionNode>(
 				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size)
 			);
@@ -2317,7 +2317,7 @@ ParseResult Parser::parse_type_specifier()
 		// Otherwise, treat as generic user-defined type or typedef
 		// Look up the type_index if it's a registered type
 		TypeIndex user_type_index {};
-		Type resolved_type = Type::UserDefined;
+		TypeCategory resolved_type = TypeCategory::UserDefined;
 		if (type_info_ctx) {
 			user_type_index = type_info_ctx->type_index_;
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
@@ -2332,7 +2332,7 @@ ParseResult Parser::parse_type_specifier()
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = categoryToType(type_info_ctx->typeEnum());
+				resolved_type = type_info_ctx->typeEnum();
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(

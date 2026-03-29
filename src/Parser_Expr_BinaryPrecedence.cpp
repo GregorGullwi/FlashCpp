@@ -373,7 +373,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (resolved_type == TypeCategory::Invalid || resolved_type == TypeCategory::Void) {
 							resolved_type = TypeCategory::Struct;
 						}
-						type_spec->set_type(categoryToType(resolved_type));
+						type_spec->set_category(resolved_type);
 					};
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
@@ -1696,7 +1696,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				}
 				
 				// For other types, use the standard alignment function
-				alignment = get_type_alignment(categoryToType(parsed_type), type_size_bytes);
+				alignment = get_type_alignment(parsed_type, type_size_bytes);
 				discard_saved_token(pre_type_pos);
 				discard_saved_token(saved_pos);
 				return alignment;

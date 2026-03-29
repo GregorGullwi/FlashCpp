@@ -204,7 +204,7 @@
 		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 
-		TempVar result_var = emitDereference(typeToCategory(member_type), member_size, 1, member_addr, ptmNode.operator_token());
+		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
 		return makeExprResult(
 			member_type,
 			SizeInBits{static_cast<int>(member_size)},
@@ -314,7 +314,7 @@
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		auto preserveSemanticTypeIndex = [](TypeCategory type, TypeIndex type_index) {
-			return carriesSemanticTypeIndex(typeToCategory(type)) ? type_index : TypeIndex{};
+			return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 		                            identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -1040,7 +1040,7 @@ semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 			// - Otherwise return 0
 			// Guard with is_valid() so primitive typedefs (Type::UserDefined but
 			// no struct/enum info) don't propagate a stale type_index.
-			TypeIndex type_index = (carriesSemanticTypeIndex(typeToCategory(type_node.type())) && type_node.type_index().is_valid())
+			TypeIndex type_index = (carriesSemanticTypeIndex(type_node.type()) && type_node.type_index().is_valid())
 				? type_node.type_index()
 				: TypeIndex{};
 			// Enums are scalar (carry pointer_depth like integers), while structs
@@ -1164,7 +1164,7 @@ semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
 
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
-					TempVar result_temp = emitDereference(typeToCategory(pointee_type), 64, ptr_depth,
+					TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 						StringTable::getOrInternStringHandle(identifierNode.name()));
 
 					// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -1195,7 +1195,7 @@ semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 					result_type,
 					size_bits,
 					StringTable::getOrInternStringHandle(identifierNode.name()),
-					carriesSemanticTypeIndex(typeToCategory(result_type))
+					carriesSemanticTypeIndex(result_type)
 						? result_type_index
 						: TypeIndex{},
 					PointerDepth{isIrStructType(toIrType(result_type))
@@ -1657,7 +1657,7 @@ semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 		AstToIr::generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode) {
 		// Generate IR for numeric literal using the actual type from the literal
 		// Check if it's a floating-point type
-		if (is_floating_point_type(typeToCategory(numericLiteralNode.type()))) {
+		if (is_floating_point_type(numericLiteralNode.type())) {
 			// For floating-point literals, the value is stored as double
 			return makeExprResult(numericLiteralNode.type(), SizeInBits{static_cast<int>(numericLiteralNode.sizeInBits())}, std::get<double>(numericLiteralNode.value()), TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		} else {

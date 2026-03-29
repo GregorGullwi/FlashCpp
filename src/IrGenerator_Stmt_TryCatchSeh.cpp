@@ -258,7 +258,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			if (!catch_scope_stack_.empty()) {
 				bool needs_materialization =
-					typeToCategory(expr_type) == TypeCategory::Struct &&
+					expr_type == TypeCategory::Struct &&
 					!is_rvalue &&
 					(std::holds_alternative<StringHandle>(exception_value) ||
 					 (std::holds_alternative<TempVar>(exception_value) &&
