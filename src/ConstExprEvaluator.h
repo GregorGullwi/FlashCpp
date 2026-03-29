@@ -479,7 +479,7 @@ public:
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_array_value(
-			Type element_type,
+			TypeCategory element_type,
 			TypeIndex element_type_index,
 			const InitializerListNode& init_list,
 			EvaluationContext& context,

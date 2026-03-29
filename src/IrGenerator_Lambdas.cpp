@@ -287,7 +287,7 @@
 								TempVar addr_temp = var_counter.next();
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.setType(typeToCategory(init_type));
+								addr_op.operand.setType(init_type);
 								addr_op.operand.ir_type = toIrType(init_type);
 								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 								addr_op.operand.pointer_depth = PointerDepth{};
@@ -305,7 +305,7 @@
 
 								// Store the address in the closure member
 								MemberStoreOp member_store;
-								member_store.value.setType(typeToCategory(init_type));
+								member_store.value.setType(init_type);
 								member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 								member_store.value.value = addr_temp;
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);

@@ -104,7 +104,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 }
 
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
-	TypeSpecifierNode type_node(categoryToType(desc.category()), desc.type_index, 0);
+	TypeSpecifierNode type_node(desc.category(), desc.type_index, 0);
 	type_node.set_cv_qualifier(desc.base_cv);
 	type_node.set_reference_qualifier(desc.ref_qualifier);
 	for (const auto& pointer_level : desc.pointer_levels) {
@@ -2807,7 +2807,7 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 					target_name = StringTable::getStringView(target_ei->name);
 			}
 			if (target_name.empty())
-				target_name = getTypeName(categoryToType(to_desc.category()));
+				target_name = getTypeName(to_desc.category());
 			throw CompileError("cannot implicitly convert from scoped enum '" +
 				std::string(StringTable::getStringView(ei->name)) +
 				"' to '" + target_name +
@@ -2853,7 +2853,7 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 
 	// Same scoped enum type: relational and equality comparisons are valid.
 	if (lhs_scoped && rhs_scoped &&
-		categoryToType(lhs_desc.category()) == categoryToType(rhs_desc.category()) &&
+		lhs_desc.category() == rhs_desc.category() &&
 		lhs_desc.type_index == rhs_desc.type_index) {
 		const bool is_comparison =
 			op == "==" || op == "!=" || op == "<" || op == ">" ||
@@ -2896,7 +2896,7 @@ static bool structHasConversionOperatorTo(
 			return false;
 		target_name = StringTable::getStringView(getTypeInfo(to_desc.type_index).name());
 	} else {
-		target_name = getTypeName(categoryToType(to_desc.category()));
+		target_name = getTypeName(to_desc.category());
 		if (target_name.empty()) return false;
 	}
 
@@ -2963,7 +2963,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
-	if (categoryToType(from_desc.category()) == categoryToType(to_desc.category())) return false;
+	if (from_desc.category() == to_desc.category()) return false;
 
 	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
 	// Enum source types are allowed: C++20 permits implicit enum→primitive conversions
@@ -3200,7 +3200,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
@@ -3272,7 +3272,7 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
 
 	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
 	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
@@ -3313,7 +3313,7 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
 	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(categoryToType(lhs_desc.category())) || isPlaceholderAutoType(categoryToType(rhs_desc.category()))) return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
@@ -3354,7 +3354,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (!operand_desc.pointer_levels.empty()) return;
 	if (!operand_desc.array_dimensions.empty()) return;
 	if (operand_desc.category() == TypeCategory::Struct || operand_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(categoryToType(operand_desc.category()))) return;
+	if (isPlaceholderAutoType(operand_desc.category())) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
 	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.category(), operand_desc.type_index);
@@ -4006,9 +4006,9 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// its type is void. The result type is the other branch's type — no conversion needed.
 	if (true_desc.category() == TypeCategory::Void || false_desc.category() == TypeCategory::Void) return;
 
-	Type common = categoryToType(get_common_type(true_desc.category(), false_desc.category()));
+	TypeCategory common = get_common_type(true_desc.category(), false_desc.category());
 	CanonicalTypeDesc common_desc;
-	common_desc.type_index = TypeIndex::fromCategory(typeToCategory(common));
+	common_desc.type_index = TypeIndex::fromCategory(common);
 	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	// Annotate each branch if it needs conversion to the common type.

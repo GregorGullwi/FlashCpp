@@ -337,14 +337,14 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 
 
 namespace {
-Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
-	TypeCategory canonical_type = typeToCategory(semantic_type);
+TypeCategory resolveRuntimeBaseType(TypeCategory semantic_type, TypeIndex type_index) {
+	TypeCategory canonical_type = semantic_type;
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		// Prefer the canonical type stored in gTypeInfo when available. This keeps
 		// typedef / alias lowering consistent with the resolved type table entry.
 		canonical_type = getTypeInfo(type_index).resolvedType();
 	}
-	return categoryToType(resolve_type_alias(canonical_type, type_index));
+	return resolve_type_alias(canonical_type, type_index);
 }
 }
 
@@ -369,7 +369,7 @@ size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
 		assert(type != TypeCategory::Struct && "TypeCategory::Struct without valid StructInfo is a compiler bug");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
-	return static_cast<size_t>(getRuntimeValueSizeBits(categoryToType(type), type_index, size_in_bits, PointerDepth{}) / 8);
+	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
 int AstToIr::getPointerElementSize(TypeIndex type_index, int pointer_depth) const {
@@ -386,8 +386,7 @@ TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, Pointer
 		return semantic_type;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(categoryToType(semantic_type), semantic_type_index);
-	const TypeCategory lowered_cat = typeToCategory(lowered_type);
+	TypeCategory lowered_cat = resolveRuntimeBaseType(semantic_type, semantic_type_index);
 
 	if (lowered_cat == TypeCategory::Enum && semantic_type_index.is_valid() && semantic_type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* enum_info = getTypeInfo(semantic_type_index).getEnumInfo()) {
@@ -398,14 +397,13 @@ TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, Pointer
 	return lowered_cat;
 }
 
-int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {
+int AstToIr::getRuntimeValueSizeBits(TypeCategory semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {
 	if (pointer_depth.is_pointer()) {
 		return semantic_size_bits;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
-	const TypeCategory lowered_cat = typeToCategory(lowered_type);
-	const TypeCategory semantic_cat = typeToCategory(semantic_type);
+	TypeCategory lowered_cat = resolveRuntimeBaseType(semantic_type, type_index);
+	const TypeCategory semantic_cat = semantic_type;
 
 	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);

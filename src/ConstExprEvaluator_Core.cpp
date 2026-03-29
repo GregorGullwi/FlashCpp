@@ -1831,7 +1831,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			// Preserve the older generic array materialization for declarations whose
 			// array element type is not represented as a TypeSpecifierNode (for example,
 			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(Type::Auto, TypeIndex{}, init_list, context);
+			return materialize_array_value(TypeCategory::Auto, TypeIndex{}, init_list, context);
 		}
 	}
 
@@ -3517,7 +3517,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							return EvalResult::error("Statement executed (not a return)");
 						}
 
-						auto array_result = materialize_array_value(Type::Auto, TypeIndex{}, init_list, context, &bindings);
+						auto array_result = materialize_array_value(TypeCategory::Auto, TypeIndex{}, init_list, context, &bindings);
 						if (!array_result.success()) {
 							return array_result;
 						}

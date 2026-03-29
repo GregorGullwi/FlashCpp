@@ -583,12 +583,12 @@
 			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
-			if (typeToCategory(ret_type) == TypeCategory::Float) {
+			if (ret_type == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
 				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			if (typeToCategory(ret_type) == TypeCategory::Double || typeToCategory(ret_type) == TypeCategory::LongDouble) {
+			if (ret_type == TypeCategory::Double || ret_type == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
 				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -858,7 +858,7 @@
 				// This is a member function template - we need to instantiate it
 
 				// Deduce template argument types from call arguments
-				std::vector<std::pair<Type, TypeIndex>> arg_types;
+				std::vector<std::pair<TypeCategory, TypeIndex>> arg_types;
 				// DEBUG removed
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
@@ -874,11 +874,11 @@
 
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back({Type::Bool, TypeIndex{}});
+						arg_types.push_back({TypeCategory::Bool, TypeIndex{}});
 					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 						const NumericLiteralNode& lit = *numeric_literal;
 						// DEBUG removed
-						arg_types.push_back({categoryToType(lit.type()), TypeIndex{}});
+						arg_types.push_back({lit.type(), TypeIndex{}});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -888,7 +888,7 @@
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
 							// DEBUG removed
-							arg_types.push_back({categoryToType(type.type()), type.type_index()});
+							arg_types.push_back({type.type(), type.type_index()});
 						}
 					} else {
 						// DEBUG removed
@@ -1620,7 +1620,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
 							// Now take the address of the temporary
-							TempVar addr_var = emitAddressOf(typeToCategory(literal_type), literal_size, IrValue(temp_var));
+							TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 							// Pass the address
 							call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
@@ -1632,7 +1632,7 @@
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 
-								TempVar addr_var = emitAddressOf(typeToCategory(expr_type), expr_size, IrValue(expr_var));
+								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
 								call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
 									IrValue(addr_var), ReferenceQualifier::LValueReference));

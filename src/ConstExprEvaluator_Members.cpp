@@ -56,13 +56,13 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 	const TypeCategory promoted_type = promote_integer_type(type_spec.category());
 	const int promoted_width = get_type_size_bits(promoted_type);
 	if (promoted_width > 0) {
-		return TypeSpecifierNode(categoryToType(promoted_type), TypeQualifier::None, promoted_width);
+		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width);
 	}
 
 	// Defensive fallback for unusual/dependent type shapes where the promoted
 	// type is known but the width table cannot provide a concrete bit-size yet.
 	if (type_spec.size_in_bits() > 0) {
-		return TypeSpecifierNode(categoryToType(promoted_type), TypeQualifier::None, type_spec.size_in_bits());
+		return TypeSpecifierNode(promoted_type, TypeQualifier::None, type_spec.size_in_bits());
 	}
 
 	return std::nullopt;
@@ -193,7 +193,7 @@ std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
 	const TypeCategory result_type = get_common_type(lhs.exact_type->category(), rhs.exact_type->category());
 	const int result_bits = get_type_size_bits(result_type);
 	if (result_bits > 0) {
-		return TypeSpecifierNode(categoryToType(result_type), TypeQualifier::None, result_bits);
+		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits);
 	}
 	return std::nullopt;
 }
@@ -2820,7 +2820,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				auto evaluateTypeTraitFromInput = [](TypeTraitKind trait_kind, const TraitInput& input) {
-					return evaluateTypeTrait(trait_kind, categoryToType(input.base_type), input.type_index,
+					return evaluateTypeTrait(trait_kind, input.base_type, input.type_index,
 						input.ref_qualifier != ReferenceQualifier::None,
 						input.ref_qualifier == ReferenceQualifier::RValueReference,
 						input.ref_qualifier == ReferenceQualifier::LValueReference,
@@ -4458,7 +4458,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 }
 
 EvalResult Evaluator::materialize_array_value(
-	Type element_type,
+	TypeCategory element_type,
 	TypeIndex element_type_index,
 	const InitializerListNode& init_list,
 	EvaluationContext& context,
@@ -4471,7 +4471,7 @@ EvalResult Evaluator::materialize_array_value(
 	for (const auto& element : init_list.initializers()) {
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
-			(is_struct_type(typeToCategory(element_type))) &&
+			(is_struct_type(element_type)) &&
 			element_type_index.is_valid() && element_type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* element_struct_info = getTypeInfo(element_type_index).getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
@@ -4523,7 +4523,7 @@ namespace {
 // Create a zero-initialized EvalResult for the given dimensions and element type.
 // When dims is empty, returns a type-correct scalar zero (0.0 for float, 0u for unsigned, 0 for signed).
 // For non-empty dims, returns a nested is_array EvalResult of the appropriate depth.
-EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, Type element_type) {
+EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, TypeCategory element_type) {
 	if (dims.empty()) {
 		if (isFloatingPointType(element_type)) {
 			return EvalResult::from_double(0.0);
@@ -4542,11 +4542,6 @@ EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, Type elemen
 	}
 	return result;
 }
-
-// TypeCategory overload — bridges through categoryToType() temporarily.
-EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, TypeCategory element_cat) {
-	return make_zero_array_for_dims(dims, categoryToType(element_cat));
-}
 } // namespace
 
 EvalResult Evaluator::materialize_array_value_with_spec(
@@ -4558,7 +4553,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.
-		auto base_result = materialize_array_value(categoryToType(type_spec.type()), type_spec.type_index(), init_list, context, bindings);
+		auto base_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
 		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
@@ -4697,7 +4692,7 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(categoryToType(member_info.memberType()), member_info.type_index, init_list, context);
+			return Evaluator::materialize_array_value(member_info.memberType(), member_info.type_index, init_list, context);
 		}
 
 		if ((is_struct_type(member_info.type_index.category())) &&
@@ -4749,7 +4744,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				val = Evaluator::materialize_array_value(
-					categoryToType(member_info->memberType()),
+					member_info->memberType(),
 					member_info->type_index,
 					member_init_list,
 					context,
@@ -4833,7 +4828,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			EvalResult member_result;
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
-					categoryToType(member_info->memberType()), member_info->type_index, init_list, context, &ctor_param_bindings);
+					member_info->memberType(), member_info->type_index, init_list, context, &ctor_param_bindings);
 				// C++ aggregate init: zero-fill remaining elements up to the declared array size
 				// using a type-correct zero for each native type.
 				if (member_result.success() && !member_info->array_dimensions.empty()) {
@@ -5338,7 +5333,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
-			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeCategory::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
 		}
 		return evaluate(elem, context);
 	};
@@ -5406,10 +5401,10 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (elem.is<InitializerListNode>()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				return materialize_array_value(categoryToType(type_spec.type()), type_spec.type_index(),
+				return materialize_array_value(type_spec.type(), type_spec.type_index(),
 				                               elem.as<InitializerListNode>(), context);
 			}
-			return materialize_array_value(Type::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeCategory::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
 		}
 		
 		return evaluate(elem, context);

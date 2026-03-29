@@ -116,7 +116,7 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
-	Type base_type,
+	TypeCategory base_type,
 	[[maybe_unused]] TypeIndex type_idx,
 	bool is_reference,
 	bool is_rvalue_reference,
@@ -130,7 +130,7 @@ TypeTraitResult evaluateTypeTrait(
 	const StructTypeInfo* struct_info
 ) {
 	using namespace TypeTraitEval;
-	const TypeCategory cat = typeToCategory(base_type);
+	const TypeCategory cat = base_type;
 	bool result = false;
 	
 	switch (kind) {
@@ -481,7 +481,7 @@ TypeTraitResult evaluateTypeTrait(
 ) {
 	return evaluateTypeTrait(
 		kind,
-		categoryToType(type_spec.category()),
+		type_spec.category(),
 		type_spec.type_index(),
 		type_spec.is_reference(),
 		type_spec.is_rvalue_reference(),

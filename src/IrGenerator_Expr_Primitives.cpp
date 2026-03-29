@@ -995,7 +995,8 @@
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
 				pointee_type = getRuntimeValueType(TypeIndex::fromTypeAndIndex(semantic_pointee_type, type_node.type_index()), PointerDepth{});
-				pointee_size = getRuntimeValueSizeBits(categoryToType(semantic_pointee_type), type_node.type_index(), pointee_size, PointerDepth{});
+				pointee_size = getRuntimeValueSizeBits(
+semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1026,7 +1027,8 @@
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
 			TypeCategory return_type = getRuntimeValueType(type_node.type_index(), identifier_pointer_depth);
 			size_bits = getRuntimeValueSizeBits(
-				categoryToType(type_node.type()),
+
+				type_node.type(),
 				type_node.type_index(),
 				size_bits,
 				identifier_pointer_depth);
