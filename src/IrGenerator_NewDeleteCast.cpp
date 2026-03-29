@@ -748,9 +748,9 @@
 			if (!source_type_index.is_valid() || source_type_index.index() >= getTypeInfoCount()) {
 				return false;
 			}
-			TypeCategory semantic_type = resolve_type_alias(source_type, source_type_index);
+			TypeCategory semantic_type = resolve_type_alias(source_type_index);
 			if (!carriesSemanticTypeIndex(semantic_type)) {
-				semantic_type = resolve_type_alias(getTypeInfo(source_type_index).typeEnum(), source_type_index);
+				semantic_type = resolve_type_alias(source_type_index);
 			}
 			return carriesSemanticTypeIndex(semantic_type);
 		};

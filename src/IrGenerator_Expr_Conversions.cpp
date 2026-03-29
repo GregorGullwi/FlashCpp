@@ -17,7 +17,7 @@
 
 		// Resolve enum to its underlying integer type so downstream size/signedness
 		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
-		fromType = resolveEnumUnderlyingTypeCategory(fromType, operands.type_index);
+		fromType = resolveEnumUnderlyingTypeCategory(operands.type_index);
 
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);

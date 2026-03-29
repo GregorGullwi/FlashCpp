@@ -182,7 +182,8 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 
 // Resolve Enum to its underlying integer category.
 // Returns the category unchanged if it is not an enum or the TypeIndex is invalid.
-inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeCategory cat, TypeIndex type_index) {
+inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeIndex type_index) {
+	TypeCategory cat = type_index.category();
 	if (cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
 			return ei->underlying_type;
@@ -841,7 +842,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
-			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type_index());
 			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
@@ -1560,7 +1561,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		TypeCategory indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
 		}
@@ -1807,7 +1808,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		TypeCategory indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).resolvedType(), right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
 		}

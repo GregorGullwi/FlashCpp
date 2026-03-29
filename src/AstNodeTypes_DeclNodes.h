@@ -64,8 +64,8 @@ struct StructTypeInfo {
 	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
 	std::optional<TypeIndex> own_type_index_;
 
-	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false,
-	              NamespaceHandle ns = NamespaceHandle{})
+	StructTypeInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+	              NamespaceHandle ns)
 		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
 	
 	StringHandle getName() const {
@@ -657,7 +657,7 @@ struct EnumTypeInfo {
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 
 	// Convenience: default underlying type is Int/32-bit
-	explicit EnumTypeInfo(StringHandle n, bool scoped = false)
+	explicit EnumTypeInfo(StringHandle n, bool scoped)
 		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
 	
 	StringHandle getName() const {
@@ -952,15 +952,9 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	return CanonicalTypeAlias{original_type_index};
 }
 
-// TypeCategory overload — operates directly on TypeCategory.
-inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory cat, TypeIndex type_index) {
-	if (type_index.category() == TypeCategory::Invalid)
-		type_index = TypeIndex{type_index.index(), cat};
-	return canonicalize_type_alias(type_index);
-}
-
-inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
-	return canonicalize_type_alias(cat, type_index).typeEnum();
+// Convenience — resolves type alias from a TypeIndex alone.
+inline TypeCategory resolve_type_alias(TypeIndex type_index) {
+	return canonicalize_type_alias(type_index).typeEnum();
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
@@ -1200,8 +1194,8 @@ public:
 		if (type_index_.category() != other.type_index_.category()) {
 			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
 			// types such as enum vs int just because they share a runtime size.
-			TypeCategory resolved_type = resolve_type_alias(type_index_.category(), type_index_);
-			TypeCategory other_resolved_type = resolve_type_alias(other.type_index_.category(), other.type_index_);
+			TypeCategory resolved_type = resolve_type_alias(type_index_);
+			TypeCategory other_resolved_type = resolve_type_alias(other.type_index_);
 			if (resolved_type != other_resolved_type) {
 				return false;
 			}

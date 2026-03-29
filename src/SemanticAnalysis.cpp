@@ -1957,7 +1957,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
 							// Skip non-primitive types
 						} else {
-							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
+							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
 							const TypeCategory promoted_cat = promote_integer_type(lhs_cat);
 							if (promoted_cat != lhs_cat) {
 								CanonicalTypeDesc promoted_desc;
@@ -2472,7 +2472,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!operand_id) return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
 					// Resolve enum to underlying type
-					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.category(), operand_desc.type_index);
+					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
 					const bool is_small_int =
 						(isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool)
 						&& get_integer_rank(operand_cat) < 3;  // rank of int
@@ -2922,7 +2922,7 @@ static bool structHasConversionOperatorTo(
 			if (!return_type_node.is<TypeSpecifierNode>()) continue;
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			const CanonicalTypeAlias canonical_return_type =
-				canonicalize_type_alias(type_spec.type(), type_spec.type_index());
+				canonicalize_type_alias(type_spec.type_index());
 			TypeCategory resolved_type = canonical_return_type.typeEnum();
 			if (resolved_type == to_desc.category()) return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
@@ -3204,8 +3204,8 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
 	if (common_cat == TypeCategory::Invalid) return;
@@ -3274,8 +3274,8 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
 	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
 
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
 	if (common_cat == TypeCategory::Invalid) return;
@@ -3317,8 +3317,8 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
-	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.category(), lhs_desc.type_index);
-	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.category(), rhs_desc.type_index);
+	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
+	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	// Shift is only defined for integral operands
 	if (isFloatingPointType(lhs_cat) || isFloatingPointType(rhs_cat)) return;
@@ -3357,7 +3357,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (isPlaceholderAutoType(operand_desc.category())) return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
-	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.category(), operand_desc.type_index);
+	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
 
 	// Unary +, -, ~ are only defined for arithmetic types
 	// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.

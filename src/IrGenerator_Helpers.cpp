@@ -344,7 +344,7 @@ TypeCategory resolveRuntimeBaseType(TypeCategory semantic_type, TypeIndex type_i
 		// typedef / alias lowering consistent with the resolved type table entry.
 		canonical_type = getTypeInfo(type_index).resolvedType();
 	}
-	return resolve_type_alias(canonical_type, type_index);
+	return resolve_type_alias(type_index);
 }
 }
 
