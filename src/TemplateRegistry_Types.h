@@ -254,10 +254,14 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
+	static TemplateTypeArg makeType(Type t, TypeIndex idx) {
 		TemplateTypeArg arg;
 		arg.type_index = makeTypeIndex(t, idx);
 		return arg;
+	}
+
+	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx) {
+		return makeType(categoryToType(cat), idx);
 	}
 	
 	static TemplateTypeArg makeTypeSpecifier(const TypeSpecifierNode& ts) {
@@ -615,4 +619,3 @@ inline std::string_view generateInstantiatedNameFromArgs(
 }
 
 } // namespace FlashCpp
-

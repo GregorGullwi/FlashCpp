@@ -65,13 +65,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							std::string_view orig_name = param_decl.identifier_token().value();
 							for (size_t pi = 0; pi < pack_size; ++pi) {
 								const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-								Type elem_type = elem.typeEnum();
 								TypeIndex elem_type_index = elem.type_index;
 								TypeSpecifierNode sub_type(
-									elem_type, param_type_spec.qualifier(),
-									get_type_size_bits(elem_type),
+									elem_type_index, param_type_spec.qualifier(),
+									get_type_size_bits(elem_type_index.category()),
 									param_decl.identifier_token(), param_type_spec.cv_qualifier());
-								sub_type.set_type_index(elem_type_index);
 								for (const auto& pl : param_type_spec.pointer_levels())
 									sub_type.add_pointer_level(pl.cv_qualifier);
 								sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
@@ -129,7 +127,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
 			}
 		}
 
@@ -270,7 +268,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
 			}
 		}
 
@@ -389,13 +387,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						std::string_view orig_name = param_decl.identifier_token().value();
 						for (size_t pi = 0; pi < pack_size; ++pi) {
 							const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-							Type elem_type = elem.typeEnum();
 							TypeIndex elem_type_index = elem.type_index;
 							TypeSpecifierNode sub_type(
-								elem_type, param_type_spec.qualifier(),
-								get_type_size_bits(elem_type),
+								elem_type_index, param_type_spec.qualifier(),
+								get_type_size_bits(elem_type_index.category()),
 								param_decl.identifier_token(), param_type_spec.cv_qualifier());
-							sub_type.set_type_index(elem_type_index);
 							for (const auto& pl : param_type_spec.pointer_levels())
 								sub_type.add_pointer_level(pl.cv_qualifier);
 							sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
@@ -541,7 +537,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.type_index));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.category(), ttype_arg.type_index));
 			}
 		}
 
@@ -989,7 +985,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 
 // Phase 3: Evaluate a lazy type alias on-demand
 // Returns the evaluated type and type index, or nullopt if not found/failed
-std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
+std::optional<std::pair<TypeCategory, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	StringHandle instantiated_class_name, StringHandle member_name) {
 	
 	auto& registry = LazyTypeAliasRegistry::getInstance();
@@ -1023,7 +1019,7 @@ std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	// Perform template parameter substitution
 	TypeIndex substituted_type_index = substitute_template_parameter(
 		target_type, lazy_info->template_params, lazy_info->template_args);
-	Type substituted_type = categoryToType(substituted_type_index.category());
+	TypeCategory substituted_type = substituted_type_index.category();
 	
 	// Cache the result
 	registry.markEvaluated(instantiated_class_name, member_name, substituted_type, substituted_type_index);

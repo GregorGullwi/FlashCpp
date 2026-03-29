@@ -1133,17 +1133,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
+							template_args.push_back(TemplateTypeArg::makeType(Type::Bool, TypeIndex{}));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
+							template_args.push_back(TemplateTypeArg::makeType(lit.type(), TypeIndex{}));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(type.type()));
+								template_args.push_back(TemplateTypeArg::makeType(type.type(), TypeIndex{}));
 							}
 						}
 					});
