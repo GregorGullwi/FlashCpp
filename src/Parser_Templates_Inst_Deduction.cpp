@@ -689,7 +689,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		substituted_return_type_index,
 		get_type_size_bits(substituted_return_type),
 		orig_return_type.token(),
-		orig_return_type.cv_qualifier()
+		orig_return_type.cv_qualifier(),
+		ReferenceQualifier::None
 	);
 	
 	// Apply pointer levels and references from original type
@@ -721,7 +722,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				substituted_type_index,
 				get_type_size_bits(substituted_type),
 				orig_param_type.token(),
-				orig_param_type.cv_qualifier()
+				orig_param_type.cv_qualifier(),
+				ReferenceQualifier::None
 			);
 			resolve_dependent_member_alias_local(param_type);
 			
@@ -1820,7 +1822,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						arg_type.qualifier(),
 						arg_type.size_in_bits(),
 						Token()
-					);
+					, CVQualifier::None);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
 				
 					// If the original parameter was a forwarding reference (T&&), apply reference collapsing

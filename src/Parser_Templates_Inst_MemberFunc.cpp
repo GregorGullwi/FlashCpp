@@ -340,7 +340,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		return_type,
 		TypeQualifier::None,
 		get_type_size_bits(return_type),
-		Token()
+		Token(),
+		CVQualifier::None
 	);
 	
 	// Copy pointer levels and set type_index from the resolved type
@@ -398,7 +399,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				TypeQualifier::None,
 				get_type_size_bits(param_type),
 				Token()
-			);
+			, CVQualifier::None);
 			
 			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();

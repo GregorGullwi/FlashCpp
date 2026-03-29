@@ -1073,7 +1073,7 @@ void Parser::register_builtin_functions() {
 		
 		// Create second parameter
 		Token param2_token = dummy_token;
-		auto param2_type_node = emplace_node<TypeSpecifierNode>(param2_type, TypeQualifier::None, 64, param2_token);
+		auto param2_type_node = emplace_node<TypeSpecifierNode>(param2_type, TypeQualifier::None, 64, param2_token, CVQualifier::None);
 		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node, param2_token);
 		func_decl_ref.add_parameter_node(param2_decl);
 		

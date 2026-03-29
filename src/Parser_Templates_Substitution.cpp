@@ -274,7 +274,7 @@ ASTNode Parser::substituteTemplateParameters(
 						// not from this forward declaration's type node.
 						Token new_token(Token::Type::Identifier, new_func_name,
 							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
-						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
 						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
 							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));

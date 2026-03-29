@@ -195,7 +195,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, op_token);
+		auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, op_token, CVQualifier::None, ReferenceQualifier::None);
 		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 		auto func_call = FunctionCallNode(op_decl, std::move(args_result.args), op_token);
 		if (!namespaces.empty()) {
@@ -366,7 +366,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		                 first_type_token.line(), first_type_token.column(), first_type_token.file_index());
 		
 		// Create a dependent/placeholder type (TypeCategory::UserDefined with special marker)
-		auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, type_token);
+		auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, type_token, CVQualifier::None);
 		
 		// Create ConstructorCallNode with the dependent type
 		result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), init_token));
@@ -528,7 +528,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
 			
 			// Create a placeholder type spec and decl for the deferred call
-			auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 			result = emplace_node<ExpressionNode>(
@@ -551,7 +551,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Operator function not found - create a deferred call that will be resolved at instantiation
 			// This is common in template/requires contexts where the operator is dependent
-			auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			result = emplace_node<ExpressionNode>(
 				FunctionCallNode(operator_decl, std::move(args), operator_name_token));
@@ -902,7 +902,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Create a forward declaration for the operator (returns void* for new, void for delete)
 			bool is_new = op_name.find("new") != std::string_view::npos;
-			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token());
+			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
 			if (is_new) {
 				type_node.as<TypeSpecifierNode>().add_pointer_level(); // void* return type for new
 			}
@@ -1017,7 +1017,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							.append("'").commit()),
 						qual_id.identifier_token());
 				}
-				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
 			}
@@ -1616,7 +1616,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						if (!decl_ptr) {
 							// Create a forward declaration
-							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
 							member_lookup = forward_decl;
 							decl_ptr = &forward_decl.as<DeclarationNode>();
@@ -1695,7 +1695,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 
 				int type_size = struct_info ? static_cast<int>(struct_info->total_size * 8) : 0;
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, final_identifier);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 				return ParseResult::success(*result);
 			}
@@ -1769,7 +1769,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							.append("'").commit()),
 						qual_id.identifier_token());
 				}
-				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
 			}
@@ -2383,7 +2383,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (type_info.struct_info_) {
 								type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
 							}
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, final_identifier);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 							
 							// Create ConstructorCallNode
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
@@ -2561,7 +2561,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Create TypeSpecifierNode for the class
 				TypeIndex type_index = type_it->second->type_index_;
 					int type_size = getStructTypeSizeBits(type_index);
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 				
 				// Create ConstructorCallNode
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -2601,7 +2601,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Create TypeSpecifierNode for the template parameter (dependent type)
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 				
 				// Create ConstructorCallNode for brace initialization
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -2946,7 +2946,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									static_member->memberType(),
 									static_member->type_index,
 									static_cast<unsigned char>(static_member->size * 8),
-									identifier_token
+									identifier_token,
+									CVQualifier::None, ReferenceQualifier::None
 								),
 								identifier_token
 							);
@@ -3380,7 +3381,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					TypeIndex type_index = type_it->second->type_index_;
 					int type_size = getStructTypeSizeBits(type_index);
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Struct, type_index, type_size, identifier_token);
+						TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 				
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -3480,7 +3481,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Skip if we already found this as a member function in the class context
 				if (!found_member_function_in_context && !identifierType.has_value()) {
 					// We'll assume it returns int for now (this is a simplification)
-					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 
 					// Add to GLOBAL symbol table as a forward declaration
@@ -3852,7 +3853,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// For dependent args, create a placeholder ConstructorCallNode
 									// The actual type will be resolved during template instantiation
 									// Use a placeholder type for now
-									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, identifier_token);
+									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 									result = emplace_node<ExpressionNode>(ConstructorCallNode(placeholder_type_node, std::move(args), identifier_token));
 									return ParseResult::success(*result);
 								}
@@ -3923,7 +3924,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (type_info.struct_info_) {
 										type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
 									}
-									auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token);
+									auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 									
 									// Create ConstructorCallNode
 									result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -3992,10 +3993,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (inst_type_info.struct_info_) {
 										inst_type_size = static_cast<int>(inst_type_info.struct_info_->total_size * 8);
 									}
-									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, inst_type_index, inst_type_size, inst_type_token);
+									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, inst_type_index, inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
 								} else {
 									// Type not found yet (e.g. dependent/incomplete); size 0 is the standard placeholder
-									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token);
+									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
 								}
 								
 								// Create ConstructorCallNode for functional-style cast
@@ -4065,7 +4066,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
 											// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", identifier_token.value(), qualified_name);
-											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token);
+											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 											DeclarationNode& stub_decl_sv = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_sv), identifier_token);
 											ChunkedVector<ASTNode> no_args_sv;
 											FunctionCallNode& var_call_sv = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_sv, std::move(no_args_sv), identifier_token);
@@ -4078,7 +4079,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 														TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 													targ_nodes_sv.push_back(ASTNode(&dep_expr));
 												} else {
-													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
+													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token, CVQualifier::None, ReferenceQualifier::None);
 													targ_nodes_sv.push_back(ASTNode(&tts));
 												}
 											}
@@ -4116,7 +4117,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
 									// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", identifier_token.value());
-									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token);
+									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 									DeclarationNode& stub_decl_vt = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt), identifier_token);
 									ChunkedVector<ASTNode> no_args_vt;
 									FunctionCallNode& var_call_vt = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt, std::move(no_args_vt), identifier_token);
@@ -4129,7 +4130,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 											targ_nodes_vt.push_back(ASTNode(&dep_expr));
 										} else {
-											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
+											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token, CVQualifier::None, ReferenceQualifier::None);
 											targ_nodes_vt.push_back(ASTNode(&tts));
 										}
 									}
@@ -4165,7 +4166,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Create a dummy declaration for the concept call
 									Token void_token(Token::Type::Keyword, "void"sv, concept_token.line(), concept_token.column(), concept_token.file_index());
 									auto void_type = emplace_node<TypeSpecifierNode>(
-										TypeCategory::Void, TypeIndex{}, 0, void_token, CVQualifier::None);
+										TypeCategory::Void, TypeIndex{}, 0, void_token, CVQualifier::None, ReferenceQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
 									
 									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
@@ -4670,7 +4671,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Variable template found but couldn't instantiate (likely dependent args).
 							// Preserve template args in a FunctionCallNode for later substitution.
 							FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args, path 3)", template_name_to_use);
-							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token);
+							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), identifier_token);
 							ChunkedVector<ASTNode> no_args_vt3;
 							FunctionCallNode& var_call_vt3 = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt3, std::move(no_args_vt3), identifier_token);
@@ -4729,7 +4730,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Create TypeSpecifierNode for the instantiated template type
 					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 					                      identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
 					
 					// Create ConstructorCallNode for functional-style cast
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
@@ -4789,7 +4790,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						// Wrap the result in a ConstructorCallNode so codegen knows the target type
 						if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 							// Convert InitializerListNode initializers to ConstructorCallNode args
 							const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
 							ChunkedVector<ASTNode> args;
@@ -4826,7 +4827,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
-						auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token);
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);
 					}
@@ -4855,7 +4856,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("Expected '}' after brace initializer", current_token_);
 					}
 					
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 					return ParseResult::success(*result);
 				}
@@ -5087,7 +5088,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const auto& template_param = identifierType->as<TemplateParameterReferenceNode>();
 					// Create a TypeSpecifierNode for the template parameter
 					Token param_token(Token::Type::Identifier, template_param.param_name().view(), identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token, CVQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 				}
 				// For function pointers, skip overload resolution and create FunctionCallNode directly
@@ -5147,7 +5148,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
 							Token param_token(Token::Type::Identifier, template_param.param_name().view(), identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token, CVQualifier::None);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						} else {
 							FLASH_LOG_FORMAT(Parser, Debug, "result is NOT TemplateParameterReferenceNode, proceeding to overload resolution, args.size()={}", args.size());
@@ -5285,7 +5286,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										FLASH_LOG(Templates, Debug, "Creating dependent FunctionCallNode for call to '", identifier_token.value(), "'");
 										
 										// Create a placeholder declaration for the dependent function call
-										auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token);
+										auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 										auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 										

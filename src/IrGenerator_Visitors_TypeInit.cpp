@@ -1961,7 +1961,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 					TypeQualifier::None,
 					get_type_size_bits(concrete_cat),
 					param_decl.identifier_token()
-				);
+				, CVQualifier::None);
 				auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());
 				symbol_table.insert(param_decl.identifier_token().value(), concrete_param_decl);
 			} else {

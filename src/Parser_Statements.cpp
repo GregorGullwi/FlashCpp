@@ -1446,7 +1446,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						elem_type, 
 						TypeQualifier::None,
 						static_cast<unsigned char>(elem_size),
-						brace_token
+						brace_token,
+						CVQualifier::None
 					);
 					// If it's a struct type, preserve the type_index
 					if (elem_cat == TypeCategory::Struct) {
@@ -1460,7 +1461,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						first_member.memberType(),
 						TypeQualifier::None,
 						static_cast<unsigned char>(elem_size),
-						brace_token
+						brace_token,
+						CVQualifier::None
 					);
 				}
 			}
@@ -1468,7 +1470,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		
 		// Fallback to int if we couldn't extract the element type
 		if (!element_type_node.has_value()) {
-			element_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, brace_token);
+			element_type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, brace_token, CVQualifier::None);
 		}
 		
 		// Try to get the actual element type from the parameter
@@ -1519,7 +1521,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
 				TypeCategory::Struct, type_index, 
 					getStructTypeSizeBits(type_index),
-				brace_token
+				brace_token, CVQualifier::None, ReferenceQualifier::None
 			);
 			
 			return ParseResult::success(
@@ -1586,7 +1588,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					TypeCategory::Struct, type_index,
 					getStructTypeSizeBits(type_index),
-					brace_token
+					brace_token, CVQualifier::None, ReferenceQualifier::None
 				);
 
 				ChunkedVector<ASTNode> ctor_args;

@@ -996,7 +996,7 @@ ParseResult Parser::parse_lambda_expression() {
             FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
         } else {
             // No return statement found or return with no value - lambda returns void
-            return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0);
+            return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
             FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
         }
     }

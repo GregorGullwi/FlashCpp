@@ -1570,7 +1570,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_return_type_index,
 					get_substituted_type_size_bits(substituted_return_type, substituted_return_type_index),
 					orig_decl.identifier_token(),
-					orig_return_type.cv_qualifier()
+					orig_return_type.cv_qualifier(),
+					ReferenceQualifier::None
 				);
 				substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
 
@@ -3808,7 +3809,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_type_index,
 			get_type_size_bits(member_type),
 			Token(),
-			type_spec.cv_qualifier()  // Preserve const/volatile qualifier
+			type_spec.cv_qualifier(),  // Preserve const/volatile qualifier
+			ReferenceQualifier::None
 		);
 
 		// Copy pointer levels from the original type specifier

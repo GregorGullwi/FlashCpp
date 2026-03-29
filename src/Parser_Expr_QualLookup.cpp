@@ -122,7 +122,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name, 
 	                identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, type_token);
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
 	
 	// Create ConstructorCallNode
 	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
@@ -371,7 +371,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 		// Fall back to forward declaration only if we still couldn't resolve.
 		if (!decl_ptr) {
-			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, func_token);
+			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, func_token, CVQualifier::None);
 			auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
 			decl_ptr = &forward_decl.as<DeclarationNode>();
 		}

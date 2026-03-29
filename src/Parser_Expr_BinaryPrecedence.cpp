@@ -272,7 +272,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 						// Fall back to forward declaration if lookup failed
 						if (!decl_ptr) {
-							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token());
+							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
 							decl_ptr = &forward_decl.as<DeclarationNode>();
 						}

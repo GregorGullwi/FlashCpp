@@ -717,13 +717,13 @@
 		// The size_in_bits should be the element size for correct pointer arithmetic
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 			array_type.type(), array_type.type_index(), element_size_bits, Token()
-		);
+		, CVQualifier::None, ReferenceQualifier::None);
 		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 			array_type.type(), array_type.type_index(), element_size_bits, Token()
-		);
+		, CVQualifier::None, ReferenceQualifier::None);
 		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
@@ -906,13 +906,13 @@
 		// Create type nodes for the iterator variables (they're pointers typically)
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
-		);
+		, CVQualifier::None, ReferenceQualifier::None);
 		begin_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
 			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
-		);
+		, CVQualifier::None, ReferenceQualifier::None);
 		end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
@@ -1002,7 +1002,7 @@
 			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
-			);
+			, CVQualifier::None, ReferenceQualifier::None);
 			// Copy existing pointer depth (e.g., for `int*& p : arr`, loop_type is int* with depth=1)
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_levels(static_cast<int>(loop_type.pointer_depth()));
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();

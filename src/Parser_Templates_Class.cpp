@@ -382,7 +382,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			if (found_nested_def && peek() == "("_tok) {
 				// Create a stub function declaration for registration
-				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token);
+				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
 				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, nested_func_name_token.value());
 
