@@ -989,7 +989,10 @@ void initialize_native_types();
 TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
 
 // For adding a concrete instantiated type with known size (registers in gTypesByName too)
-TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits);
+TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
+inline TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits) {
+	return add_instantiated_type(name, typeToCategory(type), size_bits);
+}
 
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
