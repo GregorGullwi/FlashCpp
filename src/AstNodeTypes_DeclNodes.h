@@ -1034,8 +1034,46 @@ inline bool is_standard_arithmetic_type(Type type) {
 }
 int get_integer_rank(Type type);
 int get_floating_point_rank(Type type);
-inline int get_integer_rank(TypeCategory cat) { return get_integer_rank(categoryToType(cat)); }
-inline int get_floating_point_rank(TypeCategory cat) { return get_floating_point_rank(categoryToType(cat)); }
+inline int get_integer_rank(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Bool:
+			return 0;
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
+			return 1;
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::Char16:
+			return 2;
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Char32:
+			return 3;
+		case TypeCategory::WChar:
+			return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+			return 4;
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+			return 5;
+		default:
+			return -1;
+	}
+}
+inline int get_floating_point_rank(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Float:
+			return 1;
+		case TypeCategory::Double:
+			return 2;
+		case TypeCategory::LongDouble:
+			return 3;
+		default:
+			return 0;
+	}
+}
 
 // Get the size of 'long' in bits based on the target data model
 inline int get_long_size_bits() {

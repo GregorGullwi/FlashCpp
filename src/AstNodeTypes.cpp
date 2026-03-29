@@ -463,7 +463,46 @@ int get_type_size_bits(Type type) {
 }
 
 int get_type_size_bits(TypeCategory cat) {
-    return get_type_size_bits(categoryToType(cat));
+	switch (cat) {
+		case TypeCategory::Bool:
+			return 8;
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
+			return 8;
+		case TypeCategory::Char16:
+			return 16;
+		case TypeCategory::Char32:
+			return 32;
+		case TypeCategory::WChar:
+			return get_wchar_size_bits();
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+			return 16;
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+			return 32;
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+			return get_long_size_bits();
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+			return 64;
+		case TypeCategory::Float:
+			return 32;
+		case TypeCategory::Double:
+			return 64;
+		case TypeCategory::LongDouble:
+			return 80;
+		case TypeCategory::Enum:
+			return 32;
+		case TypeCategory::FunctionPointer:
+		case TypeCategory::MemberFunctionPointer:
+		case TypeCategory::MemberObjectPointer:
+			return 64;
+		default:
+			return 0;
+	}
 }
 
 int get_type_size_bits(TypeIndex type_index) {
